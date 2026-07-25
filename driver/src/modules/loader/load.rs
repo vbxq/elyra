@@ -35,7 +35,7 @@ impl ModuleLoader {
         }
 
         if self.loaded_modules.contains_key(&module_path_str) {
-            if let Some(prev) = self.native_fingerprints.get(&module_path_str).cloned() {
+            if let Some(_prev) = self.native_fingerprints.get(&module_path_str).cloned() {
                 let file_path = self
                     .loaded_modules
                     .get(&module_path_str)
@@ -51,16 +51,6 @@ impl ModuleLoader {
                         ))
                     })?;
                 let current = self.current_native_fingerprint(&file_path);
-                if current.as_ref() != Some(&prev) && !vm.config().allow_hot_reload {
-                    return Err(AelysError::Compile(CompileError::new(
-                        CompileErrorKind::InvalidNativeModule {
-                            module: module_path_str.clone(),
-                            reason: "hot reload disabled".to_string(),
-                        },
-                        needs.span,
-                        self.source.clone(),
-                    )));
-                }
                 if let Some(current) = current {
                     self.native_fingerprints
                         .insert(module_path_str.clone(), current);

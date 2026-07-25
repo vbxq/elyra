@@ -19,7 +19,7 @@ pub(super) fn verify(
         OpCode::CallCached => {
             verify_reg(a, num_regs, "CallCached")?;
             verify_reg(b, num_regs, "CallCached")?;
-            verify_call_args(b, c, num_regs, "CallCached")?;
+            verify_call_args(a, c, num_regs, "CallCached")?;
         }
         OpCode::CallUpval | OpCode::TailCallUpval => {
             verify_reg(a, num_regs, "CallUpval")?;

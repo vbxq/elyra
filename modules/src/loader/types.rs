@@ -1,8 +1,5 @@
-use crate::manifest::Manifest;
-use aelys_syntax::Source;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct ModuleInfo {
@@ -52,16 +49,4 @@ pub struct ModuleImports {
 pub enum LoadResult {
     Module(String),
     Symbol(String),
-}
-
-#[allow(dead_code)]
-pub struct ModuleLoader {
-    pub(crate) base_dir: PathBuf,
-    pub(crate) base_root: PathBuf, // canonical, prevents symlink escapes
-    pub(crate) loaded_modules: HashMap<String, ModuleInfo>,
-    pub(crate) loading_stack: Vec<String>, // circular dep detection
-    pub(crate) source: Arc<Source>,
-    pub(crate) native_fingerprints: HashMap<String, FileFingerprint>,
-    pub(crate) manifest: Option<Manifest>,
-    pub(crate) loaded_native_modules: HashMap<String, LoadedNativeInfo>,
 }

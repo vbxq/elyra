@@ -162,54 +162,6 @@ impl<'a> AasmParser<'a> {
                 let b = self.parse_u8()?;
                 encode_a(OpCode::IncGlobalI, a, k, b)
             }
-            "EnterNoGc" => encode_a(OpCode::EnterNoGc, 0, 0, 0),
-            "ExitNoGc" => encode_a(OpCode::ExitNoGc, 0, 0, 0),
-            "Alloc" => {
-                let a = self.parse_register()?;
-                self.skip_comma()?;
-                let b = self.parse_register()?;
-                encode_a(OpCode::Alloc, a, b, 0)
-            }
-            "Free" => {
-                let a = self.parse_register()?;
-                encode_a(OpCode::Free, a, 0, 0)
-            }
-            "LoadMem" => {
-                let a = self.parse_register()?;
-                self.skip_comma()?;
-                let b = self.parse_register()?;
-                self.skip_comma()?;
-                let c = self.parse_register()?;
-                encode_a(OpCode::LoadMem, a, b, c)
-            }
-            "LoadMemI" => {
-                let a = self.parse_register()?;
-                self.skip_comma()?;
-                let b = self.parse_register()?;
-                self.skip_comma()?;
-                let c = self.parse_u8()?;
-                encode_a(OpCode::LoadMemI, a, b, c)
-            }
-            "StoreMem" => {
-                let a = self.parse_register()?;
-                self.skip_comma()?;
-                let b = self.parse_register()?;
-                self.skip_comma()?;
-                let c = self.parse_register()?;
-                encode_a(OpCode::StoreMem, a, b, c)
-            }
-            "StoreMemI" => {
-                let a = self.parse_register()?;
-                self.skip_comma()?;
-                let b = self.parse_register()?;
-                self.skip_comma()?;
-                let c = self.parse_u8()?;
-                encode_a(OpCode::StoreMemI, a, b, c)
-            }
-            "Print" => {
-                let a = self.parse_register()?;
-                encode_a(OpCode::Print, a, 0, 0)
-            }
             "MakeClosure" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;

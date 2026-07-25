@@ -36,12 +36,6 @@ pub fn run() -> i32 {
     })
 }
 
-#[allow(dead_code)]
-pub fn run_with_args(args: &[String]) -> Result<i32, String> {
-    let parsed = args::parse_args(args)?;
-    dispatch(parsed)
-}
-
 fn parse_warning_config(flags: &[String]) -> Result<WarningConfig, String> {
     let mut config = WarningConfig::new();
     for flag in flags {
@@ -68,16 +62,11 @@ fn dispatch(parsed: args::ParsedArgs) -> Result<i32, String> {
         args::Command::Compile {
             path,
             output,
-            emit_air,
         } => {
             if !parsed.vm_args.is_empty() {
                 return Err("vm flags are only supported for run or repl".to_string());
             }
-            if emit_air {
-                commands::compile::emit_air(&path, parsed.opt_level)
-            } else {
-                commands::compile::run_with_options(&path, output, parsed.opt_level, warn_config)
-            }
+            commands::compile::run_with_options(&path, output, parsed.opt_level, warn_config)
         }
 
         args::Command::Asm {

@@ -336,5 +336,3 @@ Download [Aelys Language Support](https://marketplace.visualstudio.com/items?ite
 - [Standard Library](standard-library.md) - available modules and functions
 - [Examples](../examples/README.md) - array examples, demos, and more
 - [Performance](performance-benchmarks.md) - benchmarks and optimization tips
-
-If you want to understand what makes Aelys different, check out the [@no_gc](language-spec.md#attributes) section in the language spec.

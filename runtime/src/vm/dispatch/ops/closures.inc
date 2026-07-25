@@ -1,15 +1,7 @@
-// Closure operations: Print(34), MakeClosure(35), GetUpval(36),
+// Closure operations: MakeClosure(35), GetUpval(36),
 // SetUpval(37), CloseUpvals(38)
 
 match opcode_byte {
-    // Print (34)
-    34 => {
-        let (a, _, _) = decode_abc(instr);
-        let value = reg_get!(base + a as usize);
-        self.frames[current_frame_idx].ip = ip;
-        self.print_value(value);
-    }
-
     // MakeClosure (35)
     35 => {
         let (dest, const_idx, num_upvalues) = decode_abc(instr);
@@ -17,10 +9,10 @@ match opcode_byte {
         // Get the function value from constants (k{const_idx})
         if (const_idx as usize) >= constants_len {
             self.frames[current_frame_idx].ip = ip;
-            return Err(self.runtime_error(RuntimeErrorKind::InvalidConstantIndex {
-                index: const_idx as usize,
-                max: constants_len,
-            }));
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                "invalid constant index: {} (max: {})",
+                const_idx, constants_len
+            ))));
         }
         let constant = unsafe { *constants_ptr.add(const_idx as usize) };
 

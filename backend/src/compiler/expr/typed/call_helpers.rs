@@ -1,7 +1,6 @@
 use super::super::Compiler;
 use aelys_bytecode::OpCode;
 use aelys_common::Result;
-use aelys_sema::TypedExprKind;
 use aelys_syntax::Span;
 
 impl Compiler {
@@ -12,24 +11,7 @@ impl Compiler {
         dest: u8,
         span: Span,
     ) -> Result<()> {
-        // fast path: direct opcodes for memory operations
-        match name {
-            "alloc" if args.len() == 1 => {
-                return self.compile_typed_alloc(&args[0], dest, span);
-            }
-            "free" if args.len() == 1 => {
-                return self.compile_typed_free(&args[0], dest, span);
-            }
-            "load" if args.len() == 2 => {
-                return self.compile_typed_load(&args[0], &args[1], dest, span);
-            }
-            "store" if args.len() == 3 => {
-                return self.compile_typed_store(&args[0], &args[1], &args[2], dest, span);
-            }
-            _ => {}
-        }
-
-        // fallback to CallGlobalNative for 'type' and other builtins
+        // fallback to CallGlobalNative for builtins like 'type'
         let idx = self.get_or_create_global_index(name);
         self.accessed_globals.insert(name.to_string());
 
@@ -75,100 +57,6 @@ impl Compiler {
             self.register_pool[arg_reg as usize] = false;
         }
 
-        Ok(())
-    }
-
-    fn compile_typed_alloc(
-        &mut self,
-        size_expr: &aelys_sema::TypedExpr,
-        dest: u8,
-        span: Span,
-    ) -> Result<()> {
-        let size_reg = self.alloc_register()?;
-        self.compile_typed_expr(size_expr, size_reg)?;
-        self.emit_a(OpCode::Alloc, dest, size_reg, 0, span);
-        self.free_register(size_reg);
-        Ok(())
-    }
-
-    fn compile_typed_free(
-        &mut self,
-        ptr_expr: &aelys_sema::TypedExpr,
-        dest: u8,
-        span: Span,
-    ) -> Result<()> {
-        let ptr_reg = self.alloc_register()?;
-        self.compile_typed_expr(ptr_expr, ptr_reg)?;
-        self.emit_a(OpCode::Free, ptr_reg, 0, 0, span);
-        self.free_register(ptr_reg);
-        self.emit_a(OpCode::LoadNull, dest, 0, 0, span);
-        Ok(())
-    }
-
-    fn compile_typed_load(
-        &mut self,
-        ptr_expr: &aelys_sema::TypedExpr,
-        offset_expr: &aelys_sema::TypedExpr,
-        dest: u8,
-        span: Span,
-    ) -> Result<()> {
-        // Optimize: use LoadMemI for constant offsets 0-255
-        if let TypedExprKind::Int(offset) = &offset_expr.kind
-            && *offset >= 0
-            && *offset <= 255
-        {
-            let ptr_reg = self.alloc_register()?;
-            self.compile_typed_expr(ptr_expr, ptr_reg)?;
-            self.emit_a(OpCode::LoadMemI, dest, ptr_reg, *offset as u8, span);
-            self.free_register(ptr_reg);
-            return Ok(());
-        }
-
-        let ptr_reg = self.alloc_register()?;
-        let offset_reg = self.alloc_register()?;
-        self.compile_typed_expr(ptr_expr, ptr_reg)?;
-        self.compile_typed_expr(offset_expr, offset_reg)?;
-        self.emit_a(OpCode::LoadMem, dest, ptr_reg, offset_reg, span);
-        self.free_register(offset_reg);
-        self.free_register(ptr_reg);
-        Ok(())
-    }
-
-    fn compile_typed_store(
-        &mut self,
-        ptr_expr: &aelys_sema::TypedExpr,
-        offset_expr: &aelys_sema::TypedExpr,
-        value_expr: &aelys_sema::TypedExpr,
-        dest: u8,
-        span: Span,
-    ) -> Result<()> {
-        // Optimize: use StoreMemI for constant offsets 0-255
-        if let TypedExprKind::Int(offset) = &offset_expr.kind
-            && *offset >= 0
-            && *offset <= 255
-        {
-            let ptr_reg = self.alloc_register()?;
-            let val_reg = self.alloc_register()?;
-            self.compile_typed_expr(ptr_expr, ptr_reg)?;
-            self.compile_typed_expr(value_expr, val_reg)?;
-            self.emit_a(OpCode::StoreMemI, ptr_reg, *offset as u8, val_reg, span);
-            self.free_register(val_reg);
-            self.free_register(ptr_reg);
-            self.emit_a(OpCode::LoadNull, dest, 0, 0, span);
-            return Ok(());
-        }
-
-        let ptr_reg = self.alloc_register()?;
-        let offset_reg = self.alloc_register()?;
-        let val_reg = self.alloc_register()?;
-        self.compile_typed_expr(ptr_expr, ptr_reg)?;
-        self.compile_typed_expr(offset_expr, offset_reg)?;
-        self.compile_typed_expr(value_expr, val_reg)?;
-        self.emit_a(OpCode::StoreMem, ptr_reg, offset_reg, val_reg, span);
-        self.free_register(val_reg);
-        self.free_register(offset_reg);
-        self.free_register(ptr_reg);
-        self.emit_a(OpCode::LoadNull, dest, 0, 0, span);
         Ok(())
     }
 

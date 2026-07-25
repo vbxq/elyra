@@ -9,7 +9,7 @@ impl Compiler {
         let setup = setup_typed_function(self, func)?;
         let mut nested_compiler = setup.nested_compiler;
 
-        compile_typed_body(&mut nested_compiler, func, setup.has_no_gc)?;
+        compile_typed_body(&mut nested_compiler, func)?;
 
         finalize_typed_function(self, nested_compiler, func, setup.func_var_reg)
     }

@@ -54,8 +54,6 @@ The VM starts with a small heap and grows as needed. Typical memory usage:
 
 Memory usage is dominated by the Rust runtime and stdlib. Aelys's own data structures are pretty compact.
 
-But for `@no_gc` code, obviously emory usage depends entirely on what you allocate.  
-The manual heap is separate from the GC heap.
 
 ## What's Slow
 
@@ -149,9 +147,8 @@ Run the benchmarks:
 If your Aelys code is too slow:
 
 1. **Add type annotations** - small speedup from fewer runtime checks
-2. **Use `@no_gc` for hot paths** - eliminates GC pauses
-3. **Pre-allocate arrays/vecs** - avoid reallocation overhead
-4. **Precompile to bytecode** - skip parse/compile on each run
-5. **Profile first** - make sure you're optimizing the right thing
+2. **Pre-allocate arrays/vecs** - avoid reallocation overhead
+3. **Precompile to bytecode** - skip parse/compile on each run
+4. **Profile first** - make sure you're optimizing the right thing
 
 For truly performance-critical code, consider writing a native module in Rust and calling it from Aelys. That's what the native FFI is for.

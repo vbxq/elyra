@@ -6,10 +6,6 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
     let mut program_args = Vec::new();
 
     for arg in args {
-        if arg == "--dev" {
-            config.allow_hot_reload = true;
-            continue;
-        }
         if let Some(value) = arg.strip_prefix("-ae.") {
             apply_vm_arg(value, arg, &mut config)?;
             continue;

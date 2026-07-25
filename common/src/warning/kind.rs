@@ -2,7 +2,6 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WarningKind {
-    // Inline-related (W01xx)
     InlineRecursive,
     InlineMutualRecursion {
         cycle: Vec<String>,
@@ -11,7 +10,7 @@ pub enum WarningKind {
     InlinePublicFunction,
     InlineNativeFunction,
 
-    // Unused code (W02xx) - for later
+    // TODO: emit these warnings in the optimizer
     UnusedVariable {
         name: String,
     },
@@ -21,19 +20,14 @@ pub enum WarningKind {
     UnusedImport {
         module: String,
     },
-
-    // Deprecation (W03xx)
     DeprecatedFunction {
         name: String,
         replacement: Option<String>,
     },
-
-    // Style (W04xx)
     ShadowedVariable {
         name: String,
     },
 
-    // Type-related (W05xx)
     UnknownType {
         name: String,
     },
@@ -68,6 +62,7 @@ impl WarningKind {
             | WarningKind::InlinePublicFunction
             | WarningKind::InlineNativeFunction => "inline",
 
+            // TODO: when these warnings are emitted, assign proper categories
             WarningKind::UnusedVariable { .. }
             | WarningKind::UnusedFunction { .. }
             | WarningKind::UnusedImport { .. } => "unused",

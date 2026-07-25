@@ -1,25 +1,11 @@
 mod common;
 
 use aelys_bytecode::asm::disassemble;
-use aelys_driver::pipeline::{compilation_pipeline, compilation_pipeline_with_opt};
+use aelys_driver::pipeline::compilation_pipeline_with_opt;
 use aelys_opt::OptimizationLevel;
 use aelys_runtime::{VM, stdlib};
 use aelys_syntax::Source;
 use common::assert_aelys_int;
-
-#[test]
-fn test_builtin_call_in_loop_uses_cache() {
-    assert_aelys_int(
-        r#"
-        let ptr = alloc(100)
-        for i in 0..100 {
-            store(ptr, i, i * 2)
-        }
-        load(ptr, 50)
-    "#,
-        100,
-    );
-}
 
 #[test]
 fn test_recursive_function_with_cache() {
@@ -47,22 +33,6 @@ fn test_call_global_mono_patches_correctly() {
         sum
     "#,
         1000,
-    );
-}
-
-#[test]
-fn test_call_global_native_patches_correctly() {
-    assert_aelys_int(
-        r#"
-        let ptr = alloc(1)
-        let mut val = 0
-        for i in 0..1000 {
-            store(ptr, 0, i)
-            val = load(ptr, 0)
-        }
-        val
-    "#,
-        999,
     );
 }
 
@@ -208,97 +178,6 @@ fn test_stdlib_modules_export_native_functions() {
 }
 
 #[test]
-fn test_builtin_functions_work() {
-    let source = r#"
-        let p = alloc(8)
-        store(p, 0, 100)
-        let v = load(p, 0)
-        free(p)
-        v
-    "#;
-
-    assert_aelys_int(source, 100);
-}
-
-#[test]
-fn test_heavy_builtin_call_loop() {
-    assert_aelys_int(
-        r#"
-        let ptr = alloc(1)
-        store(ptr, 0, 0)
-        for i in 0..10000 {
-            let v = load(ptr, 0)
-            store(ptr, 0, v + 1)
-        }
-        load(ptr, 0)
-    "#,
-        10000,
-    );
-}
-
-#[test]
-fn test_interleaved_aelys_and_builtin_calls() {
-    assert_aelys_int(
-        r#"
-        fn increment(x: int) -> int { return x + 1 }
-        fn decrement(x: int) -> int { return x - 1 }
-
-        let ptr = alloc(1)
-        store(ptr, 0, 0)
-
-        for i in 0..1000 {
-            let v = load(ptr, 0)
-            let v2 = increment(v)
-            let v3 = increment(v2)
-            let v4 = decrement(v3)
-            store(ptr, 0, v4)
-        }
-
-        load(ptr, 0)
-    "#,
-        1000,
-    );
-}
-
-#[test]
-fn test_memory_opcodes_in_bytecode() {
-    let mut pipeline = compilation_pipeline();
-
-    let source = r#"
-        let ptr = alloc(10)
-        store(ptr, 0, 42)
-        load(ptr, 0)
-    "#;
-
-    let src = Source::new("test", source);
-    let (func, _heap) = pipeline.compile(src).expect("compile failed");
-
-    let mut found_alloc = false;
-    let mut found_store = false;
-    let mut found_load = false;
-
-    for &instr in func.bytecode.as_slice() {
-        let opcode = (instr >> 24) as u8;
-        match opcode {
-            28 => found_alloc = true,      // Alloc
-            32 | 33 => found_store = true, // StoreMem / StoreMemI
-            30 | 31 => found_load = true,  // LoadMem / LoadMemI
-            _ => {}
-        }
-    }
-
-    assert!(found_alloc, "Expected Alloc opcode (28) in bytecode");
-    assert!(
-        found_store,
-        "Expected StoreMem/StoreMemI opcode (32/33) in bytecode"
-    );
-    assert!(
-        found_load,
-        "Expected LoadMem/LoadMemI opcode (30/31) in bytecode"
-    );
-}
-
-#[test]
 fn test_call_global_opcode_for_aelys_functions() {
     // use O0 to prevent inlining so we can verify CallGlobal opcodes
     let mut pipeline = compilation_pipeline_with_opt(OptimizationLevel::None);
@@ -383,19 +262,6 @@ fn test_type_builtin_uses_cache() {
         42
     "#,
         42,
-    );
-}
-
-#[test]
-fn test_mixed_aelys_and_builtin_in_expression() {
-    assert_aelys_int(
-        r#"
-        fn square(x: int) -> int { return x * x }
-        let ptr = alloc(1)
-        store(ptr, 0, square(5))
-        load(ptr, 0) + square(3)
-    "#,
-        34,
     );
 }
 

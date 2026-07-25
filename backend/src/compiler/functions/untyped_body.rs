@@ -20,7 +20,6 @@ impl UntypedBodyResult {
 pub(super) fn compile_untyped_body(
     func_compiler: &mut Compiler,
     func: &Function,
-    has_no_gc: bool,
 ) -> Result<UntypedBodyResult> {
     if func.body.is_empty() {
         return Ok(UntypedBodyResult::not_returned());
@@ -37,12 +36,6 @@ pub(super) fn compile_untyped_body(
             let result_reg = func_compiler.alloc_register()?;
             func_compiler.compile_expr(expr, result_reg)?;
 
-            if has_no_gc {
-                let line = func_compiler.current_line(func.span);
-                func_compiler
-                    .current
-                    .emit_a(OpCode::ExitNoGc, 0, 0, 0, line);
-            }
 
             let line = func_compiler.current_line(last_stmt.span);
             func_compiler
@@ -72,12 +65,6 @@ pub(super) fn compile_untyped_body(
             }
             func_compiler.patch_jump(jump_to_end);
 
-            if has_no_gc {
-                let line = func_compiler.current_line(func.span);
-                func_compiler
-                    .current
-                    .emit_a(OpCode::ExitNoGc, 0, 0, 0, line);
-            }
 
             let line = func_compiler.current_line(last_stmt.span);
             func_compiler

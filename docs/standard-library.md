@@ -655,7 +655,7 @@ println("Running on {sys.platform()} {sys.arch()}")
 
 ## std.bytes
 
-Byte-level memory operations for binary data manipulation. Use with `@no_gc` functions for best performance.
+Byte-level memory operations for binary data manipulation.
 
 ```rust
 needs std.bytes
@@ -745,7 +745,6 @@ All `_be` variants for network byte order:
 ```rust
 needs std.bytes
 
-@no_gc
 fn parse_network_packet() {
     let buf = bytes.alloc(16)
 

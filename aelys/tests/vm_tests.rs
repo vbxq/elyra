@@ -17,7 +17,6 @@ fn test_vm_creation() {
     assert_eq!(vm.frame_count(), 0);
     // VM now pre-allocates 32768 registers for performance
     assert_eq!(vm.register_count(), 32768);
-    assert!(!vm.is_in_no_gc());
 }
 
 #[test]
@@ -140,66 +139,9 @@ fn test_global_variables() {
     assert_eq!(vm.get_global("x"), Some(Value::bool(true)));
 }
 
-#[test]
-fn test_no_gc_depth() {
-    let source = make_test_source();
-    let mut vm = VM::new(source).unwrap();
 
-    assert_eq!(vm.no_gc_depth(), 0);
-    assert!(!vm.is_in_no_gc());
 
-    vm.enter_no_gc();
-    assert_eq!(vm.no_gc_depth(), 1);
-    assert!(vm.is_in_no_gc());
 
-    vm.enter_no_gc();
-    assert_eq!(vm.no_gc_depth(), 2);
-    assert!(vm.is_in_no_gc());
-
-    vm.exit_no_gc();
-    assert_eq!(vm.no_gc_depth(), 1);
-    assert!(vm.is_in_no_gc());
-
-    vm.exit_no_gc();
-    assert_eq!(vm.no_gc_depth(), 0);
-    assert!(!vm.is_in_no_gc());
-
-    // Extra exits should saturate at 0
-    vm.exit_no_gc();
-    assert_eq!(vm.no_gc_depth(), 0);
-}
-
-#[test]
-fn test_maybe_collect_respects_no_gc() {
-    let source = make_test_source();
-    let mut vm = VM::new(source).unwrap();
-
-    // Capture baseline: builtins + auto-registered stdlib functions are rooted
-    vm.collect();
-    let baseline = vm.heap().object_count();
-
-    // Allocate strings to fill heap past threshold
-    for i in 0..10000 {
-        vm.alloc_string(&format!("string_number_{}", i)).unwrap();
-    }
-
-    let objects_before = vm.heap().object_count();
-    assert!(objects_before > baseline);
-
-    // Enter no_gc - collection should be suppressed even if threshold is reached
-    vm.enter_no_gc();
-    vm.maybe_collect();
-
-    // Objects should not be collected
-    assert_eq!(vm.heap().object_count(), objects_before);
-
-    // Exit no_gc and force collection
-    vm.exit_no_gc();
-    vm.collect();
-
-    // After GC, only rooted globals survive (builtins + auto-registered stdlib)
-    assert_eq!(vm.heap().object_count(), baseline);
-}
 
 #[test]
 fn test_collect_marks_registers() {
@@ -721,8 +663,6 @@ fn test_execute_no_gc_control() {
     // Test EnterNoGc and ExitNoGc
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 1;
-    func.emit_a(OpCode::EnterNoGc, 0, 0, 0, 1);
-    func.emit_a(OpCode::ExitNoGc, 0, 0, 0, 1);
     func.emit_b(OpCode::LoadI, 0, 42, 1);
     func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
@@ -731,7 +671,6 @@ fn test_execute_no_gc_control() {
     let func_ref = vm.alloc_function(func).unwrap();
     let result = vm.execute(func_ref).unwrap();
     assert_eq!(result.as_int(), Some(42));
-    assert!(!vm.is_in_no_gc());
 }
 
 #[test]

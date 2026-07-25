@@ -313,36 +313,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, k, b) = decode_c(instr);
                 format!("IncGlobalI r{}, {}, {}", a, k, b)
             }
-            OpCode::EnterNoGc => "EnterNoGc".to_string(),
-            OpCode::ExitNoGc => "ExitNoGc".to_string(),
-            OpCode::Alloc => {
-                let (_, a, b, _) = decode_a(instr);
-                format!("Alloc     r{}, r{}", a, b)
-            }
-            OpCode::Free => {
-                let (_, a, _, _) = decode_a(instr);
-                format!("Free      r{}", a)
-            }
-            OpCode::LoadMem => {
-                let (_, a, b, c) = decode_a(instr);
-                format!("LoadMem   r{}, r{}, r{}", a, b, c)
-            }
-            OpCode::LoadMemI => {
-                let (_, a, b, c) = decode_a(instr);
-                format!("LoadMemI  r{}, r{}, {}", a, b, c)
-            }
-            OpCode::StoreMem => {
-                let (_, a, b, c) = decode_a(instr);
-                format!("StoreMem  r{}, r{}, r{}", a, b, c)
-            }
-            OpCode::StoreMemI => {
-                let (_, a, b, c) = decode_a(instr);
-                format!("StoreMemI r{}, {}, r{}", a, b, c)
-            }
-            OpCode::Print => {
-                let (_, a, _, _) = decode_a(instr);
-                format!("Print     r{}", a)
-            }
 
             // Format B: register + immediate
             OpCode::LoadI => {
@@ -990,6 +960,7 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, imm) = decode_b(instr);
                 format!("ArrayForLoop r{}, {}", a, imm)
             }
+            _ => format!(".word 0x{:08x}", instr),
         }
     }
 

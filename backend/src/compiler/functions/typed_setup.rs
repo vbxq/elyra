@@ -4,7 +4,6 @@ use aelys_sema::{ResolvedType, TypedFunction};
 
 pub(super) struct TypedFunctionSetup {
     pub(super) func_var_reg: u8,
-    pub(super) has_no_gc: bool,
     pub(super) nested_compiler: Compiler,
 }
 
@@ -12,8 +11,7 @@ pub(super) fn setup_typed_function(
     parent: &mut Compiler,
     func: &TypedFunction,
 ) -> Result<TypedFunctionSetup> {
-    let has_no_gc = func.decorators.iter().any(|d| d.name == "no_gc");
-    let func_var_reg = parent.alloc_register()?;
+        let func_var_reg = parent.alloc_register()?;
 
     if parent.scope_depth == 0 {
         parent.globals.insert(func.name.clone(), false);
@@ -58,7 +56,6 @@ pub(super) fn setup_typed_function(
         parent.next_call_site_slot,
     );
     nested_compiler.current.arity = func.params.len() as u8;
-    nested_compiler.has_no_gc = has_no_gc;
 
     #[allow(clippy::collapsible_if)]
     for (capture_name, _capture_ty) in &func.captures {
@@ -104,7 +101,6 @@ pub(super) fn setup_typed_function(
 
     Ok(TypedFunctionSetup {
         func_var_reg,
-        has_no_gc,
         nested_compiler,
     })
 }

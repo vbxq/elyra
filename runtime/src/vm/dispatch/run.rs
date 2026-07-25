@@ -162,15 +162,9 @@ impl VM {
                     include!("ops/globals.inc");
                 }
 
-                // Memory operations: EnterNoGc(26), ExitNoGc(27), Alloc(28), Free(29),
-                // LoadMem(30), LoadMemI(31), StoreMem(32), StoreMemI(33)
-                26..=33 => {
-                    include!("ops/memory.inc");
-                }
-
-                // Closure operations: Print(34), MakeClosure(35), GetUpval(36),
+                // Closure operations: MakeClosure(35), GetUpval(36),
                 // SetUpval(37), CloseUpvals(38)
-                34..=38 => {
+                35..=38 => {
                     include!("ops/closures.inc");
                 }
 

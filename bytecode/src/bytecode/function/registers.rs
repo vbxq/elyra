@@ -121,40 +121,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
             OpCode::GetGlobal | OpCode::SetGlobal | OpCode::IncGlobalI => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
-            OpCode::EnterNoGc | OpCode::ExitNoGc => {}
-            OpCode::Alloc => {
-                update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
-            }
-            OpCode::Free => {
-                update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
-            }
-            OpCode::LoadMem => {
-                update_max_reg(
-                    &mut max_reg,
-                    &mut used,
-                    a as usize,
-                    Some(b as usize),
-                    Some(c as usize),
-                );
-            }
-            OpCode::LoadMemI => {
-                update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
-            }
-            OpCode::StoreMem => {
-                update_max_reg(
-                    &mut max_reg,
-                    &mut used,
-                    a as usize,
-                    Some(b as usize),
-                    Some(c as usize),
-                );
-            }
-            OpCode::StoreMemI => {
-                update_max_reg(&mut max_reg, &mut used, a as usize, Some(c as usize), None);
-            }
-            OpCode::Print => {
-                update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
-            }
             OpCode::MakeClosure | OpCode::GetUpval | OpCode::CloseUpvals => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
@@ -203,7 +169,7 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 let nargs = c as usize;
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
                 if nargs > 0 {
-                    update_max_reg(&mut max_reg, &mut used, (b as usize) + nargs, None, None);
+                    update_max_reg(&mut max_reg, &mut used, (a as usize) + nargs, None, None);
                 }
             }
             OpCode::CallUpval | OpCode::TailCallUpval => {
@@ -334,6 +300,7 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(a as usize),
                 );
             }
+            _ => {}
         }
         ip += 1;
     }

@@ -1,35 +1,10 @@
 // mark-and-sweep, scans only num_registers per frame
 // TODO: incremental/generational GC would be nice for larger heaps
 
-use super::{GcRef, MAX_NO_GC_DEPTH, VM};
+use super::{GcRef, VM};
 
 impl VM {
-    pub fn enter_no_gc(&mut self) {
-        if self.no_gc_depth >= MAX_NO_GC_DEPTH {
-            return;
-        }
-        self.no_gc_depth += 1;
-    }
-
-    pub fn exit_no_gc(&mut self) {
-        if self.no_gc_depth == 0 {
-            return;
-        }
-        self.no_gc_depth -= 1;
-    }
-
-    pub fn is_in_no_gc(&self) -> bool {
-        self.no_gc_depth > 0
-    }
-
-    pub fn no_gc_depth(&self) -> usize {
-        self.no_gc_depth
-    }
-
     pub fn maybe_collect(&mut self) {
-        if self.is_in_no_gc() {
-            return;
-        }
         if self.heap.should_collect() {
             self.collect();
         }

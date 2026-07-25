@@ -3,7 +3,6 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub struct VmConfig {
     pub max_heap_bytes: u64,
-    pub allow_hot_reload: bool,
 }
 
 impl VmConfig {
@@ -13,7 +12,6 @@ impl VmConfig {
     pub fn new(max_heap_bytes: u64) -> Result<Self, VmConfigError> {
         let config = Self {
             max_heap_bytes,
-            allow_hot_reload: false,
         };
         config.validate()?;
         Ok(config)
@@ -34,7 +32,6 @@ impl Default for VmConfig {
     fn default() -> Self {
         Self {
             max_heap_bytes: Self::DEFAULT_MAX_HEAP_BYTES,
-            allow_hot_reload: false,
         }
     }
 }

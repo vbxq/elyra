@@ -6,23 +6,6 @@ impl Heap {
         self.objects.get(gc_ref.index())?.as_ref()
     }
 
-    /// Get a GC object without bounds checking.
-    ///
-    /// # Safety
-    /// - The caller must guarantee that `gc_ref.index()` is within bounds of `self.objects`.
-    /// - The slot at `gc_ref.index()` must contain a valid object (not None).
-    // TODO: Future optimization for faster heap access in hot paths.
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub unsafe fn get_unchecked(&self, gc_ref: GcRef) -> &GcObject {
-        unsafe {
-            self.objects
-                .get_unchecked(gc_ref.index())
-                .as_ref()
-                .unwrap_unchecked()
-        }
-    }
-
     pub fn get_mut(&mut self, gc_ref: GcRef) -> Option<&mut GcObject> {
         self.objects.get_mut(gc_ref.index())?.as_mut()
     }

@@ -7,10 +7,10 @@ match opcode_byte {
         let name_index = imm as u16 as usize;
         if name_index >= constants_len {
             self.frames[current_frame_idx].ip = ip;
-            return Err(self.runtime_error(RuntimeErrorKind::InvalidConstantIndex {
-                index: name_index,
-                max: constants_len,
-            }));
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                "invalid constant index: {} (max: {})",
+                name_index, constants_len
+            ))));
         }
         let name_constant = unsafe { *constants_ptr.add(name_index) };
         let name_ptr = match name_constant.as_ptr() {
@@ -62,10 +62,10 @@ match opcode_byte {
         let name_index = imm as u16 as usize;
         if name_index >= constants_len {
             self.frames[current_frame_idx].ip = ip;
-            return Err(self.runtime_error(RuntimeErrorKind::InvalidConstantIndex {
-                index: name_index,
-                max: constants_len,
-            }));
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                "invalid constant index: {} (max: {})",
+                name_index, constants_len
+            ))));
         }
         let name_constant = unsafe { *constants_ptr.add(name_index) };
         let name_ptr = match name_constant.as_ptr() {

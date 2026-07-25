@@ -1,7 +1,7 @@
 use super::super::Compiler;
 use super::untyped_body::compile_untyped_body;
 use super::untyped_finalize::finalize_untyped_function;
-use aelys_bytecode::{Heap, OpCode};
+use aelys_bytecode::Heap;
 use aelys_common::Result;
 
 impl Compiler {
@@ -17,7 +17,6 @@ impl Compiler {
             }
         }
 
-        let has_no_gc = func.decorators.iter().any(|d| d.name == "no_gc");
 
         let heap = std::mem::replace(&mut self.heap, Heap::new());
         let globals = self.globals.clone();
@@ -42,32 +41,19 @@ impl Compiler {
             self.next_call_site_slot,
         );
 
-        func_compiler.has_no_gc = has_no_gc;
         func_compiler.begin_scope();
 
         for param in &func.params {
             func_compiler.declare_variable(&param.name, false)?;
         }
 
-        if has_no_gc {
-            let line = func_compiler.current_line(func.span);
-            func_compiler
-                .current
-                .emit_a(OpCode::EnterNoGc, 0, 0, 0, line);
-        }
 
-        let body_result = compile_untyped_body(&mut func_compiler, func, has_no_gc)?;
+        let body_result = compile_untyped_body(&mut func_compiler, func)?;
 
         func_compiler.end_scope();
 
         if !body_result.returned {
-            if has_no_gc {
-                let line = func_compiler.current_line(func.span);
-                func_compiler
-                    .current
-                    .emit_a(OpCode::ExitNoGc, 0, 0, 0, line);
-            }
-            func_compiler.emit_return0(func.span);
+                        func_compiler.emit_return0(func.span);
         }
 
         func_compiler.current.num_registers = func_compiler.next_register;

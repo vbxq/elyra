@@ -246,6 +246,41 @@ impl Compiler {
             }
         }
 
+        // CallCached: when the callee is a local variable holding a function
+        if let aelys_sema::TypedExprKind::Identifier(name) = &callee.kind {
+            if let Some((callee_reg, _mutable)) = self.resolve_variable(name) {
+                let nargs = args.len();
+                let Some(arg_start) = dest.checked_add(1) else {
+                    return self.compile_typed_call_fallback(callee, args, dest, span);
+                };
+                let mut can_use = true;
+                for i in 0..nargs {
+                    let reg_idx = (arg_start + i as u8) as usize;
+                    if reg_idx >= self.register_pool.len() || self.register_pool[reg_idx] {
+                        can_use = false;
+                        break;
+                    }
+                }
+                if can_use {
+                    for i in 0..nargs {
+                        let reg_idx = (arg_start + i as u8) as usize;
+                        self.register_pool[reg_idx] = true;
+                        if (reg_idx as u8) >= self.next_register {
+                            self.next_register = reg_idx as u8 + 1;
+                        }
+                    }
+                    for (i, arg) in args.iter().enumerate() {
+                        self.compile_typed_expr(arg, arg_start + i as u8)?;
+                    }
+                    self.emit_c(OpCode::CallCached, dest, callee_reg, nargs as u8, span);
+                    for i in (0..nargs).rev() {
+                        self.register_pool[(arg_start + i as u8) as usize] = false;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
         self.compile_typed_call_fallback(callee, args, dest, span)
     }
 

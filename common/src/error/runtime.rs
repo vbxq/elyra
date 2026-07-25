@@ -42,10 +42,6 @@ pub enum RuntimeErrorKind {
     NegativeMemoryIndex {
         value: i64,
     },
-    InvalidConstantIndex {
-        index: usize,
-        max: usize,
-    },
     InvalidOpcode {
         opcode: u8,
     },
@@ -111,9 +107,6 @@ impl RuntimeErrorKind {
             ),
             Self::NegativeMemoryIndex { value } => {
                 format!("negative memory index: {}", value)
-            }
-            Self::InvalidConstantIndex { index, max } => {
-                format!("invalid constant index: {} (max: {})", index, max)
             }
             Self::InvalidOpcode { opcode } => format!("invalid opcode: {}", opcode),
             Self::InvalidRegister { reg, max } => {

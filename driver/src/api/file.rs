@@ -9,7 +9,7 @@ use aelys_runtime::{VM, Value, VmConfig};
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
 
-const BUILTIN_NAMES: &[&str] = &["alloc", "free", "load", "store", "type"];
+const BUILTIN_NAMES: &[&str] = &["type"];
 
 pub struct RunResult {
     pub value: Value,

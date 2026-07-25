@@ -101,7 +101,7 @@
                 self.prepare_globals_for_function(callee_ref);
             }
             let new_base = base
-                .checked_add(func_reg as usize)
+                .checked_add(dest as usize)
                 .and_then(|v| v.checked_add(1))
                 .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
             let needed = new_base
@@ -141,7 +141,7 @@
             }
             let mut args = Vec::with_capacity(nargs as usize);
             for i in 0..nargs {
-                args.push(reg_get!(base + func_reg as usize + 1 + i as usize));
+                args.push(reg_get!(base + dest as usize + 1 + i as usize));
             }
             match self.call_cached_native(&native, &args) {
                 Ok(result) => {
@@ -176,7 +176,7 @@
                 self.prepare_globals_for_function(inner_func);
             }
             let new_base = base
-                .checked_add(func_reg as usize)
+                .checked_add(dest as usize)
                 .and_then(|v| v.checked_add(1))
                 .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
             let needed = new_base

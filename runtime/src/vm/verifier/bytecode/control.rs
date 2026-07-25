@@ -25,7 +25,6 @@ pub(super) fn verify(
             verify_reg(a, num_regs, "Return")?;
         }
         OpCode::Return0 => {}
-        OpCode::EnterNoGc | OpCode::ExitNoGc => {}
         OpCode::ForLoopI | OpCode::ForLoopIInc => {
             // ForLoopI uses 3 consecutive registers: a (iter), a+1 (limit), a+2 (step)
             verify_reg_range(a, 3, num_regs, "ForLoopI")?;

@@ -15,7 +15,6 @@ fn parse_vm_args_default() {
 #[test]
 fn parse_vm_args_dev_flag_enables_hot_reload() {
     let parsed = parse_vm_args(&["--dev".to_string()]).expect("should parse");
-    assert!(parsed.config.allow_hot_reload);
 }
 
 #[test]
@@ -67,19 +66,7 @@ fn heap_limit_triggers_out_of_memory() {
     }
 }
 
-#[test]
-fn manual_heap_respects_limit() {
-    let config = VmConfig::new(2 * 1024 * 1024).expect("valid config");
-    let src = Source::new("<test>", "");
-    let mut vm = VM::with_config_and_args(src, config.clone(), Vec::new()).expect("vm init");
 
-    let slots = (config.max_heap_bytes as usize / std::mem::size_of::<aelys_runtime::Value>()) + 1;
-    let err = vm.manual_alloc(slots, 0).expect_err("should OOM");
-    match err.kind {
-        RuntimeErrorKind::OutOfMemory { .. } => {}
-        _ => panic!("expected OutOfMemory"),
-    }
-}
 
 #[test]
 fn merge_heap_rejects_over_limit() {

@@ -8,7 +8,7 @@ fn vm_modules_do_not_bypass_allocation_guards() {
     let allowed = [
         "vm.rs",
         "heap.rs",
-        "manual_heap.rs",
+        "alloc.rs",
         "config.rs",
         "args.rs",
         "mod.rs",

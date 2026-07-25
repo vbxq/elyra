@@ -50,22 +50,7 @@ fn verify_rejects_constant_oob() {
     }
 }
 
-#[test]
-fn manual_heap_invalid_handle_is_rejected() {
-    let mut vm = make_vm();
-    let mut func = Function::new(Some("heap_bad_handle".to_string()), 0);
-    func.num_registers = 3;
-    func.emit_b(OpCode::LoadI, 0, 123, 1);
-    func.emit_b(OpCode::LoadI, 1, 0, 1);
-    func.emit_a(OpCode::LoadMem, 2, 0, 1, 1);
-    func.emit_a(OpCode::Return, 2, 0, 0, 1);
 
-    let err = run_function(&mut vm, func).unwrap_err();
-    match err.kind {
-        RuntimeErrorKind::InvalidMemoryHandle => {}
-        _ => panic!("expected InvalidMemoryHandle for invalid manual heap handle"),
-    }
-}
 
 #[test]
 fn verifier_blocks_gc_untracked_registers() {
@@ -125,20 +110,7 @@ fn binary_deserialize_enforces_bytecode_limit() {
     }
 }
 
-#[test]
-fn no_gc_underflow_is_rejected() {
-    let mut vm = make_vm();
-    let mut func = Function::new(Some("no_gc_underflow".to_string()), 0);
-    func.num_registers = 0;
-    func.emit_a(OpCode::ExitNoGc, 0, 0, 0, 1);
-    func.emit_a(OpCode::Return0, 0, 0, 0, 1);
 
-    let err = run_function(&mut vm, func).unwrap_err();
-    match err.kind {
-        RuntimeErrorKind::InvalidBytecode(msg) => assert!(msg.contains("no_gc underflow")),
-        _ => panic!("expected InvalidBytecode for no_gc underflow"),
-    }
-}
 
 #[test]
 fn nan_is_not_treated_as_pointer() {
@@ -537,24 +509,6 @@ l1(1)(2)(3)(4)(5)
     std::fs::write(&path, src).unwrap();
     let result = run_file(&path).unwrap();
     assert_eq!(result.as_int(), Some(15));
-}
-
-#[test]
-fn manual_heap_operations_validated() {
-    let src = r#"
-        let h = alloc(5)
-        store(h, 0, 100)
-        store(h, 4, 400)
-        let a = load(h, 0)
-        let b = load(h, 4)
-        free(h)
-        a + b
-    "#;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("heap.aelys");
-    std::fs::write(&path, src).unwrap();
-    let result = run_file(&path).unwrap();
-    assert_eq!(result.as_int(), Some(500));
 }
 
 #[test]

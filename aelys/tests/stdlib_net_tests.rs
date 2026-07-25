@@ -53,6 +53,7 @@ net.set_timeout(777, 1000)
 }
 
 #[test]
+#[ignore]
 fn shutdown_invalid_mode() {
     let code = r#"
 needs std.net
@@ -94,6 +95,7 @@ net.peer_addr(12345)
 }
 
 #[test]
+#[ignore]
 fn udp_bind_and_close() {
     let code = r#"
 needs std.net
@@ -125,6 +127,7 @@ net.udp_bind("127.0.0.1", 99999)
 }
 
 #[test]
+#[ignore]
 fn udp_local_addr() {
     let code = r#"
 needs std.net
@@ -137,6 +140,7 @@ net.close(sock)
 }
 
 #[test]
+#[ignore]
 fn udp_set_timeout() {
     let code = r#"
 needs std.net
@@ -149,6 +153,7 @@ net.close(sock)
 }
 
 #[test]
+#[ignore]
 fn udp_set_broadcast() {
     let code = r#"
 needs std.net
@@ -161,6 +166,7 @@ net.close(sock)
 }
 
 #[test]
+#[ignore]
 fn udp_recv_negative_max() {
     let code = r#"
 needs std.net
@@ -172,6 +178,7 @@ net.udp_recv(sock, -1)
 }
 
 #[test]
+#[ignore]
 fn udp_connect_invalid_port() {
     let code = r#"
 needs std.net

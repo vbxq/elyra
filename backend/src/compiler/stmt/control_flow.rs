@@ -76,10 +76,6 @@ impl Compiler {
             .into());
         }
 
-        if self.has_no_gc {
-            let line = self.current_line(span);
-            self.current.emit_a(OpCode::ExitNoGc, 0, 0, 0, line);
-        }
 
         if let Some(expr) = expr {
             let reg = self.alloc_register()?;
@@ -134,9 +130,6 @@ impl Compiler {
             .into());
         }
 
-        if self.has_no_gc {
-            self.emit_a(OpCode::ExitNoGc, 0, 0, 0, span);
-        }
 
         if let Some(e) = expr {
             let reg = self.alloc_register()?;

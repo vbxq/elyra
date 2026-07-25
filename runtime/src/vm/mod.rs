@@ -12,7 +12,6 @@ mod frames;
 mod gc;
 mod globals;
 mod init;
-pub mod manual_heap;
 mod native;
 mod native_registry;
 mod repl;
@@ -37,14 +36,11 @@ pub use aelys_bytecode::{
     Value, decode_a, decode_b, decode_c,
 };
 pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
-pub use builtins::{
-    builtin_alloc, builtin_free, builtin_load, builtin_store, builtin_type, register_builtins,
-};
+pub use builtins::{builtin_type, register_builtins};
 pub use config::{VmConfig, VmConfigError};
 pub use core::{
-    CallSiteCacheEntry, MAX_CALL_SITE_SLOTS, MAX_FRAMES, MAX_NO_GC_DEPTH, MAX_REGISTERS,
+    CallSiteCacheEntry, MAX_CALL_SITE_SLOTS, MAX_FRAMES, MAX_REGISTERS,
     StepResult, VM,
 };
 pub use frame::CallFrame;
-pub use manual_heap::{ManualHeap, ManualHeapGuard};
 pub use native::{NativeFn, NativeFunctionImpl, build_native_vm_api};

@@ -32,14 +32,13 @@ fn test_basic_assembly() {
 
   .code
     0000: LoadI     r0, 42
-    0001: Print     r0
-    0002: Return0
+    0001: Return0
 "#;
     let (functions, _heap) = assemble(source).unwrap();
     assert_eq!(functions.len(), 1);
     assert_eq!(functions[0].name, Some("main".to_string()));
     assert_eq!(functions[0].arity, 0);
-    assert_eq!(functions[0].bytecode.len(), 3);
+    assert_eq!(functions[0].bytecode.len(), 2);
 }
 
 #[test]
@@ -66,7 +65,7 @@ fn test_label_resolution() {
 fn test_binary_basic_roundtrip() {
     let mut func = Function::new(Some("test".to_string()), 0);
     func.num_registers = 2;
-    func.set_bytecode(vec![0x01_00_00_2A, 0x22_00_00_00]); // LoadI r0, 42; Print r0
+    func.set_bytecode(vec![0x01_00_00_2A]); // LoadI r0, 42
 
     let heap = Heap::new();
     let bytes = serialize(&func, &heap);

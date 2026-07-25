@@ -51,7 +51,6 @@ pub struct Compiler {
     pub loop_variables: Vec<String>, // can't assign inside loop body
     pub scope_depth: usize,
     pub next_register: u8,
-    pub has_no_gc: bool,
     pub heap: Heap,
     pub(crate) register_pool: [bool; 256],
     pub globals: HashMap<String, bool>, // name -> mutable

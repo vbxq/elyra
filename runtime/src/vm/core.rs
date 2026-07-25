@@ -1,6 +1,5 @@
 use super::config::VmConfig;
 use super::frame::CallFrame;
-use super::manual_heap::ManualHeap;
 use super::{GcRef, Heap, NativeFunctionImpl, Value};
 use crate::native::NativeModule;
 use crate::stdlib::Resource;
@@ -10,14 +9,12 @@ use std::sync::Arc;
 
 pub const MAX_FRAMES: usize = 1024;
 pub const MAX_REGISTERS: usize = 65536;
-pub const MAX_NO_GC_DEPTH: usize = 64;
 pub const MAX_CALL_SITE_SLOTS: usize = 4096;
 
 // windowed regs like Lua
 pub struct VM {
     pub(crate) heap: Heap,
     pub(crate) config: VmConfig,
-    pub(crate) manual_heap: ManualHeap,
     pub(crate) registers: Vec<Value>,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) globals: HashMap<String, Value>,
@@ -25,7 +22,6 @@ pub struct VM {
     pub(crate) globals_by_index_cache: HashMap<usize, Arc<Vec<Value>>>,
     pub(crate) globals_by_index: Vec<Value>,
     pub(crate) source: Arc<Source>,
-    pub(crate) no_gc_depth: usize,
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,
     pub(crate) call_site_cache: Vec<CallSiteCacheEntry>,

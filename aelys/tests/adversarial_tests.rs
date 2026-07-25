@@ -311,44 +311,13 @@ fn modulo_by_zero() {
 
 // Memory safety
 
-#[test]
-fn use_after_free_manual_heap() {
-    let code = r#"
-let p = alloc(10)
-store(p, 0, 42)
-free(p)
-load(p, 0)
-"#;
-    assert_aelys_error_contains(code, "freed");
-}
 
-#[test]
-fn double_free_manual_heap() {
-    let code = r#"
-let p = alloc(10)
-free(p)
-free(p)
-"#;
-    assert_aelys_error_contains(code, "free");
-}
 
-#[test]
-fn manual_heap_buffer_overflow() {
-    let code = r#"
-let p = alloc(5)
-load(p, 100)
-"#;
-    assert_aelys_error_contains(code, "bound");
-}
 
-#[test]
-fn manual_heap_negative_offset() {
-    let code = r#"
-let p = alloc(10)
-load(p, -5)
-"#;
-    assert_aelys_error_contains(code, "negative");
-}
+
+
+
+
 
 // GC exploitation
 

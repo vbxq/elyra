@@ -49,7 +49,6 @@ impl Stage for CompilerStage {
     fn execute(&mut self, input: StageInput) -> Result<StageOutput, PipelineError> {
         let (typed_program, source) = match input {
             StageInput::TypedAst(t, s) => (t, s),
-            StageInput::Air(_, t, s) => (t, s),
             other => {
                 return Err(PipelineError::TypeMismatch {
                     expected: "TypedAst or Air",

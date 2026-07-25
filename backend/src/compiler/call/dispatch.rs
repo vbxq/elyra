@@ -53,6 +53,12 @@ impl Compiler {
             return Ok(());
         }
 
+        // CallCached: when the callee is in a local register (e.g., let f = func; f())
+        // Skips the global index lookup and 2 cache words of CallGlobal.
+        if self.try_compile_cached_call(callee, args, dest, span)? {
+            return Ok(());
+        }
+
         if self.try_compile_global_call(callee, args, dest, span)? {
             return Ok(());
         }

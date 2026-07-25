@@ -23,10 +23,10 @@ match opcode_byte {
         // SAFETY: Validate index before accessing constants array
         if k >= constants_len {
             self.frames[current_frame_idx].ip = ip;
-            return Err(self.runtime_error(RuntimeErrorKind::InvalidConstantIndex {
-                index: k,
-                max: constants_len,
-            }));
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                "invalid constant index: {} (max: {})",
+                k, constants_len
+            ))));
         }
         let constant = unsafe { *constants_ptr.add(k) };
 

@@ -13,10 +13,6 @@ fn test_register_builtins() {
 
     // Verify core built-ins are registered as globals
     assert!(vm.get_global("type").is_some());
-    assert!(vm.get_global("alloc").is_some());
-    assert!(vm.get_global("free").is_some());
-    assert!(vm.get_global("load").is_some());
-    assert!(vm.get_global("store").is_some());
 }
 
 #[test]

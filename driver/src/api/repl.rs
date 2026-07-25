@@ -9,7 +9,7 @@ use aelys_runtime::{VM, Value};
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
 
-const BUILTIN_NAMES: &[&str] = &["alloc", "free", "load", "store", "type"];
+const BUILTIN_NAMES: &[&str] = &["type"];
 
 // REPL mode - uses Basic opt to keep top-level vars for subsequent inputs
 pub fn run_with_vm(vm: &mut VM, source: &str, name: &str) -> Result<Value> {

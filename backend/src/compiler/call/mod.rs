@@ -1,5 +1,6 @@
 mod assign;
 mod builtins;
+mod cached;
 mod dispatch;
 mod generic;
 mod global;

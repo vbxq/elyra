@@ -1,5 +1,4 @@
 use super::config::VmConfig;
-use super::manual_heap::ManualHeap;
 use super::{Heap, Value};
 use super::{MAX_FRAMES, MAX_REGISTERS, VM};
 use aelys_common::error::RuntimeError;
@@ -24,7 +23,6 @@ impl VM {
         let mut vm = Self {
             heap: Heap::new(),
             config,
-            manual_heap: ManualHeap::new(),
             registers: {
                 let mut regs = Vec::with_capacity(MAX_REGISTERS);
                 regs.resize(32768, Value::null());
@@ -36,7 +34,6 @@ impl VM {
             globals_by_index_cache: HashMap::with_capacity(32),
             globals_by_index: Vec::with_capacity(64),
             source,
-            no_gc_depth: 0,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),
             call_site_cache: Vec::with_capacity(64),

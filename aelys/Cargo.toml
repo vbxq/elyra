@@ -18,7 +18,6 @@ aelys-driver = { path = "../driver" }
 [dev-dependencies]
 tempfile = "3"
 aelys-opt = { path = "../opt" }
-aelys-air = { path = "../air" }
 aelys-bytecode = { path = "../bytecode" }
 
 [build-dependencies]

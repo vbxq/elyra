@@ -27,16 +27,7 @@ pub enum OpCode {
     Return0,
     GetGlobal,
     SetGlobal,
-    EnterNoGc,
-    ExitNoGc,
-    Alloc,
-    Free,
-    LoadMem,
-    LoadMemI,
-    StoreMem,
-    StoreMemI,
-    Print,
-    MakeClosure,
+    MakeClosure = 35,
     GetUpval,
     SetUpval,
     CloseUpvals,
@@ -180,7 +171,7 @@ pub enum OpCode {
 
 impl OpCode {
     pub fn from_u8(byte: u8) -> Option<Self> {
-        if byte <= Self::ArrayForLoop as u8 {
+        if byte <= 25 || (35..=129).contains(&byte) || (130..=179).contains(&byte) {
             Some(unsafe { std::mem::transmute::<u8, OpCode>(byte) })
         } else {
             None

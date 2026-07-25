@@ -26,12 +26,6 @@ Several fibonacci implementations comparing different approaches.
 
 Demonstrates the type system: annotations, inference, closures, and higher-order functions.
 
-### [lang/simple_no_gc_demo.aelys](lang/simple_no_gc_demo.aelys)
-
-Shows `@no_gc` usage with manual memory:
-- `alloc` / `free` for buffer management
-- `store` / `load` for data access
-
 ## Arrays and Vectors
 
 The `arrays/` directory has examples showing how to work with collections:
@@ -62,7 +56,7 @@ Visual demos that run in the terminal.
 
 ### [graphical_demo/mandelbrot.aelys](graphical_demo/mandelbrot.aelys)
 
-Animated ASCII Mandelbrot set with zoom. Uses `@no_gc` for the framebuffer.
+Animated ASCII Mandelbrot set with zoom.
 
 ```bash
 aelys-cli examples/graphical_demo/mandelbrot.aelys
@@ -108,7 +102,6 @@ Performance test files:
 - `fib_typed.aelys` - Fibonacci with type annotations
 - `fib_untyped.aelys` - Fibonacci without types
 - `mandelbrot_gc.aelys` - Mandelbrot with normal GC
-- `mandelbrot_nogc.aelys` - Mandelbrot with `@no_gc`
 
 ## Native Extensions
 

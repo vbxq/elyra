@@ -1,7 +1,6 @@
-use super::manual_heap::ManualHeapError;
 use super::{
     AelysFunction, GcObject, GcRef, Heap, NativeFn, NativeFunction, NativeFunctionImpl, ObjectKind,
-    VM, Value,
+    VM,
 };
 use aelys_bytecode::object::{AelysArray, AelysVec};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
@@ -10,14 +9,7 @@ use aelys_native::AelysNativeFn;
 impl VM {
     fn ensure_heap_capacity(&self, additional: u64) -> Result<(), RuntimeError> {
         let heap_bytes = self.heap.bytes_allocated() as u64;
-        let manual_bytes = self.manual_heap.bytes_allocated() as u64;
-        let used = heap_bytes.checked_add(manual_bytes).ok_or_else(|| {
-            self.runtime_error(RuntimeErrorKind::OutOfMemory {
-                requested: additional,
-                max: self.config.max_heap_bytes,
-            })
-        })?;
-        let new_total = used.checked_add(additional).ok_or_else(|| {
+        let new_total = heap_bytes.checked_add(additional).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::OutOfMemory {
                 requested: additional,
                 max: self.config.max_heap_bytes,
@@ -96,41 +88,12 @@ impl VM {
         self.alloc_object(obj)
     }
 
-    pub fn manual_alloc(&mut self, size: usize, line: u32) -> Result<usize, RuntimeError> {
-        let bytes = (size as u64)
-            .checked_mul(std::mem::size_of::<Value>() as u64)
-            .ok_or_else(|| {
-                self.runtime_error(RuntimeErrorKind::OutOfMemory {
-                    requested: self.config.max_heap_bytes.saturating_add(1),
-                    max: self.config.max_heap_bytes,
-                })
-            })?;
-        self.ensure_heap_capacity(bytes)?;
-        self.manual_heap
-            .alloc(size, line)
-            .map_err(|e| self.manual_heap_error(e))
-    }
-
-    pub fn manual_free(&mut self, handle: usize, line: u32) -> Result<(), RuntimeError> {
-        self.manual_heap
-            .free(handle, line)
-            .map_err(|e| self.manual_heap_error(e))
-    }
-
     pub fn heap(&self) -> &Heap {
         &self.heap
     }
 
     pub fn heap_mut(&mut self) -> &mut Heap {
         &mut self.heap
-    }
-
-    pub fn manual_heap(&self) -> &super::ManualHeap {
-        &self.manual_heap
-    }
-
-    pub fn manual_heap_mut(&mut self) -> &mut super::ManualHeap {
-        &mut self.manual_heap
     }
 
     pub fn merge_heap(
@@ -140,18 +103,5 @@ impl VM {
         let added_bytes = compile_heap.bytes_allocated() as u64;
         self.ensure_heap_capacity(added_bytes)?;
         Ok(self.heap.merge(compile_heap))
-    }
-
-    pub fn manual_heap_error(&self, err: ManualHeapError) -> RuntimeError {
-        let kind = match err {
-            ManualHeapError::InvalidSize => RuntimeErrorKind::InvalidAllocationSize { size: 0 },
-            ManualHeapError::InvalidHandle => RuntimeErrorKind::InvalidMemoryHandle,
-            ManualHeapError::DoubleFree { .. } => RuntimeErrorKind::DoubleFree,
-            ManualHeapError::UseAfterFree { .. } => RuntimeErrorKind::UseAfterFree,
-            ManualHeapError::OutOfBounds { offset, size } => {
-                RuntimeErrorKind::MemoryOutOfBounds { offset, size }
-            }
-        };
-        self.runtime_error(kind)
     }
 }

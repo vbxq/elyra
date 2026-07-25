@@ -16,25 +16,14 @@ Depends what you mean by fast, it's a bytecode interpreter, so it won't match co
 
 For the fibonacci benchmark, it's roughly on par with Python. Node.js with V8 is about 10x faster. LuaJIT would be even faster.
 
-Aelys is "fast enough" for scripting, tools, and applications where you're not CPU-bound. For tight numerical loops, consider using `@no_gc` or writing a native module.
+Aelys is "fast enough" for scripting, tools, and applications where you're not CPU-bound. For tight numerical loops, consider writing a native module.
 
 But I plan on writing a JIT (LLVM or Cranelift based) in the future to improve performance ! 
-### What does `@no_gc` actually do?
-
-When you mark a function with `@no_gc`:
-1. The garbage collector is suspended while that function runs
-2. You get access to manual memory primitives (`alloc`, `store`, `load`, `free`)
-3. Memory you allocate is not tracked by the GC - you must free it yourself
-
-This is useful when you need predictable performance without GC pauses, for example : game loops, audio processing, real-time graphics, etc. 
-
-For most code, you don't need it though
-
 ### How does the GC work?
 
 Mark-and-sweep, stop-the-world, but I plan on using https://github.com/kyren/gc-arena in the future  
 
-For most programs, pauses are imperceptible, if you're doing something that allocates heavily and can't tolerate pauses, use `@no_gc` !
+For most programs, pauses are imperceptible. Profile allocation-heavy workloads before optimizing them.
 
 ## Practical
 

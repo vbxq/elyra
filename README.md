@@ -4,9 +4,7 @@
 
 # aelys 0.21.0
 
-Register-based VM with dual memory management: GC by default, `@no_gc` for performance-critical code.
-
-You choose between comfort and performance on a per-function basis.
+Register-based VM with garbage-collected memory management.
 
 # Two versions of Aelys
 

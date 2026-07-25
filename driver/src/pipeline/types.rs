@@ -1,4 +1,3 @@
-use aelys_air::AirProgram;
 use aelys_bytecode::{Function, Heap};
 use aelys_runtime::Value;
 use aelys_sema::TypedProgram;
@@ -54,7 +53,6 @@ pub enum StageInput {
     Tokens(Vec<Token>, Arc<Source>),
     Ast(Vec<Stmt>, Arc<Source>),
     TypedAst(TypedProgram, Arc<Source>),
-    Air(AirProgram, TypedProgram, Arc<Source>),
     Compiled(Box<Function>, Heap, Arc<Source>),
 }
 
@@ -65,7 +63,6 @@ impl StageInput {
             StageInput::Tokens(_, _) => "Tokens",
             StageInput::Ast(_, _) => "Ast",
             StageInput::TypedAst(_, _) => "TypedAst",
-            StageInput::Air(_, _, _) => "Air",
             StageInput::Compiled(_, _, _) => "Compiled",
         }
     }
@@ -76,7 +73,6 @@ pub enum StageOutput {
     Tokens(Vec<Token>, Arc<Source>),
     Ast(Vec<Stmt>, Arc<Source>),
     TypedAst(TypedProgram, Arc<Source>),
-    Air(AirProgram, TypedProgram, Arc<Source>),
     Compiled(Box<Function>, Heap, Arc<Source>),
     Value(Value),
 }
@@ -87,7 +83,6 @@ impl StageOutput {
             StageOutput::Tokens(t, s) => Ok(StageInput::Tokens(t, s)),
             StageOutput::Ast(a, s) => Ok(StageInput::Ast(a, s)),
             StageOutput::TypedAst(t, s) => Ok(StageInput::TypedAst(t, s)),
-            StageOutput::Air(a, t, s) => Ok(StageInput::Air(a, t, s)),
             StageOutput::Compiled(f, h, s) => Ok(StageInput::Compiled(f, h, s)),
 
             StageOutput::Value(_) => Err(PipelineError::TypeMismatch {

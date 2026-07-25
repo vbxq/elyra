@@ -1,0 +1,13 @@
+fn increment(x: int) -> int {
+    return x + 1
+}
+
+fn run(n: int) -> int {
+    let mut value = 0
+    for i in 0..n {
+        value = increment(value)
+    }
+    value
+}
+
+run(20000000)
