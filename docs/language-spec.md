@@ -556,7 +556,7 @@ Work in `while` loops too.
 The `needs` keyword imports modules:
 
 ```rust
-needs std.fs                     // whole module (required for capability-gated modules)
+needs std.fs                     // whole module
 needs std.math as m              // aliased
 needs sqrt, pow from std.math    // multiple functions
 ```
@@ -582,14 +582,6 @@ The safe standard library modules are **auto-registered**, their functions are a
 - `std.convert` - type conversions
 - `std.time` - time and timers
 
-Capability-gated modules still require an explicit `needs` import:
-
-- `std.fs` - file system (requires capability)
-- `std.net` - networking (requires capability)
-- `std.sys` - system info
-- `std.bytes` - byte-level memory (requires capability)
-
-You can also use `--ae-trusted=true` to enable all caps
 
 See [Standard Library](standard-library.md) for full documentation.
 

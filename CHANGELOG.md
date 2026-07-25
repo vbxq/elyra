@@ -2,6 +2,12 @@
 
 All notable changes to Aelys, roughly grouped by version. I don't always tag releases perfectly, so this is reconstructed from git history
 
+## 0.21.x - vm rework
+
+split aelys llvm & aelys vm into separate repo
+
+- remove the capability system
+
 ## 0.20.x - Preparing for LLVM
 
 Groundwork for LLVM: sized types, structs, generics, monomorphization, and a new intermediate representation (AIR) with System V AMD64 layout. Nothing implemented in the VM though. I'd rather focus on the new backend than on that. 

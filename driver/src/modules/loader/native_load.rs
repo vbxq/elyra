@@ -25,20 +25,6 @@ impl ModuleLoader {
             .cloned()
             .expect("needs.path validated as non-empty");
         if let Some(policy) = self.manifest.as_ref().and_then(|m| m.module(&module_name)) {
-            if !policy.capabilities.is_empty()
-                && let Err(denied_cap) = vm.config().check_native_capabilities(&policy.capabilities)
-            {
-                return Err(AelysError::Compile(CompileError::new(
-                    CompileErrorKind::NativeCapabilityDenied {
-                        module: module_path_str.to_string(),
-                        capability: denied_cap,
-                        required: policy.capabilities.clone(),
-                    },
-                    needs.span,
-                    self.source.clone(),
-                )));
-            }
-
             if let Some(expected_checksum) = &policy.checksum {
                 let actual_checksum = compute_file_checksum(file_path).map_err(|e| {
                     self.native_error(

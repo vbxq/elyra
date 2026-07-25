@@ -1,36 +1,9 @@
-use std::collections::HashSet;
 use std::fmt;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VMCapabilities {
-    pub allow_fs: bool,
-    pub allow_net: bool,
-    pub allow_exec: bool,
-}
-
-impl VMCapabilities {
-    pub const fn all_enabled() -> Self {
-        Self {
-            allow_fs: true,
-            allow_net: true,
-            allow_exec: true,
-        }
-    }
-
-    pub fn set_all(&mut self, enabled: bool) {
-        self.allow_fs = enabled;
-        self.allow_net = enabled;
-        self.allow_exec = enabled;
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct VmConfig {
     pub max_heap_bytes: u64,
-    pub capabilities: VMCapabilities,
     pub allow_hot_reload: bool,
-    pub allowed_caps: HashSet<String>,
-    pub denied_caps: HashSet<String>,
 }
 
 impl VmConfig {
@@ -40,10 +13,7 @@ impl VmConfig {
     pub fn new(max_heap_bytes: u64) -> Result<Self, VmConfigError> {
         let config = Self {
             max_heap_bytes,
-            capabilities: VMCapabilities::default(),
             allow_hot_reload: false,
-            allowed_caps: HashSet::new(),
-            denied_caps: HashSet::new(),
         };
         config.validate()?;
         Ok(config)
@@ -58,45 +28,13 @@ impl VmConfig {
         }
         Ok(())
     }
-
-    pub fn check_native_capability(&self, capability: &str) -> Result<(), String> {
-        // denied takes precedence
-        if self.denied_caps.contains(capability) {
-            return Err(capability.to_string());
-        }
-        // If allowed_caps is empty, all capabilities are allowed (unless explicitly denied)
-        if self.allowed_caps.is_empty() {
-            return Ok(());
-        }
-        // Otherwise, the capability must be in allowed_caps
-        if self.allowed_caps.contains(capability) {
-            Ok(())
-        } else {
-            Err(capability.to_string())
-        }
-    }
-
-    pub fn check_native_capabilities(&self, capabilities: &[String]) -> Result<(), String> {
-        for cap in capabilities {
-            self.check_native_capability(cap)?;
-        }
-        Ok(())
-    }
-
-    pub fn allow_all_native_caps(&mut self) {
-        self.allowed_caps.clear();
-        self.denied_caps.clear();
-    }
 }
 
 impl Default for VmConfig {
     fn default() -> Self {
         Self {
             max_heap_bytes: Self::DEFAULT_MAX_HEAP_BYTES,
-            capabilities: VMCapabilities::default(),
             allow_hot_reload: false,
-            allowed_caps: HashSet::new(),
-            denied_caps: HashSet::new(),
         }
     }
 }

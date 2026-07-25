@@ -316,11 +316,6 @@ fn num_cpus() -> usize {
 
 /// exec(command) - Execute shell command, returns exit code.
 fn native_exec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if !vm.capabilities().allow_exec {
-        return Err(vm.runtime_error(RuntimeErrorKind::CapabilityDenied {
-            operation: "sys.exec",
-        }));
-    }
     let command = get_string(vm, args[0], "sys.exec")?;
 
     #[cfg(unix)]
@@ -342,11 +337,6 @@ fn native_exec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 /// exec_output(command) - Execute command and capture output.
 /// Returns stdout as string, or null on error.
 fn native_exec_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if !vm.capabilities().allow_exec {
-        return Err(vm.runtime_error(RuntimeErrorKind::CapabilityDenied {
-            operation: "sys.exec_output",
-        }));
-    }
     let command = get_string(vm, args[0], "sys.exec_output")?;
 
     #[cfg(unix)]
@@ -373,11 +363,6 @@ fn native_exec_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
 /// This is safer than exec() as it prevents shell injection attacks.
 /// Returns exit code.
 fn native_exec_args(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if !vm.capabilities().allow_exec {
-        return Err(vm.runtime_error(RuntimeErrorKind::CapabilityDenied {
-            operation: "sys.exec_args",
-        }));
-    }
     let program = get_string(vm, args[0], "sys.exec_args")?;
     let args_str = get_string(vm, args[1], "sys.exec_args")?;
 
@@ -401,11 +386,6 @@ fn native_exec_args(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 /// This is safer than exec_output() as it prevents shell injection attacks.
 /// Returns stdout as string.
 fn native_exec_args_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if !vm.capabilities().allow_exec {
-        return Err(vm.runtime_error(RuntimeErrorKind::CapabilityDenied {
-            operation: "sys.exec_args_output",
-        }));
-    }
     let program = get_string(vm, args[0], "sys.exec_args_output")?;
     let args_str = get_string(vm, args[1], "sys.exec_args_output")?;
 

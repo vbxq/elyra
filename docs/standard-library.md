@@ -12,16 +12,6 @@ You can still use `needs` with an alias if you want a shorter name:
 needs std.math as m
 ```
 
-### Capability-gated modules
-
-The following modules require an explicit `needs` import and the corresponding `--allow-caps` flag:
-
-- `std.fs` -- file system access (`--allow-caps=fs`)
-- `std.net` -- network access (`--allow-caps=net`)
-- `std.sys` -- system information
-- `std.bytes` -- raw byte buffers
-
-**Important** : you can also use `--ae-trusted=true` to enable all caps.
 
 ```rust
 needs std.fs
@@ -464,7 +454,7 @@ time.iso()                        // "2024-01-15T14:30:45Z"
 
 ## std.fs
 
-File system operations. **Requires `--allow-caps=fs`**.
+File system operations.
 
 ```rust
 needs std.fs
@@ -557,7 +547,7 @@ fs.join("/home/user", "../../etc/passwd")  // stays within /home/user
 
 ## std.net
 
-Network operations. **Requires `--allow-caps=net`**.
+Network operations.
 
 ```rust
 needs std.net

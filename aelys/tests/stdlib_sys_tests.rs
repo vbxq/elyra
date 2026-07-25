@@ -173,42 +173,7 @@ if c > 0 { 1 } else { 0 }
 }
 
 #[test]
-fn sys_exec_denied_without_capability() {
-    let code = r#"
-needs std.sys
-sys.exec("echo hi")
-"#;
-    assert_aelys_error_contains(code, "capability");
-}
 
-#[test]
-fn sys_exec_output_denied() {
-    let code = r#"
-needs std.sys
-sys.exec_output("echo test")
-"#;
-    assert_aelys_error_contains(code, "capability");
-}
-
-#[test]
-fn sys_exec_args_denied() {
-    let code = r#"
-needs std.sys
-sys.exec_args("ls", "-l")
-"#;
-    assert_aelys_error_contains(code, "capability");
-}
-
-#[test]
-fn sys_exec_args_output_denied() {
-    let code = r#"
-needs std.sys
-sys.exec_args_output("echo", "test")
-"#;
-    assert_aelys_error_contains(code, "capability");
-}
-
-#[test]
 fn sys_random_in_range() {
     let code = r#"
 needs std.sys

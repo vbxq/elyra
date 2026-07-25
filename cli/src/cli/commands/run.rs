@@ -255,15 +255,6 @@ fn load_bundled_module(
     manifest: Option<&Manifest>,
 ) -> Result<(), String> {
     if let Some(policy) = manifest.and_then(|m| m.module(module_name)) {
-        if !policy.capabilities.is_empty()
-            && let Err(denied) = vm.config().check_native_capabilities(&policy.capabilities)
-        {
-            return Err(format!(
-                "native capability denied for {}: {}",
-                module_name, denied
-            ));
-        }
-
         if let Some(expected) = &policy.checksum {
             let actual = compute_simple_hash(&bundle.bytes);
             if &actual != expected {

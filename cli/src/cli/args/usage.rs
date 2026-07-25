@@ -16,8 +16,6 @@ Flags (any position):
   --emit-air                 Print AIR instead of compiling (compile)
   -ae.<k>=<v>                VM option (e.g., -ae.max-heap=64M)
   --ae-<k>=<v>               VM option (e.g., --ae-max-heap=64M)
-  --allow-caps=<list>        Allow native capabilities (comma-separated)
-  --deny-caps=<list>         Deny native capabilities (comma-separated)
   --dev                      Enable dev features (hot reload)
 
 Warning flags:
@@ -27,7 +25,6 @@ Warning flags:
   -Wno-<category>            Disable specific category
 
 Examples:
-  aelys main.aelys -O2 --ae-trusted=true
   aelys main.aelys -O2 '-ae.trusted=true'  (quote in PowerShell)
   aelys run -O3 main.aelys arg1 arg2
   aelys repl -ae.max-heap=1G

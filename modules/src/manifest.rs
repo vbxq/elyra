@@ -14,8 +14,6 @@ pub struct Manifest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ModulePolicy {
-    #[serde(default)]
-    pub capabilities: Vec<String>, // e.g., ["gpu", "window"]
     pub required_version: Option<String>, // semver constraint
     pub checksum: Option<String>,
     pub kind: Option<String>, // "script", "native", or "std"

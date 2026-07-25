@@ -305,15 +305,6 @@ impl<'a> Parser<'a> {
         if token == "--dev" {
             return Ok(Some((token.to_string(), false)));
         }
-        if token.starts_with("--allow-caps=") || token.starts_with("--deny-caps=") {
-            return Ok(Some((token.to_string(), false)));
-        }
-        if token == "--allow-caps" || token == "--deny-caps" {
-            let next = self
-                .peek_next()
-                .ok_or_else(|| format!("missing value for {}", token))?;
-            return Ok(Some((format!("{}={}", token, next), true)));
-        }
         if token.starts_with("-ae.") || token.starts_with("--ae-") {
             return Ok(Some((token.to_string(), false)));
         }

@@ -89,31 +89,9 @@ You can tune VM behavior with `-ae.<option>=<value>`:
 
 ```bash
 aelys-cli -ae.max-heap=128M program.aelys
-aelys-cli -ae.trusted=true program.aelys
 ```
 
-`max-heap` sets the heap size limit. `trusted` disables some security checks
-
-**Capabilities**
-
-Some modules require explicit permission:
-
-```bash
-# Allow file system access
-aelys-cli --allow-caps=fs program.aelys
-
-# Allow networking
-aelys-cli --allow-caps=net server.aelys
-
-# Allow both
-aelys-cli --allow-caps=fs,net program.aelys
-
-# Deny specific capability
-aelys-cli --deny-caps=net program.aelys
-```
-
-Without these flags, `std.fs` and `std.net` will error when you try to use them.  
-This is a security feature - untrusted scripts can't access the filesystem or network unless you explicitly allow it.
+`max-heap` sets the heap size limit.
 
 **Development**
 
@@ -187,8 +165,6 @@ Module resolution is relative to the importing file. Check:
 - Is the file path correct?
 - Did you spell the module name right?
 - For `std.*` modules, make sure you're using the exact name (`std.io`, not `std.IO`)
-
-### "capability denied: std.fs"
 
 You're trying to use file system operations without permission. Add `--allow-caps=fs` to your command.
 

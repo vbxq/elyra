@@ -103,22 +103,8 @@ pub fn register_std_module(
     match module_name {
         "math" => math::register(vm),
         "io" => io::register(vm),
-        "fs" => {
-            if !vm.capabilities().allow_fs {
-                return Err(vm.runtime_error(RuntimeErrorKind::CapabilityDenied {
-                    operation: "std.fs",
-                }));
-            }
-            fs::register(vm)
-        }
-        "net" => {
-            if !vm.capabilities().allow_net {
-                return Err(vm.runtime_error(RuntimeErrorKind::CapabilityDenied {
-                    operation: "std.net",
-                }));
-            }
-            net::register(vm)
-        }
+        "fs" => fs::register(vm),
+        "net" => net::register(vm),
         "time" => time::register(vm),
         "string" => string::register(vm),
         "convert" => convert::register(vm),

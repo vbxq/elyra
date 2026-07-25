@@ -1,17 +1,9 @@
 use super::VM;
-use super::config::{VMCapabilities, VmConfig};
+use super::config::VmConfig;
 use aelys_syntax::Source;
 use std::sync::Arc;
 
 impl VM {
-    pub fn capabilities(&self) -> &VMCapabilities {
-        &self.config.capabilities
-    }
-
-    pub fn set_capabilities(&mut self, capabilities: VMCapabilities) {
-        self.config.capabilities = capabilities;
-    }
-
     pub fn config(&self) -> &VmConfig {
         &self.config
     }

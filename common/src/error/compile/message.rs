@@ -71,19 +71,6 @@ impl CompileErrorKind {
             Self::InvalidNativeModule { module, reason } => {
                 format!("invalid native module '{}': {}", module, reason)
             }
-            Self::NativeCapabilityDenied {
-                module,
-                capability,
-                required,
-            } => {
-                let caps_str = required.join(", ");
-                format!(
-                    "native module '{}' requires capability '{}' which is not allowed\n   \
-                     = required capabilities: [{}]\n   \
-                     = hint: use --allow-caps={} or -ae.trusted=true to allow",
-                    module, capability, caps_str, capability
-                )
-            }
             Self::NativeChecksumMismatch {
                 module,
                 expected,

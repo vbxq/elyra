@@ -89,27 +89,6 @@ fn verifier_blocks_gc_untracked_registers() {
 }
 
 #[test]
-fn stdlib_exec_denied_without_capability() {
-    let src = r#"
-needs exec from std.sys
-exec("echo hi")
-"#;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("cap.aelys");
-    std::fs::write(&path, src).unwrap();
-    let err = run_file(&path).unwrap_err();
-    match err {
-        AelysError::Runtime(runtime) => match runtime.kind {
-            RuntimeErrorKind::CapabilityDenied { operation } => {
-                assert_eq!(operation, "sys.exec");
-            }
-            _ => panic!("expected CapabilityDenied for sys.exec"),
-        },
-        _ => panic!("expected runtime error for sys.exec"),
-    }
-}
-
-#[test]
 fn verify_rejects_invalid_opcode() {
     let mut vm = make_vm();
     let mut func = Function::new(Some("bad_opcode".to_string()), 0);
@@ -304,8 +283,7 @@ fs.join("/app", "/etc/passwd")
     let path = dir.path().join("path_traversal.aelys");
     std::fs::write(&path, src).unwrap();
 
-    let mut config = aelys_runtime::VmConfig::default();
-    config.capabilities.allow_fs = true;
+    let config = aelys_runtime::VmConfig::default();
 
     let err = aelys_driver::run_file_with_config(&path, config, Vec::new()).unwrap_err();
     match err {
@@ -331,8 +309,7 @@ fs.join("/app/data", "../../../etc/passwd")
     let path = dir.path().join("path_escape.aelys");
     std::fs::write(&path, src).unwrap();
 
-    let mut config = aelys_runtime::VmConfig::default();
-    config.capabilities.allow_fs = true;
+    let config = aelys_runtime::VmConfig::default();
 
     let err = aelys_driver::run_file_with_config(&path, config, Vec::new()).unwrap_err();
     match err {
@@ -366,8 +343,7 @@ fs.read_bytes(f, 999999999999)
     let path = dir.path().join("huge_buffer.aelys");
     std::fs::write(&path, &src).unwrap();
 
-    let mut config = aelys_runtime::VmConfig::default();
-    config.capabilities.allow_fs = true;
+    let config = aelys_runtime::VmConfig::default();
 
     let result = aelys_driver::run_file_with_config(&path, config, Vec::new());
     match result {

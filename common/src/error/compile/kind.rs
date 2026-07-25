@@ -66,11 +66,6 @@ pub enum CompileErrorKind {
         module: String,
         reason: String,
     },
-    NativeCapabilityDenied {
-        module: String,
-        capability: String,
-        required: Vec<String>,
-    },
     NativeChecksumMismatch {
         module: String,
         expected: String,

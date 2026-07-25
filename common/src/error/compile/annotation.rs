@@ -19,7 +19,6 @@ impl CompileErrorKind {
             Self::StdlibNotAvailable { .. } => "'std' modules are not yet implemented",
             Self::SymbolNotFound { .. } => "symbol not found",
             Self::InvalidNativeModule { .. } => "invalid native module",
-            Self::NativeCapabilityDenied { .. } => "capability denied",
             Self::NativeChecksumMismatch { .. } => "checksum mismatch",
             Self::NativeVersionMismatch { .. } => "version constraint not satisfied",
             Self::TypeInferenceError(_) => "type inference failed",

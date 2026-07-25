@@ -1,4 +1,4 @@
-use super::config::{VMCapabilities, VmConfig};
+use super::config::VmConfig;
 use super::manual_heap::ManualHeap;
 use super::{Heap, Value};
 use super::{MAX_FRAMES, MAX_REGISTERS, VM};
@@ -10,17 +10,6 @@ use std::sync::Arc;
 impl VM {
     pub fn new(source: Arc<Source>) -> Result<Self, RuntimeError> {
         Self::with_config_and_args(source, VmConfig::default(), Vec::new())
-    }
-
-    pub fn with_capabilities(
-        source: Arc<Source>,
-        capabilities: VMCapabilities,
-    ) -> Result<Self, RuntimeError> {
-        let config = VmConfig {
-            capabilities,
-            ..VmConfig::default()
-        };
-        Self::with_config_and_args(source, config, Vec::new())
     }
 
     pub fn with_config(source: Arc<Source>, config: VmConfig) -> Result<Self, RuntimeError> {

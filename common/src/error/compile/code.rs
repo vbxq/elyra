@@ -33,7 +33,6 @@ impl CompileErrorKind {
             Self::StdlibNotAvailable { .. } => 404,
             Self::SymbolNotFound { .. } => 405,
             Self::InvalidNativeModule { .. } => 406,
-            Self::NativeCapabilityDenied { .. } => 407,
             Self::NativeChecksumMismatch { .. } => 408,
             Self::NativeVersionMismatch { .. } => 409,
             Self::SymbolConflict { .. } => 410,

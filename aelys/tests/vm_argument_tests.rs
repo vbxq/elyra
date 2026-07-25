@@ -1,5 +1,5 @@
 use aelys_common::RuntimeErrorKind;
-use aelys_runtime::{VM, VmArgsError, VmConfig, VmConfigError, parse_vm_args};
+use aelys_runtime::{VM, VmConfig, VmConfigError, parse_vm_args};
 use aelys_syntax::Source;
 
 #[test]
@@ -9,9 +9,6 @@ fn parse_vm_args_default() {
         parsed.config.max_heap_bytes,
         VmConfig::DEFAULT_MAX_HEAP_BYTES
     );
-    assert!(!parsed.config.capabilities.allow_fs);
-    assert!(!parsed.config.capabilities.allow_net);
-    assert!(!parsed.config.capabilities.allow_exec);
     assert!(parsed.program_args.is_empty());
 }
 
@@ -22,27 +19,15 @@ fn parse_vm_args_dev_flag_enables_hot_reload() {
 }
 
 #[test]
-fn parse_vm_args_allow_deny_caps() {
-    let parsed = parse_vm_args(&[
-        "--allow-caps=net,gpu".to_string(),
-        "--deny-caps=exec".to_string(),
-    ])
-    .expect("should parse");
-    assert!(parsed.config.allowed_caps.contains("net"));
-    assert!(parsed.config.allowed_caps.contains("gpu"));
-    assert!(parsed.config.denied_caps.contains("exec"));
-}
-
-#[test]
 fn jvm_style_max_heap_too_small() {
     let err = parse_vm_args(&["-ae.max-heap=4096".to_string()])
         .err()
         .expect("should fail");
     match err {
-        VmArgsError::InvalidValue { reason, .. } => {
+        aelys_runtime::VmArgsError::InvalidValue { reason, .. } => {
             assert!(reason.contains("must be >="));
         }
-        VmArgsError::InvalidConfig(VmConfigError::MaxHeapTooSmall { .. }) => {}
+        aelys_runtime::VmArgsError::InvalidConfig(VmConfigError::MaxHeapTooSmall { .. }) => {}
         _ => panic!("unexpected error: {:?}", err),
     }
 }
@@ -61,76 +46,11 @@ fn invalid_vm_arg_value_errors() {
         .err()
         .expect("should error");
     match err {
-        VmArgsError::InvalidValue { reason, .. } => {
+        aelys_runtime::VmArgsError::InvalidValue { reason, .. } => {
             assert!(reason.contains("invalid integer"));
         }
         _ => panic!("unexpected error"),
     }
-}
-
-#[test]
-fn parse_vm_args_capabilities_flags() {
-    let parsed = parse_vm_args(&[
-        "-ae.allow-fs=true".to_string(),
-        "-ae.allow-net=false".to_string(),
-        "-ae.allow-exec=true".to_string(),
-    ])
-    .expect("should parse capabilities");
-    assert!(parsed.config.capabilities.allow_fs);
-    assert!(!parsed.config.capabilities.allow_net);
-    assert!(parsed.config.capabilities.allow_exec);
-}
-
-#[test]
-fn trusted_overrides_capabilities() {
-    let parsed = parse_vm_args(&[
-        "-ae.trusted=true".to_string(),
-        "-ae.allow-fs=false".to_string(),
-        "-ae.allow-net=false".to_string(),
-        "-ae.allow-exec=false".to_string(),
-    ])
-    .expect("should parse trusted override");
-    assert!(parsed.config.capabilities.allow_fs);
-    assert!(parsed.config.capabilities.allow_net);
-    assert!(parsed.config.capabilities.allow_exec);
-}
-
-#[test]
-fn invalid_capability_value_errors() {
-    let err = parse_vm_args(&["-ae.allow-fs=maybe".to_string()])
-        .err()
-        .expect("should error");
-    match err {
-        VmArgsError::InvalidValue { reason, .. } => {
-            assert!(reason.contains("expected true or false"));
-        }
-        _ => panic!("unexpected error"),
-    }
-}
-
-#[test]
-fn trusted_clears_allowed_caps() {
-    // Regression test: trusted should clear allowed_caps, not just denied_caps
-    let parsed = parse_vm_args(&[
-        "--allow-caps=net".to_string(),
-        "-ae.trusted=true".to_string(),
-    ])
-    .expect("should parse");
-
-    // With trusted=true, allowed_caps should be empty (allowing everything)
-    assert!(parsed.config.allowed_caps.is_empty());
-    assert!(parsed.config.denied_caps.is_empty());
-
-    // All capabilities should be enabled
-    assert!(parsed.config.capabilities.allow_fs);
-    assert!(parsed.config.capabilities.allow_net);
-    assert!(parsed.config.capabilities.allow_exec);
-
-    // Native caps check should allow any capability
-    assert!(parsed.config.check_native_capability("fs").is_ok());
-    assert!(parsed.config.check_native_capability("net").is_ok());
-    assert!(parsed.config.check_native_capability("gpu").is_ok());
-    assert!(parsed.config.check_native_capability("anything").is_ok());
 }
 
 #[test]

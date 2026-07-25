@@ -54,9 +54,6 @@ pub enum RuntimeErrorKind {
         max: usize,
     },
     InvalidBytecode(String),
-    CapabilityDenied {
-        operation: &'static str,
-    },
     NativeError {
         code: i32,
     },
@@ -123,7 +120,6 @@ impl RuntimeErrorKind {
                 format!("invalid register index: {} (max: {})", reg, max)
             }
             Self::InvalidBytecode(message) => format!("invalid bytecode: {}", message),
-            Self::CapabilityDenied { operation } => format!("capability denied: {}", operation),
             Self::NativeError { code } => format!("native error: code {}", code),
             Self::IndexOutOfBounds { index, length } => {
                 format!(

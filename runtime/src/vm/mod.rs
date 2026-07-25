@@ -40,7 +40,7 @@ pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
 pub use builtins::{
     builtin_alloc, builtin_free, builtin_load, builtin_store, builtin_type, register_builtins,
 };
-pub use config::{VMCapabilities, VmConfig, VmConfigError};
+pub use config::{VmConfig, VmConfigError};
 pub use core::{
     CallSiteCacheEntry, MAX_CALL_SITE_SLOTS, MAX_FRAMES, MAX_NO_GC_DEPTH, MAX_REGISTERS,
     StepResult, VM,
