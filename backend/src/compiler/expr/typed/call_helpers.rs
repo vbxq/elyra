@@ -15,10 +15,6 @@ impl Compiler {
         let idx = self.get_or_create_global_index(name);
         self.accessed_globals.insert(name.to_string());
 
-        if idx > 255 {
-            return self.compile_typed_call_generic(name, args, dest, span);
-        }
-
         let arg_start = match dest.checked_add(1) {
             Some(s) => s,
             None => return self.compile_typed_call_generic(name, args, dest, span),
@@ -50,7 +46,7 @@ impl Compiler {
             self.compile_typed_expr(arg, arg_reg)?;
         }
 
-        self.emit_call_global_cached(dest, idx as u8, args.len() as u8, name, span);
+        self.emit_call_global_cached(dest, idx, args.len() as u8, name, span);
 
         for i in (0..args.len()).rev() {
             let arg_reg = arg_start + i as u8;

@@ -34,33 +34,26 @@ impl Compiler {
 
             self.accessed_globals.insert(name.to_string());
 
-            // 255 limit: index must fit in a byte for CallGlobal encoding
-            // TODO: could extend to 16-bit indices with a new opcode if needed
-            if global_idx <= 255 {
-                let arg_start = match self.checked_arg_start(dest) {
-                    Some(s) => s,
-                    None => {
-                        self.compile_call_generic(callee, args, dest, span)?;
-                        return Ok(true);
-                    }
-                };
-
-                if !self.reserve_arg_registers(arg_start, args.len()) {
+            let arg_start = match self.checked_arg_start(dest) {
+                Some(s) => s,
+                None => {
                     self.compile_call_generic(callee, args, dest, span)?;
                     return Ok(true);
                 }
+            };
 
-                for (i, arg) in args.iter().enumerate() {
-                    let arg_reg = arg_start + i as u8;
-                    self.compile_expr(arg, arg_reg)?;
-                }
-
-                self.emit_call_global_cached(dest, global_idx as u8, args.len() as u8, name, span);
-                self.release_arg_registers(arg_start, args.len());
+            if !self.reserve_arg_registers(arg_start, args.len()) {
+                self.compile_call_generic(callee, args, dest, span)?;
                 return Ok(true);
             }
 
-            self.compile_call_generic(callee, args, dest, span)?;
+            for (i, arg) in args.iter().enumerate() {
+                let arg_reg = arg_start + i as u8;
+                self.compile_expr(arg, arg_reg)?;
+            }
+
+            self.emit_call_global_cached(dest, global_idx, args.len() as u8, name, span);
+            self.release_arg_registers(arg_start, args.len());
             return Ok(true);
         }
 

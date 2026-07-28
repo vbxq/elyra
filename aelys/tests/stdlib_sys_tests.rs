@@ -214,6 +214,39 @@ if r == 5 { 1 } else { 0 }
 }
 
 #[test]
+fn standard_random_functions_share_replayable_state() {
+    let code = r#"
+needs std.sys
+sys.random_seed(123456)
+sys.random()
+randint(-1000000, 1000000)
+let state = sys.random_state()
+let first = sys.random_int(-1000000, 1000000)
+let second = randint(-1000000, 1000000)
+let third = sys.random()
+sys.random_set_state(state)
+let replay_first = sys.random_int(-1000000, 1000000)
+let replay_second = randint(-1000000, 1000000)
+let replay_third = sys.random()
+if first == replay_first and second == replay_second and third == replay_third { 1 } else { 0 }
+"#;
+    assert_aelys_int(code, 1);
+}
+
+#[test]
+fn random_seed_restarts_sequence() {
+    let code = r#"
+needs std.sys
+sys.random_seed(-42)
+let first = sys.random_int(-1000, 1000)
+let second = randint(-1000, 1000)
+sys.random_seed(-42)
+if first == sys.random_int(-1000, 1000) and second == randint(-1000, 1000) { 1 } else { 0 }
+"#;
+    assert_aelys_int(code, 1);
+}
+
+#[test]
 fn sys_script_path_returns_value() {
     let code = r#"
 needs std.sys

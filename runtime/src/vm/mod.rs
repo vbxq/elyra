@@ -14,6 +14,7 @@ mod globals;
 mod init;
 mod native;
 mod native_registry;
+mod random;
 mod repl;
 mod resources;
 

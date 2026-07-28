@@ -28,6 +28,7 @@ pub struct VM {
     pub(crate) resources: Vec<Option<Resource>>,
     pub(crate) native_modules: HashMap<String, NativeModule>,
     pub(crate) native_registry: HashMap<String, NativeFunctionImpl>,
+    pub(crate) random_state: u64,
 
     pub(crate) current_global_mapping_id: usize,
     pub(crate) program_args: Vec<String>,

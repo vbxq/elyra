@@ -1,11 +1,14 @@
 mod common;
 
+use aelys::{new_vm, run_with_vm_and_opt};
 use aelys_bytecode::asm::disassemble;
+use aelys_common::error::RuntimeError;
 use aelys_driver::pipeline::compilation_pipeline_with_opt;
 use aelys_opt::OptimizationLevel;
-use aelys_runtime::{VM, stdlib};
+use aelys_runtime::{VM, Value, stdlib};
 use aelys_syntax::Source;
 use common::assert_aelys_int;
+use std::collections::HashSet;
 
 #[test]
 fn test_recursive_function_with_cache() {
@@ -204,6 +207,33 @@ fn test_call_global_opcode_for_aelys_functions() {
         "Expected at least 2 CallGlobal opcodes (double/triple), found {}",
         found_call_global
     );
+}
+
+#[test]
+fn test_global_calls_above_u8_index() {
+    use std::fmt::Write;
+
+    fn native_value(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        Ok(Value::int(7))
+    }
+
+    let mut vm = new_vm().unwrap();
+    let mut native_globals = HashSet::new();
+    let mut source = String::new();
+    source.push_str("fn main() -> int {\n");
+    for index in 0..260 {
+        let name = format!("stress_{index}");
+        let function = vm.alloc_native(&name, 0, native_value).unwrap();
+        vm.set_global(name.clone(), Value::ptr(function.index()));
+        native_globals.insert(name.clone());
+        writeln!(source, "{name}()").unwrap();
+    }
+    source.push_str("return stress_259()\n}\nmain()");
+    vm.add_repl_known_globals(&native_globals);
+    vm.add_repl_known_native_globals(&native_globals);
+
+    let result = run_with_vm_and_opt(&mut vm, &source, "test", OptimizationLevel::None).unwrap();
+    assert_eq!(result.as_int(), Some(7));
 }
 
 #[test]

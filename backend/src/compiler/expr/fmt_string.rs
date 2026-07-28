@@ -140,7 +140,7 @@ impl Compiler {
     fn emit_tostring_call(&mut self, reg: u8, span: Span) -> Result<()> {
         let global_idx = self.get_or_create_global_index("__tostring");
         self.accessed_globals.insert("__tostring".to_string());
-        self.emit_call_global_cached(reg, global_idx as u8, 1, "__tostring", span);
+        self.emit_call_global_cached(reg, global_idx, 1, "__tostring", span);
         Ok(())
     }
 }

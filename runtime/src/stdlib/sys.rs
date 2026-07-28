@@ -42,6 +42,9 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("exec_args_output", 2, native_exec_args_output);
     reg_fn!("random", 0, native_random);
     reg_fn!("random_int", 2, native_random_int);
+    reg_fn!("random_seed", 1, native_random_seed);
+    reg_fn!("random_state", 0, native_random_state);
+    reg_fn!("random_set_state", 1, native_random_set_state);
 
     Ok(StdModuleExports {
         all_exports,
@@ -409,24 +412,8 @@ fn native_exec_args_output(vm: &mut VM, args: &[Value]) -> Result<Value, Runtime
 
 /// random() - Get a random float between 0 and 1.
 // TODO: Imagine making prng3d and not using a proper PRNG here :)
-fn native_random(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    // Simple PRNG using system time as seed
-    use std::time::SystemTime;
-
-    let seed = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-
-    // Simple xorshift
-    let mut x = seed;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-
-    // Convert to float in [0, 1)
-    let result = (x as f64) / (u64::MAX as f64);
-    Ok(Value::float(result))
+fn native_random(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(Value::float(vm.random_f64()))
 }
 
 /// random_int(min, max) - Get a random integer in range [min, max].
@@ -442,21 +429,21 @@ fn native_random_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         ));
     }
 
-    use std::time::SystemTime;
+    Ok(Value::int(vm.random_i64_inclusive(min, max)))
+}
 
-    let seed = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+fn native_random_seed(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let seed = get_int(vm, args[0], "sys.random_seed")?;
+    vm.set_random_seed(seed as u64);
+    Ok(Value::null())
+}
 
-    // Simple xorshift
-    let mut x = seed;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
+fn native_random_state(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(Value::int(vm.random_state() as i64))
+}
 
-    // Map to range
-    let range = (max - min + 1) as u64;
-    let result = min + (x % range) as i64;
-    Ok(Value::int(result))
+fn native_random_set_state(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let state = get_int(vm, args[0], "sys.random_set_state")?;
+    vm.set_random_state(state as u64);
+    Ok(Value::null())
 }

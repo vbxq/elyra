@@ -4,7 +4,6 @@ use crate::stdlib::helpers::get_number;
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
-use rand::Rng;
 
 pub const PI: f64 = std::f64::consts::PI;
 pub const E: f64 = std::f64::consts::E;
@@ -369,7 +368,5 @@ fn native_randint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         ))));
     }
 
-    let mut rng = rand::thread_rng();
-    let result = rng.gen_range(debut..=fin);
-    Ok(Value::int(result))
+    Ok(Value::int(vm.random_i64_inclusive(debut, fin)))
 }

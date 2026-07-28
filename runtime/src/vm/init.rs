@@ -40,6 +40,7 @@ impl VM {
             resources: Vec::with_capacity(16),
             native_modules: HashMap::new(),
             native_registry: HashMap::new(),
+            random_state: super::random::initial_random_state(),
             current_global_mapping_id: 0,
             program_args,
             script_path: None,

@@ -57,12 +57,21 @@ impl Compiler {
     pub fn emit_call_global_cached(
         &mut self,
         dest: u8,
-        global_idx: u8,
+        global_idx: u16,
         nargs: u8,
         global_name: &str,
         span: Span,
     ) {
         let line = self.current_line(span);
+
+        if global_idx > u8::MAX as u16 {
+            self.current
+                .emit_b(OpCode::GetGlobalIdx, dest, global_idx as i16, line);
+            self.current.emit_c(OpCode::Call, dest, dest, nargs, line);
+            return;
+        }
+
+        let global_idx = global_idx as u8;
 
         // Check if this is a known native function (builtin or stdlib)
         let is_known_native =

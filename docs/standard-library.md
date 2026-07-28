@@ -103,6 +103,8 @@ Math functions and constants. Auto-registered -- no `needs` required.
 | `clamp(x, min, max)` | Clamp value to range |
 | `randint(debut, fin)` | Random integer in range [debut, fin] (inclusive) |
 
+`math.randint`, `sys.random`, and `sys.random_int` consume the same VM-local sequence.
+
 ```rust
 math.abs(-5)        // 5
 math.sqrt(16.0)     // 4.0
@@ -645,6 +647,11 @@ needs std.sys
 |----------|-------------|
 | `platform()` | OS name ("linux", "macos", "windows") |
 | `arch()` | CPU architecture ("x86_64", "aarch64", etc.) |
+| `random()` | Random float in [0, 1) |
+| `random_int(min, max)` | Random integer in [min, max] |
+| `random_seed(seed)` | Restart the VM-local random sequence from a seed |
+| `random_state()` | Return the current random state |
+| `random_set_state(state)` | Restore a previously returned random state |
 
 ```rust
 println("Running on {sys.platform()} {sys.arch()}")
