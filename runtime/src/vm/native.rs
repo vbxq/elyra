@@ -57,7 +57,7 @@ extern "C" fn native_read_string_callback(
     out_ptr: *mut *const u8,
     out_len: *mut usize,
 ) -> i32 {
-    if context.is_null() {
+    if context.is_null() || out_ptr.is_null() || out_len.is_null() {
         return 1;
     }
     let context = unsafe { &*(context as *const RuntimeNativeContext) };
@@ -104,5 +104,33 @@ impl VM {
             return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
         }
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aelys_syntax::Source;
+
+    #[test]
+    fn read_string_callback_rejects_null_output_pointers() {
+        let mut vm = VM::new(Source::new("native-null-output", "")).unwrap();
+        let mut context = RuntimeNativeContext {
+            magic: NATIVE_CONTEXT_MAGIC,
+            vm: &mut vm,
+        };
+        let context = (&mut context as *mut RuntimeNativeContext).cast();
+        let value = aelys_native::value_null();
+        let mut pointer = std::ptr::null();
+        let mut length = 0;
+
+        assert_eq!(
+            native_read_string_callback(context, value, std::ptr::null_mut(), &mut length),
+            1
+        );
+        assert_eq!(
+            native_read_string_callback(context, value, &mut pointer, std::ptr::null_mut()),
+            1
+        );
     }
 }

@@ -99,8 +99,6 @@ impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
 }
 
-unsafe impl Sync for AelysVmApi {}
-unsafe impl Sync for AelysTypeDescriptor {}
 unsafe impl Sync for AelysExport {}
 unsafe impl Sync for AelysRequiredModule {}
 unsafe impl Sync for AelysModuleDescriptor {}
