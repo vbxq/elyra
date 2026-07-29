@@ -118,8 +118,20 @@ pub enum JitCallResult {
     Returned(Value),
     Deoptimized {
         bytecode_ip: u32,
-        registers: Vec<(u16, Value)>,
+        registers: Vec<(u16, JitDeoptValue)>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum JitDeoptValue {
+    Value(Value),
+    Argument(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum JitArgument<'a> {
+    Integer(i64),
+    IntegerArray(&'a [i64]),
 }
 
 pub trait JitExecutor: Send + Sync {
@@ -131,7 +143,7 @@ pub trait JitExecutor: Send + Sync {
         &self,
         key: &JitFunctionKey,
         function: &Function,
-        arguments: &[Value],
+        arguments: &[JitArgument<'_>],
         calls: u64,
     ) -> JitCallResult;
 }

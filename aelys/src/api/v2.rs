@@ -8,8 +8,8 @@ use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::{OptimizationLevel, Optimizer};
 use aelys_runtime::{
-    ExecutionControl, JitCallResult, JitExecutor, JitFunctionKey, VM, Value, VmConfig,
-    VmConfigError,
+    ExecutionControl, JitArgument, JitCallResult, JitDeoptValue, JitExecutor, JitFunctionKey, VM,
+    Value, VmConfig, VmConfigError,
 };
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
@@ -452,16 +452,28 @@ impl Isolate {
         if !provider.should_execute(&key, calls) {
             return RootJitResult::Unsupported;
         }
-        match provider.try_execute(&key, &module.function, &[], calls) {
+        match provider.try_execute(&key, &module.function, &[] as &[JitArgument<'_>], calls) {
             JitCallResult::Unsupported => RootJitResult::Unsupported,
             JitCallResult::Returned(value) => RootJitResult::Returned(value),
             JitCallResult::Deoptimized {
                 bytecode_ip,
                 registers,
-            } => RootJitResult::Deoptimized {
-                bytecode_ip,
-                registers,
-            },
+            } => {
+                let Some(registers) = registers
+                    .into_iter()
+                    .map(|(register, value)| match value {
+                        JitDeoptValue::Value(value) => Some((register, value)),
+                        JitDeoptValue::Argument(_) => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return RootJitResult::Unsupported;
+                };
+                RootJitResult::Deoptimized {
+                    bytecode_ip,
+                    registers,
+                }
+            }
         }
     }
 

@@ -286,6 +286,8 @@ fn expression(kind: &IrInstructionKind) -> Option<Expression> {
         } => Some(Expression::Compare(predicate, left, right)),
         IrInstructionKind::Guard { .. }
         | IrInstructionKind::BoundsCheck { .. }
+        | IrInstructionKind::ArrayLen(_)
+        | IrInstructionKind::ArrayLoadI { .. }
         | IrInstructionKind::Safepoint { .. } => None,
     }
 }
@@ -326,6 +328,13 @@ fn rewrite_instruction(kind: &mut IrInstructionKind, aliases: &HashMap<ValueId, 
         IrInstructionKind::BoundsCheck { index, length, .. } => {
             *index = resolve(*index, aliases);
             *length = resolve(*length, aliases);
+        }
+        IrInstructionKind::ArrayLen(array) => {
+            *array = resolve(*array, aliases);
+        }
+        IrInstructionKind::ArrayLoadI { array, index, .. } => {
+            *array = resolve(*array, aliases);
+            *index = resolve(*index, aliases);
         }
         IrInstructionKind::Iconst(_)
         | IrInstructionKind::Bconst(_)
@@ -375,6 +384,13 @@ fn used_values(ir: &FunctionIr) -> HashSet<ValueId> {
                     used.insert(index);
                     used.insert(length);
                 }
+                IrInstructionKind::ArrayLen(array) => {
+                    used.insert(array);
+                }
+                IrInstructionKind::ArrayLoadI { array, index, .. } => {
+                    used.insert(array);
+                    used.insert(index);
+                }
                 IrInstructionKind::Iconst(_)
                 | IrInstructionKind::Bconst(_)
                 | IrInstructionKind::Safepoint { .. } => {}
@@ -408,6 +424,7 @@ fn is_pure(kind: &IrInstructionKind) -> bool {
         kind,
         IrInstructionKind::Guard { .. }
             | IrInstructionKind::BoundsCheck { .. }
+            | IrInstructionKind::ArrayLoadI { .. }
             | IrInstructionKind::Safepoint { .. }
     )
 }

@@ -1,8 +1,11 @@
-use super::engine::{CompiledFunction, JitEngine, JitExecution, JitKey, JitTier};
+use super::engine::{CompiledFunction, JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
 use super::optimize::{optimize_integer_ir, specialize_integer_parameters};
 use super::translate::translate_integer_function;
 use aelys_bytecode::Function;
-use aelys_runtime::{JitCallResult, JitExecutor, JitFunctionKey, Value};
+use aelys_runtime::{
+    JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutor, JitFunctionKey,
+    Value,
+};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -168,20 +171,21 @@ impl JitExecutor for JitProvider {
         &self,
         key: &JitFunctionKey,
         function: &Function,
-        arguments: &[Value],
+        arguments: &[JitArgument<'_>],
         calls: u64,
     ) -> JitCallResult {
-        let Some(arguments) = arguments
+        let integer_arguments = arguments
             .iter()
-            .map(Value::as_int)
-            .collect::<Option<Vec<_>>>()
-        else {
-            return JitCallResult::Unsupported;
-        };
+            .map(|argument| match argument {
+                JitArgument::Integer(value) => Some(*value),
+                JitArgument::IntegerArray(_) => None,
+            })
+            .collect::<Option<Vec<_>>>();
         if let Some(threshold) = self.tier2_call_threshold
             && calls <= threshold
+            && let Some(integer_arguments) = &integer_arguments
         {
-            self.observe_profile(key, &arguments);
+            self.observe_profile(key, integer_arguments);
         }
         let profile = self
             .tier2_call_threshold
@@ -193,7 +197,12 @@ impl JitExecutor for JitProvider {
         if compiled.arity() != arguments.len() {
             return JitCallResult::Unsupported;
         }
-        let Ok(result) = compiled.execute(&arguments) else {
+        let result = if let Some(integer_arguments) = &integer_arguments {
+            compiled.execute(integer_arguments)
+        } else {
+            compiled.execute_arguments(arguments)
+        };
+        let Ok(result) = result else {
             return JitCallResult::Unsupported;
         };
         match result {
@@ -208,7 +217,15 @@ impl JitExecutor for JitProvider {
                 self.deoptimizations.fetch_add(1, Ordering::Relaxed);
                 let Some(registers) = registers
                     .into_iter()
-                    .map(|(register, value)| Some((register, Value::int_checked(value).ok()?)))
+                    .map(|(register, value)| {
+                        let value = match value {
+                            JitDeoptValue::Integer(value) => {
+                                RuntimeDeoptValue::Value(Value::int_checked(value).ok()?)
+                            }
+                            JitDeoptValue::Argument(index) => RuntimeDeoptValue::Argument(index),
+                        };
+                        Some((register, value))
+                    })
                     .collect::<Option<Vec<_>>>()
                 else {
                     return JitCallResult::Unsupported;

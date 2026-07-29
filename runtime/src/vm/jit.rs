@@ -1,5 +1,5 @@
 use super::{CallFrame, Function, GcRef, ObjectKind, VM, Value};
-use crate::{JitCallResult, JitExecutor, JitFunctionKey};
+use crate::{JitArgument, JitCallResult, JitDeoptValue, JitExecutor, JitFunctionKey};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use std::sync::Arc;
 
@@ -54,13 +54,33 @@ impl VM {
             return JitCallResult::Unsupported;
         };
         let calls = self.jit_call_counts.get(&key).copied().unwrap_or(0);
+        let mut jit_arguments = smallvec::SmallVec::<[JitArgument<'_>; 8]>::new();
+        for argument in arguments {
+            if let Some(value) = argument.as_int() {
+                jit_arguments.push(JitArgument::Integer(value));
+                continue;
+            }
+            let Some(reference) = argument.as_ptr().map(GcRef::new) else {
+                return JitCallResult::Unsupported;
+            };
+            let Some(object) = self.heap.get(reference) else {
+                return JitCallResult::Unsupported;
+            };
+            let ObjectKind::Array(array) = &object.kind else {
+                return JitCallResult::Unsupported;
+            };
+            let Some(values) = array.data.as_ints() else {
+                return JitCallResult::Unsupported;
+            };
+            jit_arguments.push(JitArgument::IntegerArray(values));
+        }
         let Some(object) = self.heap.get(function) else {
             return JitCallResult::Unsupported;
         };
         let ObjectKind::Function(function) = &object.kind else {
             return JitCallResult::Unsupported;
         };
-        executor.try_execute(&key, &function.function, arguments, calls)
+        executor.try_execute(&key, &function.function, &jit_arguments, calls)
     }
 
     pub(crate) fn prepare_jit_call(&mut self, function: GcRef) -> bool {
@@ -109,10 +129,25 @@ impl VM {
             JitCallResult::Deoptimized {
                 bytecode_ip,
                 registers,
-            } => JitRegisterCallResult::Deoptimized {
-                bytecode_ip,
-                registers,
-            },
+            } => {
+                let Some(registers) = registers
+                    .into_iter()
+                    .map(|(register, value)| {
+                        let value = match value {
+                            JitDeoptValue::Value(value) => value,
+                            JitDeoptValue::Argument(index) => *arguments.get(index)?,
+                        };
+                        Some((register, value))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return Ok(JitRegisterCallResult::Unsupported);
+                };
+                JitRegisterCallResult::Deoptimized {
+                    bytecode_ip,
+                    registers,
+                }
+            }
         })
     }
 
@@ -245,5 +280,61 @@ impl VM {
         let heap = &self.heap;
         self.jit_function_keys
             .retain(|reference, _| heap.get(*reference).is_some());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::JitArgument;
+    use aelys_bytecode::object::AelysArray;
+    use aelys_syntax::Source;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct ArrayExecutor {
+        observed: Arc<AtomicBool>,
+    }
+
+    impl JitExecutor for ArrayExecutor {
+        fn should_execute(&self, _key: &JitFunctionKey, _calls: u64) -> bool {
+            true
+        }
+
+        fn observe_backedge(&self, _key: &JitFunctionKey, _function: &Function, _backedges: u64) {}
+
+        fn try_execute(
+            &self,
+            _key: &JitFunctionKey,
+            _function: &Function,
+            arguments: &[JitArgument<'_>],
+            _calls: u64,
+        ) -> JitCallResult {
+            let [JitArgument::IntegerArray(elements)] = arguments else {
+                return JitCallResult::Unsupported;
+            };
+            self.observed.store(true, Ordering::Relaxed);
+            JitCallResult::Returned(Value::int(elements[1]))
+        }
+    }
+
+    #[test]
+    fn jit_arguments_borrow_validated_integer_arrays() {
+        let mut vm = VM::new(Source::new("jit-array", "")).unwrap();
+        let observed = Arc::new(AtomicBool::new(false));
+        vm.configure_jit(Some(Arc::new(ArrayExecutor {
+            observed: Arc::clone(&observed),
+        })));
+        let function = vm
+            .alloc_function_with_jit_key(
+                Function::new(Some("read_array".to_string()), 1),
+                JitFunctionKey::root(1),
+            )
+            .unwrap();
+        let array = vm.alloc_array(AelysArray::from_ints(vec![19, 42])).unwrap();
+
+        let result = vm.try_execute_jit_call(function, &[Value::ptr(array.index())]);
+
+        assert_eq!(result, JitCallResult::Returned(Value::int(42)));
+        assert!(observed.load(Ordering::Relaxed));
     }
 }

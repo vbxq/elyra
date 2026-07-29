@@ -22,10 +22,12 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
         return None;
     }
     let decoded = decode(function)?;
+    let parameter_types =
+        infer_parameter_types(usize::from(function.arity), register_count, &decoded)?;
     let (leaders, instruction_by_ip) = leaders(function, &decoded)?;
     let block_types = infer_block_types(
         register_count,
-        usize::from(function.arity),
+        &parameter_types,
         &leaders,
         &decoded,
         &instruction_by_ip,
@@ -50,14 +52,13 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
 
     let mut entry_parameters = Vec::with_capacity(usize::from(function.arity));
     let mut entry_registers = Vec::with_capacity(register_count);
-    for register in 0..register_count {
-        if register < usize::from(function.arity) {
-            let value = next_id(&mut next_value)?;
-            entry_parameters.push((value, IrType::I64));
-            entry_registers.push(value);
-        } else {
-            entry_registers.push(ValueId(u32::MAX));
-        }
+    for &ty in &parameter_types {
+        let value = next_id(&mut next_value)?;
+        entry_parameters.push((value, ty));
+        entry_registers.push(value);
+    }
+    for _ in parameter_types.len()..register_count {
+        entry_registers.push(ValueId(u32::MAX));
     }
     let mut entry_instructions = Vec::new();
     for register in entry_registers
@@ -137,6 +138,36 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
                         source,
                     )?;
                 }
+                OpCode::ArrayLen => {
+                    let array = *registers.get(instruction.b)?;
+                    emit_value(
+                        &mut registers,
+                        &mut instructions,
+                        &mut next_value,
+                        instruction.a,
+                        IrType::I64,
+                        IrInstructionKind::ArrayLen(array),
+                        source,
+                    )?;
+                }
+                OpCode::ArrayLoadI => {
+                    let array = *registers.get(instruction.b)?;
+                    let index = *registers.get(instruction.c)?;
+                    let bytecode_ip = push_deopt_map(instruction.ip, &registers, &mut deopt_maps)?;
+                    emit_value(
+                        &mut registers,
+                        &mut instructions,
+                        &mut next_value,
+                        instruction.a,
+                        IrType::I64,
+                        IrInstructionKind::ArrayLoadI {
+                            array,
+                            index,
+                            deopt: bytecode_ip,
+                        },
+                        source,
+                    )?;
+                }
                 OpCode::AddI | OpCode::SubI => {
                     let immediate = next_id(&mut next_value)?;
                     instructions.push(IrInstruction {
@@ -160,13 +191,18 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
                         source,
                     )?;
                 }
-                OpCode::AddII | OpCode::SubII | OpCode::MulII => {
+                OpCode::Add
+                | OpCode::Sub
+                | OpCode::Mul
+                | OpCode::AddII
+                | OpCode::SubII
+                | OpCode::MulII => {
                     let left = *registers.get(instruction.b)?;
                     let right = *registers.get(instruction.c)?;
                     let kind = match instruction.opcode {
-                        OpCode::AddII => IrInstructionKind::Iadd(left, right),
-                        OpCode::SubII => IrInstructionKind::Isub(left, right),
-                        OpCode::MulII => IrInstructionKind::Imul(left, right),
+                        OpCode::Add | OpCode::AddII => IrInstructionKind::Iadd(left, right),
+                        OpCode::Sub | OpCode::SubII => IrInstructionKind::Isub(left, right),
+                        OpCode::Mul | OpCode::MulII => IrInstructionKind::Imul(left, right),
                         _ => return None,
                     };
                     emit_value(
@@ -270,7 +306,7 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
             .clone()
             .unwrap_or_else(|| "anonymous".to_string()),
         entry,
-        parameter_types: vec![IrType::I64; usize::from(function.arity)],
+        parameter_types,
         return_type: IrType::I64,
         blocks,
         deopt_maps,
@@ -349,7 +385,7 @@ fn leaders(
 
 fn infer_block_types(
     register_count: usize,
-    arity: usize,
+    parameter_types: &[IrType],
     leaders: &[usize],
     decoded: &[DecodedInstruction],
     instruction_by_ip: &HashMap<usize, usize>,
@@ -357,8 +393,8 @@ fn infer_block_types(
     let mut entry_types = vec![None; register_count];
     entry_types
         .iter_mut()
-        .take(arity)
-        .for_each(|ty| *ty = Some(IrType::I64));
+        .zip(parameter_types)
+        .for_each(|(slot, ty)| *slot = Some(*ty));
     let mut inputs = HashMap::from([(0usize, entry_types)]);
     let mut queue = VecDeque::from([0usize]);
     while let Some(leader) = queue.pop_front() {
@@ -422,11 +458,20 @@ fn transfer_types(instruction: DecodedInstruction, registers: &mut [Option<IrTyp
         }
         OpCode::LoadI => *registers.get_mut(destination)? = Some(IrType::I64),
         OpCode::LoadBool => *registers.get_mut(destination)? = Some(IrType::Bool),
+        OpCode::ArrayLen => {
+            require_register_type(registers, instruction.b, IrType::I64Array)?;
+            *registers.get_mut(destination)? = Some(IrType::I64);
+        }
+        OpCode::ArrayLoadI => {
+            require_register_type(registers, instruction.b, IrType::I64Array)?;
+            require_register_type(registers, instruction.c, IrType::I64)?;
+            *registers.get_mut(destination)? = Some(IrType::I64);
+        }
         OpCode::AddI | OpCode::SubI => {
             require_register_type(registers, instruction.b, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
         }
-        OpCode::AddII | OpCode::SubII | OpCode::MulII => {
+        OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::AddII | OpCode::SubII | OpCode::MulII => {
             require_register_type(registers, instruction.b, IrType::I64)?;
             require_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
@@ -480,7 +525,17 @@ fn record_backedge(
     if instruction.target? >= instruction.ip {
         return Some(());
     }
-    let bytecode_ip = u32::try_from(instruction.ip).ok()?;
+    let bytecode_ip = push_deopt_map(instruction.ip, registers, deopt_maps)?;
+    instructions.push(IrInstruction {
+        result: None,
+        kind: IrInstructionKind::Safepoint { deopt: bytecode_ip },
+        source: position(function, instruction.ip),
+    });
+    Some(())
+}
+
+fn push_deopt_map(ip: usize, registers: &[ValueId], deopt_maps: &mut Vec<DeoptMap>) -> Option<u32> {
+    let bytecode_ip = u32::try_from(ip).ok()?;
     deopt_maps.push(DeoptMap {
         bytecode_ip,
         registers: registers
@@ -489,12 +544,95 @@ fn record_backedge(
             .map(|(register, value)| Some((u16::try_from(register).ok()?, *value)))
             .collect::<Option<Vec<_>>>()?,
     });
-    instructions.push(IrInstruction {
-        result: None,
-        kind: IrInstructionKind::Safepoint { deopt: bytecode_ip },
-        source: position(function, instruction.ip),
-    });
-    Some(())
+    Some(bytecode_ip)
+}
+
+fn infer_parameter_types(
+    arity: usize,
+    register_count: usize,
+    decoded: &[DecodedInstruction],
+) -> Option<Vec<IrType>> {
+    let mut types = vec![None; arity];
+    let mut origins = vec![None; register_count];
+    for (index, origin) in origins.iter_mut().take(arity).enumerate() {
+        *origin = Some(index);
+    }
+    for instruction in decoded {
+        let mut require = |register: usize, ty: IrType| -> Option<()> {
+            let Some(parameter) = *origins.get(register)? else {
+                return Some(());
+            };
+            match types[parameter] {
+                Some(existing) if existing != ty => None,
+                _ => {
+                    types[parameter] = Some(ty);
+                    Some(())
+                }
+            }
+        };
+        match instruction.opcode {
+            OpCode::Move => {}
+            OpCode::AddI | OpCode::SubI => require(instruction.b, IrType::I64)?,
+            OpCode::Add
+            | OpCode::Sub
+            | OpCode::Mul
+            | OpCode::AddII
+            | OpCode::SubII
+            | OpCode::MulII
+            | OpCode::LtII
+            | OpCode::LeII
+            | OpCode::GtII
+            | OpCode::GeII
+            | OpCode::EqII
+            | OpCode::NeII => {
+                require(instruction.b, IrType::I64)?;
+                require(instruction.c, IrType::I64)?;
+            }
+            OpCode::ArrayLen => require(instruction.b, IrType::I64Array)?,
+            OpCode::ArrayLoadI => {
+                require(instruction.b, IrType::I64Array)?;
+                require(instruction.c, IrType::I64)?;
+            }
+            OpCode::JumpIf | OpCode::JumpIfLong | OpCode::JumpIfNot | OpCode::JumpIfNotLong => {
+                require(instruction.a, IrType::Bool)?;
+            }
+            OpCode::Return => require(instruction.a, IrType::I64)?,
+            _ => {}
+        }
+        if instruction.a < register_count {
+            if instruction.opcode == OpCode::Move {
+                origins[instruction.a] = *origins.get(instruction.b)?;
+            } else if matches!(
+                instruction.opcode,
+                OpCode::LoadI
+                    | OpCode::LoadBool
+                    | OpCode::Add
+                    | OpCode::Sub
+                    | OpCode::Mul
+                    | OpCode::AddI
+                    | OpCode::SubI
+                    | OpCode::AddII
+                    | OpCode::SubII
+                    | OpCode::MulII
+                    | OpCode::LtII
+                    | OpCode::LeII
+                    | OpCode::GtII
+                    | OpCode::GeII
+                    | OpCode::EqII
+                    | OpCode::NeII
+                    | OpCode::ArrayLen
+                    | OpCode::ArrayLoadI
+            ) {
+                origins[instruction.a] = None;
+            }
+        }
+    }
+    Some(
+        types
+            .into_iter()
+            .map(|ty| ty.unwrap_or(IrType::I64))
+            .collect(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

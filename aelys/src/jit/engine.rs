@@ -1,4 +1,5 @@
 use super::ir::{FunctionIr, IntPredicate, IrError, IrInstructionKind, IrTerminator, IrType};
+use aelys_runtime::JitArgument;
 use cranelift_codegen::ir::{AbiParam, BlockArg, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
@@ -9,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-pub(crate) const JIT_ABI_VERSION: u16 = 1;
+pub(crate) const JIT_ABI_VERSION: u16 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
@@ -47,8 +48,9 @@ impl JitKey {
 pub(crate) struct CompiledFunction {
     address: usize,
     arity: usize,
+    parameter_types: Arc<[IrType]>,
     deopt_register_count: usize,
-    deopt_maps: HashMap<u32, Arc<[u16]>>,
+    deopt_maps: HashMap<u32, Arc<[(u16, DeoptSource)]>>,
     _module: Mutex<JITModule>,
 }
 
@@ -59,13 +61,32 @@ struct RawJitExit {
     bytecode_ip: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawI64Collection {
+    data: *const i64,
+    length: u64,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum JitExecution {
     Returned(i64),
     Deoptimized {
         bytecode_ip: u32,
-        registers: Vec<(u16, i64)>,
+        registers: Vec<(u16, JitDeoptValue)>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JitDeoptValue {
+    Integer(i64),
+    Argument(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeoptSource {
+    Machine(u16),
+    Argument(usize),
 }
 
 impl fmt::Debug for CompiledFunction {
@@ -101,13 +122,75 @@ impl CompiledFunction {
                 actual: arguments.len(),
             });
         }
-        type Entry = unsafe extern "C" fn(*const i64, *mut RawJitExit, *mut i64) -> i64;
+        if self.parameter_types.iter().any(|ty| *ty != IrType::I64) {
+            return Err(JitError::ArgumentType(0));
+        }
+        self.execute_raw(arguments.as_ptr(), std::ptr::null())
+    }
+
+    pub(crate) fn execute_arguments(
+        &self,
+        arguments: &[JitArgument<'_>],
+    ) -> Result<JitExecution, JitError> {
+        if arguments.len() != self.arity {
+            return Err(JitError::Arity {
+                expected: self.arity,
+                actual: arguments.len(),
+            });
+        }
+        let mut integers = Vec::with_capacity(arguments.len());
+        let mut collections = Vec::with_capacity(arguments.len());
+        for (index, (argument, expected)) in arguments
+            .iter()
+            .zip(self.parameter_types.iter())
+            .enumerate()
+        {
+            match (argument, expected) {
+                (JitArgument::Integer(value), IrType::I64) => {
+                    integers.push(*value);
+                    collections.push(RawI64Collection {
+                        data: std::ptr::null(),
+                        length: 0,
+                    });
+                }
+                (JitArgument::IntegerArray(elements), IrType::I64Array) => {
+                    integers.push(0);
+                    collections.push(RawI64Collection {
+                        data: elements.as_ptr(),
+                        length: u64::try_from(elements.len())
+                            .map_err(|_| JitError::OffsetOverflow)?,
+                    });
+                }
+                _ => return Err(JitError::ArgumentType(index)),
+            }
+        }
+        self.execute_raw(integers.as_ptr(), collections.as_ptr())
+    }
+
+    fn execute_raw(
+        &self,
+        integers: *const i64,
+        collections: *const RawI64Collection,
+    ) -> Result<JitExecution, JitError> {
+        type Entry = unsafe extern "C" fn(
+            *const i64,
+            *mut RawJitExit,
+            *mut i64,
+            *const RawI64Collection,
+        ) -> i64;
         // SAFETY: addresses are obtained from finalized Cranelift functions with this exact ABI.
         let entry = unsafe { std::mem::transmute::<usize, Entry>(self.address) };
         let mut exit = RawJitExit::default();
         let mut deopt_registers = vec![0; self.deopt_register_count];
         // SAFETY: Cranelift receives valid argument, exit-state and deoptimization buffers for the compiled ABI.
-        let result = unsafe { entry(arguments.as_ptr(), &mut exit, deopt_registers.as_mut_ptr()) };
+        let result = unsafe {
+            entry(
+                integers,
+                &mut exit,
+                deopt_registers.as_mut_ptr(),
+                collections,
+            )
+        };
         if exit.kind == 0 {
             return Ok(JitExecution::Returned(result));
         }
@@ -116,13 +199,21 @@ impl CompiledFunction {
         }
         let bytecode_ip =
             u32::try_from(exit.bytecode_ip).map_err(|_| JitError::InvalidExitKind(exit.kind))?;
-        let register_ids = self
+        let register_sources = self
             .deopt_maps
             .get(&bytecode_ip)
             .ok_or(JitError::UnknownDeoptExit(bytecode_ip))?;
-        let registers = register_ids
+        let registers = register_sources
             .iter()
-            .map(|register| (*register, deopt_registers[usize::from(*register)]))
+            .map(|(register, source)| {
+                let value = match source {
+                    DeoptSource::Machine(slot) => {
+                        JitDeoptValue::Integer(deopt_registers[usize::from(*slot)])
+                    }
+                    DeoptSource::Argument(index) => JitDeoptValue::Argument(*index),
+                };
+                (*register, value)
+            })
             .collect();
         Ok(JitExecution::Deoptimized {
             bytecode_ip,
@@ -209,6 +300,11 @@ impl JitEngine {
         context
             .func
             .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        context
+            .func
+            .signature
             .returns
             .push(AbiParam::new(types::I64));
         context.func.name = UserFuncName::user(0, u32::try_from(state.next_symbol).unwrap_or(0));
@@ -235,24 +331,59 @@ impl JitEngine {
             })
             .max()
             .map_or(0, |register| register.saturating_add(1));
-        let deopt_maps = ir
-            .deopt_maps
+        let entry = ir
+            .blocks
             .iter()
-            .map(|map| {
-                (
-                    map.bytecode_ip,
-                    Arc::from(
-                        map.registers
-                            .iter()
-                            .map(|(register, _)| *register)
-                            .collect::<Vec<_>>(),
-                    ),
+            .find(|block| block.id == ir.entry)
+            .ok_or(JitError::InvalidIr(IrError::InvalidBlockGraph))?;
+        let mut array_parameters = entry
+            .parameters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (value, ty))| (*ty == IrType::I64Array).then_some((*value, index)))
+            .collect::<HashMap<_, _>>();
+        for block in &ir.blocks {
+            for (index, &(value, ty)) in block.parameters.iter().enumerate() {
+                if ty == IrType::I64Array
+                    && ir.parameter_types.get(index) == Some(&IrType::I64Array)
+                {
+                    array_parameters.insert(value, index);
+                }
+            }
+        }
+        let value_types = ir
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block.parameters.iter().copied().chain(
+                    block
+                        .instructions
+                        .iter()
+                        .filter_map(|instruction| instruction.result),
                 )
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
+        let mut deopt_maps = HashMap::new();
+        for map in &ir.deopt_maps {
+            let mut sources = Vec::with_capacity(map.registers.len());
+            for &(register, value) in &map.registers {
+                let source = if value_types.get(&value) == Some(&IrType::I64Array) {
+                    DeoptSource::Argument(array_parameters.get(&value).copied().ok_or(
+                        JitError::UnsupportedIr(
+                            "array deoptimization source is not an entry argument",
+                        ),
+                    )?)
+                } else {
+                    DeoptSource::Machine(register)
+                };
+                sources.push((register, source));
+            }
+            deopt_maps.insert(map.bytecode_ip, Arc::from(sources));
+        }
         let entry = Arc::new(CompiledFunction {
             address,
             arity: ir.parameter_types.len(),
+            parameter_types: Arc::from(ir.parameter_types.clone()),
             deopt_register_count,
             deopt_maps,
             _module: Mutex::new(module),
@@ -318,6 +449,7 @@ fn lower_function(
     builder.append_block_params_for_function_params(entry);
     let exit_state = builder.block_params(entry)[1];
     let deopt_registers = builder.block_params(entry)[2];
+    let collections = builder.block_params(entry)[3];
     let mut values = HashMap::new();
     for block in &ir.blocks {
         let lowered = blocks[&block.id];
@@ -335,12 +467,21 @@ fn lower_function(
         if block.id == ir.entry {
             let arguments = builder.block_params(entry)[0];
             for (index, &(value, ty)) in block.parameters.iter().enumerate() {
-                let offset = i32::try_from(index.checked_mul(8).ok_or(JitError::OffsetOverflow)?)
-                    .map_err(|_| JitError::OffsetOverflow)?;
-                let loaded =
+                let (base, stride) = if ty == IrType::I64Array {
+                    (collections, 16usize)
+                } else {
+                    (arguments, 8usize)
+                };
+                let offset =
+                    i32::try_from(index.checked_mul(stride).ok_or(JitError::OffsetOverflow)?)
+                        .map_err(|_| JitError::OffsetOverflow)?;
+                let loaded = if ty == IrType::I64Array {
+                    builder.ins().iadd_imm_s(base, i64::from(offset))
+                } else {
                     builder
                         .ins()
-                        .load(lower_type(ty), MemFlagsData::trusted(), arguments, offset);
+                        .load(lower_type(ty), MemFlagsData::trusted(), base, offset)
+                };
                 values.insert(value, loaded);
             }
         }
@@ -441,6 +582,56 @@ fn lower_function(
                         deopt_registers,
                     )?;
                     None
+                }
+                IrInstructionKind::ArrayLen(array) => Some(builder.ins().load(
+                    types::I64,
+                    MemFlagsData::trusted(),
+                    values[&array],
+                    8,
+                )),
+                IrInstructionKind::ArrayLoadI {
+                    array,
+                    index,
+                    deopt,
+                } => {
+                    use cranelift_codegen::ir::condcodes::IntCC;
+                    let descriptor = values[&array];
+                    let index = values[&index];
+                    let length =
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), descriptor, 8);
+                    let zero = builder.ins().iconst(types::I64, 0);
+                    let non_negative =
+                        builder
+                            .ins()
+                            .icmp(IntCC::SignedGreaterThanOrEqual, index, zero);
+                    let below_length = builder.ins().icmp(IntCC::SignedLessThan, index, length);
+                    let in_bounds = builder.ins().band(non_negative, below_length);
+                    let map = ir
+                        .deopt_maps
+                        .iter()
+                        .find(|map| map.bytecode_ip == deopt)
+                        .ok_or(JitError::InvalidIr(IrError::UnknownDeoptMap(deopt)))?;
+                    lower_guard(
+                        &mut builder,
+                        in_bounds,
+                        map,
+                        &values,
+                        exit_state,
+                        deopt_registers,
+                    )?;
+                    let data =
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), descriptor, 0);
+                    let byte_offset = builder.ins().ishl_imm_u(index, 3);
+                    let address = builder.ins().iadd(data, byte_offset);
+                    Some(
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), address, 0),
+                    )
                 }
                 IrInstructionKind::Safepoint { .. } => None,
             };
@@ -575,6 +766,7 @@ fn lower_type(ty: IrType) -> cranelift_codegen::ir::Type {
     match ty {
         IrType::I64 => types::I64,
         IrType::Bool => types::I8,
+        IrType::I64Array => types::I64,
     }
 }
 
@@ -627,6 +819,7 @@ pub(crate) enum JitError {
         expected: usize,
         actual: usize,
     },
+    ArgumentType(usize),
     #[cfg(test)]
     Deoptimized(u32),
     InvalidExitKind(u64),
@@ -653,6 +846,9 @@ impl fmt::Display for JitError {
                     formatter,
                     "JIT arity mismatch: expected {expected}, got {actual}"
                 )
+            }
+            Self::ArgumentType(index) => {
+                write!(formatter, "JIT argument {index} has an incompatible type")
             }
             #[cfg(test)]
             Self::Deoptimized(bytecode_ip) => {

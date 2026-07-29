@@ -1,10 +1,11 @@
-use super::engine::{JitEngine, JitExecution, JitKey, JitTier};
+use super::engine::{JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
 use super::ir::{
     BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
     IrTerminator, IrType, SourcePosition, ValueId,
 };
 use super::translate::translate_integer_function;
 use aelys_bytecode::{Function, OpCode};
+use aelys_runtime::JitArgument;
 
 fn position(ip: u32) -> SourcePosition {
     SourcePosition {
@@ -305,7 +306,7 @@ fn compiled_guard_returns_exact_deoptimization_state() {
         compiled.execute(&[7]).unwrap(),
         JitExecution::Deoptimized {
             bytecode_ip: 4,
-            registers: vec![(0, 7)],
+            registers: vec![(0, JitDeoptValue::Integer(7))],
         }
     );
 }
@@ -355,14 +356,75 @@ fn compiled_bounds_check_deoptimizes_only_out_of_range_values() {
         compiled.execute(&[-1]).unwrap(),
         JitExecution::Deoptimized {
             bytecode_ip: 3,
-            registers: vec![(0, -1)],
+            registers: vec![(0, JitDeoptValue::Integer(-1))],
         }
     );
     assert_eq!(
         compiled.execute(&[4]).unwrap(),
         JitExecution::Deoptimized {
             bytecode_ip: 3,
-            registers: vec![(0, 4)],
+            registers: vec![(0, JitDeoptValue::Integer(4))],
+        }
+    );
+}
+
+#[test]
+fn compiled_integer_array_load_is_bounded_and_preserves_reference_on_deopt() {
+    let array = ValueId(0);
+    let index = ValueId(1);
+    let loaded = ValueId(2);
+    let ir = FunctionIr {
+        name: "array_load".to_string(),
+        entry: BlockId(0),
+        parameter_types: vec![IrType::I64Array, IrType::I64],
+        return_type: IrType::I64,
+        blocks: vec![IrBlock {
+            id: BlockId(0),
+            parameters: vec![(array, IrType::I64Array), (index, IrType::I64)],
+            instructions: vec![IrInstruction {
+                result: Some((loaded, IrType::I64)),
+                kind: IrInstructionKind::ArrayLoadI {
+                    array,
+                    index,
+                    deopt: 7,
+                },
+                source: position(7),
+            }],
+            terminator: IrTerminator::Return(loaded),
+        }],
+        deopt_maps: vec![DeoptMap {
+            bytecode_ip: 7,
+            registers: vec![(0, array), (1, index)],
+        }],
+    };
+    let engine = JitEngine::new(4).unwrap();
+    let compiled = engine
+        .compile(&JitKey::new(13, 0, JitTier::Baseline), &ir)
+        .unwrap();
+    let elements = [19, 42];
+
+    assert_eq!(
+        compiled
+            .execute_arguments(&[
+                JitArgument::IntegerArray(&elements),
+                JitArgument::Integer(1),
+            ])
+            .unwrap(),
+        JitExecution::Returned(42)
+    );
+    assert_eq!(
+        compiled
+            .execute_arguments(&[
+                JitArgument::IntegerArray(&elements),
+                JitArgument::Integer(2),
+            ])
+            .unwrap(),
+        JitExecution::Deoptimized {
+            bytecode_ip: 7,
+            registers: vec![
+                (0, JitDeoptValue::Argument(0)),
+                (1, JitDeoptValue::Integer(2)),
+            ],
         }
     );
 }

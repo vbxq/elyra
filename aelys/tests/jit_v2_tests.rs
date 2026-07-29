@@ -337,3 +337,78 @@ fn jit_arithmetic_overflow_falls_back_to_the_structured_interpreter_error() {
         assert_eq!(runtime.jit_cache_entries(), 1);
     }
 }
+
+#[test]
+fn baseline_jit_reads_borrowed_integer_arrays() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn read(values: Array<Int>, index: int) -> int {
+    return values.len() + values[index]
+}
+let values = Array[19, 40]
+let mut result = 0
+for index in 0..1000 {
+    result = read(values, 1)
+}
+result
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+}
+
+#[test]
+fn array_jit_deoptimization_restores_the_original_reference() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn read(values: Array<Int>, index: int) -> int {
+    return values[index]
+}
+let values = Array[19, 42]
+for index in 0..1000 {
+    read(values, 1)
+}
+read(values, 2)
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    let error = isolate.execute(&module, RunOptions::default()).unwrap_err();
+    let AelysError::Runtime(error) = error else {
+        panic!("expected an array bounds error");
+    };
+    assert!(
+        matches!(
+            error.kind,
+            RuntimeErrorKind::IndexOutOfBounds {
+                index: 2,
+                length: 2
+            }
+        ),
+        "{:?}",
+        error.kind
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_deoptimizations(), 1);
+}

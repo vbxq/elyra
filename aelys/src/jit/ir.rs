@@ -10,6 +10,7 @@ pub(crate) struct ValueId(pub(crate) u32);
 pub(crate) enum IrType {
     I64,
     Bool,
+    I64Array,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,6 +55,12 @@ pub(crate) enum IrInstructionKind {
     BoundsCheck {
         index: ValueId,
         length: ValueId,
+        deopt: u32,
+    },
+    ArrayLen(ValueId),
+    ArrayLoadI {
+        array: ValueId,
+        index: ValueId,
         deopt: u32,
     },
     Safepoint {
@@ -220,6 +227,23 @@ fn verify_instruction(
             require_type(values, index, IrType::I64)?;
             require_type(values, length, IrType::I64)?;
             require_no_result(instruction)?;
+            require_deopt(deopts, available, deopt)
+        }
+        IrInstructionKind::ArrayLen(array) => {
+            require_available(available, array)?;
+            require_type(values, array, IrType::I64Array)?;
+            require_result(instruction, IrType::I64)
+        }
+        IrInstructionKind::ArrayLoadI {
+            array,
+            index,
+            deopt,
+        } => {
+            require_available(available, array)?;
+            require_available(available, index)?;
+            require_type(values, array, IrType::I64Array)?;
+            require_type(values, index, IrType::I64)?;
+            require_result(instruction, IrType::I64)?;
             require_deopt(deopts, available, deopt)
         }
         IrInstructionKind::Safepoint { deopt } => {
