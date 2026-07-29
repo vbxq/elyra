@@ -66,13 +66,21 @@ impl VM {
             let Some(object) = self.heap.get(reference) else {
                 return JitCallResult::Unsupported;
             };
-            let ObjectKind::Array(array) = &object.kind else {
-                return JitCallResult::Unsupported;
+            match &object.kind {
+                ObjectKind::Array(array) => {
+                    let Some(values) = array.data.as_ints() else {
+                        return JitCallResult::Unsupported;
+                    };
+                    jit_arguments.push(JitArgument::IntegerArray(values));
+                }
+                ObjectKind::Vec(vector) => {
+                    let Some(values) = vector.data.as_ints() else {
+                        return JitCallResult::Unsupported;
+                    };
+                    jit_arguments.push(JitArgument::IntegerVec(values));
+                }
+                _ => return JitCallResult::Unsupported,
             };
-            let Some(values) = array.data.as_ints() else {
-                return JitCallResult::Unsupported;
-            };
-            jit_arguments.push(JitArgument::IntegerArray(values));
         }
         let Some(object) = self.heap.get(function) else {
             return JitCallResult::Unsupported;

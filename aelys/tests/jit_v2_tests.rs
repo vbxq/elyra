@@ -412,3 +412,46 @@ read(values, 2)
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 1);
 }
+
+#[test]
+fn vec_jit_reads_length_and_deoptimizes_out_of_bounds() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn read(values: Vec<Int>, index: int) -> int {
+    return values.len() + values[index]
+}
+let values = Vec[19, 40]
+for index in 0..1000 {
+    read(values, 1)
+}
+read(values, 2)
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    let error = isolate.execute(&module, RunOptions::default()).unwrap_err();
+    let AelysError::Runtime(error) = error else {
+        panic!("expected a vec bounds error");
+    };
+    assert!(
+        matches!(
+            error.kind,
+            RuntimeErrorKind::IndexOutOfBounds {
+                index: 2,
+                length: 2
+            }
+        ),
+        "{:?}",
+        error.kind
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_deoptimizations(), 1);
+}

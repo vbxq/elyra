@@ -11,6 +11,7 @@ pub(crate) enum IrType {
     I64,
     Bool,
     I64Array,
+    I64Vec,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -60,6 +61,12 @@ pub(crate) enum IrInstructionKind {
     ArrayLen(ValueId),
     ArrayLoadI {
         array: ValueId,
+        index: ValueId,
+        deopt: u32,
+    },
+    VecLen(ValueId),
+    VecLoadI {
+        vector: ValueId,
         index: ValueId,
         deopt: u32,
     },
@@ -242,6 +249,23 @@ fn verify_instruction(
             require_available(available, array)?;
             require_available(available, index)?;
             require_type(values, array, IrType::I64Array)?;
+            require_type(values, index, IrType::I64)?;
+            require_result(instruction, IrType::I64)?;
+            require_deopt(deopts, available, deopt)
+        }
+        IrInstructionKind::VecLen(vector) => {
+            require_available(available, vector)?;
+            require_type(values, vector, IrType::I64Vec)?;
+            require_result(instruction, IrType::I64)
+        }
+        IrInstructionKind::VecLoadI {
+            vector,
+            index,
+            deopt,
+        } => {
+            require_available(available, vector)?;
+            require_available(available, index)?;
+            require_type(values, vector, IrType::I64Vec)?;
             require_type(values, index, IrType::I64)?;
             require_result(instruction, IrType::I64)?;
             require_deopt(deopts, available, deopt)

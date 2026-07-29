@@ -161,6 +161,14 @@ impl CompiledFunction {
                             .map_err(|_| JitError::OffsetOverflow)?,
                     });
                 }
+                (JitArgument::IntegerVec(elements), IrType::I64Vec) => {
+                    integers.push(0);
+                    collections.push(RawI64Collection {
+                        data: elements.as_ptr(),
+                        length: u64::try_from(elements.len())
+                            .map_err(|_| JitError::OffsetOverflow)?,
+                    });
+                }
                 _ => return Err(JitError::ArgumentType(index)),
             }
         }
@@ -340,13 +348,11 @@ impl JitEngine {
             .parameters
             .iter()
             .enumerate()
-            .filter_map(|(index, (value, ty))| (*ty == IrType::I64Array).then_some((*value, index)))
+            .filter_map(|(index, (value, ty))| is_collection_type(*ty).then_some((*value, index)))
             .collect::<HashMap<_, _>>();
         for block in &ir.blocks {
             for (index, &(value, ty)) in block.parameters.iter().enumerate() {
-                if ty == IrType::I64Array
-                    && ir.parameter_types.get(index) == Some(&IrType::I64Array)
-                {
+                if is_collection_type(ty) && ir.parameter_types.get(index) == Some(&ty) {
                     array_parameters.insert(value, index);
                 }
             }
@@ -367,7 +373,10 @@ impl JitEngine {
         for map in &ir.deopt_maps {
             let mut sources = Vec::with_capacity(map.registers.len());
             for &(register, value) in &map.registers {
-                let source = if value_types.get(&value) == Some(&IrType::I64Array) {
+                let source = if value_types
+                    .get(&value)
+                    .is_some_and(|ty| is_collection_type(*ty))
+                {
                     DeoptSource::Argument(array_parameters.get(&value).copied().ok_or(
                         JitError::UnsupportedIr(
                             "array deoptimization source is not an entry argument",
@@ -467,7 +476,7 @@ fn lower_function(
         if block.id == ir.entry {
             let arguments = builder.block_params(entry)[0];
             for (index, &(value, ty)) in block.parameters.iter().enumerate() {
-                let (base, stride) = if ty == IrType::I64Array {
+                let (base, stride) = if is_collection_type(ty) {
                     (collections, 16usize)
                 } else {
                     (arguments, 8usize)
@@ -475,7 +484,7 @@ fn lower_function(
                 let offset =
                     i32::try_from(index.checked_mul(stride).ok_or(JitError::OffsetOverflow)?)
                         .map_err(|_| JitError::OffsetOverflow)?;
-                let loaded = if ty == IrType::I64Array {
+                let loaded = if is_collection_type(ty) {
                     builder.ins().iadd_imm_s(base, i64::from(offset))
                 } else {
                     builder
@@ -583,14 +592,18 @@ fn lower_function(
                     )?;
                     None
                 }
-                IrInstructionKind::ArrayLen(array) => Some(builder.ins().load(
-                    types::I64,
-                    MemFlagsData::trusted(),
-                    values[&array],
-                    8,
-                )),
+                IrInstructionKind::ArrayLen(array) | IrInstructionKind::VecLen(array) => Some(
+                    builder
+                        .ins()
+                        .load(types::I64, MemFlagsData::trusted(), values[&array], 8),
+                ),
                 IrInstructionKind::ArrayLoadI {
                     array,
+                    index,
+                    deopt,
+                }
+                | IrInstructionKind::VecLoadI {
+                    vector: array,
                     index,
                     deopt,
                 } => {
@@ -767,7 +780,12 @@ fn lower_type(ty: IrType) -> cranelift_codegen::ir::Type {
         IrType::I64 => types::I64,
         IrType::Bool => types::I8,
         IrType::I64Array => types::I64,
+        IrType::I64Vec => types::I64,
     }
+}
+
+fn is_collection_type(ty: IrType) -> bool {
+    matches!(ty, IrType::I64Array | IrType::I64Vec)
 }
 
 fn lower_predicate(predicate: IntPredicate) -> cranelift_codegen::ir::condcodes::IntCC {

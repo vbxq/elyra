@@ -178,7 +178,7 @@ impl JitExecutor for JitProvider {
             .iter()
             .map(|argument| match argument {
                 JitArgument::Integer(value) => Some(*value),
-                JitArgument::IntegerArray(_) => None,
+                JitArgument::IntegerArray(_) | JitArgument::IntegerVec(_) => None,
             })
             .collect::<Option<Vec<_>>>();
         if let Some(threshold) = self.tier2_call_threshold

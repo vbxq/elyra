@@ -132,6 +132,7 @@ pub enum JitDeoptValue {
 pub enum JitArgument<'a> {
     Integer(i64),
     IntegerArray(&'a [i64]),
+    IntegerVec(&'a [i64]),
 }
 
 pub trait JitExecutor: Send + Sync {

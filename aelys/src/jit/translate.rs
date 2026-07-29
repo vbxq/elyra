@@ -138,33 +138,47 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
                         source,
                     )?;
                 }
-                OpCode::ArrayLen => {
-                    let array = *registers.get(instruction.b)?;
+                OpCode::ArrayLen | OpCode::VecLen => {
+                    let collection = *registers.get(instruction.b)?;
+                    let kind = if instruction.opcode == OpCode::ArrayLen {
+                        IrInstructionKind::ArrayLen(collection)
+                    } else {
+                        IrInstructionKind::VecLen(collection)
+                    };
                     emit_value(
                         &mut registers,
                         &mut instructions,
                         &mut next_value,
                         instruction.a,
                         IrType::I64,
-                        IrInstructionKind::ArrayLen(array),
+                        kind,
                         source,
                     )?;
                 }
-                OpCode::ArrayLoadI => {
-                    let array = *registers.get(instruction.b)?;
+                OpCode::ArrayLoadI | OpCode::VecLoadI => {
+                    let collection = *registers.get(instruction.b)?;
                     let index = *registers.get(instruction.c)?;
                     let bytecode_ip = push_deopt_map(instruction.ip, &registers, &mut deopt_maps)?;
+                    let kind = if instruction.opcode == OpCode::ArrayLoadI {
+                        IrInstructionKind::ArrayLoadI {
+                            array: collection,
+                            index,
+                            deopt: bytecode_ip,
+                        }
+                    } else {
+                        IrInstructionKind::VecLoadI {
+                            vector: collection,
+                            index,
+                            deopt: bytecode_ip,
+                        }
+                    };
                     emit_value(
                         &mut registers,
                         &mut instructions,
                         &mut next_value,
                         instruction.a,
                         IrType::I64,
-                        IrInstructionKind::ArrayLoadI {
-                            array,
-                            index,
-                            deopt: bytecode_ip,
-                        },
+                        kind,
                         source,
                     )?;
                 }
@@ -467,6 +481,15 @@ fn transfer_types(instruction: DecodedInstruction, registers: &mut [Option<IrTyp
             require_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
         }
+        OpCode::VecLen => {
+            require_register_type(registers, instruction.b, IrType::I64Vec)?;
+            *registers.get_mut(destination)? = Some(IrType::I64);
+        }
+        OpCode::VecLoadI => {
+            require_register_type(registers, instruction.b, IrType::I64Vec)?;
+            require_register_type(registers, instruction.c, IrType::I64)?;
+            *registers.get_mut(destination)? = Some(IrType::I64);
+        }
         OpCode::AddI | OpCode::SubI => {
             require_register_type(registers, instruction.b, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
@@ -593,6 +616,11 @@ fn infer_parameter_types(
                 require(instruction.b, IrType::I64Array)?;
                 require(instruction.c, IrType::I64)?;
             }
+            OpCode::VecLen => require(instruction.b, IrType::I64Vec)?,
+            OpCode::VecLoadI => {
+                require(instruction.b, IrType::I64Vec)?;
+                require(instruction.c, IrType::I64)?;
+            }
             OpCode::JumpIf | OpCode::JumpIfLong | OpCode::JumpIfNot | OpCode::JumpIfNotLong => {
                 require(instruction.a, IrType::Bool)?;
             }
@@ -622,6 +650,8 @@ fn infer_parameter_types(
                     | OpCode::NeII
                     | OpCode::ArrayLen
                     | OpCode::ArrayLoadI
+                    | OpCode::VecLen
+                    | OpCode::VecLoadI
             ) {
                 origins[instruction.a] = None;
             }
