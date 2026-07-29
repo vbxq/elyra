@@ -5,6 +5,7 @@ use aelys::{
 use aelys_common::error::{AelysError, RuntimeErrorKind};
 use aelys_opt::OptimizationLevel;
 use std::sync::Arc;
+use std::time::Instant;
 
 fn assert_send<T: Send>() {}
 fn assert_send_sync<T: Send + Sync>() {}
@@ -116,6 +117,27 @@ fn instruction_budget_and_interrupt_are_structured_errors() {
     assert!(matches!(
         error,
         AelysError::Runtime(ref error) if matches!(error.kind, RuntimeErrorKind::Interrupted)
+    ));
+
+    let error = isolate
+        .execute(
+            &module,
+            RunOptions {
+                deadline: Some(Instant::now()),
+                safepoint_interval: 1,
+                ..RunOptions::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AelysError::Runtime(ref error) if matches!(error.kind, RuntimeErrorKind::DeadlineExceeded)
+    ));
+
+    let recovery = runtime.compile("42", CompileOptions::default()).unwrap();
+    assert!(matches!(
+        isolate.execute(&recovery, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(value) if value.as_int() == Some(42)
     ));
 }
 

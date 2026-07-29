@@ -56,7 +56,8 @@ impl ConstantFolder {
                 if !(0..=63).contains(&b) {
                     return None;
                 }
-                let result = a.checked_shl(b as u32)?;
+                let shift = u32::try_from(b).ok()?;
+                let result = a.checked_shl(shift)?;
                 if !is_in_vm_range(result) {
                     return None;
                 }
@@ -66,7 +67,8 @@ impl ConstantFolder {
                 if !(0..=63).contains(&b) {
                     return None;
                 }
-                return int_result(self, a >> (b as u32));
+                let shift = u32::try_from(b).ok()?;
+                return int_result(self, a >> shift);
             }
             _ => {}
         }

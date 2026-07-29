@@ -7,7 +7,11 @@ use std::sync::Arc;
 impl VM {
     pub fn execute(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
         match catch_unwind(AssertUnwindSafe(|| self.execute_inner(function))) {
-            Ok(result) => result,
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => {
+                self.abort_execution();
+                Err(error)
+            }
             Err(payload) => {
                 let message = panic_message(payload.as_ref());
                 let kind = if message.starts_with("integer ")
@@ -18,12 +22,19 @@ impl VM {
                     RuntimeErrorKind::RuntimePanic { message }
                 };
                 let error = self.runtime_error(kind);
-                self.frames.clear();
-                self.open_upvalues.clear();
-                self.current_upvalues.clear();
+                self.abort_execution();
                 Err(error)
             }
         }
+    }
+
+    fn abort_execution(&mut self) {
+        self.sync_current_function_globals();
+        self.close_upvalues_from(0);
+        self.frames.clear();
+        self.open_upvalues.clear();
+        self.current_upvalues.clear();
+        self.current_global_mapping_id = 0;
     }
 
     fn execute_inner(&mut self, function: GcRef) -> Result<Value, RuntimeError> {

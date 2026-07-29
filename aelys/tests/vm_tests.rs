@@ -636,6 +636,39 @@ fn test_execute_native_function_call() {
 }
 
 #[test]
+fn native_panic_is_structured_and_vm_can_be_reused() {
+    fn panic_native(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        panic!("native test panic")
+    }
+
+    let mut vm = VM::new(make_test_source()).unwrap();
+    let native_ref = vm.alloc_native("panic_native", 0, panic_native).unwrap();
+    vm.set_global("panic_native".to_string(), Value::ptr(native_ref.index()));
+
+    let mut failing = Function::new(Some("failing".to_string()), 0);
+    failing.num_registers = 2;
+    let name = failing
+        .add_structural_constant(aelys_bytecode::Constant::String("panic_native".to_string()));
+    failing.emit_a(OpCode::GetGlobal, 0, u8::try_from(name).unwrap(), 0, 1);
+    failing.emit_c(OpCode::Call, 1, 0, 0, 1);
+    failing.emit_a(OpCode::Return, 1, 0, 0, 1);
+    failing.finalize_bytecode();
+    let failing_ref = vm.alloc_function(failing).unwrap();
+
+    let error = vm.execute(failing_ref).unwrap_err();
+    assert!(matches!(error.kind, RuntimeErrorKind::NativePanic));
+    assert_eq!(vm.frame_count(), 0);
+
+    let mut recovery = Function::new(Some("recovery".to_string()), 0);
+    recovery.num_registers = 1;
+    recovery.emit_b(OpCode::LoadI, 0, 42, 1);
+    recovery.emit_a(OpCode::Return, 0, 0, 0, 1);
+    recovery.finalize_bytecode();
+    let recovery_ref = vm.alloc_function(recovery).unwrap();
+    assert_eq!(vm.execute(recovery_ref).unwrap().as_int(), Some(42));
+}
+
+#[test]
 fn test_execute_return0() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
