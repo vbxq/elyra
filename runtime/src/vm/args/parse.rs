@@ -4,14 +4,28 @@ use super::{VmArgsError, VmArgsParsed};
 pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
     let mut config = VmConfig::default();
     let mut program_args = Vec::new();
+    let mut max_instructions = None;
+    let mut timeout_ms = None;
 
     for arg in args {
         if let Some(value) = arg.strip_prefix("-ae.") {
-            apply_vm_arg(value, arg, &mut config)?;
+            apply_vm_arg(
+                value,
+                arg,
+                &mut config,
+                &mut max_instructions,
+                &mut timeout_ms,
+            )?;
             continue;
         }
         if let Some(value) = arg.strip_prefix("--ae-") {
-            apply_vm_arg(value, arg, &mut config)?;
+            apply_vm_arg(
+                value,
+                arg,
+                &mut config,
+                &mut max_instructions,
+                &mut timeout_ms,
+            )?;
             continue;
         }
         program_args.push(arg.clone());
@@ -22,6 +36,8 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
     Ok(VmArgsParsed {
         config,
         program_args,
+        max_instructions,
+        timeout_ms,
     })
 }
 
@@ -29,6 +45,8 @@ fn apply_vm_arg(
     value: &str,
     raw_arg: &str,
     config: &mut VmConfig,
+    max_instructions: &mut Option<u64>,
+    timeout_ms: &mut Option<u64>,
 ) -> Result<(), VmArgsError> {
     let (key, raw_value) = value
         .split_once('=')
@@ -40,8 +58,24 @@ fn apply_vm_arg(
             config.max_heap_bytes = bytes;
             Ok(())
         }
+        "max-instructions" => {
+            *max_instructions = Some(parse_u64(raw_value, raw_arg)?);
+            Ok(())
+        }
+        "timeout-ms" => {
+            *timeout_ms = Some(parse_u64(raw_value, raw_arg)?);
+            Ok(())
+        }
         _ => Err(VmArgsError::UnknownArgument(raw_arg.to_string())),
     }
+}
+
+fn parse_u64(value: &str, arg: &str) -> Result<u64, VmArgsError> {
+    value.parse().map_err(|_| VmArgsError::InvalidValue {
+        arg: arg.to_string(),
+        value: value.to_string(),
+        reason: "expected an unsigned integer".to_string(),
+    })
 }
 
 fn parse_size_bytes(value: &str, arg: &str) -> Result<u64, VmArgsError> {

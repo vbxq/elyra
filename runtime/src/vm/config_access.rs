@@ -31,4 +31,8 @@ impl VM {
     pub fn source(&self) -> &Arc<Source> {
         &self.source
     }
+
+    pub fn set_source(&mut self, source: Arc<Source>) {
+        self.source = source;
+    }
 }

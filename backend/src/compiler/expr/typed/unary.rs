@@ -9,7 +9,7 @@ impl Compiler {
         &mut self,
         op: UnaryOp,
         operand: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         self.compile_typed_expr(operand, dest)?;

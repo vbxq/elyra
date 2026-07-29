@@ -1,6 +1,6 @@
 use super::super::Compiler;
 use super::finalize::finalize_lambda;
-use aelys_bytecode::{Heap, OpCode};
+use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_syntax::Span;
 use aelys_syntax::ast::{Parameter, Stmt, StmtKind};
@@ -10,10 +10,9 @@ impl Compiler {
         &mut self,
         params: &[Parameter],
         body: &[Stmt],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
-        let heap = std::mem::replace(&mut self.heap, Heap::new());
         let globals = self.globals.clone();
         let global_indices = self.global_indices.clone();
         let enclosing_locals = self.locals.clone();
@@ -22,7 +21,6 @@ impl Compiler {
         let mut lambda_compiler = Compiler::for_nested_function(
             None,
             self.source.clone(),
-            heap,
             globals,
             global_indices,
             self.next_global_index,
@@ -33,7 +31,6 @@ impl Compiler {
             self.known_globals.clone(),
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
-            self.next_call_site_slot,
         );
 
         lambda_compiler.begin_scope();
@@ -46,7 +43,13 @@ impl Compiler {
 
         lambda_compiler.end_scope();
         lambda_compiler.current.num_registers = lambda_compiler.next_register;
-        lambda_compiler.current.arity = params.len() as u8;
+        lambda_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
+            aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TooManyArguments,
+                span,
+                self.source.clone(),
+            )
+        })?;
 
         finalize_lambda(self, lambda_compiler, dest, span)
     }

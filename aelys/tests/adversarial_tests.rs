@@ -26,7 +26,7 @@ fn bytecode_constant_pool_oob() {
     let mut vm = VM::new(Source::new("test.aelys", "")).unwrap();
     let mut func = Function::new(Some("const_oob".to_string()), 0);
     func.num_registers = 1;
-    func.constants.push(Value::int(42));
+    func.constants.push(Value::int(42).into());
 
     // Try to access constant index 5 when only 1 exists
     func.emit_a(OpCode::LoadK, 0, 5, 0, 1);
@@ -195,8 +195,8 @@ fn integer_overflow_checked() {
 let max = 140737488355327
 max + 1
 "#;
-    // This might overflow or be handled
-    let _ = run_aelys(code);
+    let error = run_aelys_result(code).expect_err("integer overflow must be rejected");
+    assert!(error.contains("integer overflow"));
 }
 
 #[test]
@@ -205,7 +205,8 @@ fn integer_multiply_overflow() {
 let big = 10000000000
 big * big
 "#;
-    let _ = run_aelys(code);
+    let error = run_aelys_result(code).expect_err("integer overflow must be rejected");
+    assert!(error.contains("integer overflow"));
 }
 
 // Format string attacks
@@ -225,21 +226,19 @@ format("%n%n%n%n%n")
 fn binary_oversized_function_count() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ");
-    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
 
     // Try to claim 1 million nested functions
     bytes.extend_from_slice(&0u16.to_le_bytes()); // name len
-    bytes.push(0u8); // arity
-    bytes.push(0u8); // num_registers
-    bytes.extend_from_slice(&0u16.to_le_bytes()); // constants
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // arity
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // num_registers
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // constants
     bytes.extend_from_slice(&1u32.to_le_bytes()); // bytecode length
     bytes.extend_from_slice(&0u32.to_le_bytes()); // Return0
-    bytes.extend_from_slice(&0u16.to_le_bytes()); // upvalues
-    bytes.extend_from_slice(&0u16.to_le_bytes()); // line numbers
-    bytes.extend_from_slice(&1000000u32.to_le_bytes()); // nested functions
+    bytes.extend_from_slice(&5000u16.to_le_bytes()); // nested functions
 
     let result = aelys_bytecode::asm::deserialize(&bytes);
     assert!(result.is_err());
@@ -249,14 +248,14 @@ fn binary_oversized_function_count() {
 fn binary_oversized_constants() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ");
-    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.push(0u8);
-    bytes.push(0u8);
-    bytes.extend_from_slice(&65535u16.to_le_bytes()); // Max u16 constants
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&1_000_001u32.to_le_bytes());
 
     let result = aelys_bytecode::asm::deserialize(&bytes);
     assert!(result.is_err());
@@ -311,14 +310,6 @@ fn modulo_by_zero() {
 
 // Memory safety
 
-
-
-
-
-
-
-
-
 // GC exploitation
 
 #[test]
@@ -335,7 +326,6 @@ while i < 5000 {
 "#;
     assert_aelys_int(code, 42);
 }
-
 
 // Prototype pollution attempts (not applicable, but test object safety)
 

@@ -1,5 +1,4 @@
 use super::super::Compiler;
-use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
@@ -10,7 +9,7 @@ impl Compiler {
         &mut self,
         object: &Expr,
         member: &str,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         if let ExprKind::Identifier(module_name) = &object.kind
@@ -28,7 +27,7 @@ impl Compiler {
             };
 
             self.accessed_globals.insert(qualified_name);
-            self.emit_b(OpCode::GetGlobalIdx, dest, idx as i16, span);
+            self.emit_get_global_index(dest, idx, span);
             return Ok(());
         }
 
@@ -42,7 +41,7 @@ impl Compiler {
                 idx
             };
             self.accessed_globals.insert(member.to_string());
-            self.emit_b(OpCode::GetGlobalIdx, dest, idx as i16, span);
+            self.emit_get_global_index(dest, idx, span);
             Ok(())
         } else {
             Err(CompileError::new(

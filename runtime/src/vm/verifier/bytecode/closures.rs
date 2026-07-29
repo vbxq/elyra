@@ -17,7 +17,7 @@ pub(super) fn verify(
         OpCode::MakeClosure => {
             verify_reg(a, num_regs, "MakeClosure")?;
             verify_const(b, constants_len, "MakeClosure")?;
-            let constant = func.constants[b];
+            let constant = &func.constants[b];
             let func_idx = match constant.as_nested_fn_marker() {
                 Some(idx) => idx,
                 None => {

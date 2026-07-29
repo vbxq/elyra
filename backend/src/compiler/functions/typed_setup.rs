@@ -3,7 +3,7 @@ use aelys_common::Result;
 use aelys_sema::{ResolvedType, TypedFunction};
 
 pub(super) struct TypedFunctionSetup {
-    pub(super) func_var_reg: u8,
+    pub(super) func_var_reg: u16,
     pub(super) nested_compiler: Compiler,
 }
 
@@ -11,7 +11,7 @@ pub(super) fn setup_typed_function(
     parent: &mut Compiler,
     func: &TypedFunction,
 ) -> Result<TypedFunctionSetup> {
-        let func_var_reg = parent.alloc_register()?;
+    let func_var_reg = parent.alloc_register()?;
 
     if parent.scope_depth == 0 {
         parent.globals.insert(func.name.clone(), false);
@@ -42,7 +42,6 @@ pub(super) fn setup_typed_function(
     let mut nested_compiler = Compiler::for_nested_function(
         Some(func.name.clone()),
         parent.source.clone(),
-        parent.heap.clone(),
         parent.globals.clone(),
         parent.global_indices.clone(),
         parent.next_global_index,
@@ -53,9 +52,14 @@ pub(super) fn setup_typed_function(
         parent.known_globals.clone(),
         parent.known_native_globals.clone(),
         parent.symbol_origins.clone(),
-        parent.next_call_site_slot,
     );
-    nested_compiler.current.arity = func.params.len() as u8;
+    nested_compiler.current.arity = u16::try_from(func.params.len()).map_err(|_| {
+        aelys_common::error::CompileError::new(
+            aelys_common::error::CompileErrorKind::TooManyArguments,
+            func.span,
+            parent.source.clone(),
+        )
+    })?;
 
     #[allow(clippy::collapsible_if)]
     for (capture_name, _capture_ty) in &func.captures {
@@ -92,7 +96,7 @@ pub(super) fn setup_typed_function(
         {
             nested_compiler.upvalues.push(Upvalue {
                 is_local: false,
-                index: upvalue_idx as u8,
+                index: u16::try_from(upvalue_idx).unwrap_or(u16::MAX),
                 name: capture_name.clone(),
                 mutable: parent.upvalues[upvalue_idx].mutable,
             });

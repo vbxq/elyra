@@ -21,7 +21,7 @@ impl Compiler {
                     .enumerate()
                     .find(|(_, u)| u.name == upvalue.name)
             {
-                upvalue.index = idx as u8;
+                upvalue.index = u16::try_from(idx).unwrap_or(u16::MAX);
             }
         }
     }

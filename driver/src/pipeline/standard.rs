@@ -1,7 +1,7 @@
 use super::pipeline::Pipeline;
 use super::stages::{
-    CompilerStage, DebugStripStage, LexerStage, OptimizationStage, ParserStage,
-    TypeInferenceStage, VMStage,
+    CompilerStage, DebugStripStage, LexerStage, OptimizationStage, ParserStage, TypeInferenceStage,
+    VMStage,
 };
 use aelys_opt::OptimizationLevel;
 use std::collections::{HashMap, HashSet};
@@ -22,7 +22,7 @@ pub fn standard_pipeline_with_opt(opt_level: OptimizationLevel) -> Pipeline {
     pipeline
 }
 
-// no VM - use pipeline.compile() to get (Function, Heap)
+// no VM - use pipeline.compile() to get Function
 pub fn compilation_pipeline() -> Pipeline {
     compilation_pipeline_with_opt(OptimizationLevel::Standard)
 }

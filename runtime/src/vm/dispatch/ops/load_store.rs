@@ -18,7 +18,7 @@ match opcode_byte {
     // LoadK (2)
     2 => {
         let (a, imm) = decode_aimm(instr);
-        let k = imm as u16 as usize;
+        let k = usize::from(u16::from_ne_bytes(imm.to_ne_bytes()));
 
         // SAFETY: Validate index before accessing constants array
         if k >= constants_len {
@@ -37,12 +37,37 @@ match opcode_byte {
             match self.get_nested_function(func_ref, func_idx) {
                 Ok(nested_func) => {
                     self.verify_function_value(&nested_func)?;
-                    self.maybe_collect();
                     let func_obj_ref = self.alloc_function(nested_func)?;
                     reg_set!(base + a as usize, Value::ptr(func_obj_ref.index()));
                     continue;
                 }
                 Err(e) => return Err(e),
+            }
+        }
+        reg_set!(base + a as usize, constant);
+    }
+
+    180 => {
+        let (a, _, _) = decode_abc(instr);
+        let index = unsafe { *bytecode_ptr.add(ip) } as usize;
+        ip += 1;
+        if index >= constants_len {
+            self.frames[current_frame_idx].ip = ip;
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                "constant index {index} out of bounds"
+            ))));
+        }
+        let constant = unsafe { *constants_ptr.add(index) };
+        if let Some(func_idx) = constant.as_nested_fn_marker() {
+            self.frames[current_frame_idx].ip = ip;
+            match self.get_nested_function(func_ref, func_idx) {
+                Ok(nested_func) => {
+                    self.verify_function_value(&nested_func)?;
+                    let func_obj_ref = self.alloc_function(nested_func)?;
+                    reg_set!(base + a as usize, Value::ptr(func_obj_ref.index()));
+                    continue;
+                }
+                Err(error) => return Err(error),
             }
         }
         reg_set!(base + a as usize, constant);
@@ -63,7 +88,7 @@ match opcode_byte {
     // GetGlobalIdx (75)
     75 => {
         let (a, imm) = decode_aimm(instr);
-        let idx = imm as u16 as usize;
+        let idx = usize::from(u16::from_ne_bytes(imm.to_ne_bytes()));
         let value = if idx < self.globals_by_index.len() {
             self.globals_by_index[idx]
         } else {
@@ -75,9 +100,29 @@ match opcode_byte {
     // SetGlobalIdx (76)
     76 => {
         let (a, imm) = decode_aimm(instr);
-        let idx = imm as u16 as usize;
+        let idx = usize::from(u16::from_ne_bytes(imm.to_ne_bytes()));
         let value = reg_get!(base + a as usize);
         self.set_global_by_index(idx, value);
+    }
+
+    182 => {
+        let (register, _, _) = decode_abc(instr);
+        let index = unsafe { *bytecode_ptr.add(ip) } as usize;
+        ip += 1;
+        let value = self
+            .globals_by_index
+            .get(index)
+            .copied()
+            .unwrap_or_else(Value::null);
+        reg_set!(base + register as usize, value);
+    }
+
+    183 => {
+        let (register, _, _) = decode_abc(instr);
+        let index = unsafe { *bytecode_ptr.add(ip) } as usize;
+        ip += 1;
+        let value = reg_get!(base + register as usize);
+        self.set_global_by_index(index, value);
     }
 
     _ => unreachable!(),

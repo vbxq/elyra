@@ -8,7 +8,7 @@ impl Compiler {
         &mut self,
         _callee: &Expr,
         _args: &[Expr],
-        _dest: u8,
+        _dest: u16,
         _span: Span,
     ) -> Result<bool> {
         // Manual heap builtins (alloc/free/load/store) have been removed

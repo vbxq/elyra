@@ -76,6 +76,26 @@ impl VM {
         Ok(())
     }
 
+    pub(crate) fn write_register_wide(
+        &mut self,
+        reg: u16,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        let frame = self.current_frame()?;
+        let idx = frame
+            .base
+            .checked_add(usize::from(reg))
+            .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
+        if idx >= self.registers.len() {
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidRegister {
+                reg: usize::from(reg),
+                max: self.registers.len(),
+            }));
+        }
+        self.registers[idx] = value;
+        Ok(())
+    }
+
     pub fn register_count(&self) -> usize {
         self.registers.len()
     }

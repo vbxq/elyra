@@ -28,7 +28,6 @@ impl VM {
         };
 
         if let Some(result) = concatenated {
-            self.maybe_collect();
             let str_ref = self.alloc_string(&result)?;
             return Ok(Some(Value::ptr(str_ref.index())));
         }

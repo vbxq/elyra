@@ -24,26 +24,26 @@ impl ModuleLoader {
             .last()
             .cloned()
             .expect("needs.path validated as non-empty");
-        if let Some(policy) = self.manifest.as_ref().and_then(|m| m.module(&module_name)) {
-            if let Some(expected_checksum) = &policy.checksum {
-                let actual_checksum = compute_file_checksum(file_path).map_err(|e| {
-                    self.native_error(
-                        module_path_str,
-                        aelys_runtime::native::NativeError::Io(e),
-                        needs.span,
-                    )
-                })?;
-                if &actual_checksum != expected_checksum {
-                    return Err(AelysError::Compile(CompileError::new(
-                        CompileErrorKind::NativeChecksumMismatch {
-                            module: module_path_str.to_string(),
-                            expected: expected_checksum.clone(),
-                            actual: actual_checksum,
-                        },
-                        needs.span,
-                        self.source.clone(),
-                    )));
-                }
+        if let Some(policy) = self.manifest.as_ref().and_then(|m| m.module(&module_name))
+            && let Some(expected_checksum) = &policy.checksum
+        {
+            let actual_checksum = compute_file_checksum(file_path).map_err(|e| {
+                self.native_error(
+                    module_path_str,
+                    aelys_runtime::native::NativeError::Io(e),
+                    needs.span,
+                )
+            })?;
+            if &actual_checksum != expected_checksum {
+                return Err(AelysError::Compile(CompileError::new(
+                    CompileErrorKind::NativeChecksumMismatch {
+                        module: module_path_str.to_string(),
+                        expected: expected_checksum.clone(),
+                        actual: actual_checksum,
+                    },
+                    needs.span,
+                    self.source.clone(),
+                )));
             }
         }
 
@@ -140,8 +140,12 @@ impl ModuleLoader {
                             needs.span,
                         ));
                     }
-                    let raw = unsafe { *(export.value as *const u64) };
-                    vm.set_global(name, Value::from_raw(raw));
+                    let native_value =
+                        unsafe { *(export.value as *const aelys_native::AelysValue) };
+                    let value = vm
+                        .import_native_value(native_value)
+                        .map_err(AelysError::Runtime)?;
+                    vm.set_global(name, value);
                 }
                 AelysExportKind::Type => {
                     vm.set_global(name, Value::null());

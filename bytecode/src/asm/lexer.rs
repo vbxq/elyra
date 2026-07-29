@@ -15,7 +15,7 @@ pub(super) enum Token {
     /// An identifier/opcode like LoadI, Move
     Ident(String),
     /// A register like r0, r1
-    Register(u8),
+    Register(u16),
     /// An integer literal
     Int(i64),
     /// A float literal
@@ -109,8 +109,10 @@ impl<'a> Lexer<'a> {
                 self.chars.next();
                 let num = self.read_number()?;
                 if let Token::Int(n) = num {
-                    if (0..=255).contains(&n) {
-                        Ok(Token::Register(n as u8))
+                    if (0..=u16::MAX as i64).contains(&n) {
+                        Ok(Token::Register(u16::try_from(n).map_err(|_| {
+                            AssemblerError::InvalidRegister(format!("r{n}"))
+                        })?))
                     } else {
                         Err(AssemblerError::InvalidRegister(format!("r{}", n)))
                     }

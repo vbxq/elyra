@@ -1,6 +1,6 @@
 use super::cache::{CachedOutput, source_hash};
 use super::types::{PipelineError, Stage, StageInput, StageOutput};
-use aelys_bytecode::{Function, Heap};
+use aelys_bytecode::Function;
 use aelys_runtime::Value;
 use aelys_syntax::Source;
 use std::collections::HashMap;
@@ -78,13 +78,13 @@ impl Pipeline {
     pub(crate) fn compile_internal(
         &mut self,
         input: StageInput,
-    ) -> Result<(Function, Heap), PipelineError> {
+    ) -> Result<Function, PipelineError> {
         let hash = match &input {
             StageInput::Source(source)
             | StageInput::Tokens(_, source)
             | StageInput::Ast(_, source)
             | StageInput::TypedAst(_, source)
-            | StageInput::Compiled(_, _, source) => source_hash(source),
+            | StageInput::Compiled(_, source) => source_hash(source),
         };
 
         let mut current = input;
@@ -122,7 +122,7 @@ impl Pipeline {
         }
 
         match current {
-            StageInput::Compiled(func, heap, _) => Ok((*func, heap)),
+            StageInput::Compiled(func, _) => Ok(*func),
             other => Err(PipelineError::TypeMismatch {
                 expected: "Compiled",
                 got: other.type_name(),

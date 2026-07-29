@@ -23,7 +23,7 @@ static EXPORTS: [AelysExport; 1] = [AelysExport {
     name: EXPORT_NAME.as_ptr() as *const i8,
     kind: AelysExportKind::Function,
     arity: 0,
-    _padding: [0; 3],
+    _padding: [0; 2],
     value: tamper_ok as *const c_void,
 }];
 

@@ -1,13 +1,14 @@
 use super::super::Compiler;
-use aelys_bytecode::{OpCode, UpvalueDescriptor};
+use aelys_bytecode::UpvalueDescriptor;
 use aelys_common::Result;
+use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::TypedFunction;
 
 pub(super) fn finalize_typed_function(
     parent: &mut Compiler,
     mut nested_compiler: Compiler,
     func: &TypedFunction,
-    func_var_reg: u8,
+    func_var_reg: u16,
 ) -> Result<()> {
     nested_compiler.current.num_registers = nested_compiler.next_register;
     nested_compiler.current.global_layout = nested_compiler.build_global_layout();
@@ -27,9 +28,6 @@ pub(super) fn finalize_typed_function(
         });
     }
 
-    let remap = parent.heap.merge(&mut nested_compiler.heap);
-    compiled_func.remap_constants(&remap);
-
     for (name, idx) in &nested_compiler.global_indices {
         if !parent.global_indices.contains_key(name) {
             parent.global_indices.insert(name.clone(), *idx);
@@ -37,28 +35,25 @@ pub(super) fn finalize_typed_function(
     }
     parent.next_global_index = nested_compiler.next_global_index;
 
-    if nested_compiler.next_call_site_slot > parent.next_call_site_slot {
-        parent.next_call_site_slot = nested_compiler.next_call_site_slot;
-    }
-
     let const_idx = parent.current.add_constant_function(compiled_func);
 
     if nested_upvalues.is_empty() {
-        parent.emit_b(OpCode::LoadK, func_var_reg, const_idx as i16, func.span);
+        parent.emit_load_constant(func_var_reg, const_idx, func.span);
     } else {
-        parent.emit_a(
-            OpCode::MakeClosure,
-            func_var_reg,
-            const_idx as u8,
-            nested_upvalues.len() as u8,
-            func.span,
-        );
+        let upvalue_count = u8::try_from(nested_upvalues.len()).map_err(|_| {
+            CompileError::new(
+                CompileErrorKind::TooManyUpvalues,
+                func.span,
+                parent.source.clone(),
+            )
+        })?;
+        parent.emit_make_closure(func_var_reg, const_idx, upvalue_count, func.span);
     }
 
     if parent.scope_depth == 0 {
         let idx = parent.get_or_create_global_index(&func.name);
         parent.accessed_globals.insert(func.name.clone());
-        parent.emit_b(OpCode::SetGlobalIdx, func_var_reg, idx as i16, func.span);
+        parent.emit_set_global_index(func_var_reg, idx, func.span);
     }
 
     Ok(())

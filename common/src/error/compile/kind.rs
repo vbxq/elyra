@@ -31,6 +31,10 @@ pub enum CompileErrorKind {
     TooManyRegisters,
     TooManyArguments,
     TooManyUpvalues,
+    JumpOffsetTooLarge {
+        distance: usize,
+    },
+    CompilationLimitExceeded(String),
     BreakOutsideLoop,
     ContinueOutsideLoop,
     ReturnOutsideFunction,

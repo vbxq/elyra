@@ -151,8 +151,9 @@ fn test_free_list_reuse() {
     // Allocate new object - should reuse freed slot
     let ref3 = heap.alloc_string("third");
 
-    // ref3 should have reused ref2's slot
-    assert_eq!(ref3.index(), ref2.index());
+    assert_ne!(ref3, ref2);
+    assert!(heap.get(ref2).is_none());
+    assert!(heap.get(ref3).is_some());
     assert_eq!(heap.object_count(), 2);
 }
 

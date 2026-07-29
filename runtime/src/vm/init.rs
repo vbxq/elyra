@@ -20,6 +20,7 @@ impl VM {
         config: VmConfig,
         program_args: Vec<String>,
     ) -> Result<Self, RuntimeError> {
+        let random_seed = super::random::initial_random_state();
         let mut vm = Self {
             heap: Heap::new(),
             config,
@@ -33,14 +34,18 @@ impl VM {
             global_mutability: HashMap::new(),
             globals_by_index_cache: HashMap::with_capacity(32),
             globals_by_index: Vec::with_capacity(64),
+            global_generations: Vec::with_capacity(64),
+            inline_call_cache: HashMap::with_capacity(64),
             source,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),
-            call_site_cache: Vec::with_capacity(64),
             resources: Vec::with_capacity(16),
             native_modules: HashMap::new(),
             native_registry: HashMap::new(),
-            random_state: super::random::initial_random_state(),
+            random_state: random_seed,
+            random_seed,
+            execution_control: super::ExecutionControl::default(),
+            execution_stats: super::ExecutionStats::default(),
             current_global_mapping_id: 0,
             program_args,
             script_path: None,

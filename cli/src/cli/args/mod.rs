@@ -16,7 +16,7 @@ pub enum Command {
     Compile {
         path: String,
         output: Option<String>,
-        },
+    },
     Asm {
         path: String,
         output: Option<String>,

@@ -29,8 +29,7 @@ impl Compiler {
 
         self.compile_typed_stmt(body)?;
 
-        let jump_dist = (self.current_offset() - loop_start + 1) as i16;
-        self.emit_b(OpCode::Jump, 0, -jump_dist, span);
+        self.emit_jump_back(loop_start, span);
 
         self.patch_jump(exit_jump);
 
@@ -68,7 +67,7 @@ impl Compiler {
         self.register_pool[iter_reg as usize] = true;
         self.register_pool[end_reg as usize] = true;
         self.register_pool[step_reg as usize] = true;
-        self.next_register = self.next_register.max(step_reg + 1);
+        self.next_register = self.next_register.max(u32::from(step_reg) + 1);
 
         self.compile_typed_expr(start, iter_reg)?;
         self.compile_typed_expr(end, end_reg)?;
@@ -116,8 +115,12 @@ impl Compiler {
         // Patch the initial jump to point here (to ForLoopI)
         self.patch_jump(jump_to_forloop);
 
-        let offset = (self.current_offset() - loop_start + 1) as i16;
-        self.emit_b(opcode, iter_reg, -offset, span);
+        let long_opcode = if inclusive {
+            OpCode::ForLoopIIncLong
+        } else {
+            OpCode::ForLoopILong
+        };
+        self.emit_loop_back(opcode, long_opcode, iter_reg, loop_start, span);
 
         let ctx = self.loop_stack.pop().ok_or_else(|| {
             CompileError::new(
@@ -127,9 +130,7 @@ impl Compiler {
             )
         })?;
         for jump in ctx.continue_jumps {
-            let offset_to_target = (continue_target as isize - jump as isize - 1) as i16;
-            *self.current.bytecode_mut(jump) =
-                (OpCode::Jump as u32) << 24 | ((offset_to_target as u32) & 0xFFFFFF);
+            self.patch_jump_to(jump, continue_target);
         }
 
         for jump in ctx.break_jumps {
@@ -215,7 +216,7 @@ impl Compiler {
         self.register_pool[elem_reg as usize] = true;
         self.register_pool[index_reg as usize] = true;
         self.register_pool[coll_reg as usize] = true;
-        self.next_register = self.next_register.max(coll_reg + 1);
+        self.next_register = self.next_register.max(u32::from(coll_reg) + 1);
 
         // Compile iterable into collection_ptr register
         self.compile_typed_expr(iterable, coll_reg)?;
@@ -248,8 +249,12 @@ impl Compiler {
         self.patch_jump(jump_to_forloop);
 
         // Emit VecForLoop/ArrayForLoop: operates on elem_reg (consecutive regs)
-        let offset = (self.current_offset() - loop_start + 1) as i16;
-        self.emit_b(opcode, elem_reg, -offset, span);
+        let long_opcode = match opcode {
+            OpCode::VecForLoop => OpCode::VecForLoopLong,
+            OpCode::ArrayForLoop => OpCode::ArrayForLoopLong,
+            _ => unreachable!("collection loop opcode was selected above"),
+        };
+        self.emit_loop_back(opcode, long_opcode, elem_reg, loop_start, span);
 
         let ctx = self.loop_stack.pop().ok_or_else(|| {
             CompileError::new(
@@ -259,9 +264,7 @@ impl Compiler {
             )
         })?;
         for jump in ctx.continue_jumps {
-            let offset_to_target = (continue_target as isize - jump as isize - 1) as i16;
-            *self.current.bytecode_mut(jump) =
-                (OpCode::Jump as u32) << 24 | ((offset_to_target as u32) & 0xFFFFFF);
+            self.patch_jump_to(jump, continue_target);
         }
         for jump in ctx.break_jumps {
             self.patch_jump(jump);
@@ -291,7 +294,7 @@ impl Compiler {
         self.register_pool[char_reg as usize] = true;
         self.register_pool[offset_reg as usize] = true;
         self.register_pool[str_reg as usize] = true;
-        self.next_register = self.next_register.max(str_reg + 1);
+        self.next_register = self.next_register.max(u32::from(str_reg) + 1);
 
         // Compile iterable into string_ptr register
         self.compile_typed_expr(iterable, str_reg)?;
@@ -328,8 +331,13 @@ impl Compiler {
         self.patch_jump(jump_to_forloop);
 
         // Emit StringForLoop: operates on char_reg (consecutive regs)
-        let offset = (self.current_offset() - loop_start + 1) as i16;
-        self.emit_b(OpCode::StringForLoop, char_reg, -offset, span);
+        self.emit_loop_back(
+            OpCode::StringForLoop,
+            OpCode::StringForLoopLong,
+            char_reg,
+            loop_start,
+            span,
+        );
 
         let ctx = self.loop_stack.pop().ok_or_else(|| {
             CompileError::new(
@@ -339,9 +347,7 @@ impl Compiler {
             )
         })?;
         for jump in ctx.continue_jumps {
-            let offset_to_target = (continue_target as isize - jump as isize - 1) as i16;
-            *self.current.bytecode_mut(jump) =
-                (OpCode::Jump as u32) << 24 | ((offset_to_target as u32) & 0xFFFFFF);
+            self.patch_jump_to(jump, continue_target);
         }
         for jump in ctx.break_jumps {
             self.patch_jump(jump);

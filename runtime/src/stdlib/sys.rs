@@ -155,7 +155,9 @@ fn native_env_vars(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> 
 /// exit(code) - Exit with status code.
 fn native_exit(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let code = get_int(vm, args[0], "sys.exit")?;
-    std::process::exit(code as i32);
+    let code = i32::try_from(code)
+        .map_err(|_| sys_error(vm, "sys.exit", "status must fit in i32".to_string()))?;
+    Err(vm.runtime_error(RuntimeErrorKind::Exit(code)))
 }
 
 /// pid() - Get current process ID.
@@ -439,7 +441,7 @@ fn native_random_seed(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
 }
 
 fn native_random_state(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    Ok(Value::int(vm.random_state() as i64))
+    Ok(Value::int_wrapping(vm.random_state() as i64))
 }
 
 fn native_random_set_state(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

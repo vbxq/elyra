@@ -1,6 +1,7 @@
 use crate::cli::vm_config::parse_vm_args_or_error;
+use aelys_common::error::{AelysError, RuntimeErrorKind};
 use aelys_common::{WarningConfig, format_warnings};
-use aelys_driver::run_file_full;
+use aelys_driver::run_file_full_with_control;
 use aelys_modules::manifest::Manifest;
 use aelys_opt::OptimizationLevel;
 use aelys_runtime::VM;
@@ -9,6 +10,7 @@ use aelys_syntax::{ImportKind, NeedsStmt, Source, Span};
 use semver::{Version, VersionReq};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 pub fn run_with_options(
     path: &str,
@@ -19,15 +21,36 @@ pub fn run_with_options(
 ) -> Result<i32, String> {
     let parsed = parse_vm_args_or_error(&vm_args)?;
     let config = parsed.config;
+    let execution_control = aelys_runtime::ExecutionControl {
+        max_instructions: parsed.max_instructions,
+        deadline: parsed
+            .timeout_ms
+            .and_then(|ms| Instant::now().checked_add(Duration::from_millis(ms))),
+        ..aelys_runtime::ExecutionControl::default()
+    };
 
     let path_ref = Path::new(path);
-    let value = match detect_format(path_ref)? {
-        InputFormat::Assembly => run_aasm_file(path_ref, config, program_args)?,
-        InputFormat::Bytecode => run_avbc_file(path_ref, config, program_args)?,
+    let execution = match detect_format(path_ref)? {
+        InputFormat::Assembly => run_aasm_file(path_ref, config, program_args, execution_control)?,
+        InputFormat::Bytecode => run_avbc_file(path_ref, config, program_args, execution_control)?,
         InputFormat::Source => {
             ensure_utf8_source(path_ref)?;
-            let result = run_file_full(path_ref, config, program_args, opt_level)
-                .map_err(|err| err.to_string())?;
+            let result = match run_file_full_with_control(
+                path_ref,
+                config,
+                program_args,
+                opt_level,
+                execution_control,
+            ) {
+                Ok(result) => result,
+                Err(AelysError::Runtime(error)) => {
+                    if let RuntimeErrorKind::Exit(code) = error.kind {
+                        return Ok(code);
+                    }
+                    return Err(error.to_string());
+                }
+                Err(error) => return Err(error.to_string()),
+            };
 
             let filtered: Vec<_> = result
                 .warnings
@@ -43,14 +66,24 @@ pub fn run_with_options(
                 return Err(format!("{} warning(s) treated as errors", filtered.len()));
             }
 
-            result.value
+            FileExecution::Returned(result.value)
         }
     };
 
-    if !value.is_null() {
-        println!("{}", value);
+    match execution {
+        FileExecution::Returned(value) => {
+            if !value.is_null() {
+                println!("{}", value);
+            }
+            Ok(0)
+        }
+        FileExecution::Exited(code) => Ok(code),
     }
-    Ok(0)
+}
+
+enum FileExecution {
+    Returned(aelys_runtime::Value),
+    Exited(i32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,20 +132,21 @@ fn run_aasm_file(
     path: &Path,
     config: aelys_runtime::VmConfig,
     program_args: Vec<String>,
-) -> Result<aelys_runtime::Value, String> {
+    execution_control: aelys_runtime::ExecutionControl,
+) -> Result<FileExecution, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let (functions, mut heap) =
-        aelys_bytecode::asm::assemble(&content).map_err(|err| err.to_string())?;
+    let functions = aelys_bytecode::asm::assemble(&content).map_err(|err| err.to_string())?;
     if functions.is_empty() {
         return Err("no functions found in assembly file".to_string());
     }
 
-    let mut function = reconstruct_function_hierarchy(functions);
+    let function = reconstruct_function_hierarchy(functions);
 
     let src = Source::new(path.display().to_string(), "");
     let mut vm = VM::with_config_and_args(src.clone(), config, program_args)
         .map_err(|err| err.to_string())?;
+    vm.configure_execution(execution_control);
     if let Ok(abs_path) = path.canonicalize() {
         vm.set_script_path(abs_path.display().to_string());
     } else {
@@ -122,21 +156,19 @@ fn run_aasm_file(
     let required_modules = collect_required_modules(&function);
     load_required_modules(&mut vm, path, src, &required_modules, None, &HashMap::new())?;
 
-    let remap = vm.merge_heap(&mut heap).map_err(|err| err.to_string())?;
-    function.remap_constants(&remap);
-
     let func_ref = vm.alloc_function(function).map_err(|err| err.to_string())?;
-    vm.execute(func_ref).map_err(|err| err.to_string())
+    execute_file(&mut vm, func_ref)
 }
 
 fn run_avbc_file(
     path: &Path,
     config: aelys_runtime::VmConfig,
     program_args: Vec<String>,
-) -> Result<aelys_runtime::Value, String> {
+    execution_control: aelys_runtime::ExecutionControl,
+) -> Result<FileExecution, String> {
     let bytes =
         std::fs::read(path).map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let (mut function, mut heap, manifest_bytes, bundles) =
+    let (function, manifest_bytes, bundles) =
         aelys_bytecode::asm::deserialize_with_manifest(&bytes).map_err(|err| err.to_string())?;
 
     let manifest = match manifest_bytes.as_deref() {
@@ -150,6 +182,7 @@ fn run_avbc_file(
     let src = Source::new(path.display().to_string(), "");
     let mut vm = VM::with_config_and_args(src.clone(), config, program_args)
         .map_err(|err| err.to_string())?;
+    vm.configure_execution(execution_control);
     if let Ok(abs_path) = path.canonicalize() {
         vm.set_script_path(abs_path.display().to_string());
     } else {
@@ -166,11 +199,18 @@ fn run_avbc_file(
         &bundled_modules,
     )?;
 
-    let remap = vm.merge_heap(&mut heap).map_err(|err| err.to_string())?;
-    function.remap_constants(&remap);
-
     let func_ref = vm.alloc_function(function).map_err(|err| err.to_string())?;
-    vm.execute(func_ref).map_err(|err| err.to_string())
+    execute_file(&mut vm, func_ref)
+}
+
+fn execute_file(vm: &mut VM, function: aelys_runtime::GcRef) -> Result<FileExecution, String> {
+    match vm.execute(function) {
+        Ok(value) => Ok(FileExecution::Returned(value)),
+        Err(error) => match error.kind {
+            RuntimeErrorKind::Exit(code) => Ok(FileExecution::Exited(code)),
+            _ => Err(error.to_string()),
+        },
+    }
 }
 
 fn collect_required_modules(function: &aelys_bytecode::Function) -> HashSet<String> {
@@ -254,15 +294,15 @@ fn load_bundled_module(
     bundle: &aelys_bytecode::asm::NativeBundle,
     manifest: Option<&Manifest>,
 ) -> Result<(), String> {
-    if let Some(policy) = manifest.and_then(|m| m.module(module_name)) {
-        if let Some(expected) = &policy.checksum {
-            let actual = compute_simple_hash(&bundle.bytes);
-            if &actual != expected {
-                return Err(format!(
-                    "native checksum mismatch for {} (expected {}, got {})",
-                    module_name, expected, actual
-                ));
-            }
+    if let Some(policy) = manifest.and_then(|m| m.module(module_name))
+        && let Some(expected) = &policy.checksum
+    {
+        let actual = compute_simple_hash(&bundle.bytes);
+        if &actual != expected {
+            return Err(format!(
+                "native checksum mismatch for {} (expected {}, got {})",
+                module_name, expected, actual
+            ));
         }
     }
 
@@ -321,8 +361,11 @@ fn register_native_module(
                 if export.value.is_null() {
                     return Err(format!("null constant pointer for {}", name));
                 }
-                let raw = unsafe { *(export.value as *const u64) };
-                vm.set_global(qualified_name, aelys_runtime::Value::from_raw(raw));
+                let native_value = unsafe { *(export.value as *const aelys_native::AelysValue) };
+                let value = vm
+                    .import_native_value(native_value)
+                    .map_err(|err| err.to_string())?;
+                vm.set_global(qualified_name, value);
             }
             AelysExportKind::Type => {
                 vm.set_global(qualified_name, aelys_runtime::Value::null());

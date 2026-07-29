@@ -10,7 +10,7 @@ impl Compiler {
         cond: &Expr,
         then_: &Expr,
         else_: &Expr,
-        dest: u8,
+        dest: u16,
     ) -> Result<()> {
         let tmp = self.alloc_register()?;
         self.compile_expr(cond, tmp)?;

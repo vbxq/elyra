@@ -9,32 +9,34 @@ impl Compiler {
         &mut self,
         callee: &Expr,
         args: &[Expr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
-        let nargs = args.len();
-        let func_reg = self.alloc_consecutive_registers_for_call(nargs as u8 + 1, span)?;
+        let nargs = self.checked_call_arity(args.len(), span)?;
+        let register_count = args.len().saturating_add(1);
+        let func_reg = self.alloc_consecutive_registers_for_call(register_count, span)?;
 
-        for i in 0..=nargs {
-            let reg = func_reg + i as u8;
+        for i in 0..register_count {
+            let reg = func_reg + u16::try_from(i).expect("argument count was range checked");
             self.register_pool[reg as usize] = true;
-            if reg >= self.next_register {
-                self.next_register = reg + 1;
+            if u32::from(reg) >= self.next_register {
+                self.next_register = u32::from(reg) + 1;
             }
         }
 
         self.compile_expr(callee, func_reg)?;
 
         for (i, arg) in args.iter().enumerate() {
-            let arg_reg = func_reg + 1 + i as u8;
+            let arg_reg =
+                func_reg + 1 + u16::try_from(i).expect("argument count was range checked");
             self.compile_expr(arg, arg_reg)?;
         }
 
-        self.emit_c(OpCode::Call, dest, func_reg, args.len() as u8, span);
+        self.emit_c(OpCode::Call, dest, func_reg, nargs, span);
 
-        for i in (0..=nargs).rev() {
-            let reg = func_reg + i as u8;
-            self.register_pool[reg as usize] = false;
+        for i in (0..register_count).rev() {
+            let reg = func_reg + u16::try_from(i).expect("argument count was range checked");
+            self.free_register(reg);
         }
 
         Ok(())

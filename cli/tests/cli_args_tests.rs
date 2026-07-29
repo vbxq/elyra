@@ -3,6 +3,24 @@ use aelys_opt::OptimizationLevel;
 use aelys_cli::cli::args::{Command, ParsedArgs, parse_args};
 
 #[test]
+fn parse_execution_limits() {
+    let args = [
+        "aelys",
+        "run",
+        "main.aelys",
+        "--max-instructions",
+        "123",
+        "--timeout-ms=45",
+    ]
+    .map(str::to_string);
+    let parsed = parse_args(&args).unwrap();
+    assert_eq!(
+        parsed.vm_args,
+        ["-ae.max-instructions=123", "-ae.timeout-ms=45"]
+    );
+}
+
+#[test]
 fn parse_run_with_flags_anywhere() {
     let args = vec![
         "aelys",
@@ -102,7 +120,6 @@ fn parse_compile_output_flag() {
             command: Command::Compile {
                 path: "main.aelys".to_string(),
                 output: Some("out.avbc".to_string()),
-
             },
             vm_args: Vec::new(),
             opt_level: OptimizationLevel::Standard,

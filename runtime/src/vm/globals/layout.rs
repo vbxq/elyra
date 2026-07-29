@@ -94,6 +94,7 @@ impl VM {
                     len,
                 );
             }
+            self.bump_global_generations(len);
             self.current_global_mapping_id = mapping_id;
             return mapping_id;
         }
@@ -120,6 +121,7 @@ impl VM {
             }
         }
         self.globals_by_index.truncate(needed_len);
+        self.bump_global_generations(needed_len);
 
         self.current_global_mapping_id = mapping_id;
         self.globals_by_index_cache

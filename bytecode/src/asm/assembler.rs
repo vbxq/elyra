@@ -1,9 +1,7 @@
 //! Assembler: Parses .aasm text and produces bytecode
 
 use super::lexer::{Lexer, Token};
-use crate::bytecode::{Function, GlobalLayout, UpvalueDescriptor};
-use crate::heap::Heap;
-use crate::value::Value;
+use crate::bytecode::{Constant, Function, GlobalLayout, UpvalueDescriptor};
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -36,19 +34,22 @@ pub enum AssemblerError {
 
     #[error("Unexpected end of input")]
     UnexpectedEof,
+
+    #[error("Unsupported assembly version: {0} (expected 2)")]
+    UnsupportedVersion(i64),
 }
 
 /// Result type for assembler operations
 pub type Result<T> = std::result::Result<T, AssemblerError>;
 
 /// Assemble .aasm source into bytecode functions
-pub fn assemble(source: &str) -> Result<(Vec<Function>, Heap)> {
+pub fn assemble(source: &str) -> Result<Vec<Function>> {
     let mut parser = AasmParser::new(source);
     parser.parse()
 }
 
 /// Convenience function that takes a string
-pub fn assemble_from_string(source: &str) -> Result<(Vec<Function>, Heap)> {
+pub fn assemble_from_string(source: &str) -> Result<Vec<Function>> {
     assemble(source)
 }
 
@@ -56,18 +57,13 @@ pub fn assemble_from_string(source: &str) -> Result<(Vec<Function>, Heap)> {
 pub(super) struct AasmParser<'a> {
     pub(super) lexer: Lexer<'a>,
     pub(super) current: Token,
-    heap: Heap,
 }
 
 impl<'a> AasmParser<'a> {
     fn new(source: &'a str) -> Self {
         let mut lexer = Lexer::new(source);
         let current = lexer.next_token().unwrap_or(Token::Eof);
-        Self {
-            lexer,
-            current,
-            heap: Heap::new(),
-        }
+        Self { lexer, current }
     }
 
     pub(super) fn advance(&mut self) -> Result<Token> {
@@ -94,7 +90,7 @@ impl<'a> AasmParser<'a> {
         }
     }
 
-    fn parse(&mut self) -> Result<(Vec<Function>, Heap)> {
+    fn parse(&mut self) -> Result<Vec<Function>> {
         let mut functions = Vec::new();
 
         self.skip_newlines()?;
@@ -103,7 +99,10 @@ impl<'a> AasmParser<'a> {
             && d == "version"
         {
             self.advance()?;
-            if let Token::Int(_) = self.current {
+            if let Token::Int(version) = self.current {
+                if version != 2 {
+                    return Err(AssemblerError::UnsupportedVersion(version));
+                }
                 self.advance()?;
             }
             self.skip_newlines()?;
@@ -140,8 +139,7 @@ impl<'a> AasmParser<'a> {
             }
         }
 
-        let heap = std::mem::take(&mut self.heap);
-        Ok((functions, heap))
+        Ok(functions)
     }
 
     fn parse_function(&mut self) -> Result<Function> {
@@ -159,14 +157,14 @@ impl<'a> AasmParser<'a> {
         self.skip_newlines()?;
 
         let mut name = None;
-        let mut arity = 0u8;
-        let mut num_registers = 0u8;
+        let mut arity = 0u16;
+        let mut num_registers = 0u32;
         let mut constants = Vec::new();
         let mut bytecode = Vec::new();
         let mut global_names = Vec::new();
         let mut upvalue_descriptors = Vec::new();
         let mut labels: HashMap<String, usize> = HashMap::new();
-        let mut label_refs: Vec<(usize, String, bool)> = Vec::new(); // (offset, label, is_conditional)
+        let mut label_refs: Vec<(usize, String, bool, u8)> = Vec::new(); // (offset, label, is_conditional, offset_word)
 
         loop {
             match &self.current {
@@ -180,13 +178,19 @@ impl<'a> AasmParser<'a> {
                     "arity" => {
                         self.advance()?;
                         if let Token::Int(n) = self.advance()? {
-                            arity = n as u8;
+                            arity = u16::try_from(n).map_err(|_| {
+                                AssemblerError::InvalidNumber(format!("Arity is out of range: {n}"))
+                            })?;
                         }
                     }
                     "registers" => {
                         self.advance()?;
                         if let Token::Int(n) = self.advance()? {
-                            num_registers = n as u8;
+                            num_registers = u32::try_from(n).map_err(|_| {
+                                AssemblerError::InvalidNumber(format!(
+                                    "Register count is out of range: {n}"
+                                ))
+                            })?;
                         }
                     }
                     "globals" => {
@@ -228,14 +232,34 @@ impl<'a> AasmParser<'a> {
          * For each label reference, we look up the target label's offset,
          * calculate the relative jump distance, and patch the instruction.
          */
-        for (offset, label, is_conditional) in label_refs {
+        for (offset, label, is_conditional, offset_word) in label_refs {
             let target = labels
                 .get(&label)
                 .ok_or_else(|| AssemblerError::UndefinedLabel(label.clone()))?;
 
-            // Calculate relative offset: target - (offset + 1)
-            let relative = (*target as i32) - (offset as i32) - 1;
-            let relative = relative as i16;
+            let target = i64::try_from(*target).map_err(|_| {
+                AssemblerError::InvalidNumber(format!("Label offset is too large: {target}"))
+            })?;
+            let offset_i64 = i64::try_from(offset).map_err(|_| {
+                AssemblerError::InvalidNumber(format!("Instruction offset is too large: {offset}"))
+            })?;
+            let instruction_words = i64::from(offset_word) + 1;
+            let relative = target - offset_i64 - instruction_words;
+
+            if offset_word > 0 {
+                let relative = i32::try_from(relative).map_err(|_| {
+                    AssemblerError::InvalidNumber(format!(
+                        "Long jump offset is out of range: {relative}"
+                    ))
+                })?;
+                bytecode[offset + usize::from(offset_word)] =
+                    u32::from_ne_bytes(relative.to_ne_bytes());
+                continue;
+            }
+
+            let relative = i16::try_from(relative).map_err(|_| {
+                AssemblerError::InvalidNumber(format!("Jump offset is out of range: {relative}"))
+            })?;
 
             // Patch the instruction
             let instr = bytecode[offset];
@@ -243,11 +267,13 @@ impl<'a> AasmParser<'a> {
                 // Keep the register in A field
                 let a = (instr >> 16) & 0xFF;
                 let op = instr >> 24;
-                (op << 24) | (a << 16) | ((relative as u16) as u32)
+                let relative = u16::from_ne_bytes(relative.to_ne_bytes());
+                (op << 24) | (a << 16) | u32::from(relative)
             } else {
                 // Jump has no register
                 let op = instr >> 24;
-                (op << 24) | ((relative as u16) as u32)
+                let relative = u16::from_ne_bytes(relative.to_ne_bytes());
+                (op << 24) | u32::from(relative)
             };
             bytecode[offset] = patched;
         }
@@ -263,7 +289,7 @@ impl<'a> AasmParser<'a> {
         Ok(func)
     }
 
-    fn parse_constants(&mut self) -> Result<Vec<Value>> {
+    fn parse_constants(&mut self) -> Result<Vec<Constant>> {
         let mut constants = Vec::new();
 
         loop {
@@ -362,7 +388,7 @@ impl<'a> AasmParser<'a> {
                     };
 
                     // Parse the index
-                    let index = self.parse_u8()?;
+                    let index = self.parse_u16()?;
 
                     // Ensure the vec is large enough
                     if upvalues.len() <= idx {
@@ -385,13 +411,13 @@ impl<'a> AasmParser<'a> {
     }
 
     /// Parse a constant value of the form TYPE VALUE
-    fn parse_constant_value(&mut self) -> Result<Value> {
+    fn parse_constant_value(&mut self) -> Result<Constant> {
         match self.advance()? {
             Token::Ident(type_name) => {
                 match type_name.as_str() {
                     "int" => {
                         if let Token::Int(n) = self.advance()? {
-                            Ok(Value::int(n))
+                            Ok(Constant::Int(n))
                         } else {
                             Err(AssemblerError::Expected {
                                 expected: "integer".to_string(),
@@ -400,19 +426,21 @@ impl<'a> AasmParser<'a> {
                         }
                     }
                     "float" => match self.advance()? {
-                        Token::Float(f) => Ok(Value::float(f)),
-                        Token::Int(n) => Ok(Value::float(n as f64)),
-                        Token::Ident(s) if s == "nan" => Ok(Value::float(f64::NAN)),
-                        Token::Ident(s) if s == "inf" => Ok(Value::float(f64::INFINITY)),
+                        Token::Float(f) => Ok(Constant::Float(f.to_bits())),
+                        Token::Int(n) => Ok(Constant::Float((n as f64).to_bits())),
+                        Token::Ident(s) if s == "nan" => Ok(Constant::Float(f64::NAN.to_bits())),
+                        Token::Ident(s) if s == "inf" => {
+                            Ok(Constant::Float(f64::INFINITY.to_bits()))
+                        }
                         t => Err(AssemblerError::Expected {
                             expected: "float".to_string(),
                             got: format!("{:?}", t),
                         }),
                     },
                     "bool" => match self.advance()? {
-                        Token::Bool(b) => Ok(Value::bool(b)),
-                        Token::Ident(s) if s == "true" => Ok(Value::bool(true)),
-                        Token::Ident(s) if s == "false" => Ok(Value::bool(false)),
+                        Token::Bool(b) => Ok(Constant::Bool(b)),
+                        Token::Ident(s) if s == "true" => Ok(Constant::Bool(true)),
+                        Token::Ident(s) if s == "false" => Ok(Constant::Bool(false)),
                         t => Err(AssemblerError::Expected {
                             expected: "bool".to_string(),
                             got: format!("{:?}", t),
@@ -420,8 +448,7 @@ impl<'a> AasmParser<'a> {
                     },
                     "string" => {
                         if let Token::String(s) = self.advance()? {
-                            let str_ref = self.heap.intern_string(&s);
-                            Ok(Value::ptr(str_ref.index()))
+                            Ok(Constant::String(s))
                         } else {
                             Err(AssemblerError::Expected {
                                 expected: "string".to_string(),
@@ -429,22 +456,24 @@ impl<'a> AasmParser<'a> {
                             })
                         }
                     }
-                    "ptr" => {
-                        if let Token::Int(n) = self.advance()? {
-                            Ok(Value::ptr(n as usize))
-                        } else {
-                            Err(AssemblerError::Expected {
-                                expected: "pointer value".to_string(),
-                                got: format!("{:?}", self.current),
-                            })
-                        }
-                    }
+                    "ptr" => Err(AssemblerError::ParseError {
+                        line: self.lexer.current_line(),
+                        message: "raw heap pointers are not valid AVBC v2 constants".to_string(),
+                    }),
                     "func" => {
                         // func @N
                         self.expect(Token::At)?;
                         if let Token::Int(n) = self.advance()? {
                             // Encode as nested function marker (uses dedicated tag)
-                            Ok(Value::nested_fn_marker((n - 1) as usize)) // -1 because main is @0
+                            let index = u32::try_from(n - 1).map_err(|_| {
+                                AssemblerError::InvalidNumber(format!(
+                                    "invalid nested function index: {n}"
+                                ))
+                            })?;
+                            if matches!(self.current, Token::String(_)) {
+                                self.advance()?;
+                            }
+                            Ok(Constant::NestedFunction(index))
                         } else {
                             Err(AssemblerError::Expected {
                                 expected: "function index".to_string(),
@@ -452,13 +481,13 @@ impl<'a> AasmParser<'a> {
                             })
                         }
                     }
-                    "null" => Ok(Value::null()),
+                    "null" => Ok(Constant::Null),
                     "native" => {
                         if let Token::String(_) = self.advance()? {
                             // We can't recreate native functions, return null
-                            Ok(Value::null())
+                            Ok(Constant::Null)
                         } else {
-                            Ok(Value::null())
+                            Ok(Constant::Null)
                         }
                     }
                     _ => Err(AssemblerError::Expected {
@@ -467,7 +496,7 @@ impl<'a> AasmParser<'a> {
                     }),
                 }
             }
-            Token::Null => Ok(Value::null()),
+            Token::Null => Ok(Constant::Null),
             t => Err(AssemblerError::Expected {
                 expected: "constant type".to_string(),
                 got: format!("{:?}", t),
@@ -479,7 +508,7 @@ impl<'a> AasmParser<'a> {
         &mut self,
         bytecode: &mut Vec<u32>,
         labels: &mut HashMap<String, usize>,
-        label_refs: &mut Vec<(usize, String, bool)>,
+        label_refs: &mut Vec<(usize, String, bool, u8)>,
     ) -> Result<()> {
         loop {
             match &self.current {
@@ -529,7 +558,9 @@ impl<'a> AasmParser<'a> {
 
     pub(super) fn parse_register(&mut self) -> Result<u8> {
         match self.advance()? {
-            Token::Register(r) => Ok(r),
+            Token::Register(r) => {
+                u8::try_from(r).map_err(|_| AssemblerError::InvalidRegister(format!("r{r}")))
+            }
             t => Err(AssemblerError::Expected {
                 expected: "register".to_string(),
                 got: format!("{:?}", t),
@@ -537,9 +568,20 @@ impl<'a> AasmParser<'a> {
         }
     }
 
+    pub(super) fn parse_wide_register(&mut self) -> Result<u16> {
+        match self.advance()? {
+            Token::Register(register) => Ok(register),
+            token => Err(AssemblerError::Expected {
+                expected: "register".to_string(),
+                got: format!("{token:?}"),
+            }),
+        }
+    }
+
     pub(super) fn parse_u8(&mut self) -> Result<u8> {
         match self.advance()? {
-            Token::Int(n) if (0..=255).contains(&n) => Ok(n as u8),
+            Token::Int(n) if (0..=255).contains(&n) => u8::try_from(n)
+                .map_err(|_| AssemblerError::InvalidNumber(format!("{n} (must be 0-255)"))),
             Token::Int(n) => Err(AssemblerError::InvalidNumber(format!(
                 "{} (must be 0-255)",
                 n
@@ -551,9 +593,22 @@ impl<'a> AasmParser<'a> {
         }
     }
 
+    pub(super) fn parse_u16(&mut self) -> Result<u16> {
+        match self.advance()? {
+            Token::Int(n) => u16::try_from(n).map_err(|_| {
+                AssemblerError::InvalidNumber(format!("{n} (must fit unsigned 16-bit)"))
+            }),
+            token => Err(AssemblerError::Expected {
+                expected: "u16".to_string(),
+                got: format!("{token:?}"),
+            }),
+        }
+    }
+
     pub(super) fn parse_i16(&mut self) -> Result<i16> {
         match self.advance()? {
-            Token::Int(n) if n >= i16::MIN as i64 && n <= i16::MAX as i64 => Ok(n as i16),
+            Token::Int(n) if n >= i16::MIN as i64 && n <= i16::MAX as i64 => i16::try_from(n)
+                .map_err(|_| AssemblerError::InvalidNumber(format!("{n} (must fit i16)"))),
             Token::Int(n) => Err(AssemblerError::InvalidNumber(format!(
                 "{} (must fit i16)",
                 n
@@ -561,6 +616,18 @@ impl<'a> AasmParser<'a> {
             t => Err(AssemblerError::Expected {
                 expected: "i16".to_string(),
                 got: format!("{:?}", t),
+            }),
+        }
+    }
+
+    pub(super) fn parse_u32(&mut self) -> Result<u32> {
+        match self.advance()? {
+            Token::Int(n) => u32::try_from(n).map_err(|_| {
+                AssemblerError::InvalidNumber(format!("{n} (must fit unsigned 32-bit)"))
+            }),
+            token => Err(AssemblerError::Expected {
+                expected: "u32".to_string(),
+                got: format!("{token:?}"),
             }),
         }
     }

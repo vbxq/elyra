@@ -10,13 +10,12 @@ impl Compiler {
         params: &[aelys_sema::TypedParam],
         body: &[aelys_sema::TypedStmt],
         captures: &[(String, aelys_sema::InferType)],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let mut nested_compiler = super::super::Compiler::for_nested_function(
             Some("<lambda>".to_string()),
             self.source.clone(),
-            self.heap.clone(),
             self.globals.clone(),
             self.global_indices.clone(),
             self.next_global_index,
@@ -27,9 +26,14 @@ impl Compiler {
             self.known_globals.clone(),
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
-            self.next_call_site_slot,
         );
-        nested_compiler.current.arity = params.len() as u8;
+        nested_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
+            aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TooManyArguments,
+                span,
+                self.source.clone(),
+            )
+        })?;
 
         #[allow(clippy::collapsible_if)]
         for (capture_name, _capture_ty) in captures {
@@ -66,7 +70,7 @@ impl Compiler {
             {
                 nested_compiler.upvalues.push(Upvalue {
                     is_local: false,
-                    index: upvalue_idx as u8,
+                    index: u16::try_from(upvalue_idx).expect("upvalue index was range checked"),
                     name: capture_name.clone(),
                     mutable: self.upvalues[upvalue_idx].mutable,
                 });
@@ -126,9 +130,6 @@ impl Compiler {
                 });
         }
 
-        let remap = self.heap.merge(&mut nested_compiler.heap);
-        compiled_func.remap_constants(&remap);
-
         for (name, idx) in &nested_compiler.global_indices {
             if !self.global_indices.contains_key(name) {
                 self.global_indices.insert(name.clone(), *idx);
@@ -136,22 +137,19 @@ impl Compiler {
         }
         self.next_global_index = nested_compiler.next_global_index;
 
-        if nested_compiler.next_call_site_slot > self.next_call_site_slot {
-            self.next_call_site_slot = nested_compiler.next_call_site_slot;
-        }
-
         let const_idx = self.current.add_constant_function(compiled_func);
 
         if nested_upvalues.is_empty() {
-            self.emit_b(OpCode::LoadK, dest, const_idx as i16, span);
+            self.emit_load_constant(dest, const_idx, span);
         } else {
-            self.emit_a(
-                OpCode::MakeClosure,
-                dest,
-                const_idx as u8,
-                nested_upvalues.len() as u8,
-                span,
-            );
+            let upvalue_count = u8::try_from(nested_upvalues.len()).map_err(|_| {
+                aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TooManyUpvalues,
+                    span,
+                    self.source.clone(),
+                )
+            })?;
+            self.emit_make_closure(dest, const_idx, upvalue_count, span);
         }
 
         Ok(())

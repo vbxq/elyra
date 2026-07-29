@@ -39,7 +39,7 @@ impl VM {
     pub fn capture_upvalue(
         &mut self,
         frame_base: usize,
-        register: u8,
+        register: u16,
     ) -> Result<GcRef, RuntimeError> {
         // Check if we already have an open upvalue for this location
         for &upval_ref in &self.open_upvalues {
@@ -124,7 +124,7 @@ impl VM {
     }
 
     /// Close all open upvalues that point to registers >= from_reg in the given frame.
-    pub fn close_upvalues(&mut self, frame_base: usize, from_reg: u8) {
+    pub fn close_upvalues(&mut self, frame_base: usize, from_reg: u16) {
         let mut i = 0;
         while i < self.open_upvalues.len() {
             let upval_ref = self.open_upvalues[i];

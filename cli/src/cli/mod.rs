@@ -59,10 +59,7 @@ fn dispatch(parsed: args::ParsedArgs) -> Result<i32, String> {
             warn_config,
         ),
 
-        args::Command::Compile {
-            path,
-            output,
-        } => {
+        args::Command::Compile { path, output } => {
             if !parsed.vm_args.is_empty() {
                 return Err("vm flags are only supported for run or repl".to_string());
             }

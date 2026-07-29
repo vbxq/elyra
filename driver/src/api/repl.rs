@@ -107,12 +107,9 @@ pub fn run_with_vm_and_opt(
         symbol_origins,
         existing_globals,
     );
-    let (mut function, mut compile_heap, new_globals) = compiler.compile_typed(&typed_program)?;
+    let (function, new_globals) = compiler.compile_typed(&typed_program)?;
 
     vm.update_global_mutability(new_globals);
-
-    let remap = vm.merge_heap(&mut compile_heap)?;
-    function.remap_constants(&remap);
 
     let global_names: Vec<String> = function.global_layout.names().to_vec();
 

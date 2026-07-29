@@ -27,17 +27,13 @@ impl VM {
         })?;
 
         if let ObjectKind::Function(func) = &obj.kind {
-            func.function
-                .constants
-                .get(k as usize)
-                .copied()
-                .ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "get_constant",
-                        expected: "valid constant index",
-                        got: k.to_string(),
-                    })
+            func.constants.get(k as usize).copied().ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::TypeError {
+                    operation: "get_constant",
+                    expected: "valid constant index",
+                    got: k.to_string(),
                 })
+            })
         } else {
             Err(self.runtime_error(RuntimeErrorKind::TypeError {
                 operation: "get_constant",
@@ -93,7 +89,7 @@ impl VM {
         })?;
 
         if let ObjectKind::Function(func) = &obj.kind {
-            let constant = func.function.constants.get(k as usize).ok_or_else(|| {
+            let constant = func.constants.get(k as usize).ok_or_else(|| {
                 self.runtime_error(RuntimeErrorKind::TypeError {
                     operation: "get_constant_string",
                     expected: "valid constant index",

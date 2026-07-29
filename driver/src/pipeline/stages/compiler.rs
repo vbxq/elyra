@@ -57,7 +57,7 @@ impl Stage for CompilerStage {
             }
         };
 
-        let (function, heap, _globals) =
+        let (function, _globals) =
             if self.module_aliases.is_empty() && self.known_globals.is_empty() {
                 Compiler::new(None, source.clone()).compile_typed(&typed_program)
             } else {
@@ -76,6 +76,6 @@ impl Stage for CompilerStage {
                 message: e.to_string(),
             })?;
 
-        Ok(StageOutput::Compiled(Box::new(function), heap, source))
+        Ok(StageOutput::Compiled(Box::new(function), source))
     }
 }

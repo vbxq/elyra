@@ -21,7 +21,8 @@ pub(super) fn verify(
         }
         OpCode::LoadK => {
             verify_reg(a, num_regs, "LoadK")?;
-            verify_const(imm as u16 as usize, constants_len, "LoadK")?;
+            let index = usize::from(u16::from_ne_bytes(imm.to_ne_bytes()));
+            verify_const(index, constants_len, "LoadK")?;
         }
         _ => return Ok(false),
     }

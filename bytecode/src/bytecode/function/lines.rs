@@ -12,7 +12,7 @@ impl Function {
         self.lines.push((1, line));
     }
 
-    /// Record line info for multiple words (used for cache words after CallGlobal)
+    /// Record line info for multiple instruction words.
     pub fn record_lines(&mut self, count: usize, line: u32) {
         for _ in 0..count {
             self.add_line(line);

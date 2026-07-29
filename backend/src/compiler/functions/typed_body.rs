@@ -17,11 +17,10 @@ pub(super) fn compile_typed_body(
         nested_compiler.add_local(param.name.clone(), param.mutable, reg, resolved_type);
     }
 
-
     let liveness = LivenessAnalysis::analyze_function(func);
 
     if func.body.is_empty() {
-                nested_compiler.emit_a(OpCode::Return0, 0, 0, 0, func.span);
+        nested_compiler.emit_a(OpCode::Return0, 0, 0, 0, func.span);
         nested_compiler.end_scope();
         return Ok(());
     }
@@ -71,7 +70,6 @@ pub(super) fn compile_typed_body(
             None
         }
     };
-
 
     if let Some(result_reg) = implicit_return_reg {
         nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, func.span);

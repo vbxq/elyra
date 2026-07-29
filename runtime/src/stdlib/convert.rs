@@ -109,7 +109,8 @@ fn native_parse_int_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
         ));
     }
 
-    match i64::from_str_radix(s.trim(), radix as u32) {
+    let radix = u32::try_from(radix).expect("radix was range checked");
+    match i64::from_str_radix(s.trim(), radix) {
         Ok(n) => Ok(Value::int(n)),
         Err(_) => Ok(Value::null()),
     }
@@ -303,7 +304,7 @@ fn native_chr(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     }
 
-    match char::from_u32(code as u32) {
+    match char::from_u32(u32::try_from(code).expect("code point was range checked")) {
         Some(c) => Ok(make_string(vm, &c.to_string())?),
         None => Err(convert_error(
             vm,

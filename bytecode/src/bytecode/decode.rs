@@ -6,18 +6,22 @@ use super::opcode::OpCode;
 //   C: same as A                    - just different semantics (call)
 
 pub fn decode_a(instr: u32) -> (OpCode, u8, u8, u8) {
-    let op = OpCode::from_u8((instr >> 24) as u8).unwrap_or(OpCode::Move);
+    let opcode = u8::try_from(instr >> 24).expect("opcode occupies one byte");
+    let op = OpCode::from_u8(opcode).unwrap_or(OpCode::Move);
     (
         op,
-        ((instr >> 16) & 0xFF) as u8,
-        ((instr >> 8) & 0xFF) as u8,
-        (instr & 0xFF) as u8,
+        u8::try_from((instr >> 16) & 0xFF).expect("operand occupies one byte"),
+        u8::try_from((instr >> 8) & 0xFF).expect("operand occupies one byte"),
+        u8::try_from(instr & 0xFF).expect("operand occupies one byte"),
     )
 }
 
 pub fn decode_b(instr: u32) -> (OpCode, u8, i16) {
-    let op = OpCode::from_u8((instr >> 24) as u8).unwrap_or(OpCode::Move);
-    (op, ((instr >> 16) & 0xFF) as u8, (instr & 0xFFFF) as i16)
+    let opcode = u8::try_from(instr >> 24).expect("opcode occupies one byte");
+    let op = OpCode::from_u8(opcode).unwrap_or(OpCode::Move);
+    let a = u8::try_from((instr >> 16) & 0xFF).expect("operand occupies one byte");
+    let immediate = u16::try_from(instr & 0xFFFF).expect("immediate occupies two bytes");
+    (op, a, i16::from_ne_bytes(immediate.to_ne_bytes()))
 }
 
 pub fn decode_c(instr: u32) -> (OpCode, u8, u8, u8) {

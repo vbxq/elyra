@@ -1,5 +1,5 @@
 use super::super::Compiler;
-use aelys_bytecode::{OpCode, UpvalueDescriptor};
+use aelys_bytecode::UpvalueDescriptor;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
@@ -7,7 +7,7 @@ use aelys_syntax::Span;
 pub(super) fn finalize_lambda(
     parent: &mut Compiler,
     mut lambda_compiler: Compiler,
-    dest: u8,
+    dest: u16,
     span: Span,
 ) -> Result<()> {
     let global_layout = if lambda_compiler.accessed_globals.is_empty() {
@@ -47,8 +47,6 @@ pub(super) fn finalize_lambda(
         .into());
     }
 
-    parent.heap = lambda_compiler.heap;
-
     for (name, &idx) in &lambda_compiler.global_indices {
         if !parent.global_indices.contains_key(name) {
             parent.global_indices.insert(name.clone(), idx);
@@ -58,30 +56,18 @@ pub(super) fn finalize_lambda(
         parent.next_global_index = lambda_compiler.next_global_index;
     }
 
-    if lambda_compiler.next_call_site_slot > parent.next_call_site_slot {
-        parent.next_call_site_slot = lambda_compiler.next_call_site_slot;
-    }
-
     let const_idx = parent.current.add_constant_function(compiled_func);
-    if const_idx > u8::MAX as u16 {
-        return Err(CompileError::new(
-            CompileErrorKind::TooManyConstants,
-            span,
-            parent.source.clone(),
-        )
-        .into());
-    }
-
     if upvalue_count > 0 {
-        parent.emit_a(
-            OpCode::MakeClosure,
-            dest,
-            const_idx as u8,
-            upvalue_count as u8,
-            span,
-        );
+        let upvalue_count = u8::try_from(upvalue_count).map_err(|_| {
+            CompileError::new(
+                CompileErrorKind::TooManyUpvalues,
+                span,
+                parent.source.clone(),
+            )
+        })?;
+        parent.emit_make_closure(dest, const_idx, upvalue_count, span);
     } else {
-        parent.emit_b(OpCode::LoadK, dest, const_idx as i16, span);
+        parent.emit_load_constant(dest, const_idx, span);
     }
 
     Ok(())

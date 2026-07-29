@@ -3,17 +3,29 @@ use crate::Function;
 use crate::object::{AelysFunction, AelysString, GcObject, GcRef, NativeFunction, ObjectKind};
 
 impl Heap {
-    pub fn alloc(&mut self, obj: GcObject) -> GcRef {
+    pub fn alloc(&mut self, mut obj: GcObject) -> GcRef {
         self.bytes_allocated += Self::estimate_object_size(&obj);
+        self.allocation_count = self.allocation_count.saturating_add(1);
+        if self.major_collection_active() {
+            obj.marked = true;
+        }
 
         // reuse free slots when possible
         if let Some(idx) = self.free_list.pop() {
-            self.objects[idx] = Some(obj);
-            GcRef::new(idx)
+            let slot = &mut self.objects[idx as usize];
+            slot.object = Some(obj);
+            slot.heap_generation = super::HeapGeneration::Young;
+            slot.survival_count = 0;
+            GcRef::from_parts(idx, slot.generation)
         } else {
-            let idx = self.objects.len();
-            self.objects.push(Some(obj));
-            GcRef::new(idx)
+            let idx = u32::try_from(self.objects.len()).expect("heap slot limit exceeded");
+            self.objects.push(super::HeapSlot {
+                generation: 0,
+                heap_generation: super::HeapGeneration::Young,
+                survival_count: 0,
+                object: Some(obj),
+            });
+            GcRef::from_parts(idx, 0)
         }
     }
 
@@ -22,19 +34,24 @@ impl Heap {
     }
 
     pub fn alloc_function(&mut self, func: Function) -> GcRef {
-        self.alloc(GcObject::new(ObjectKind::Function(AelysFunction::new(
-            func,
-        ))))
+        let constants = func
+            .constants
+            .iter()
+            .map(|constant| constant.materialize(self))
+            .collect();
+        self.alloc(GcObject::new(ObjectKind::Function(
+            AelysFunction::with_constants(func, constants),
+        )))
     }
 
-    pub fn alloc_native(&mut self, name: &str, arity: u8) -> GcRef {
+    pub fn alloc_native(&mut self, name: &str, arity: u16) -> GcRef {
         self.alloc(GcObject::new(ObjectKind::Native(NativeFunction::new(
             name, arity,
         ))))
     }
 
     // same as alloc_native, just different name for clarity in calling code
-    pub fn alloc_foreign(&mut self, name: &str, arity: u8) -> GcRef {
+    pub fn alloc_foreign(&mut self, name: &str, arity: u16) -> GcRef {
         self.alloc_native(name, arity)
     }
 }

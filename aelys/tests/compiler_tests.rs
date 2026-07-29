@@ -11,7 +11,12 @@ fn compile_typed_program_to_bytecode() {
     let ast = Parser::new(tokens, src.clone()).parse().unwrap();
     let typed = TypeInference::infer_program(ast, src.clone()).unwrap();
 
-    let (func, heap, _globals) = Compiler::new(None, src).compile_typed(&typed).unwrap();
+    let (func, _globals) = Compiler::new(None, src).compile_typed(&typed).unwrap();
     assert!(!func.bytecode.is_empty());
-    assert!(heap.object_count() > 0);
+    assert!(func.nested_functions.iter().any(|nested| {
+        nested
+            .constants
+            .iter()
+            .any(|constant| constant.as_string() == Some("hi"))
+    }));
 }

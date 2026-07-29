@@ -16,7 +16,7 @@ fn compile_includes_manifest_when_present() {
     let output = compile_to_avbc(&src_path, OptimizationLevel::None).unwrap();
     let bytes = std::fs::read(output).unwrap();
 
-    let (_func, _heap, manifest_bytes, _bundles) =
+    let (_func, manifest_bytes, _bundles) =
         aelys_bytecode::asm::deserialize_with_manifest(&bytes).unwrap();
 
     assert!(manifest_bytes.is_some());

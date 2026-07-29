@@ -4,6 +4,7 @@ mod builtins;
 mod call_api;
 mod config;
 mod config_access;
+mod control;
 mod core;
 mod errors;
 mod execute;
@@ -33,15 +34,13 @@ pub use aelys_bytecode::{
     ObjectKind, UpvalueLocation,
 };
 pub use aelys_bytecode::{
-    BytecodeBuffer, Function, GlobalLayout, Heap, IntegerOverflowError, OpCode, UpvalueDescriptor,
-    Value, decode_a, decode_b, decode_c,
+    BytecodeBuffer, Function, GlobalLayout, Heap, InstructionFormat, IntegerOverflowError, OpCode,
+    UpvalueDescriptor, Value, WideRegisterOperands, decode_a, decode_b, decode_c,
 };
 pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
 pub use builtins::{builtin_type, register_builtins};
 pub use config::{VmConfig, VmConfigError};
-pub use core::{
-    CallSiteCacheEntry, MAX_CALL_SITE_SLOTS, MAX_FRAMES, MAX_REGISTERS,
-    StepResult, VM,
-};
+pub use control::{ExecutionControl, ExecutionStats, InterruptHandle};
+pub use core::{MAX_FRAMES, MAX_REGISTERS, StepResult, VM};
 pub use frame::CallFrame;
 pub use native::{NativeFn, NativeFunctionImpl, build_native_vm_api};

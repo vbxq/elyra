@@ -8,7 +8,7 @@ impl Compiler {
         &mut self,
         left: &aelys_sema::TypedExpr,
         right: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         self.compile_typed_expr(left, dest)?;
@@ -22,7 +22,7 @@ impl Compiler {
         &mut self,
         left: &aelys_sema::TypedExpr,
         right: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         self.compile_typed_expr(left, dest)?;

@@ -1,5 +1,5 @@
 use super::super::{Compiler, Scope};
-use aelys_bytecode::OpCode;
+use aelys_bytecode::{OpCode, Register};
 
 impl Compiler {
     pub fn begin_scope(&mut self) {
@@ -19,12 +19,22 @@ impl Compiler {
         if let Some(scope) = self.scopes.pop() {
             // Only need to close upvalues if any locals were captured
             if let Some(&lowest_captured) = scope.captured_registers.iter().min() {
-                self.current
-                    .emit_a(OpCode::CloseUpvals, lowest_captured, 0, 0, 0);
+                self.current.emit_register_abc(
+                    OpCode::CloseUpvals,
+                    Register::new(lowest_captured),
+                    Register::new(0),
+                    Register::new(0),
+                    0,
+                );
             }
 
-            for local in self.locals.drain(scope.start..) {
-                self.register_pool[local.register as usize] = false;
+            let released: Vec<_> = self
+                .locals
+                .drain(scope.start..)
+                .map(|local| local.register)
+                .collect();
+            for register in released {
+                self.free_register(register);
             }
         }
     }

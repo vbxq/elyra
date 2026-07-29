@@ -32,7 +32,7 @@
         Some(obj) => match &obj.kind {
             ObjectKind::Function(func) => {
                 let bc = &func.function.bytecode;
-                let consts = &func.function.constants;
+                let consts = &func.constants;
                 TailCallData::Function {
                     arity: func.arity(),
                     callee_gmap: self
@@ -93,10 +93,10 @@
             const_len,
         } => {
             self.ensure_function_verified(callee_ref)?;
-            if arity != nargs {
+            if arity != u16::from(nargs) {
                 return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                     expected: arity,
-                    got: nargs,
+                    got: u16::from(nargs),
                 }));
             }
             // Load callee's globals if mapping changes
@@ -147,10 +147,10 @@
             upval_len,
         } => {
             self.ensure_function_verified(inner_func)?;
-            if arity != nargs {
+            if arity != u16::from(nargs) {
                 return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                     expected: arity,
-                    got: nargs,
+                    got: u16::from(nargs),
                 }));
             }
             // Load callee's globals if mapping changes

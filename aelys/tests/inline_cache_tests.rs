@@ -1,6 +1,7 @@
 mod common;
 
 use aelys::{new_vm, run_with_vm_and_opt};
+use aelys_bytecode::OpCode;
 use aelys_bytecode::asm::disassemble;
 use aelys_common::error::RuntimeError;
 use aelys_driver::pipeline::compilation_pipeline_with_opt;
@@ -92,8 +93,7 @@ fn test_cache_with_different_arities() {
 }
 
 #[test]
-fn test_disassembler_skips_cache_words() {
-    // use O0 to prevent inlining so we can test call opcodes
+fn test_disassembler_has_no_cache_word_gaps() {
     let mut pipeline = compilation_pipeline_with_opt(OptimizationLevel::None);
 
     let source = r#"
@@ -102,12 +102,11 @@ fn test_disassembler_skips_cache_words() {
     "#;
 
     let src = Source::new("test", source);
-    let (func, _heap) = pipeline.compile(src).expect("compile failed");
-    let output = disassemble(&func, None);
+    let func = pipeline.compile(src).expect("compile failed");
+    let output = disassemble(&func);
 
     let lines: Vec<&str> = output.lines().collect();
-    let mut prev_offset: Option<usize> = None;
-    let mut found_gap = false;
+    let mut offsets = Vec::new();
 
     for line in &lines {
         let trimmed = line.trim();
@@ -115,19 +114,15 @@ fn test_disassembler_skips_cache_words() {
             && let Some(offset_str) = trimmed.split(':').next()
             && let Ok(offset) = offset_str.parse::<usize>()
         {
-            if let Some(prev) = prev_offset
-                && offset > prev
-                && offset - prev == 3
-            {
-                found_gap = true;
-            }
-            prev_offset = Some(offset);
+            offsets.push(offset);
         }
     }
 
     assert!(
-        found_gap,
-        "Disassembler should show gaps of 3 (instruction + 2 cache words). Output:\n{}",
+        offsets
+            .windows(2)
+            .all(|pair| pair[1] <= pair[0] || pair[1] - pair[0] <= 2),
+        "Disassembler should contain only instructions and validated extension words. Output:\n{}",
         output
     );
 }
@@ -192,7 +187,7 @@ fn test_call_global_opcode_for_aelys_functions() {
     "#;
 
     let src = Source::new("test", source);
-    let (func, _heap) = pipeline.compile(src).expect("compile failed");
+    let func = pipeline.compile(src).expect("compile failed");
 
     let mut found_call_global = 0;
     for &instr in func.bytecode.as_slice() {
@@ -237,8 +232,7 @@ fn test_global_calls_above_u8_index() {
 }
 
 #[test]
-fn test_cache_words_present_after_call_opcodes() {
-    // use O0 to prevent inlining
+fn test_call_opcodes_have_no_cache_words() {
     let mut pipeline = compilation_pipeline_with_opt(OptimizationLevel::None);
 
     let source = r#"
@@ -247,23 +241,21 @@ fn test_cache_words_present_after_call_opcodes() {
     "#;
 
     let src = Source::new("test", source);
-    let (func, _heap) = pipeline.compile(src).expect("compile failed");
+    let func = pipeline.compile(src).expect("compile failed");
 
     let bytecode = func.bytecode.as_slice();
     let mut call_positions = Vec::new();
-    for (i, &instr) in bytecode.iter().enumerate() {
+    for (position, &instr) in bytecode.iter().enumerate() {
         let opcode = (instr >> 24) as u8;
-        if opcode == 77 || opcode == 78 || opcode == 104 {
-            call_positions.push(i);
+        if opcode == 77 {
+            call_positions.push(position);
         }
+        assert_ne!(opcode, 78, "obsolete CallGlobalMono must not be emitted");
+        assert_ne!(opcode, 104, "obsolete CallGlobalNative must not be emitted");
     }
-
-    for pos in call_positions {
-        assert!(
-            pos + 2 < bytecode.len(),
-            "Call opcode at position {} should have 2 cache words following it",
-            pos
-        );
+    assert!(!call_positions.is_empty());
+    for position in call_positions {
+        assert_eq!(bytecode[position + 1] >> 24, OpCode::Return as u32);
     }
 }
 
@@ -279,6 +271,32 @@ fn test_aelys_function_repeated_calls_same_result() {
     "#,
         30,
     );
+}
+
+#[test]
+fn per_vm_call_cache_reports_hits_without_bytecode_mutation() {
+    let mut vm = new_vm().unwrap();
+    vm.configure_execution(aelys_runtime::ExecutionControl {
+        report: true,
+        ..aelys_runtime::ExecutionControl::default()
+    });
+    let result = run_with_vm_and_opt(
+        &mut vm,
+        r#"
+            fn increment(x: int) -> int { return x + 1 }
+            let mut value = 0
+            for i in 0..20 { value = increment(value) }
+            value
+        "#,
+        "cache-stats",
+        OptimizationLevel::None,
+    )
+    .unwrap();
+
+    assert_eq!(result.as_int(), Some(20));
+    let stats = vm.execution_stats();
+    assert!(stats.cache_misses >= 1);
+    assert!(stats.cache_hits >= 1);
 }
 
 #[test]

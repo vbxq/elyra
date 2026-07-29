@@ -52,7 +52,7 @@ impl Compiler {
         self.register_pool[iter_reg as usize] = true;
         self.register_pool[end_reg as usize] = true;
         self.register_pool[step_reg as usize] = true;
-        self.next_register = self.next_register.max(step_reg + 1);
+        self.next_register = self.next_register.max(u32::from(step_reg) + 1);
 
         self.add_local(
             iterator.to_string(),
@@ -108,17 +108,10 @@ impl Compiler {
 
         self.patch_jump(jump_to_forloop);
 
-        // Patch continue statements to jump to ForLoopI instead of past the loop.
-        // This is slightly ugly - we're manually reconstructing the instruction encoding.
-        // TODO: maybe add a helper for patching just the offset part of a jump?
         if let Some(ctx) = self.loop_stack.last() {
-            for &continue_jump in &ctx.continue_jumps {
-                let dist = (forloop_pos - continue_jump - 1) as i16;
-                let instr = self.current.bytecode_at(continue_jump);
-                let op = instr >> 24;
-                let a = (instr >> 16) & 0xFF;
-                *self.current.bytecode_mut(continue_jump) =
-                    (op << 24) | (a << 16) | ((dist as u16) as u32);
+            let continue_jumps = ctx.continue_jumps.clone();
+            for continue_jump in continue_jumps {
+                self.patch_jump_to(continue_jump, forloop_pos);
             }
         }
 
@@ -127,8 +120,12 @@ impl Compiler {
         } else {
             OpCode::ForLoopI
         };
-        let jump_back_dist = -((forloop_pos - body_start + 1) as i16);
-        self.emit_b(loop_opcode, iter_reg, jump_back_dist, span);
+        let long_loop_opcode = if inclusive {
+            OpCode::ForLoopIIncLong
+        } else {
+            OpCode::ForLoopILong
+        };
+        self.emit_loop_back(loop_opcode, long_loop_opcode, iter_reg, body_start, span);
 
         if let Some(loop_ctx) = self.loop_stack.pop() {
             for break_jump in loop_ctx.break_jumps {

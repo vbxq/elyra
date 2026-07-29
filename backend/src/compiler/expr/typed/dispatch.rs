@@ -2,7 +2,7 @@ use super::super::Compiler;
 use aelys_common::Result;
 
 impl Compiler {
-    pub fn compile_typed_expr(&mut self, expr: &aelys_sema::TypedExpr, dest: u8) -> Result<()> {
+    pub fn compile_typed_expr(&mut self, expr: &aelys_sema::TypedExpr, dest: u16) -> Result<()> {
         use aelys_sema::TypedExprKind;
 
         match &expr.kind {

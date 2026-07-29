@@ -9,12 +9,12 @@ pub struct AelysUpvalue {
 /// Where an upvalue's value is stored.
 #[derive(Debug, Clone)]
 pub enum UpvalueLocation {
-    Open { frame_base: usize, register: u8 },
+    Open { frame_base: usize, register: u16 },
     Closed(Value),
 }
 
 impl AelysUpvalue {
-    pub fn new_open(frame_base: usize, register: u8) -> Self {
+    pub fn new_open(frame_base: usize, register: u16) -> Self {
         Self {
             location: UpvalueLocation::Open {
                 frame_base,

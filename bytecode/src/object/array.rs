@@ -144,7 +144,8 @@ impl AelysArray {
         Self {
             data: ArrayData::Bools(
                 data.iter()
-                    .map(|&b| b as u8)
+                    .copied()
+                    .map(u8::from)
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
             ),
@@ -201,7 +202,7 @@ impl AelysArray {
             }
             ArrayData::Bools(b) => {
                 if let Some(v) = value.as_bool() {
-                    b[index] = v as u8;
+                    b[index] = u8::from(v);
                     true
                 } else {
                     false

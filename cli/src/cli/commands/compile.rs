@@ -107,7 +107,7 @@ pub fn compile_to_avbc_with_output(
         })
         .collect();
 
-    let (mut function, heap, _globals) = Compiler::with_modules(
+    let (mut function, _globals) = Compiler::with_modules(
         None,
         src.clone(),
         imports.module_aliases,
@@ -133,20 +133,15 @@ pub fn compile_to_avbc_with_output(
         let bundles = build_native_bundles(loader.loaded_native_modules())?;
         aelys_bytecode::asm::serialize_with_manifest(
             &function,
-            &heap,
             manifest_bytes.as_deref(),
             Some(&bundles),
         )
     } else if manifest_bytes.is_some() {
-        aelys_bytecode::asm::serialize_with_manifest(
-            &function,
-            &heap,
-            manifest_bytes.as_deref(),
-            None,
-        )
+        aelys_bytecode::asm::serialize_with_manifest(&function, manifest_bytes.as_deref(), None)
     } else {
-        aelys_bytecode::asm::serialize(&function, &heap)
-    };
+        aelys_bytecode::asm::serialize(&function)
+    }
+    .map_err(|err| format!("failed to serialize AVBC v2: {err}"))?;
 
     let output_path = output.unwrap_or_else(|| output_path_for(path));
     std::fs::write(&output_path, bytes)
@@ -221,13 +216,13 @@ fn detect_format(path: &Path) -> CompileInput {
 fn assemble_to_avbc(path: &Path, output: Option<PathBuf>) -> Result<PathBuf, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let (functions, heap) =
-        aelys_bytecode::asm::assemble(&content).map_err(|err| err.to_string())?;
+    let functions = aelys_bytecode::asm::assemble(&content).map_err(|err| err.to_string())?;
     if functions.is_empty() {
         return Err("no functions found in assembly file".to_string());
     }
     let function = reconstruct_function_hierarchy(functions);
-    let bytes = aelys_bytecode::asm::serialize(&function, &heap);
+    let bytes = aelys_bytecode::asm::serialize(&function)
+        .map_err(|err| format!("failed to serialize AVBC v2: {err}"))?;
     let output_path = output.unwrap_or_else(|| output_path_for(path));
     std::fs::write(&output_path, bytes)
         .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;

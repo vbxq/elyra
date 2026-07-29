@@ -1,7 +1,6 @@
 use super::super::Compiler;
 use super::untyped_body::compile_untyped_body;
 use super::untyped_finalize::finalize_untyped_function;
-use aelys_bytecode::Heap;
 use aelys_common::Result;
 
 impl Compiler {
@@ -17,8 +16,6 @@ impl Compiler {
             }
         }
 
-
-        let heap = std::mem::replace(&mut self.heap, Heap::new());
         let globals = self.globals.clone();
         let global_indices = self.global_indices.clone();
         let enclosing_locals = self.locals.clone();
@@ -27,7 +24,6 @@ impl Compiler {
         let mut func_compiler = Compiler::for_nested_function(
             Some(func.name.clone()),
             self.source.clone(),
-            heap,
             globals,
             global_indices,
             self.next_global_index,
@@ -38,7 +34,6 @@ impl Compiler {
             self.known_globals.clone(),
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
-            self.next_call_site_slot,
         );
 
         func_compiler.begin_scope();
@@ -47,17 +42,22 @@ impl Compiler {
             func_compiler.declare_variable(&param.name, false)?;
         }
 
-
         let body_result = compile_untyped_body(&mut func_compiler, func)?;
 
         func_compiler.end_scope();
 
         if !body_result.returned {
-                        func_compiler.emit_return0(func.span);
+            func_compiler.emit_return0(func.span);
         }
 
         func_compiler.current.num_registers = func_compiler.next_register;
-        func_compiler.current.arity = func.params.len() as u8;
+        func_compiler.current.arity = u16::try_from(func.params.len()).map_err(|_| {
+            aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TooManyArguments,
+                func.span,
+                self.source.clone(),
+            )
+        })?;
 
         finalize_untyped_function(self, func_compiler, &func.name, func.span, func_var_reg)
     }

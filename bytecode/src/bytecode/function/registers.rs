@@ -1,5 +1,5 @@
-use crate::bytecode::OpCode;
 use crate::bytecode::decode_a;
+use crate::bytecode::{OpCode, WideRegisterOperands};
 
 pub(super) fn required_registers(bytecode: &[u32]) -> usize {
     let mut max_reg: usize = 0;
@@ -9,13 +9,20 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
     while ip < bytecode.len() {
         let instr = bytecode[ip];
         let (op, a, b, c) = decode_a(instr);
-        let imm = (instr & 0xFFFF) as i16;
+        let imm_bits = u16::try_from(instr & 0xFFFF).expect("immediate occupies two bytes");
+        let imm = i16::from_ne_bytes(imm_bits.to_ne_bytes());
 
         match op {
             OpCode::Move => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None)
             }
-            OpCode::LoadI | OpCode::LoadNull | OpCode::LoadBool | OpCode::LoadK => {
+            OpCode::LoadI
+            | OpCode::LoadNull
+            | OpCode::LoadBool
+            | OpCode::LoadK
+            | OpCode::LoadKWide
+            | OpCode::GetGlobalIdxWide
+            | OpCode::SetGlobalIdxWide => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
             OpCode::Add
@@ -114,20 +121,91 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     update_max_reg(&mut max_reg, &mut used, (b as usize) + nargs, None, None);
                 }
             }
+            OpCode::CallWide => {
+                let Some(first) = bytecode.get(ip + 1) else {
+                    break;
+                };
+                let Some(second) = bytecode.get(ip + 2) else {
+                    break;
+                };
+                let dest = (first >> 16) as usize;
+                let func = (first & 0xffff) as usize;
+                let nargs = (second >> 16) as usize;
+                update_max_reg(&mut max_reg, &mut used, dest, Some(func), None);
+                if nargs > 0 {
+                    update_max_reg(&mut max_reg, &mut used, func + nargs, None, None);
+                }
+            }
+            OpCode::ArrayLitWide | OpCode::VecLitWide => {
+                let Some(first) = bytecode.get(ip + 1) else {
+                    break;
+                };
+                let Some(second) = bytecode.get(ip + 2) else {
+                    break;
+                };
+                let dest = (first >> 16) as usize;
+                let start = (first & 0xffff) as usize;
+                let count = (second >> 16) as usize;
+                update_max_reg(&mut max_reg, &mut used, dest, Some(start), None);
+                if count > 0 {
+                    update_max_reg(&mut max_reg, &mut used, start + count - 1, None, None);
+                }
+            }
+            OpCode::JumpIfWideLong | OpCode::JumpIfNotWideLong => {
+                let Some(register_word) = bytecode.get(ip + 1) else {
+                    break;
+                };
+                update_max_reg(
+                    &mut max_reg,
+                    &mut used,
+                    (register_word >> 16) as usize,
+                    None,
+                    None,
+                );
+            }
             OpCode::Return => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
             OpCode::Return0 => {}
-            OpCode::GetGlobal | OpCode::SetGlobal | OpCode::IncGlobalI => {
+            OpCode::GetGlobal | OpCode::SetGlobal => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
-            OpCode::MakeClosure | OpCode::GetUpval | OpCode::CloseUpvals => {
+            OpCode::MakeClosure
+            | OpCode::MakeClosureWide
+            | OpCode::GetUpval
+            | OpCode::CloseUpvals => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
             OpCode::SetUpval => {
                 update_max_reg(&mut max_reg, &mut used, b as usize, None, None);
             }
-            OpCode::ForLoopI | OpCode::ForLoopIInc => {
+            OpCode::MakeClosureRegisterWide => {
+                if let Some(operands) = bytecode.get(ip + 1) {
+                    update_max_reg(
+                        &mut max_reg,
+                        &mut used,
+                        (operands >> 16) as usize,
+                        None,
+                        None,
+                    );
+                }
+            }
+            OpCode::LoopWideLong => {
+                if let Some(operands) = bytecode.get(ip + 1) {
+                    let register = (operands >> 16) as usize;
+                    update_max_reg(
+                        &mut max_reg,
+                        &mut used,
+                        register,
+                        register.checked_add(1),
+                        register.checked_add(2),
+                    );
+                }
+            }
+            OpCode::ForLoopI
+            | OpCode::ForLoopIInc
+            | OpCode::ForLoopILong
+            | OpCode::ForLoopIIncLong => {
                 update_max_reg(
                     &mut max_reg,
                     &mut used,
@@ -157,13 +235,12 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
             OpCode::GetGlobalIdx | OpCode::SetGlobalIdx => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
-            OpCode::CallGlobal | OpCode::CallGlobalMono | OpCode::CallGlobalNative => {
+            OpCode::CallGlobal => {
                 let nargs = c as usize;
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
                 if nargs > 0 {
                     update_max_reg(&mut max_reg, &mut used, (a as usize) + nargs, None, None);
                 }
-                ip += 2; // skip cache words
             }
             OpCode::CallCached => {
                 let nargs = c as usize;
@@ -281,7 +358,7 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 );
             }
             // String for loop - uses consecutive regs [char_result(a), byte_offset(a+1), string_ptr(a+2)]
-            OpCode::StringForLoop => {
+            OpCode::StringForLoop | OpCode::StringForLoopLong => {
                 update_max_reg(
                     &mut max_reg,
                     &mut used,
@@ -291,7 +368,10 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 );
             }
             // Vec/Array for loop - uses consecutive regs [element(a), index(a+1), collection_ptr(a+2)]
-            OpCode::VecForLoop | OpCode::ArrayForLoop => {
+            OpCode::VecForLoop
+            | OpCode::ArrayForLoop
+            | OpCode::VecForLoopLong
+            | OpCode::ArrayForLoopLong => {
                 update_max_reg(
                     &mut max_reg,
                     &mut used,
@@ -300,9 +380,41 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(a as usize),
                 );
             }
-            _ => {}
+            OpCode::JumpLong => {}
+            OpCode::JumpIfLong | OpCode::JumpIfNotLong => {
+                update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
+            }
+            OpCode::Wide => {
+                let Some(first) = bytecode.get(ip + 1) else {
+                    break;
+                };
+                let Some(second) = bytecode.get(ip + 2) else {
+                    break;
+                };
+                let wide_a = (first >> 16) as usize;
+                let wide_b = (first & 0xffff) as usize;
+                let wide_c = (second >> 16) as usize;
+                match OpCode::from_u8(a).and_then(OpCode::wide_register_operands) {
+                    Some(WideRegisterOperands::A) => {
+                        update_max_reg(&mut max_reg, &mut used, wide_a, None, None)
+                    }
+                    Some(WideRegisterOperands::A2) => {
+                        update_max_reg(&mut max_reg, &mut used, wide_a, wide_a.checked_add(1), None)
+                    }
+                    Some(WideRegisterOperands::B) => {
+                        update_max_reg(&mut max_reg, &mut used, wide_b, None, None)
+                    }
+                    Some(WideRegisterOperands::Ab) => {
+                        update_max_reg(&mut max_reg, &mut used, wide_a, Some(wide_b), None)
+                    }
+                    Some(WideRegisterOperands::Abc) => {
+                        update_max_reg(&mut max_reg, &mut used, wide_a, Some(wide_b), Some(wide_c))
+                    }
+                    None => {}
+                }
+            }
         }
-        ip += 1;
+        ip += 1 + op.extension_words();
     }
 
     if used { max_reg + 1 } else { 0 }

@@ -40,8 +40,8 @@ impl Compiler {
             }
 
             self.register_pool[bound_reg as usize] = true;
-            if bound_reg >= self.next_register {
-                self.next_register = bound_reg + 1;
+            if u32::from(bound_reg) >= self.next_register {
+                self.next_register = u32::from(bound_reg) + 1;
             }
 
             self.compile_expr(right, bound_reg)?;
@@ -60,8 +60,7 @@ impl Compiler {
 
             self.compile_stmt(body)?;
 
-            let jump_dist = (self.current_offset() - loop_start + 1) as i16;
-            self.emit_b(OpCode::Jump, 0, -jump_dist, body.span);
+            self.emit_jump_back(loop_start, body.span);
 
             self.patch_jump(jump_to_end);
 
@@ -71,7 +70,7 @@ impl Compiler {
                 }
             }
 
-            self.register_pool[bound_reg as usize] = false;
+            self.free_register(bound_reg);
 
             return Ok(Some(()));
         }
@@ -99,8 +98,7 @@ impl Compiler {
 
         self.compile_stmt(body)?;
 
-        let jump_dist = (self.current_offset() - loop_start + 1) as i16;
-        self.emit_b(OpCode::Jump, 0, -jump_dist, body.span);
+        self.emit_jump_back(loop_start, body.span);
 
         self.patch_jump(jump_to_end);
 

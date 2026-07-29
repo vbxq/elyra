@@ -64,7 +64,7 @@ fn test_get_function_repeated_calls() {
     let mut vm = new_vm().unwrap();
     run_with_vm(
         &mut vm,
-        "fn lcg(state) { (state * 1103515245 + 12345) & 0x7FFFFFFF }",
+        "fn lcg(state) { (state * 11035 + 12345) & 0x7FFFFFFF }",
         "def",
     )
     .unwrap();

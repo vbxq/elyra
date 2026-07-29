@@ -65,7 +65,7 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
                 name: #name_static.as_ptr() as *const ::core::ffi::c_char,
                 kind: ::aelys_native::AelysExportKind::Function,
                 arity: #arity,
-                _padding: [0; 3],
+                _padding: [0; 2],
                 value: #wrapper_name as *const ::core::ffi::c_void,
             };
         });

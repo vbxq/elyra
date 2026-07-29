@@ -103,7 +103,7 @@ impl From<libloading::Error> for NativeError {
 #[derive(Debug, Clone, Copy)]
 pub struct NativeExport {
     pub kind: AelysExportKind,
-    pub arity: u8,
+    pub arity: u16,
     pub value: *const std::ffi::c_void,
 }
 

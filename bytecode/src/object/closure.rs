@@ -7,8 +7,8 @@ pub struct ClosureCache {
     pub bytecode_len: usize,
     pub constants_ptr: *const crate::value::Value,
     pub constants_len: usize,
-    pub arity: u8,
-    pub num_registers: u8,
+    pub arity: u16,
+    pub num_registers: u32,
 }
 
 /// A closure wraps a function with its captured upvalues.
@@ -20,8 +20,8 @@ pub struct AelysClosure {
     pub bytecode_len: usize,
     pub constants_ptr: *const crate::value::Value,
     pub constants_len: usize,
-    pub arity: u8,
-    pub num_registers: u8,
+    pub arity: u16,
+    pub num_registers: u32,
 }
 
 impl AelysClosure {

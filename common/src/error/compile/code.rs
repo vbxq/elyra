@@ -22,6 +22,8 @@ impl CompileErrorKind {
             Self::TooManyRegisters => 205,
             Self::TooManyArguments => 206,
             Self::TooManyUpvalues => 211,
+            Self::JumpOffsetTooLarge { .. } => 213,
+            Self::CompilationLimitExceeded(_) => 214,
             Self::BreakOutsideLoop => 207,
             Self::ContinueOutsideLoop => 208,
             Self::ReturnOutsideFunction => 212,

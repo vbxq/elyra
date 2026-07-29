@@ -1,9 +1,32 @@
 use super::{CallFrame, GcRef, ObjectKind, VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 impl VM {
     pub fn execute(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
+        match catch_unwind(AssertUnwindSafe(|| self.execute_inner(function))) {
+            Ok(result) => result,
+            Err(payload) => {
+                let message = panic_message(payload.as_ref());
+                let kind = if message.starts_with("integer ")
+                    && message.contains("outside the supported range")
+                {
+                    RuntimeErrorKind::IntegerOverflow
+                } else {
+                    RuntimeErrorKind::RuntimePanic { message }
+                };
+                let error = self.runtime_error(kind);
+                self.frames.clear();
+                self.open_upvalues.clear();
+                self.current_upvalues.clear();
+                Err(error)
+            }
+        }
+    }
+
+    fn execute_inner(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
         self.ensure_function_verified(function)?;
         let (
             bytecode_ptr,
@@ -17,7 +40,7 @@ impl VM {
             Some(obj) => match &obj.kind {
                 ObjectKind::Function(f) => {
                     let bc = &f.function.bytecode;
-                    let consts = &f.function.constants;
+                    let consts = &f.constants;
                     let layout = Arc::clone(&f.function.global_layout);
                     let gmap_id = self.global_mapping_id_for_layout(&layout);
                     (
@@ -55,6 +78,7 @@ impl VM {
                     self.globals_by_index[idx] = Value::null();
                 }
             }
+            self.bump_global_generations(needed_len);
         }
 
         self.current_global_mapping_id = global_mapping_id;
@@ -122,5 +146,15 @@ impl VM {
     pub(crate) fn verify_function_value(&self, func: &super::Function) -> Result<(), RuntimeError> {
         super::verifier::verify_function(func, &self.heap, 0)
             .map_err(|msg| self.runtime_error(RuntimeErrorKind::InvalidBytecode(msg)))
+    }
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else {
+        "non-string panic payload".to_string()
     }
 }

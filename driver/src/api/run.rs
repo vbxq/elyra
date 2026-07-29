@@ -57,16 +57,10 @@ pub fn run_with_config_and_opt(
     let mut optimizer = Optimizer::new(opt_level);
     let typed_program = optimizer.optimize(typed_program);
 
-    let (mut function, mut compile_heap, _globals) =
-        Compiler::new(None, src.clone()).compile_typed(&typed_program)?;
+    let (function, _globals) = Compiler::new(None, src.clone()).compile_typed(&typed_program)?;
 
     let mut vm =
         VM::with_config_and_args(src, config, program_args).map_err(AelysError::Runtime)?;
-    let remap = vm
-        .merge_heap(&mut compile_heap)
-        .map_err(AelysError::Runtime)?;
-    function.remap_constants(&remap);
-
     let func_ref = vm.alloc_function(function).map_err(AelysError::Runtime)?;
     Ok(vm.execute(func_ref)?)
 }

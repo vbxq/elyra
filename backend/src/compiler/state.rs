@@ -1,4 +1,4 @@
-use aelys_bytecode::{Function, Heap};
+use aelys_bytecode::Function;
 use aelys_sema::ResolvedType;
 use aelys_syntax::Source;
 use std::collections::{HashMap, HashSet};
@@ -10,7 +10,7 @@ pub struct Local {
     pub name: String,
     pub depth: usize,
     pub mutable: bool,
-    pub register: u8,
+    pub register: u16,
     pub is_captured: bool, // closure capture
     pub resolved_type: ResolvedType,
     pub is_freed: bool, // liveness freed this reg
@@ -19,7 +19,7 @@ pub struct Local {
 #[derive(Debug, Clone)]
 pub struct Upvalue {
     pub is_local: bool, // true = from enclosing locals, false = from enclosing upvalues
-    pub index: u8,      // reg if is_local, upvalue idx otherwise
+    pub index: u16,     // reg if is_local, upvalue idx otherwise
     pub name: String,
     pub mutable: bool,
 }
@@ -27,7 +27,7 @@ pub struct Upvalue {
 #[derive(Debug, Clone)]
 pub struct Scope {
     pub start: usize,
-    pub captured_registers: Vec<u8>, // for CloseUpvals
+    pub captured_registers: Vec<u16>, // for CloseUpvals
 }
 
 #[derive(Debug, Clone)]
@@ -50,17 +50,16 @@ pub struct Compiler {
     pub loop_stack: Vec<LoopContext>,
     pub loop_variables: Vec<String>, // can't assign inside loop body
     pub scope_depth: usize,
-    pub next_register: u8,
-    pub heap: Heap,
-    pub(crate) register_pool: [bool; 256],
+    pub next_register: u32,
+    pub(crate) register_pool: Box<[bool]>,
+    pub(crate) register_search_start: usize,
     pub globals: HashMap<String, bool>, // name -> mutable
-    pub global_indices: HashMap<String, u16>,
-    pub next_global_index: u16,
+    pub global_indices: HashMap<String, u32>,
+    pub next_global_index: u32,
     pub module_aliases: Rc<HashSet<String>>,
     pub known_globals: Rc<HashSet<String>>,
     pub known_native_globals: Rc<HashSet<String>>,
     pub symbol_origins: Rc<HashMap<String, String>>, // bare name -> qualified name
     pub accessed_globals: HashSet<String>,
-    pub next_call_site_slot: u16,
     pub function_depth: usize,
 }

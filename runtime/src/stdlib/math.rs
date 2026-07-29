@@ -215,7 +215,7 @@ fn native_pow(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     // try int pow for small exponents - better precision
     if let (Some(b), Some(e)) = (args[0].as_int(), args[1].as_int())
         && (0..=62).contains(&e)
-        && let Some(r) = b.checked_pow(e as u32)
+        && let Some(r) = b.checked_pow(u32::try_from(e).expect("exponent was range checked"))
     {
         return Ok(Value::int(r));
     }

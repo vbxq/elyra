@@ -8,7 +8,7 @@ impl<'a> AasmParser<'a> {
     pub(super) fn parse_instruction(
         &mut self,
         bytecode: &mut Vec<u32>,
-        label_refs: &mut Vec<(usize, String, bool)>,
+        label_refs: &mut Vec<(usize, String, bool, u8)>,
     ) -> Result<()> {
         let opcode_name = match self.advance()? {
             Token::Ident(name) => name,
@@ -20,7 +20,7 @@ impl<'a> AasmParser<'a> {
             }
         };
 
-        let mut extra_cache_words = 0usize;
+        let mut extension_words = Vec::new();
         let instr = match opcode_name.as_str() {
             "Move" => {
                 let a = self.parse_register()?;
@@ -39,6 +39,13 @@ impl<'a> AasmParser<'a> {
                 self.skip_comma()?;
                 let k = self.parse_i16()?;
                 encode_b(OpCode::LoadK, a, k)
+            }
+            "LoadKWide" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let index = self.parse_u32()?;
+                extension_words.push(index);
+                encode_a(OpCode::LoadKWide, a, 0, 0)
             }
             "LoadNull" => {
                 let a = self.parse_register()?;
@@ -93,7 +100,7 @@ impl<'a> AasmParser<'a> {
                 let (offset, label) = self.parse_jump_target()?;
                 let instr = encode_b(OpCode::Jump, 0, offset);
                 if let Some(lbl) = label {
-                    label_refs.push((bytecode.len(), lbl, false));
+                    label_refs.push((bytecode.len(), lbl, false, 0));
                 }
                 instr
             }
@@ -103,7 +110,7 @@ impl<'a> AasmParser<'a> {
                 let (offset, label) = self.parse_jump_target()?;
                 let instr = encode_b(OpCode::JumpIf, a, offset);
                 if let Some(lbl) = label {
-                    label_refs.push((bytecode.len(), lbl, true));
+                    label_refs.push((bytecode.len(), lbl, true, 0));
                 }
                 instr
             }
@@ -113,9 +120,134 @@ impl<'a> AasmParser<'a> {
                 let (offset, label) = self.parse_jump_target()?;
                 let instr = encode_b(OpCode::JumpIfNot, a, offset);
                 if let Some(lbl) = label {
-                    label_refs.push((bytecode.len(), lbl, true));
+                    label_refs.push((bytecode.len(), lbl, true, 0));
                 }
                 instr
+            }
+            "JumpLong" => {
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, false, 1));
+                }
+                encode_a(OpCode::JumpLong, 0, 0, 0)
+            }
+            "JumpIfLong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::JumpIfLong, a, 0, 0)
+            }
+            "JumpIfNotLong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::JumpIfNotLong, a, 0, 0)
+            }
+            "JumpIfWideLong" => {
+                let register = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from(register) << 16);
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(label) = label {
+                    label_refs.push((bytecode.len(), label, true, 2));
+                }
+                encode_a(OpCode::JumpIfWideLong, 0, 0, 0)
+            }
+            "JumpIfNotWideLong" => {
+                let register = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from(register) << 16);
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(label) = label {
+                    label_refs.push((bytecode.len(), label, true, 2));
+                }
+                encode_a(OpCode::JumpIfNotWideLong, 0, 0, 0)
+            }
+            "LoopWideLong" => {
+                let inner = match self.advance()? {
+                    Token::Ident(name) if name == "ForLoopILong" => OpCode::ForLoopILong,
+                    Token::Ident(name) if name == "ForLoopIIncLong" => OpCode::ForLoopIIncLong,
+                    Token::Ident(name) if name == "StringForLoopLong" => OpCode::StringForLoopLong,
+                    Token::Ident(name) if name == "VecForLoopLong" => OpCode::VecForLoopLong,
+                    Token::Ident(name) if name == "ArrayForLoopLong" => OpCode::ArrayForLoopLong,
+                    token => {
+                        return Err(AssemblerError::Expected {
+                            expected: "wide loop opcode".to_string(),
+                            got: format!("{token:?}"),
+                        });
+                    }
+                };
+                self.skip_comma()?;
+                let register = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from(register) << 16);
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(label) = label {
+                    label_refs.push((bytecode.len(), label, true, 2));
+                }
+                encode_a(OpCode::LoopWideLong, u8::from(inner), 0, 0)
+            }
+            "ForLoopILong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::ForLoopILong, a, 0, 0)
+            }
+            "ForLoopIIncLong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::ForLoopIIncLong, a, 0, 0)
+            }
+            "StringForLoopLong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::StringForLoopLong, a, 0, 0)
+            }
+            "VecForLoopLong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::VecForLoopLong, a, 0, 0)
+            }
+            "ArrayForLoopLong" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let (offset, label) = self.parse_long_jump_target()?;
+                extension_words.push(u32::from_ne_bytes(offset.to_ne_bytes()));
+                if let Some(lbl) = label {
+                    label_refs.push((bytecode.len(), lbl, true, 1));
+                }
+                encode_a(OpCode::ArrayForLoopLong, a, 0, 0)
             }
             "Call" => {
                 let dest = self.parse_register()?;
@@ -124,6 +256,49 @@ impl<'a> AasmParser<'a> {
                 self.skip_comma()?;
                 let nargs = self.parse_u8()?;
                 encode_a(OpCode::Call, dest, func, nargs)
+            }
+            "CallWide" => {
+                let dest = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let func = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let nargs = self.parse_u16()?;
+                extension_words.extend(encode_wide_operands(dest, func, nargs));
+                encode_a(OpCode::CallWide, 0, 0, 0)
+            }
+            "ArrayLit" => {
+                let dest = self.parse_register()?;
+                self.skip_comma()?;
+                let start = self.parse_register()?;
+                self.skip_comma()?;
+                let count = self.parse_u8()?;
+                encode_a(OpCode::ArrayLit, dest, start, count)
+            }
+            "ArrayLitWide" => {
+                let dest = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let start = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let count = self.parse_u16()?;
+                extension_words.extend(encode_wide_operands(dest, start, count));
+                encode_a(OpCode::ArrayLitWide, 0, 0, 0)
+            }
+            "VecLit" => {
+                let dest = self.parse_register()?;
+                self.skip_comma()?;
+                let start = self.parse_register()?;
+                self.skip_comma()?;
+                let count = self.parse_u8()?;
+                encode_a(OpCode::VecLit, dest, start, count)
+            }
+            "VecLitWide" => {
+                let dest = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let start = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let count = self.parse_u16()?;
+                extension_words.extend(encode_wide_operands(dest, start, count));
+                encode_a(OpCode::VecLitWide, 0, 0, 0)
             }
             "Return" => {
                 let a = self.parse_register()?;
@@ -154,13 +329,19 @@ impl<'a> AasmParser<'a> {
                 let a = self.parse_register()?;
                 encode_b(OpCode::SetGlobalIdx, a, idx)
             }
-            "IncGlobalI" => {
-                let a = self.parse_register()?;
+            "GetGlobalIdxWide" => {
+                let register = self.parse_register()?;
                 self.skip_comma()?;
-                let k = self.parse_u8()?;
+                let index = self.parse_u32()?;
+                extension_words.push(index);
+                encode_a(OpCode::GetGlobalIdxWide, register, 0, 0)
+            }
+            "SetGlobalIdxWide" => {
+                let index = self.parse_u32()?;
                 self.skip_comma()?;
-                let b = self.parse_u8()?;
-                encode_a(OpCode::IncGlobalI, a, k, b)
+                let register = self.parse_register()?;
+                extension_words.push(index);
+                encode_a(OpCode::SetGlobalIdxWide, register, 0, 0)
             }
             "MakeClosure" => {
                 let a = self.parse_register()?;
@@ -182,6 +363,25 @@ impl<'a> AasmParser<'a> {
                 self.skip_comma()?;
                 let upval_count = self.parse_u8()?;
                 encode_a(OpCode::MakeClosure, a, k, upval_count)
+            }
+            "MakeClosureWide" => {
+                let register = self.parse_register()?;
+                self.skip_comma()?;
+                let index = self.parse_u32()?;
+                self.skip_comma()?;
+                let upvalue_count = self.parse_u8()?;
+                extension_words.push(index);
+                encode_a(OpCode::MakeClosureWide, register, upvalue_count, 0)
+            }
+            "MakeClosureRegisterWide" => {
+                let register = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let index = self.parse_u32()?;
+                self.skip_comma()?;
+                let upvalue_count = self.parse_u16()?;
+                extension_words.push((u32::from(register) << 16) | u32::from(upvalue_count));
+                extension_words.push(index);
+                encode_a(OpCode::MakeClosureRegisterWide, 0, 0, 0)
             }
             "GetUpval" => {
                 let a = self.parse_register()?;
@@ -494,35 +694,12 @@ impl<'a> AasmParser<'a> {
                 encode_a(OpCode::CallCached, a, b, c)
             }
             "CallGlobal" => {
-                // Format: CallGlobal r<dest>, <global_idx>, <nargs>
-                // Followed by 2 cache words (emitted separately)
                 let dest = self.parse_register()?;
                 self.skip_comma()?;
                 let global_idx = self.parse_u8()?;
                 self.skip_comma()?;
                 let nargs = self.parse_u8()?;
-                extra_cache_words = 2;
                 encode_a(OpCode::CallGlobal, dest, global_idx, nargs)
-            }
-            "CallGlobalMono" => {
-                // Format: CallGlobalMono r<dest>, <global_idx>, <nargs>
-                let dest = self.parse_register()?;
-                self.skip_comma()?;
-                let global_idx = self.parse_u8()?;
-                self.skip_comma()?;
-                let nargs = self.parse_u8()?;
-                extra_cache_words = 2;
-                encode_a(OpCode::CallGlobalMono, dest, global_idx, nargs)
-            }
-            "CallGlobalNative" => {
-                // Format: CallGlobalNative r<dest>, <global_idx>, <nargs>
-                let dest = self.parse_register()?;
-                self.skip_comma()?;
-                let global_idx = self.parse_u8()?;
-                self.skip_comma()?;
-                let nargs = self.parse_u8()?;
-                extra_cache_words = 2;
-                encode_a(OpCode::CallGlobalNative, dest, global_idx, nargs)
             }
             "CallUpval" => {
                 // Format: CallUpval r<dest>, upval[N], <nargs>
@@ -626,13 +803,48 @@ impl<'a> AasmParser<'a> {
                 let c = self.parse_u8()?;
                 encode_a(OpCode::XorIImm, a, b, c)
             }
+            "Wide" => {
+                let inner = self.parse_u8()?;
+                self.skip_comma()?;
+                let a = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let b = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let c = self.parse_wide_register()?;
+                extension_words.extend(encode_wide_operands(a, b, c));
+                encode_a(OpCode::Wide, inner, 0, 0)
+            }
+            "MoveWide" => {
+                let dest = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let source = self.parse_wide_register()?;
+                extension_words.extend(encode_wide_operands(dest, source, 0));
+                encode_a(OpCode::Wide, u8::from(OpCode::Move), 0, 0)
+            }
+            "LoadNullWide" => {
+                let dest = self.parse_wide_register()?;
+                extension_words.extend(encode_wide_operands(dest, 0, 0));
+                encode_a(OpCode::Wide, u8::from(OpCode::LoadNull), 0, 0)
+            }
+            "AddWide" => {
+                let dest = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let left = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let right = self.parse_wide_register()?;
+                extension_words.extend(encode_wide_operands(dest, left, right));
+                encode_a(OpCode::Wide, u8::from(OpCode::Add), 0, 0)
+            }
+            "ReturnWide" => {
+                let register = self.parse_wide_register()?;
+                extension_words.extend(encode_wide_operands(register, 0, 0));
+                encode_a(OpCode::Wide, u8::from(OpCode::Return), 0, 0)
+            }
             _ => return Err(AssemblerError::UnknownOpcode(opcode_name)),
         };
 
         bytecode.push(instr);
-        if extra_cache_words > 0 {
-            bytecode.extend(std::iter::repeat_n(0, extra_cache_words));
-        }
+        bytecode.extend(extension_words);
         Ok(())
     }
 
@@ -655,7 +867,10 @@ impl<'a> AasmParser<'a> {
             Token::At => {
                 self.advance()?;
                 if let Token::Int(n) = self.advance()? {
-                    Ok((n as i16, None))
+                    let offset = i16::try_from(n).map_err(|_| {
+                        AssemblerError::InvalidNumber(format!("Jump offset is out of range: {n}"))
+                    })?;
+                    Ok((offset, None))
                 } else {
                     Err(AssemblerError::Expected {
                         expected: "offset".to_string(),
@@ -666,7 +881,50 @@ impl<'a> AasmParser<'a> {
             Token::Int(n) => {
                 let offset = *n;
                 self.advance()?;
-                Ok((offset as i16, None))
+                let offset = i16::try_from(offset).map_err(|_| {
+                    AssemblerError::InvalidNumber(format!("Jump offset is out of range: {offset}"))
+                })?;
+                Ok((offset, None))
+            }
+            _ => Err(AssemblerError::Expected {
+                expected: "label or offset".to_string(),
+                got: format!("{:?}", self.current),
+            }),
+        }
+    }
+
+    fn parse_long_jump_target(&mut self) -> Result<(i32, Option<String>)> {
+        match &self.current {
+            Token::LabelRef(name) => {
+                let label = name.clone();
+                self.advance()?;
+                Ok((0, Some(label)))
+            }
+            Token::At => {
+                self.advance()?;
+                if let Token::Int(n) = self.advance()? {
+                    let offset = i32::try_from(n).map_err(|_| {
+                        AssemblerError::InvalidNumber(format!(
+                            "Long jump offset is out of range: {n}"
+                        ))
+                    })?;
+                    Ok((offset, None))
+                } else {
+                    Err(AssemblerError::Expected {
+                        expected: "offset".to_string(),
+                        got: format!("{:?}", self.current),
+                    })
+                }
+            }
+            Token::Int(n) => {
+                let offset = *n;
+                self.advance()?;
+                let offset = i32::try_from(offset).map_err(|_| {
+                    AssemblerError::InvalidNumber(format!(
+                        "Long jump offset is out of range: {offset}"
+                    ))
+                })?;
+                Ok((offset, None))
             }
             _ => Err(AssemblerError::Expected {
                 expected: "label or offset".to_string(),
@@ -720,10 +978,15 @@ impl<'a> AasmParser<'a> {
 
 /// Encode a Format A instruction
 pub(super) fn encode_a(op: OpCode, a: u8, b: u8, c: u8) -> u32 {
-    ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+    (u32::from(u8::from(op)) << 24) | (u32::from(a) << 16) | (u32::from(b) << 8) | u32::from(c)
 }
 
 /// Encode a Format B instruction
 pub(super) fn encode_b(op: OpCode, a: u8, imm: i16) -> u32 {
-    ((op as u32) << 24) | ((a as u32) << 16) | ((imm as u16) as u32)
+    let immediate = u16::from_ne_bytes(imm.to_ne_bytes());
+    (u32::from(u8::from(op)) << 24) | (u32::from(a) << 16) | u32::from(immediate)
+}
+
+fn encode_wide_operands(a: u16, b: u16, c: u16) -> [u32; 2] {
+    [(u32::from(a) << 16) | u32::from(b), u32::from(c) << 16]
 }

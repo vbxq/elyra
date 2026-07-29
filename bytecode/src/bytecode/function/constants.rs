@@ -1,6 +1,6 @@
 use super::Function;
+use crate::bytecode::Constant;
 use crate::value::Value;
-use std::collections::HashMap;
 
 impl Function {
     /// Compute and set the global_layout_hash from global layout names
@@ -18,43 +18,36 @@ impl Function {
     }
 
     /// Add a constant and return its index
-    pub fn add_constant(&mut self, value: Value) -> u16 {
+    pub fn add_constant(&mut self, value: Value) -> u32 {
+        self.add_structural_constant(Constant::from(value))
+    }
+
+    pub fn add_structural_constant(&mut self, value: Constant) -> u32 {
         for (i, existing) in self.constants.iter().enumerate() {
             if *existing == value {
-                return i as u16;
+                return u32::try_from(i).expect("constant index exceeds AVBC v2 range");
             }
         }
 
-        let idx = self.constants.len() as u16;
+        let idx =
+            u32::try_from(self.constants.len()).expect("constant index exceeds AVBC v2 range");
         self.constants.push(value);
         idx
     }
 
     /// Add a nested function and return a special constant index for it
-    pub fn add_constant_function(&mut self, func: Function) -> u16 {
+    pub fn add_constant_function(&mut self, func: Function) -> u32 {
         let func_idx = self.nested_functions.len();
         self.nested_functions.push(func);
 
         // Use dedicated tag to avoid collision with heap pointers
-        let marker = Value::nested_fn_marker(func_idx);
+        let marker = Constant::NestedFunction(
+            u32::try_from(func_idx).expect("nested function index exceeds AVBC v2 range"),
+        );
 
-        let idx = self.constants.len() as u16;
+        let idx =
+            u32::try_from(self.constants.len()).expect("constant index exceeds AVBC v2 range");
         self.constants.push(marker);
         idx
-    }
-
-    /// Remap GcRef pointers in constants using the provided mapping.
-    pub fn remap_constants(&mut self, remap: &HashMap<usize, usize>) {
-        for constant in &mut self.constants {
-            if let Some(old_idx) = constant.as_ptr()
-                && let Some(&new_idx) = remap.get(&old_idx)
-            {
-                *constant = Value::ptr(new_idx);
-            }
-        }
-
-        for nested_func in &mut self.nested_functions {
-            nested_func.remap_constants(remap);
-        }
     }
 }

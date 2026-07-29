@@ -10,14 +10,13 @@ fn run_accepts_bytecode_with_magic() {
     let bytecode_path = dir.join("program.avbc");
 
     let mut function = aelys_bytecode::Function::new(None, 0);
-    function.constants.push(aelys_bytecode::Value::int(2));
+    function.constants.push(aelys_bytecode::Constant::Int(2));
     function.num_registers = 1;
     function.emit_b(aelys_bytecode::OpCode::LoadK, 0, 0, 1);
     function.emit_a(aelys_bytecode::OpCode::Return, 0, 0, 0, 1);
     function.finalize_bytecode();
 
-    let heap = aelys_bytecode::Heap::new();
-    let bytes = aelys_bytecode::asm::serialize(&function, &heap);
+    let bytes = aelys_bytecode::asm::serialize(&function).unwrap();
     std::fs::write(&bytecode_path, bytes).unwrap();
 
     let result = run_with_options(

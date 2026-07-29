@@ -5,7 +5,7 @@ use aelys_syntax::Span;
 use aelys_syntax::ast::{Stmt, StmtKind};
 
 impl Compiler {
-    pub fn compile_if_branch_for_return(&mut self, branch: &Stmt, dest: u8) -> Result<()> {
+    pub fn compile_if_branch_for_return(&mut self, branch: &Stmt, dest: u16) -> Result<()> {
         match &branch.kind {
             StmtKind::Block(stmts) => {
                 self.begin_scope();
@@ -62,7 +62,7 @@ impl Compiler {
     pub fn compile_typed_if_branch_for_return(
         &mut self,
         branch: &aelys_sema::TypedStmt,
-        dest: u8,
+        dest: u16,
     ) -> Result<()> {
         use aelys_sema::TypedStmtKind;
 

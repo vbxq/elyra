@@ -36,7 +36,7 @@ impl VM {
             match &obj.kind {
                 ObjectKind::Function(func) => {
                     let bc = &func.function.bytecode;
-                    let consts = &func.function.constants;
+                    let consts = &func.constants;
                     CallData::Function {
                         func_ref,
                         arity: func.arity(),
@@ -81,10 +81,10 @@ impl VM {
                 constants_len,
             } => {
                 self.ensure_function_verified(func_ref)?;
-                if arity != nargs {
+                if arity != u16::from(nargs) {
                     return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                         expected: arity,
-                        got: nargs,
+                        got: u16::from(nargs),
                     }));
                 }
 
@@ -108,10 +108,10 @@ impl VM {
             }
 
             CallData::Native { native } => {
-                if native.arity != nargs {
+                if native.arity != u16::from(nargs) {
                     return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                         expected: native.arity,
-                        got: nargs,
+                        got: u16::from(nargs),
                     }));
                 }
 
@@ -136,10 +136,10 @@ impl VM {
                 upvalues_len,
             } => {
                 self.ensure_function_verified(inner_func_ref)?;
-                if arity != nargs {
+                if arity != u16::from(nargs) {
                     return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                         expected: arity,
-                        got: nargs,
+                        got: u16::from(nargs),
                     }));
                 }
 
@@ -181,7 +181,7 @@ impl VM {
             return Ok(StepResult::Return(result));
         }
 
-        self.write_register(dest, result)?;
+        self.write_register_wide(dest, result)?;
         Ok(StepResult::Continue)
     }
 }

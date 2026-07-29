@@ -5,5 +5,5 @@ pub struct UpvalueDescriptor {
     /// If false, capture from enclosing function's upvalues.
     pub is_local: bool,
     /// The index: register number if is_local, upvalue index otherwise.
-    pub index: u8,
+    pub index: u16,
 }

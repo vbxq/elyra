@@ -12,14 +12,14 @@ pub struct CallFrame {
     pub function: GcRef,
     pub ip: usize,
     pub base: usize, // offset into shared register stack
-    pub return_dest: u8,
+    pub return_dest: u16,
     pub bytecode_ptr: *const u32, // cached for speed
     pub bytecode_len: usize,
     pub constants_ptr: *const Value,
     pub constants_len: usize,
     pub upvalues_ptr: *const GcRef, // null for non-closures
     pub upvalues_len: usize,
-    pub num_registers: u8,
+    pub num_registers: u32,
     pub global_mapping_id: usize,
 }
 
@@ -31,7 +31,7 @@ impl CallFrame {
         bytecode_len: usize,
         constants_ptr: *const Value,
         constants_len: usize,
-        num_registers: u8,
+        num_registers: u32,
     ) -> Self {
         Self {
             function,
@@ -51,21 +51,21 @@ impl CallFrame {
 
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    pub fn with_return_dest(
+    pub fn with_return_dest<D: Into<u16>>(
         function: GcRef,
         base: usize,
-        return_dest: u8,
+        return_dest: D,
         bytecode_ptr: *const u32,
         bytecode_len: usize,
         constants_ptr: *const Value,
         constants_len: usize,
-        num_registers: u8,
+        num_registers: u32,
     ) -> Self {
         Self {
             function,
             ip: 0,
             base,
-            return_dest,
+            return_dest: return_dest.into(),
             bytecode_ptr,
             bytecode_len,
             constants_ptr,
@@ -79,23 +79,23 @@ impl CallFrame {
 
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    pub fn with_upvalues(
+    pub fn with_upvalues<D: Into<u16>>(
         function: GcRef,
         base: usize,
-        return_dest: u8,
+        return_dest: D,
         bytecode_ptr: *const u32,
         bytecode_len: usize,
         constants_ptr: *const Value,
         constants_len: usize,
         upvalues_ptr: *const GcRef,
         upvalues_len: usize,
-        num_registers: u8,
+        num_registers: u32,
     ) -> Self {
         Self {
             function,
             ip: 0,
             base,
-            return_dest,
+            return_dest: return_dest.into(),
             bytecode_ptr,
             bytecode_len,
             constants_ptr,
@@ -107,7 +107,7 @@ impl CallFrame {
         }
     }
 
-    pub fn return_dest(&self) -> u8 {
+    pub fn return_dest(&self) -> u16 {
         self.return_dest
     }
     pub fn function(&self) -> GcRef {

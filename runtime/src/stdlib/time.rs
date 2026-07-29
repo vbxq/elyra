@@ -74,7 +74,7 @@ fn native_now_us(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    Ok(Value::int(duration.as_micros() as i64))
+    Ok(Value::float(duration.as_micros() as f64))
 }
 
 /// now_ns() - Get current timestamp in nanoseconds since Unix epoch.
@@ -82,8 +82,7 @@ fn native_now_ns(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    // Note: This may overflow for dates far in the future
-    Ok(Value::int(duration.as_nanos() as i64))
+    Ok(Value::float(duration.as_nanos() as f64))
 }
 
 /// timer() - Create a new timer.
@@ -179,7 +178,9 @@ fn get_local_time() -> (i32, u32, u32, u32, u32, u32, u32, u32) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs() as i64;
+        .as_secs()
+        .try_into()
+        .unwrap_or(i64::MAX);
 
     // Simple UTC->local conversion is complex, so we'll use UTC for now
     // A real implementation would use the system's local timezone
@@ -188,15 +189,16 @@ fn get_local_time() -> (i32, u32, u32, u32, u32, u32, u32, u32) {
     let days = secs / 86400;
     let time_of_day = secs % 86400;
 
-    let hour = (time_of_day / 3600) as u32;
-    let minute = ((time_of_day % 3600) / 60) as u32;
-    let second = (time_of_day % 60) as u32;
+    let hour = u32::try_from(time_of_day / 3600).expect("hour is in range");
+    let minute = u32::try_from((time_of_day % 3600) / 60).expect("minute is in range");
+    let second = u32::try_from(time_of_day % 60).expect("second is in range");
 
     // Calculate year, month, day from days since epoch (1970-01-01)
-    let (year, month, day, yearday) = days_to_ymd(days as i32);
+    let bounded_days = i32::try_from(days).unwrap_or(if days < 0 { i32::MIN } else { i32::MAX });
+    let (year, month, day, yearday) = days_to_ymd(bounded_days);
 
     // Calculate weekday (1970-01-01 was Thursday = 4)
-    let weekday = ((days % 7 + 4) % 7) as u32;
+    let weekday = u32::try_from((days % 7 + 4) % 7).expect("weekday is in range");
 
     (year, month, day, hour, minute, second, weekday, yearday)
 }
@@ -206,9 +208,9 @@ fn days_to_ymd(mut days: i32) -> (i32, u32, u32, u32) {
     // Algorithm from Howard Hinnant
     days += 719468;
     let era = if days >= 0 { days } else { days - 146096 } / 146097;
-    let doe = (days - era * 146097) as u32;
+    let doe = u32::try_from(days - era * 146097).expect("era day is in range");
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i32 + era * 400;
+    let y = i32::try_from(yoe).expect("era year is in range") + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;

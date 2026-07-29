@@ -1,73 +1,47 @@
-use std::cell::UnsafeCell;
 use std::sync::Arc;
 
-// Bytecode buffer with interior mutability for inline cache patching.
-// Arc for shared ownership, UnsafeCell for patching without &mut.
-// SAFETY: VM is single-threaded, patching happens during execution only.
-// Would need AtomicU32 if we ever go multi-threaded
-#[derive(Clone)]
-pub struct BytecodeBuffer(Arc<UnsafeCell<Box<[u32]>>>);
-
-impl std::fmt::Debug for BytecodeBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("BytecodeBuffer")
-            .field(&format!("[{} words]", self.len()))
-            .finish()
-    }
-}
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BytecodeBuffer(Arc<[u32]>);
 
 impl BytecodeBuffer {
-    #[allow(clippy::arc_with_non_send_sync)] // Intentional: VM is single-threaded, see module comment
     pub fn new(data: Box<[u32]>) -> Self {
-        Self(Arc::new(UnsafeCell::new(data)))
+        Self(Arc::from(data))
     }
+
     pub fn empty() -> Self {
-        Self::new(Box::new([]))
+        Self::default()
     }
-    pub fn from_vec(v: Vec<u32>) -> Self {
-        Self::new(v.into_boxed_slice())
+
+    pub fn from_vec(data: Vec<u32>) -> Self {
+        Self(Arc::from(data))
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        unsafe { (&*self.0.get()).len() }
+        self.0.len()
     }
 
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0.is_empty()
     }
 
-    // raw pointers for dispatch loop - valid as long as buffer lives
     #[inline(always)]
     pub fn as_ptr(&self) -> *const u32 {
-        unsafe { (&*self.0.get()).as_ptr() }
+        self.0.as_ptr()
     }
 
     #[inline(always)]
-    pub fn as_mut_ptr(&self) -> *mut u32 {
-        unsafe { (&mut *self.0.get()).as_mut_ptr() }
-    }
-
-    #[inline(always)]
-    pub fn read(&self, off: usize) -> u32 {
-        unsafe { *(&*self.0.get()).get_unchecked(off) }
-    }
-
-    // for inline cache patching
-    #[inline(always)]
-    pub fn patch(&self, off: usize, val: u32) {
-        unsafe {
-            *(&mut *self.0.get()).get_unchecked_mut(off) = val;
-        }
+    pub fn read(&self, offset: usize) -> u32 {
+        self.0[offset]
     }
 
     pub fn as_slice(&self) -> &[u32] {
-        unsafe { &*self.0.get() }
+        &self.0
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &u32> {
-        self.as_slice().iter()
+        self.0.iter()
     }
 }
 
@@ -75,27 +49,18 @@ impl std::ops::Index<usize> for BytecodeBuffer {
     type Output = u32;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.as_slice()[index]
-    }
-}
-
-impl PartialEq for BytecodeBuffer {
-    fn eq(&self, other: &Self) -> bool {
-        self.as_slice() == other.as_slice()
+        &self.0[index]
     }
 }
 
 impl From<Vec<u32>> for BytecodeBuffer {
-    fn from(v: Vec<u32>) -> Self {
-        Self::from_vec(v)
+    fn from(data: Vec<u32>) -> Self {
+        Self::from_vec(data)
     }
 }
 
 impl From<Arc<[u32]>> for BytecodeBuffer {
-    fn from(arc: Arc<[u32]>) -> Self {
-        Self::new(arc.to_vec().into_boxed_slice())
+    fn from(data: Arc<[u32]>) -> Self {
+        Self(data)
     }
 }
-
-// NOTE: intentionally NOT Send/Sync due to UnsafeCell patching.
-// Use AtomicU32 if multi-threading is ever needed.

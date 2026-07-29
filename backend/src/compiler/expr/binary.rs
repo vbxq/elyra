@@ -12,7 +12,7 @@ impl Compiler {
         left: &Expr,
         op: BinaryOp,
         right: &Expr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         // Right operand is small constant: use immediate instructions
@@ -23,31 +23,73 @@ impl Compiler {
         {
             match op {
                 BinaryOp::Add => {
-                    self.emit_a(OpCode::AddI, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::AddI,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::Sub => {
-                    self.emit_a(OpCode::SubI, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::SubI,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::Shl => {
-                    self.emit_a(OpCode::ShlIImm, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::ShlIImm,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::Shr => {
-                    self.emit_a(OpCode::ShrIImm, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::ShrIImm,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::BitAnd => {
-                    self.emit_a(OpCode::AndIImm, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::AndIImm,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::BitOr => {
-                    self.emit_a(OpCode::OrIImm, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::OrIImm,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::BitXor => {
-                    self.emit_a(OpCode::XorIImm, dest, left_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::XorIImm,
+                        dest,
+                        left_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 _ => {}
@@ -61,7 +103,13 @@ impl Compiler {
             && op == BinaryOp::Add
             && let Some(right_reg) = self.get_local_register(right)
         {
-            self.emit_a(OpCode::AddI, dest, right_reg, *n as u8, span);
+            self.emit_a(
+                OpCode::AddI,
+                dest,
+                right_reg,
+                u8::try_from(*n).expect("immediate was range checked"),
+                span,
+            );
             return Ok(());
         }
 
@@ -73,15 +121,33 @@ impl Compiler {
         {
             match op {
                 BinaryOp::BitAnd => {
-                    self.emit_a(OpCode::AndIImm, dest, right_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::AndIImm,
+                        dest,
+                        right_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::BitOr => {
-                    self.emit_a(OpCode::OrIImm, dest, right_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::OrIImm,
+                        dest,
+                        right_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 BinaryOp::BitXor => {
-                    self.emit_a(OpCode::XorIImm, dest, right_reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::XorIImm,
+                        dest,
+                        right_reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     return Ok(());
                 }
                 _ => {}

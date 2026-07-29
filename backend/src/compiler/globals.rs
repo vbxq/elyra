@@ -3,14 +3,14 @@ use super::Compiler;
 impl Compiler {
     /// Get or create global index, translating imported names to qualified names.
     /// Use for function calls to direct imports.
-    pub fn get_or_create_global_index(&mut self, name: &str) -> u16 {
+    pub fn get_or_create_global_index(&mut self, name: &str) -> u32 {
         let actual_name = self.resolve_global_name(name).to_string();
         self.get_or_create_global_index_raw(&actual_name)
     }
 
     /// Get or create global index without name translation.
     /// Use for variable declarations and assignments.
-    pub fn get_or_create_global_index_raw(&mut self, name: &str) -> u16 {
+    pub fn get_or_create_global_index_raw(&mut self, name: &str) -> u32 {
         if let Some(&idx) = self.global_indices.get(name) {
             idx
         } else {

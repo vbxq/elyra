@@ -11,7 +11,7 @@ impl Compiler {
         &mut self,
         callee: &Expr,
         args: &[Expr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<bool> {
         if let ExprKind::Identifier(name) = &callee.kind
@@ -48,11 +48,13 @@ impl Compiler {
             }
 
             for (i, arg) in args.iter().enumerate() {
-                let arg_reg = arg_start + i as u8;
+                let arg_reg =
+                    arg_start + u16::try_from(i).expect("register offset was range checked");
                 self.compile_expr(arg, arg_reg)?;
             }
 
-            self.emit_call_global_cached(dest, global_idx, args.len() as u8, name, span);
+            let nargs = self.checked_call_arity(args.len(), span)?;
+            self.emit_call_global_cached(dest, global_idx, nargs, name, span);
             self.release_arg_registers(arg_start, args.len());
             return Ok(true);
         }

@@ -5,7 +5,7 @@ use aelys_common::{Result, Warning};
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::{OptimizationLevel, Optimizer};
-use aelys_runtime::{VM, Value, VmConfig};
+use aelys_runtime::{ExecutionControl, VM, Value, VmConfig};
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
 
@@ -44,6 +44,22 @@ pub fn run_file_full(
     program_args: Vec<String>,
     opt_level: OptimizationLevel,
 ) -> Result<RunResult> {
+    run_file_full_with_control(
+        file_path,
+        config,
+        program_args,
+        opt_level,
+        ExecutionControl::default(),
+    )
+}
+
+pub fn run_file_full_with_control(
+    file_path: &std::path::Path,
+    config: VmConfig,
+    program_args: Vec<String>,
+    opt_level: OptimizationLevel,
+    execution_control: ExecutionControl,
+) -> Result<RunResult> {
     let content = std::fs::read_to_string(file_path).map_err(|_| {
         AelysError::Compile(CompileError::new(
             CompileErrorKind::ModuleNotFound {
@@ -63,6 +79,7 @@ pub fn run_file_full(
 
     let mut vm =
         VM::with_config_and_args(src.clone(), config, program_args).map_err(AelysError::Runtime)?;
+    vm.configure_execution(execution_control);
 
     if let Ok(abs_path) = file_path.canonicalize() {
         vm.set_script_path(abs_path.display().to_string());
@@ -148,7 +165,7 @@ pub fn run_file_full(
             .or_insert_with(|| v.clone());
     }
 
-    let mut compiler = Compiler::with_modules(
+    let compiler = Compiler::with_modules(
         None,
         src.clone(),
         compiler_module_aliases,
@@ -156,13 +173,7 @@ pub fn run_file_full(
         compiler_native_globals,
         compiler_symbol_origins,
     );
-    compiler.next_call_site_slot = imports.next_call_site_slot;
-    let (mut function, mut compile_heap, _globals) = compiler.compile_typed(&typed_program)?;
-
-    let remap = vm
-        .merge_heap(&mut compile_heap)
-        .map_err(AelysError::Runtime)?;
-    function.remap_constants(&remap);
+    let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
     let func_ref = vm.alloc_function(function).map_err(AelysError::Runtime)?;
     let value = vm.execute(func_ref)?;

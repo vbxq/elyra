@@ -13,3 +13,6 @@ libc = "0.2"
 
 [lib]
 doctest = false
+
+[lints]
+workspace = true

@@ -135,7 +135,6 @@ pub fn load_modules_for_program(
         known_globals,
         known_native_globals,
         symbol_origins,
-        next_call_site_slot: loader.next_call_site_slot,
     })
 }
 
@@ -267,7 +266,6 @@ pub fn load_modules_with_loader(
             known_globals,
             known_native_globals,
             symbol_origins,
-            next_call_site_slot: loader.next_call_site_slot,
         },
         loader,
     ))

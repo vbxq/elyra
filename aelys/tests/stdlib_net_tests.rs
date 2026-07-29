@@ -49,7 +49,10 @@ needs std.net
 net.set_timeout(777, 1000)
 "#;
     let result = run_aelys_result(code);
-    assert!(result.is_ok(), "set_timeout invalid handle should not panic");
+    assert!(
+        result.is_ok(),
+        "set_timeout invalid handle should not panic"
+    );
 }
 
 #[test]

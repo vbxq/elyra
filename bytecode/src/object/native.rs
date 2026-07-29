@@ -2,11 +2,11 @@
 #[derive(Clone, Debug)]
 pub struct NativeFunction {
     pub name: String,
-    pub arity: u8,
+    pub arity: u16,
 }
 
 impl NativeFunction {
-    pub fn new(name: impl Into<String>, arity: u8) -> Self {
+    pub fn new(name: impl Into<String>, arity: u16) -> Self {
         Self {
             name: name.into(),
             arity,

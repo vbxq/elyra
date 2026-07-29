@@ -11,9 +11,12 @@ impl Compiler {
         &mut self,
         callee: &Expr,
         args: &[Expr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<bool> {
+        if u8::try_from(dest).is_err() || u8::try_from(args.len()).is_err() {
+            return Ok(false);
+        }
         if let ExprKind::Identifier(name) = &callee.kind {
             // Not a local? Check if it's captured from an enclosing scope
             if self.resolve_variable(name).is_none()
@@ -33,11 +36,13 @@ impl Compiler {
                 }
 
                 for (i, arg) in args.iter().enumerate() {
-                    let arg_reg = arg_start + i as u8;
+                    let arg_reg =
+                        arg_start + u16::try_from(i).expect("register offset was range checked");
                     self.compile_expr(arg, arg_reg)?;
                 }
 
-                self.emit_a(OpCode::CallUpval, dest, upval_idx, args.len() as u8, span);
+                let nargs = self.checked_call_arity(args.len(), span)?;
+                self.emit_a(OpCode::CallUpval, dest, upval_idx, nargs, span);
                 self.release_arg_registers(arg_start, args.len());
                 return Ok(true);
             }

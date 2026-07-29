@@ -5,7 +5,7 @@ impl Compiler {
         &mut self,
         name: String,
         mutable: bool,
-        register: u8,
+        register: u16,
         resolved_type: aelys_sema::ResolvedType,
     ) {
         self.locals.push(Local {

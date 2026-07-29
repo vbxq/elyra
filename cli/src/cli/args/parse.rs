@@ -81,6 +81,15 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            if let Some((vm_arg, consumed_next)) = self.parse_execution_limit(token_str)? {
+                self.vm_args.push(vm_arg);
+                self.advance();
+                if consumed_next {
+                    self.advance();
+                }
+                continue;
+            }
+
             if let Some(consumed_next) = self.parse_output_option(token_str)? {
                 self.advance();
                 if consumed_next {
@@ -95,7 +104,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-if let Some((wflag, consumed)) = self.parse_warning_flag(token_str)? {
+            if let Some((wflag, consumed)) = self.parse_warning_flag(token_str)? {
                 self.warning_flags.push(wflag);
                 self.advance();
                 if consumed {
@@ -293,6 +302,25 @@ if let Some((wflag, consumed)) = self.parse_warning_flag(token_str)? {
             && next.starts_with('.')
         {
             return Ok(Some((format!("-ae{}", next), true)));
+        }
+        Ok(None)
+    }
+
+    fn parse_execution_limit(&self, token: &str) -> Result<Option<(String, bool)>, String> {
+        for flag in ["max-instructions", "timeout-ms"] {
+            let long = format!("--{flag}");
+            if token == long {
+                let value = self
+                    .peek_next()
+                    .ok_or_else(|| format!("missing value for {long}"))?;
+                return Ok(Some((format!("-ae.{flag}={value}"), true)));
+            }
+            if let Some(value) = token.strip_prefix(&format!("{long}=")) {
+                if value.is_empty() {
+                    return Err(format!("missing value for {long}"));
+                }
+                return Ok(Some((format!("-ae.{flag}={value}"), false)));
+            }
         }
         Ok(None)
     }

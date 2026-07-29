@@ -8,3 +8,6 @@ thiserror = "2.0.17"
 
 [lib]
 doctest = false
+
+[lints]
+workspace = true

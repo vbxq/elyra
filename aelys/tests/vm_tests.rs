@@ -139,10 +139,6 @@ fn test_global_variables() {
     assert_eq!(vm.get_global("x"), Some(Value::bool(true)));
 }
 
-
-
-
-
 #[test]
 fn test_collect_marks_registers() {
     let source = make_test_source();
@@ -587,8 +583,7 @@ fn test_execute_global_variables() {
     func.num_registers = 2;
 
     // Create a string constant for the variable name
-    let name_str = vm.heap_mut().intern_string("myvar");
-    let k = func.add_constant(Value::ptr(name_str.index()));
+    let k = func.add_structural_constant(aelys_bytecode::Constant::String("myvar".to_string()));
 
     func.emit_b(OpCode::LoadI, 0, 123, 1); // r0 = 123
     func.emit_a(OpCode::SetGlobal, 0, k as u8, 0, 1); // myvar = r0
@@ -621,10 +616,10 @@ fn test_execute_native_function_call() {
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 5;
 
-    // Add the native function as a constant first
-    let k = func.add_constant(Value::ptr(native_ref.index()));
+    vm.set_global("add".to_string(), Value::ptr(native_ref.index()));
+    let k = func.add_structural_constant(aelys_bytecode::Constant::String("add".to_string()));
 
-    func.emit_a(OpCode::LoadK, 0, k as u8, 0, 1); // r0 = native function
+    func.emit_a(OpCode::GetGlobal, 0, k as u8, 0, 1); // r0 = native function
     func.emit_b(OpCode::LoadI, 1, 10, 1); // r1 = 10 (arg1)
     func.emit_b(OpCode::LoadI, 2, 20, 1); // r2 = 20 (arg2)
     func.emit_c(OpCode::Call, 3, 0, 2, 1); // r3 = r0(r1, r2)
@@ -726,8 +721,6 @@ fn test_callglobal_native_function() {
     // CallGlobal r0, 0 (global_idx=0=type), 1 (nargs=1)
     // Arguments start at r0+1=r1
     func.emit_a(OpCode::CallGlobal, 0, 0, 1, 1);
-    func.push_raw(0); // cache_word_1
-    func.push_raw(0); // cache_word_2 with slot_id=0
     func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
     func.finalize_bytecode();
@@ -743,6 +736,43 @@ fn test_callglobal_native_function() {
         "type() should return a string (ptr), got {:?}",
         value
     );
+}
+
+#[test]
+fn test_callglobal_native_target_mutation_survives_gc() {
+    fn first(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        Ok(Value::int(1))
+    }
+
+    fn second(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        Ok(Value::int(2))
+    }
+
+    let source = make_test_source();
+    let mut vm = VM::new(source).unwrap();
+    let first_ref = vm.alloc_native("target", 0, first).unwrap();
+    vm.set_global("target".to_string(), Value::ptr(first_ref.index()));
+    vm.set_global_by_index(0, Value::ptr(first_ref.index()));
+
+    let mut main = Function::new(Some("main".to_string()), 0);
+    main.num_registers = 1;
+    main.global_layout = GlobalLayout::new(vec!["target".to_string()]);
+    main.emit_a(OpCode::CallGlobal, 0, 0, 0, 1);
+    main.push_raw(0);
+    main.push_raw(0);
+    main.emit_a(OpCode::Return, 0, 0, 0, 1);
+    main.finalize_bytecode();
+    let main_ref = vm.alloc_function(main).unwrap();
+    vm.set_global("main".to_string(), Value::ptr(main_ref.index()));
+
+    assert_eq!(vm.execute(main_ref).unwrap().as_int(), Some(1));
+
+    let second_ref = vm.alloc_native("target", 0, second).unwrap();
+    vm.set_global("target".to_string(), Value::ptr(second_ref.index()));
+    vm.set_global_by_index(0, Value::ptr(second_ref.index()));
+    vm.collect();
+
+    assert_eq!(vm.execute(main_ref).unwrap().as_int(), Some(2));
 }
 
 #[test]
@@ -775,8 +805,6 @@ fn test_callglobal_user_defined_function() {
     main_func.emit_b(OpCode::LoadI, 2, 20, 1); // r2 = 20
     // CallGlobal r0, 0 (global_idx=0=add), 2 (nargs=2)
     main_func.emit_a(OpCode::CallGlobal, 0, 0, 2, 1);
-    main_func.push_raw(0); // cache_word_1
-    main_func.push_raw(0); // cache_word_2 with slot_id=0
     main_func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
     main_func.finalize_bytecode();
@@ -835,8 +863,6 @@ fn test_callglobal_recursive_function() {
     // For CallGlobal with dest=3, args must be at r4
     fact_func.emit_a(OpCode::SubI, 4, 0, 1, 1); // r4 = n - 1
     fact_func.emit_a(OpCode::CallGlobal, 3, 0, 1, 1); // r3 = fact(r4) where args at r3+1=r4
-    fact_func.push_raw(0); // cache_word_1
-    fact_func.push_raw(0); // cache_word_2 with slot_id=0
     fact_func.emit_a(OpCode::Mul, 5, 0, 3, 1); // r5 = n * r3
     fact_func.emit_a(OpCode::Return, 5, 0, 0, 1); // return r5
 
@@ -852,8 +878,6 @@ fn test_callglobal_recursive_function() {
 
     main_func.emit_b(OpCode::LoadI, 1, 5, 1); // r1 = 5 (argument at dest+1=r0+1=r1)
     main_func.emit_a(OpCode::CallGlobal, 0, 0, 1, 1); // r0 = fact(5)
-    main_func.push_raw(0); // cache_word_1
-    main_func.push_raw(1); // cache_word_2 with slot_id=1 (different from fact's slot)
     main_func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
     main_func.finalize_bytecode();
@@ -889,8 +913,6 @@ fn test_callglobal_arity_mismatch() {
 
     main_func.emit_b(OpCode::LoadI, 1, 10, 1); // Only provide 1 arg
     main_func.emit_a(OpCode::CallGlobal, 0, 0, 1, 1); // Call with nargs=1, but add expects 2
-    main_func.push_raw(0); // cache_word_1
-    main_func.push_raw(0); // cache_word_2 with slot_id=0
     main_func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
     main_func.finalize_bytecode();
@@ -934,8 +956,6 @@ fn test_callglobal_cache_invalidation_on_gc() {
     main_func.global_layout = GlobalLayout::new(vec!["test".to_string()]);
 
     main_func.emit_a(OpCode::CallGlobal, 0, 0, 0, 1);
-    main_func.push_raw(0); // cache_word_1
-    main_func.push_raw(0); // cache_word_2 with slot_id=0
     main_func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
     main_func.finalize_bytecode();
@@ -955,8 +975,6 @@ fn test_callglobal_cache_invalidation_on_gc() {
     main_func2.num_registers = 2;
     main_func2.global_layout = GlobalLayout::new(vec!["test".to_string()]);
     main_func2.emit_a(OpCode::CallGlobal, 0, 0, 0, 1);
-    main_func2.push_raw(0); // cache_word_1
-    main_func2.push_raw(1); // cache_word_2 with slot_id=1
     main_func2.emit_a(OpCode::Return, 0, 0, 0, 1);
     main_func2.finalize_bytecode();
     let main_func_ref2 = vm.alloc_function(main_func2).unwrap();

@@ -6,7 +6,7 @@ impl Value {
             return None;
         }
         let payload = self.0 & PAYLOAD_MASK;
-        Some(((payload << 16) as i64) >> 16) // sign-extend from 48 bits
+        Some(i64::from_ne_bytes((payload << 16).to_ne_bytes()) >> 16) // sign-extend from 48 bits
     }
 
     pub fn as_float(&self) -> Option<f64> {
@@ -18,33 +18,28 @@ impl Value {
     }
 
     pub fn as_ptr(&self) -> Option<usize> {
-        self.is_ptr().then_some((self.0 & PAYLOAD_MASK) as usize)
+        self.is_ptr().then(|| {
+            usize::try_from(self.0 & PAYLOAD_MASK).expect("pointer payload fits target usize")
+        })
     }
 
     /// Check if this is a nested function marker and return the index if so.
     pub fn as_nested_fn_marker(&self) -> Option<usize> {
         if (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_NESTED_FN) {
-            Some((self.0 & PAYLOAD_MASK) as usize)
+            Some(
+                usize::try_from(self.0 & PAYLOAD_MASK)
+                    .expect("nested function payload fits target usize"),
+            )
         } else {
             None
         }
-    }
-
-    #[inline(always)]
-    pub fn raw_bits(&self) -> u64 {
-        self.0
-    }
-
-    #[inline(always)]
-    pub fn from_raw(bits: u64) -> Self {
-        Self(bits)
     }
 
     // unchecked variants for type-specialized opcodes (hot paths)
     #[inline(always)]
     pub fn as_int_unchecked(&self) -> i64 {
         debug_assert!(self.is_int(), "type confusion: not an int");
-        ((self.0 & PAYLOAD_MASK) << 16) as i64 >> 16
+        i64::from_ne_bytes(((self.0 & PAYLOAD_MASK) << 16).to_ne_bytes()) >> 16
     }
 
     #[inline(always)]

@@ -1,52 +1,96 @@
-// mark-and-sweep, scans only num_registers per frame
-// TODO: incremental/generational GC would be nice for larger heaps
-
 use super::{GcRef, VM};
+use aelys_bytecode::MajorSliceResult;
+use std::time::{Duration, Instant};
 
 impl VM {
+    const GC_SLICE_BUDGET: Duration = Duration::from_micros(500);
+
     pub fn maybe_collect(&mut self) {
-        if self.heap.should_collect() {
-            self.collect();
+        if self.heap.major_collection_active() {
+            self.run_major_slice();
+            return;
+        }
+        if !self.heap.should_collect() {
+            return;
+        }
+        if self.heap.minor_collection_count() % 8 == 7 {
+            let roots = self.root_refs();
+            self.heap.begin_major_collection(roots);
+            self.run_major_slice();
+        } else {
+            self.collect_minor();
         }
     }
 
     pub fn collect(&mut self) {
+        let roots = self.root_refs();
+        if !self.heap.begin_major_collection(roots.clone()) {
+            self.heap.add_major_roots(roots);
+        }
+        while self.heap.major_collection_active() {
+            self.run_major_slice();
+        }
+    }
+
+    pub fn collect_minor(&mut self) {
+        if self.heap.major_collection_active() {
+            self.collect();
+            return;
+        }
+        let started = Instant::now();
+        self.heap.mark_young(self.root_refs());
+        self.heap.sweep_young();
+        self.globals_by_index_cache.clear();
+        self.record_gc_slice(started);
+        self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
+        self.execution_stats.minor_collections =
+            self.execution_stats.minor_collections.saturating_add(1);
+    }
+
+    fn run_major_slice(&mut self) {
+        let started = Instant::now();
+        let result = self.heap.major_collection_slice(Self::GC_SLICE_BUDGET);
+        self.record_gc_slice(started);
+        if matches!(result, MajorSliceResult::Complete { .. }) {
+            self.globals_by_index_cache.clear();
+            self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
+            self.execution_stats.major_collections =
+                self.execution_stats.major_collections.saturating_add(1);
+        }
+    }
+
+    fn root_refs(&self) -> Vec<GcRef> {
+        let mut roots = Vec::new();
         for frame in &self.frames {
             let base = frame.base;
-            let count = frame.num_registers as usize;
-            for i in 0..count {
-                let idx = base + i;
-                if idx < self.registers.len()
-                    && let Some(gc_ref) = self.registers[idx].as_ptr()
-                {
-                    self.heap.mark(GcRef::new(gc_ref));
-                }
-            }
-            self.heap.mark(frame.function());
+            let count = usize::try_from(frame.num_registers).unwrap_or(usize::MAX);
+            roots.extend(
+                (0..count)
+                    .filter_map(|offset| self.registers.get(base + offset))
+                    .filter_map(|value| value.as_ptr().map(GcRef::new)),
+            );
+            roots.push(frame.function());
         }
+        roots.extend(
+            self.globals
+                .values()
+                .filter_map(|value| value.as_ptr().map(GcRef::new)),
+        );
+        roots.extend(
+            self.globals_by_index
+                .iter()
+                .filter_map(|value| value.as_ptr().map(GcRef::new)),
+        );
+        roots.extend(self.open_upvalues.iter().copied());
+        roots.extend(self.current_upvalues.iter().copied());
+        roots
+    }
 
-        for value in self.globals.values() {
-            if let Some(gc_ref) = value.as_ptr() {
-                self.heap.mark(GcRef::new(gc_ref));
-            }
-        }
-
-        for value in &self.globals_by_index {
-            if let Some(gc_ref) = value.as_ptr() {
-                self.heap.mark(GcRef::new(gc_ref));
-            }
-        }
-
-        for &upval_ref in &self.open_upvalues {
-            self.heap.mark(upval_ref);
-        }
-        for &upval_ref in &self.current_upvalues {
-            self.heap.mark(upval_ref);
-        }
-
-        self.heap.sweep();
-        // call_site_cache is not cleared here; it's invalidated on global mutation
-        // (set_global/set_global_by_index), which prevents use-after-free.
-        self.globals_by_index_cache.clear();
+    fn record_gc_slice(&mut self, started: Instant) {
+        let micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        self.execution_stats.gc_pause_micros =
+            self.execution_stats.gc_pause_micros.saturating_add(micros);
+        self.execution_stats.gc_max_pause_micros =
+            self.execution_stats.gc_max_pause_micros.max(micros);
     }
 }

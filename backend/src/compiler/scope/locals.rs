@@ -4,7 +4,7 @@ use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
 
 impl Compiler {
-    pub fn declare_variable(&mut self, name: &str, mutable: bool) -> Result<u8> {
+    pub fn declare_variable(&mut self, name: &str, mutable: bool) -> Result<u16> {
         for local in self.locals.iter().rev() {
             if local.depth < self.scope_depth {
                 break;
@@ -34,7 +34,7 @@ impl Compiler {
         Ok(register)
     }
 
-    pub fn mark_local_captured(&mut self, register: u8) {
+    pub fn mark_local_captured(&mut self, register: u16) {
         for local in self.locals.iter_mut() {
             if local.register == register {
                 local.is_captured = true;

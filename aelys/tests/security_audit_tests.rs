@@ -50,16 +50,13 @@ fn verify_rejects_constant_oob() {
     }
 }
 
-
-
 #[test]
 fn verifier_blocks_gc_untracked_registers() {
     let mut vm = make_vm();
-    let str_ref = vm.alloc_string("secret").unwrap();
-
     let mut func = Function::new(Some("gc_oob".to_string()), 0);
     func.num_registers = 1;
-    func.constants.push(Value::ptr(str_ref.index()));
+    func.constants
+        .push(aelys_bytecode::Constant::String("secret".to_string()));
     func.emit_b(OpCode::LoadK, 1, 0, 1);
     func.emit_a(OpCode::Return0, 0, 0, 0, 1);
 
@@ -91,14 +88,14 @@ fn verify_rejects_invalid_opcode() {
 fn binary_deserialize_enforces_bytecode_limit() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ");
-    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes()); // name len
-    bytes.push(0u8); // arity
-    bytes.push(0u8); // num_registers
-    bytes.extend_from_slice(&0u16.to_le_bytes()); // constants
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // arity
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // num_registers
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // constants
     bytes.extend_from_slice(&(1_000_001u32).to_le_bytes()); // bytecode length
 
     match deserialize(&bytes) {
@@ -109,8 +106,6 @@ fn binary_deserialize_enforces_bytecode_limit() {
         Ok(_) => panic!("expected failure for oversized bytecode"),
     }
 }
-
-
 
 #[test]
 fn nan_is_not_treated_as_pointer() {
@@ -375,16 +370,16 @@ fn register_index_overflow_is_handled() {
 fn bytecode_rejects_invalid_nested_func_idx() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ"); // Magic
-    bytes.extend_from_slice(&1u16.to_le_bytes()); // Version major
+    bytes.extend_from_slice(&2u16.to_le_bytes()); // Version major
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Version minor
     bytes.extend_from_slice(&1u32.to_le_bytes()); // Flags
     bytes.extend_from_slice(&0u32.to_le_bytes()); // Entry point
 
     // Function 0:
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Name length
-    bytes.push(0u8); // Arity
-    bytes.push(1u8); // Num registers
-    bytes.extend_from_slice(&1u16.to_le_bytes()); // 1 constant
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // Arity
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // Num registers
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // 1 constant
 
     // Constant: TAG_FUNC with invalid index
     bytes.push(5u8); // TAG_FUNC
@@ -393,9 +388,9 @@ fn bytecode_rejects_invalid_nested_func_idx() {
     bytes.extend_from_slice(&1u32.to_le_bytes()); // Bytecode length
     bytes.extend_from_slice(&0u32.to_le_bytes()); // Return0 opcode
 
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // Nested functions = 0
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Upvalue descriptors
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Line numbers
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // Nested functions = 0
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Global layout
 
     match deserialize(&bytes) {
@@ -426,13 +421,6 @@ chain()
     std::fs::write(&path, src).unwrap();
     let result = run_file(&path).unwrap();
     assert_eq!(result.as_int(), Some(50));
-}
-
-#[test]
-fn call_site_cache_slot_limit_enforced() {
-    use aelys_runtime::MAX_CALL_SITE_SLOTS;
-    const { assert!(MAX_CALL_SITE_SLOTS > 0) };
-    const { assert!(MAX_CALL_SITE_SLOTS <= 65535) };
 }
 
 #[test]

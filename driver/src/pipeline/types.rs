@@ -1,4 +1,4 @@
-use aelys_bytecode::{Function, Heap};
+use aelys_bytecode::Function;
 use aelys_runtime::Value;
 use aelys_sema::TypedProgram;
 use aelys_syntax::{Source, Stmt, Token};
@@ -53,7 +53,7 @@ pub enum StageInput {
     Tokens(Vec<Token>, Arc<Source>),
     Ast(Vec<Stmt>, Arc<Source>),
     TypedAst(TypedProgram, Arc<Source>),
-    Compiled(Box<Function>, Heap, Arc<Source>),
+    Compiled(Box<Function>, Arc<Source>),
 }
 
 impl StageInput {
@@ -63,7 +63,7 @@ impl StageInput {
             StageInput::Tokens(_, _) => "Tokens",
             StageInput::Ast(_, _) => "Ast",
             StageInput::TypedAst(_, _) => "TypedAst",
-            StageInput::Compiled(_, _, _) => "Compiled",
+            StageInput::Compiled(_, _) => "Compiled",
         }
     }
 }
@@ -73,7 +73,7 @@ pub enum StageOutput {
     Tokens(Vec<Token>, Arc<Source>),
     Ast(Vec<Stmt>, Arc<Source>),
     TypedAst(TypedProgram, Arc<Source>),
-    Compiled(Box<Function>, Heap, Arc<Source>),
+    Compiled(Box<Function>, Arc<Source>),
     Value(Value),
 }
 
@@ -83,7 +83,7 @@ impl StageOutput {
             StageOutput::Tokens(t, s) => Ok(StageInput::Tokens(t, s)),
             StageOutput::Ast(a, s) => Ok(StageInput::Ast(a, s)),
             StageOutput::TypedAst(t, s) => Ok(StageInput::TypedAst(t, s)),
-            StageOutput::Compiled(f, h, s) => Ok(StageInput::Compiled(f, h, s)),
+            StageOutput::Compiled(f, s) => Ok(StageInput::Compiled(f, s)),
 
             StageOutput::Value(_) => Err(PipelineError::TypeMismatch {
                 expected: "non-final output",

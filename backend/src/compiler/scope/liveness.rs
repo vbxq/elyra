@@ -19,7 +19,9 @@ impl Compiler {
             }
 
             if liveness.is_dead_after(&local.name, stmt_idx) {
-                self.register_pool[local.register as usize] = false;
+                let index = usize::from(local.register);
+                self.register_pool[index] = false;
+                self.register_search_start = self.register_search_start.min(index);
                 local.is_freed = true;
                 already_freed.insert(local.name.clone());
                 freed += 1;

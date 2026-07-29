@@ -10,13 +10,11 @@ fn vm_executes_bytecode() {
     let tokens = Lexer::with_source(src.clone()).scan().unwrap();
     let ast = Parser::new(tokens, src.clone()).parse().unwrap();
     let typed = TypeInference::infer_program(ast, src.clone()).unwrap();
-    let (mut func, mut heap, _) = Compiler::new(None, src.clone())
+    let (func, _) = Compiler::new(None, src.clone())
         .compile_typed(&typed)
         .unwrap();
 
     let mut vm = VM::with_config_and_args(src, VmConfig::default(), vec![]).unwrap();
-    let remap = vm.merge_heap(&mut heap).unwrap();
-    func.remap_constants(&remap);
     let func_ref = vm.alloc_function(func).unwrap();
     let result = vm.execute(func_ref).unwrap();
 

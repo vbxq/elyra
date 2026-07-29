@@ -12,7 +12,7 @@ impl Compiler {
         &mut self,
         parts: &[FmtStringPart],
         extra_args: &[Expr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let placeholder_count = parts
@@ -43,7 +43,7 @@ impl Compiler {
 
         // compile each part and concat them
         let mut arg_idx = 0;
-        let mut result_reg: Option<u8> = None;
+        let mut result_reg: Option<u16> = None;
 
         for part in parts {
             let part_reg = self.alloc_register()?;
@@ -86,7 +86,7 @@ impl Compiler {
     fn compile_single_fmt_part(
         &mut self,
         part: &FmtStringPart,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         match part {
@@ -101,19 +101,19 @@ impl Compiler {
         }
     }
 
-    fn compile_expr_to_string(&mut self, expr: &Expr, dest: u8, span: Span) -> Result<()> {
-        // CallGlobalNative reads args from dest+1, so compile the expression there.
+    fn compile_expr_to_string(&mut self, expr: &Expr, dest: u16, span: Span) -> Result<()> {
+        // Native calls read args from dest+1, so compile the expression there.
         let arg_reg = dest + 1;
 
         if (arg_reg as usize) < self.register_pool.len() && !self.register_pool[arg_reg as usize] {
             // fast path: dest+1 is free
             self.register_pool[arg_reg as usize] = true;
-            self.next_register = self.next_register.max(arg_reg + 1);
+            self.next_register = self.next_register.max(u32::from(arg_reg) + 1);
 
             self.compile_expr(expr, arg_reg)?;
             self.emit_tostring_call(dest, span)?;
 
-            self.register_pool[arg_reg as usize] = false;
+            self.free_register(arg_reg);
         } else {
             // slow path: dest+1 is occupied, use a fresh consecutive pair
             let call_base = self.alloc_consecutive_registers_for_call(2, span)?;
@@ -121,7 +121,7 @@ impl Compiler {
 
             self.register_pool[call_base as usize] = true;
             self.register_pool[call_arg as usize] = true;
-            self.next_register = self.next_register.max(call_arg + 1);
+            self.next_register = self.next_register.max(u32::from(call_arg) + 1);
 
             self.compile_expr(expr, call_arg)?;
             self.emit_tostring_call(call_base, span)?;
@@ -130,14 +130,14 @@ impl Compiler {
                 self.emit_a(OpCode::Move, dest, call_base, 0, span);
             }
 
-            self.register_pool[call_arg as usize] = false;
-            self.register_pool[call_base as usize] = false;
+            self.free_register(call_arg);
+            self.free_register(call_base);
         }
 
         Ok(())
     }
 
-    fn emit_tostring_call(&mut self, reg: u8, span: Span) -> Result<()> {
+    fn emit_tostring_call(&mut self, reg: u16, span: Span) -> Result<()> {
         let global_idx = self.get_or_create_global_index("__tostring");
         self.accessed_globals.insert("__tostring".to_string());
         self.emit_call_global_cached(reg, global_idx, 1, "__tostring", span);

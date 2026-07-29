@@ -14,7 +14,7 @@ use aelys_common::Result;
 use aelys_syntax::ast::{Expr, ExprKind};
 
 impl Compiler {
-    pub fn compile_expr(&mut self, expr: &Expr, dest: u8) -> Result<()> {
+    pub fn compile_expr(&mut self, expr: &Expr, dest: u16) -> Result<()> {
         match &expr.kind {
             ExprKind::Int(n) => self.compile_literal_int(*n, dest, expr.span),
             ExprKind::Float(f) => self.compile_literal_float(*f, dest, expr.span),

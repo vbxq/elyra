@@ -4,32 +4,44 @@ use super::{
 };
 
 impl Value {
-    // wraps silently on overflow - caller should use int_checked if they care
     #[inline(always)]
     pub fn int(n: i64) -> Self {
-        Self(QNAN | TAG_INT | ((n as u64) & PAYLOAD_MASK))
+        Self::int_checked(n).unwrap_or_else(|_| {
+            panic!(
+                "integer {n} is outside the supported range {}..={}",
+                Self::INT_MIN,
+                Self::INT_MAX
+            )
+        })
     }
 
     #[inline(always)]
     pub fn int_checked(n: i64) -> Result<Self, IntegerOverflowError> {
-        // sign-extend from 48 bits and check if it matches
-        if n == (n << 16) >> 16 {
-            Ok(Self::int(n))
+        if (Self::INT_MIN..=Self::INT_MAX).contains(&n) {
+            let bits = u64::from_ne_bytes(n.to_ne_bytes());
+            Ok(Self(QNAN | TAG_INT | (bits & PAYLOAD_MASK)))
         } else {
             Err(IntegerOverflowError { value: n })
         }
     }
 
+    #[inline(always)]
+    pub fn int_wrapping(n: i64) -> Self {
+        let bits = u64::from_ne_bytes(n.to_ne_bytes());
+        Self(QNAN | TAG_INT | (bits & PAYLOAD_MASK))
+    }
+
     pub fn float(n: f64) -> Self {
-        if n.is_nan() {
+        let bits = n.to_bits();
+        if bits & 0x7FFF_FFFF_FFFF_FFFF > 0x7FF0_0000_0000_0000 {
             Self(CANONICAL_NAN)
         } else {
-            Self(n.to_bits())
+            Self(bits)
         }
     }
 
     pub fn bool(b: bool) -> Self {
-        Self(QNAN | TAG_BOOL | (b as u64))
+        Self(QNAN | TAG_BOOL | u64::from(b))
     }
 
     pub fn null() -> Self {
@@ -37,14 +49,16 @@ impl Value {
     }
 
     pub fn ptr(p: usize) -> Self {
-        debug_assert!(p <= PAYLOAD_MASK as usize, "ptr too big for NaN boxing");
-        Self(QNAN | TAG_PTR | (p as u64))
+        let payload_limit = usize::try_from(PAYLOAD_MASK).unwrap_or(usize::MAX);
+        assert!(p <= payload_limit, "ptr too big for NaN boxing");
+        Self(QNAN | TAG_PTR | u64::try_from(p).expect("pointer payload fits u64"))
     }
 
     /// create a nested function marker for use in constants array.
     /// this uses a dedicated tag that can't collide with heap pointers.
     pub fn nested_fn_marker(idx: usize) -> Self {
-        debug_assert!(idx <= PAYLOAD_MASK as usize, "nested fn index too big");
-        Self(QNAN | TAG_NESTED_FN | (idx as u64))
+        let payload_limit = usize::try_from(PAYLOAD_MASK).unwrap_or(usize::MAX);
+        assert!(idx <= payload_limit, "nested fn index too big");
+        Self(QNAN | TAG_NESTED_FN | u64::try_from(idx).expect("nested function payload fits u64"))
     }
 }

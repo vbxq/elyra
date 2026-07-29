@@ -321,7 +321,7 @@ fn native_write_u8(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
-        buf.data[off] = val as u8;
+        buf.data[off] = u8::try_from(val).expect("byte value was range checked");
         Ok(Value::null())
     } else {
         Err(err(vm, "write_u8", "invalid handle".into()))
@@ -340,7 +340,8 @@ fn native_read_i8(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
                 format!("offset {} >= size {}", off, buf.data.len()),
             ));
         }
-        Ok(Value::int(buf.data[off] as i8 as i64))
+        let value = i8::from_ne_bytes([buf.data[off]]);
+        Ok(Value::int(i64::from(value)))
     } else {
         Err(err(vm, "read_i8", "invalid handle".into()))
     }
@@ -351,7 +352,7 @@ fn native_write_i8(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let off = check_offset(get_int(vm, args[1], "write_i8")?, "write_i8")
         .map_err(|e| err(vm, "write_i8", e))?;
     let val = get_int(vm, args[2], "write_i8")?;
-    if val < i8::MIN as i64 || val > i8::MAX as i64 {
+    if val < i64::from(i8::MIN) || val > i64::from(i8::MAX) {
         return Err(err(
             vm,
             "write_i8",
@@ -367,7 +368,8 @@ fn native_write_i8(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
-        buf.data[off] = val as i8 as u8;
+        let value = i8::try_from(val).expect("signed byte value was range checked");
+        buf.data[off] = value.to_ne_bytes()[0];
         Ok(Value::null())
     } else {
         Err(err(vm, "write_i8", "invalid handle".into()))
@@ -700,7 +702,7 @@ fn native_fill(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(err(vm, "fill", e));
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
-        buf.data[off..off + len].fill(val as u8);
+        buf.data[off..off + len].fill(u8::try_from(val).expect("fill byte was range checked"));
         Ok(Value::null())
     } else {
         Err(err(vm, "fill", "invalid handle".into()))
@@ -781,7 +783,7 @@ fn native_find(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             format!("needle {} out of range [0, 255]", needle),
         ));
     }
-    let needle = needle as u8;
+    let needle = u8::try_from(needle).expect("needle byte was range checked");
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource(h) {
         let buf_len = buf.data.len();
         let end = if end < 0 {

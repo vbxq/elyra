@@ -2,7 +2,7 @@ use super::buffer::BytecodeBuffer;
 use super::global_layout::GlobalLayout;
 use super::opcode::OpCode;
 use super::upvalue::UpvalueDescriptor;
-use crate::value::Value;
+use crate::bytecode::Constant;
 use std::sync::Arc;
 
 mod constants;
@@ -11,17 +11,16 @@ mod patch;
 mod registers;
 mod storage;
 
-// A compiled function. BytecodeBuffer allows patching for inline caches
-// while keeping raw pointers stable (important for dispatch loop perf).
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: Option<String>,
-    pub arity: u8,
-    pub num_registers: u8,
-    pub call_site_count: u16, // for MIC pre-allocation
+    pub arity: u16,
+    pub num_registers: u32,
     pub bytecode: BytecodeBuffer,
     bytecode_builder: Vec<u32>, // temp storage during compilation
-    pub constants: Vec<Value>,
+    jump_overflow: Option<usize>,
+    wide_operand_error: Option<OpCode>,
+    pub constants: Vec<Constant>,
     pub nested_functions: Vec<Function>,
     pub upvalue_descriptors: Vec<UpvalueDescriptor>,
     pub lines: Vec<(u16, u32)>,
@@ -30,14 +29,15 @@ pub struct Function {
 }
 
 impl Function {
-    pub fn new(name: Option<String>, arity: u8) -> Self {
+    pub fn new(name: Option<String>, arity: u16) -> Self {
         Self {
             name,
             arity,
             num_registers: 0,
-            call_site_count: 0,
             bytecode: BytecodeBuffer::empty(),
             bytecode_builder: Vec::new(),
+            jump_overflow: None,
+            wide_operand_error: None,
             constants: Vec::new(),
             nested_functions: Vec::new(),
             upvalue_descriptors: Vec::new(),
@@ -47,6 +47,26 @@ impl Function {
         }
     }
 
+    pub fn jump_overflow(&self) -> Option<usize> {
+        self.jump_overflow.or_else(|| {
+            self.nested_functions
+                .iter()
+                .find_map(Function::jump_overflow)
+        })
+    }
+
+    pub fn wide_operand_error(&self) -> Option<OpCode> {
+        self.wide_operand_error.or_else(|| {
+            self.nested_functions
+                .iter()
+                .find_map(Function::wide_operand_error)
+        })
+    }
+
+    pub fn record_wide_operand_error(&mut self, op: OpCode) {
+        self.wide_operand_error.get_or_insert(op);
+    }
+
     pub fn finalize_bytecode(&mut self) {
         if !self.bytecode_builder.is_empty() {
             self.bytecode = BytecodeBuffer::from_vec(std::mem::take(&mut self.bytecode_builder));
@@ -54,7 +74,7 @@ impl Function {
         // make sure we have enough registers for the bytecode
         let needed = registers::required_registers(self.bytecode.as_slice());
         if needed > self.num_registers as usize {
-            self.num_registers = needed.min(255) as u8;
+            self.num_registers = u32::try_from(needed).unwrap_or(u32::MAX);
         }
         for f in &mut self.nested_functions {
             f.finalize_bytecode();
@@ -64,7 +84,10 @@ impl Function {
     // format A: op|a|b|c (3 regs)
     pub fn emit_a(&mut self, op: OpCode, a: u8, b: u8, c: u8, line: u32) {
         self.emit_raw(
-            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | c as u32,
+            (u32::from(u8::from(op)) << 24)
+                | (u32::from(a) << 16)
+                | (u32::from(b) << 8)
+                | u32::from(c),
             line,
         );
     }
@@ -72,7 +95,9 @@ impl Function {
     // format B: op|a|imm16
     pub fn emit_b(&mut self, op: OpCode, a: u8, imm: i16, line: u32) {
         self.emit_raw(
-            ((op as u32) << 24) | ((a as u32) << 16) | (imm as u16) as u32,
+            (u32::from(u8::from(op)) << 24)
+                | (u32::from(a) << 16)
+                | u32::from(u16::from_ne_bytes(imm.to_ne_bytes())),
             line,
         );
     }
@@ -80,6 +105,135 @@ impl Function {
     // format C: same layout as A but semantics are dest|func|nargs
     pub fn emit_c(&mut self, op: OpCode, dest: u8, func: u8, nargs: u8, line: u32) {
         self.emit_a(op, dest, func, nargs, line);
+    }
+
+    pub fn emit_call(
+        &mut self,
+        dest: super::Register,
+        func: super::Register,
+        nargs: super::Arity,
+        line: u32,
+    ) {
+        if let (Ok(dest), Ok(func), Ok(nargs)) = (
+            u8::try_from(dest.get()),
+            u8::try_from(func.get()),
+            u8::try_from(nargs.get()),
+        ) {
+            self.emit_c(OpCode::Call, dest, func, nargs, line);
+            return;
+        }
+        self.emit_a(OpCode::CallWide, 0, 0, 0, line);
+        self.push_raw((u32::from(dest.get()) << 16) | u32::from(func.get()));
+        self.push_raw(u32::from(nargs.get()) << 16);
+        self.record_lines(2, line);
+    }
+
+    pub fn emit_counted_registers(
+        &mut self,
+        compact_op: OpCode,
+        wide_op: OpCode,
+        dest: super::Register,
+        start: super::Register,
+        count: u16,
+        line: u32,
+    ) {
+        if let (Ok(dest), Ok(start), Ok(count)) = (
+            u8::try_from(dest.get()),
+            u8::try_from(start.get()),
+            u8::try_from(count),
+        ) {
+            self.emit_a(compact_op, dest, start, count, line);
+            return;
+        }
+        assert_eq!(wide_op.format(), super::InstructionFormat::Abc16);
+        self.emit_a(wide_op, 0, 0, 0, line);
+        self.push_raw((u32::from(dest.get()) << 16) | u32::from(start.get()));
+        self.push_raw(u32::from(count) << 16);
+        self.record_lines(2, line);
+    }
+
+    pub fn emit_closure_register_wide(
+        &mut self,
+        dest: super::Register,
+        index: u32,
+        upvalue_count: u16,
+        line: u32,
+    ) {
+        self.emit_a(OpCode::MakeClosureRegisterWide, 0, 0, 0, line);
+        self.push_raw((u32::from(dest.get()) << 16) | u32::from(upvalue_count));
+        self.push_raw(index);
+        self.record_lines(2, line);
+    }
+
+    pub fn emit_index32(&mut self, op: OpCode, register: u8, index: u32, line: u32) {
+        self.emit_index32_with_aux(op, register, 0, index, line);
+    }
+
+    pub fn emit_index32_with_aux(
+        &mut self,
+        op: OpCode,
+        register: u8,
+        aux: u8,
+        index: u32,
+        line: u32,
+    ) {
+        assert_eq!(op.format(), super::InstructionFormat::AIndex32);
+        self.emit_a(op, register, aux, 0, line);
+        self.push_raw(index);
+        self.record_lines(1, line);
+    }
+
+    pub fn emit_wide_abc(
+        &mut self,
+        op: OpCode,
+        a: super::Register,
+        b: super::Register,
+        c: super::Register,
+        line: u32,
+    ) {
+        assert_ne!(op, OpCode::Wide);
+        self.emit_a(OpCode::Wide, u8::from(op), 0, 0, line);
+        self.push_raw((u32::from(a.get()) << 16) | u32::from(b.get()));
+        self.push_raw(u32::from(c.get()) << 16);
+        self.record_lines(2, line);
+    }
+
+    pub fn emit_register_abc(
+        &mut self,
+        op: OpCode,
+        a: super::Register,
+        b: super::Register,
+        c: super::Register,
+        line: u32,
+    ) {
+        let Ok(a8) = u8::try_from(a.get()) else {
+            self.emit_wide_or_record_error(op, a, b, c, line);
+            return;
+        };
+        let Ok(b8) = u8::try_from(b.get()) else {
+            self.emit_wide_or_record_error(op, a, b, c, line);
+            return;
+        };
+        let Ok(c8) = u8::try_from(c.get()) else {
+            self.emit_wide_or_record_error(op, a, b, c, line);
+            return;
+        };
+        self.emit_a(op, a8, b8, c8, line);
+    }
+
+    fn emit_wide_or_record_error(
+        &mut self,
+        op: OpCode,
+        a: super::Register,
+        b: super::Register,
+        c: super::Register,
+        line: u32,
+    ) {
+        if op.supports_wide_registers() {
+            self.emit_wide_abc(op, a, b, c, line);
+        } else {
+            self.record_wide_operand_error(op);
+        }
     }
 
     fn emit_raw(&mut self, instr: u32, line: u32) {

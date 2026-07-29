@@ -9,7 +9,7 @@ impl Compiler {
         &mut self,
         element_type: &Option<ResolvedType>,
         size: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         // Compile size expression
@@ -33,7 +33,7 @@ impl Compiler {
         &mut self,
         expr_ty: &InferType,
         elements: &[TypedExpr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let count = elements.len();
@@ -54,26 +54,34 @@ impl Compiler {
             return Ok(());
         }
 
-        let start_reg = self.alloc_consecutive_registers_for_call(count as u8, span)?;
+        let count_operand = self.checked_call_arity(count, span)?;
+        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
 
         for i in 0..count {
-            let reg = start_reg + i as u8;
+            let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
             self.register_pool[reg as usize] = true;
-            if reg >= self.next_register {
-                self.next_register = reg + 1;
+            if u32::from(reg) >= self.next_register {
+                self.next_register = u32::from(reg) + 1;
             }
         }
 
         for (i, elem) in elements.iter().enumerate() {
-            let elem_reg = start_reg + i as u8;
+            let elem_reg = start_reg + u16::try_from(i).expect("register offset was range checked");
             self.compile_typed_expr(elem, elem_reg)?;
         }
 
-        self.emit_a(OpCode::ArrayLit, dest, start_reg, count as u8, span);
+        self.emit_counted_registers(
+            OpCode::ArrayLit,
+            OpCode::ArrayLitWide,
+            dest,
+            start_reg,
+            count_operand,
+            span,
+        );
 
         for i in (0..count).rev() {
-            let reg = start_reg + i as u8;
-            self.register_pool[reg as usize] = false;
+            let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
+            self.free_register(reg);
         }
 
         Ok(())
@@ -83,7 +91,7 @@ impl Compiler {
         &mut self,
         expr_ty: &InferType,
         elements: &[TypedExpr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let count = elements.len();
@@ -104,26 +112,34 @@ impl Compiler {
             return Ok(());
         }
 
-        let start_reg = self.alloc_consecutive_registers_for_call(count as u8, span)?;
+        let count_operand = self.checked_call_arity(count, span)?;
+        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
 
         for i in 0..count {
-            let reg = start_reg + i as u8;
+            let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
             self.register_pool[reg as usize] = true;
-            if reg >= self.next_register {
-                self.next_register = reg + 1;
+            if u32::from(reg) >= self.next_register {
+                self.next_register = u32::from(reg) + 1;
             }
         }
 
         for (i, elem) in elements.iter().enumerate() {
-            let elem_reg = start_reg + i as u8;
+            let elem_reg = start_reg + u16::try_from(i).expect("register offset was range checked");
             self.compile_typed_expr(elem, elem_reg)?;
         }
 
-        self.emit_a(OpCode::VecLit, dest, start_reg, count as u8, span);
+        self.emit_counted_registers(
+            OpCode::VecLit,
+            OpCode::VecLitWide,
+            dest,
+            start_reg,
+            count_operand,
+            span,
+        );
 
         for i in (0..count).rev() {
-            let reg = start_reg + i as u8;
-            self.register_pool[reg as usize] = false;
+            let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
+            self.free_register(reg);
         }
 
         Ok(())
@@ -133,7 +149,7 @@ impl Compiler {
         &mut self,
         object: &TypedExpr,
         index: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -174,7 +190,7 @@ impl Compiler {
         object: &TypedExpr,
         index: &TypedExpr,
         value: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -221,7 +237,7 @@ impl Compiler {
         &mut self,
         _object: &TypedExpr,
         _range: &TypedExpr,
-        _dest: u8,
+        _dest: u16,
         _span: Span,
     ) -> Result<()> {
         todo!("slice")
@@ -232,7 +248,7 @@ impl Compiler {
         _start: &Option<Box<TypedExpr>>,
         _end: &Option<Box<TypedExpr>>,
         _inclusive: bool,
-        _dest: u8,
+        _dest: u16,
         _span: Span,
     ) -> Result<()> {
         todo!("range")
@@ -256,7 +272,7 @@ impl Compiler {
     pub(super) fn compile_array_len(
         &mut self,
         object: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -269,7 +285,7 @@ impl Compiler {
     pub(super) fn compile_vec_len(
         &mut self,
         object: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -284,7 +300,7 @@ impl Compiler {
         object: &TypedExpr,
         inner: &InferType,
         value: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -313,7 +329,7 @@ impl Compiler {
         &mut self,
         object: &TypedExpr,
         inner: &InferType,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -335,7 +351,7 @@ impl Compiler {
     pub(super) fn compile_vec_capacity(
         &mut self,
         object: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;
@@ -349,7 +365,7 @@ impl Compiler {
         &mut self,
         object: &TypedExpr,
         capacity: &TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let obj_reg = self.alloc_register()?;

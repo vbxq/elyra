@@ -17,8 +17,8 @@ impl Stage for DebugStripStage {
     }
 
     fn execute(&mut self, input: StageInput) -> Result<StageOutput, PipelineError> {
-        let (mut function, heap, source) = match input {
-            StageInput::Compiled(f, h, s) => (*f, h, s),
+        let (mut function, source) = match input {
+            StageInput::Compiled(f, s) => (*f, s),
             other => {
                 return Err(PipelineError::TypeMismatch {
                     expected: "Compiled",
@@ -32,6 +32,6 @@ impl Stage for DebugStripStage {
             function.strip_debug_info();
         }
 
-        Ok(StageOutput::Compiled(Box::new(function), heap, source))
+        Ok(StageOutput::Compiled(Box::new(function), source))
     }
 }

@@ -1,9 +1,6 @@
 // disassembler: bytecode -> .aasm text
 
-use crate::bytecode::{Function, OpCode, decode_a, decode_b, decode_c};
-use crate::heap::Heap;
-use crate::object::{GcRef, ObjectKind};
-use crate::value::Value;
+use crate::bytecode::{Constant, Function, OpCode, decode_a, decode_b};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -17,22 +14,18 @@ pub struct DisassemblerOptions {
     pub include_line_info: bool,
 }
 
-pub fn disassemble(func: &Function, heap: Option<&Heap>) -> String {
-    disassemble_with_options(func, heap, &DisassemblerOptions::default())
+pub fn disassemble(func: &Function) -> String {
+    disassemble_with_options(func, &DisassemblerOptions::default())
 }
 
-pub fn disassemble_with_options(
-    func: &Function,
-    heap: Option<&Heap>,
-    options: &DisassemblerOptions,
-) -> String {
+pub fn disassemble_with_options(func: &Function, options: &DisassemblerOptions) -> String {
     let mut output = String::new();
-    let mut ctx = DisasmContext::new(heap, options);
+    let mut ctx = DisasmContext::new(options);
 
     writeln_ignore!(output, "; Aelys Assembly (.aasm)");
     writeln_ignore!(output, "; Disassembled from bytecode");
     writeln_ignore!(output);
-    writeln_ignore!(output, ".version 1");
+    writeln_ignore!(output, ".version 2");
     writeln_ignore!(output);
 
     let mut all_functions = Vec::new();
@@ -49,8 +42,8 @@ pub fn disassemble_with_options(
     output
 }
 
-pub fn disassemble_to_string(func: &Function, heap: Option<&Heap>) -> String {
-    disassemble(func, heap)
+pub fn disassemble_to_string(func: &Function) -> String {
+    disassemble(func)
 }
 
 fn collect_functions<'a>(func: &'a Function, out: &mut Vec<&'a Function>) {
@@ -61,16 +54,14 @@ fn collect_functions<'a>(func: &'a Function, out: &mut Vec<&'a Function>) {
 }
 
 struct DisasmContext<'a> {
-    heap: Option<&'a Heap>,
     options: &'a DisassemblerOptions,
     global_names: Vec<String>,
     nested_fn_names: Vec<Option<String>>,
 }
 
 impl<'a> DisasmContext<'a> {
-    fn new(heap: Option<&'a Heap>, options: &'a DisassemblerOptions) -> Self {
+    fn new(options: &'a DisassemblerOptions) -> Self {
         Self {
-            heap,
             options,
             global_names: Vec::new(),
             nested_fn_names: Vec::new(),
@@ -151,11 +142,10 @@ impl<'a> DisasmContext<'a> {
         let labels = self.collect_jump_targets(func.bytecode.as_slice());
 
         writeln_ignore!(output, "  .code");
-        let mut skip_cache_words = 0usize;
+        let mut skip_extension_words = 0usize;
         for (offset, &instr) in func.bytecode.iter().enumerate() {
-            // Skip cache words (they follow CallGlobal, CallGlobalMono, CallGlobalNative)
-            if skip_cache_words > 0 {
-                skip_cache_words -= 1;
+            if skip_extension_words > 0 {
+                skip_extension_words -= 1;
                 continue;
             }
 
@@ -164,15 +154,17 @@ impl<'a> DisasmContext<'a> {
                 writeln_ignore!(output, "  {}:", label);
             }
 
-            let disasm = self.disassemble_instruction(instr, offset, &labels);
-
-            // Check if this instruction has cache words following it
-            let opcode = OpCode::from_u8((instr >> 24) as u8);
-            if let Some(OpCode::CallGlobal | OpCode::CallGlobalMono | OpCode::CallGlobalNative) =
-                opcode
-            {
-                skip_cache_words = 2; // Skip the 2 cache words
-            }
+            let opcode =
+                OpCode::from_u8(u8::try_from(instr >> 24).expect("opcode occupies one byte"));
+            skip_extension_words = opcode.map_or(0, OpCode::extension_words);
+            let extension = (skip_extension_words >= 1)
+                .then(|| func.bytecode.as_slice().get(offset + 1).copied())
+                .flatten();
+            let second_extension = (skip_extension_words >= 2)
+                .then(|| func.bytecode.as_slice().get(offset + 2).copied())
+                .flatten();
+            let disasm =
+                self.disassemble_instruction(instr, extension, second_extension, offset, &labels);
 
             if self.options.include_line_info {
                 let line = func.get_line(offset);
@@ -190,8 +182,11 @@ impl<'a> DisasmContext<'a> {
     fn collect_jump_targets(&self, bytecode: &[u32]) -> HashMap<usize, String> {
         let mut targets = HashSet::new();
 
-        for (offset, &instr) in bytecode.iter().enumerate() {
-            let opcode = OpCode::from_u8((instr >> 24) as u8);
+        let mut offset = 0;
+        while offset < bytecode.len() {
+            let instr = bytecode[offset];
+            let opcode =
+                OpCode::from_u8(u8::try_from(instr >> 24).expect("opcode occupies one byte"));
 
             if let Some(OpCode::Jump | OpCode::JumpIf | OpCode::JumpIfNot) = opcode {
                 let (_, _, imm) = decode_b(instr);
@@ -201,7 +196,26 @@ impl<'a> DisasmContext<'a> {
                     offset.wrapping_add(1).wrapping_sub((-imm) as usize)
                 };
                 targets.insert(target);
+            } else if opcode
+                .is_some_and(|op| op.format() == crate::bytecode::InstructionFormat::AOffset32)
+                && let Some(extension) = bytecode.get(offset + 1)
+            {
+                let relative = i32::from_ne_bytes(extension.to_ne_bytes());
+                let target = (offset as i64 + 2 + i64::from(relative)) as usize;
+                targets.insert(target);
+            } else if opcode.is_some_and(|op| {
+                matches!(
+                    op.format(),
+                    crate::bytecode::InstructionFormat::RegisterOffset32
+                        | crate::bytecode::InstructionFormat::WideRegisterOffset32
+                )
+            }) && let Some(extension) = bytecode.get(offset + 2)
+            {
+                let relative = i32::from_ne_bytes(extension.to_ne_bytes());
+                let target = (offset as i64 + 3 + i64::from(relative)) as usize;
+                targets.insert(target);
             }
+            offset += 1 + opcode.map_or(0, OpCode::extension_words);
         }
 
         let mut sorted_targets: Vec<_> = targets.into_iter().collect();
@@ -218,10 +232,13 @@ impl<'a> DisasmContext<'a> {
     fn disassemble_instruction(
         &self,
         instr: u32,
+        extension: Option<u32>,
+        second_extension: Option<u32>,
         offset: usize,
         labels: &HashMap<usize, String>,
     ) -> String {
-        let opcode = match OpCode::from_u8((instr >> 24) as u8) {
+        let opcode_byte = u8::try_from(instr >> 24).expect("opcode occupies one byte");
+        let opcode = match OpCode::from_u8(opcode_byte) {
             Some(op) => op,
             None => return format!(".word 0x{:08x}", instr),
         };
@@ -292,9 +309,80 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, _) = decode_a(instr);
                 format!("Not       r{}, r{}", a, b)
             }
+            OpCode::JumpLong
+            | OpCode::JumpIfLong
+            | OpCode::JumpIfNotLong
+            | OpCode::ForLoopILong
+            | OpCode::ForLoopIIncLong
+            | OpCode::StringForLoopLong
+            | OpCode::VecForLoopLong
+            | OpCode::ArrayForLoopLong => {
+                let (_, register, _, _) = decode_a(instr);
+                let relative = i32::from_ne_bytes(extension.unwrap_or(0).to_ne_bytes());
+                let target = (offset as i64 + 2 + i64::from(relative)) as usize;
+                let target = labels
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or_else(|| format!("@{}", target));
+                match opcode {
+                    OpCode::JumpLong => format!("JumpLong  {}", target),
+                    OpCode::JumpIfLong => format!("JumpIfLong r{}, {}", register, target),
+                    OpCode::JumpIfNotLong => {
+                        format!("JumpIfNotLong r{}, {}", register, target)
+                    }
+                    OpCode::ForLoopILong => format!("ForLoopILong r{}, {}", register, target),
+                    OpCode::ForLoopIIncLong => {
+                        format!("ForLoopIIncLong r{}, {}", register, target)
+                    }
+                    OpCode::StringForLoopLong => {
+                        format!("StringForLoopLong r{}, {}", register, target)
+                    }
+                    OpCode::VecForLoopLong => {
+                        format!("VecForLoopLong r{}, {}", register, target)
+                    }
+                    OpCode::ArrayForLoopLong => {
+                        format!("ArrayForLoopLong r{}, {}", register, target)
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            OpCode::JumpIfWideLong | OpCode::JumpIfNotWideLong => {
+                let register = extension.unwrap_or(0) >> 16;
+                let relative = i32::from_ne_bytes(second_extension.unwrap_or(0).to_ne_bytes());
+                let target = (offset as i64 + 3 + i64::from(relative)) as usize;
+                let target = labels
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or_else(|| format!("@{target}"));
+                if opcode == OpCode::JumpIfWideLong {
+                    format!("JumpIfWideLong r{register}, {target}")
+                } else {
+                    format!("JumpIfNotWideLong r{register}, {target}")
+                }
+            }
+            OpCode::LoopWideLong => {
+                let (_, inner, _, _) = decode_a(instr);
+                let inner = OpCode::from_u8(inner).expect("verified wide loop opcode");
+                let register = extension.unwrap_or(0) >> 16;
+                let relative = i32::from_ne_bytes(second_extension.unwrap_or(0).to_ne_bytes());
+                let target = (offset as i64 + 3 + i64::from(relative)) as usize;
+                let target = labels
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or_else(|| format!("@{target}"));
+                format!("LoopWideLong {inner:?}, r{register}, {target}")
+            }
             OpCode::Call => {
                 let (_, dest, func, nargs) = decode_a(instr);
                 format!("Call      r{}, r{}, {}", dest, func, nargs)
+            }
+            OpCode::CallWide => {
+                let first = extension.unwrap_or(0);
+                let second = second_extension.unwrap_or(0);
+                let dest = first >> 16;
+                let func = first & 0xffff;
+                let nargs = second >> 16;
+                format!("CallWide  r{dest}, r{func}, {nargs}")
             }
             OpCode::Return => {
                 let (_, a, _, _) = decode_a(instr);
@@ -309,11 +397,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, k, _) = decode_a(instr);
                 format!("SetGlobal r{}, {}", a, k)
             }
-            OpCode::IncGlobalI => {
-                let (_, a, k, b) = decode_c(instr);
-                format!("IncGlobalI r{}, {}, {}", a, k, b)
-            }
-
             // Format B: register + immediate
             OpCode::LoadI => {
                 let (_, a, imm) = decode_b(instr);
@@ -322,6 +405,18 @@ impl<'a> DisasmContext<'a> {
             OpCode::LoadK => {
                 let (_, a, k) = decode_b(instr);
                 format!("LoadK     r{}, {}", a, k)
+            }
+            OpCode::LoadKWide => {
+                let (_, a, _, _) = decode_a(instr);
+                format!("LoadKWide r{}, {}", a, extension.unwrap_or(0))
+            }
+            OpCode::GetGlobalIdxWide => {
+                let (_, register, _, _) = decode_a(instr);
+                format!("GetGlobalIdxWide r{}, {}", register, extension.unwrap_or(0))
+            }
+            OpCode::SetGlobalIdxWide => {
+                let (_, register, _, _) = decode_a(instr);
+                format!("SetGlobalIdxWide {}, r{}", extension.unwrap_or(0), register)
             }
             OpCode::Jump => {
                 let (_, _, imm) = decode_b(instr);
@@ -367,6 +462,40 @@ impl<'a> DisasmContext<'a> {
             OpCode::MakeClosure => {
                 let (_, a, k, upval_count) = decode_a(instr);
                 format!("MakeClosure r{}, k{}, {}", a, k, upval_count)
+            }
+            OpCode::MakeClosureWide => {
+                let (_, register, upvalue_count, _) = decode_a(instr);
+                format!(
+                    "MakeClosureWide r{}, {}, {}",
+                    register,
+                    extension.unwrap_or(0),
+                    upvalue_count
+                )
+            }
+            OpCode::MakeClosureRegisterWide => {
+                let first = extension.unwrap_or(0);
+                format!(
+                    "MakeClosureRegisterWide r{}, {}, {}",
+                    first >> 16,
+                    second_extension.unwrap_or(0),
+                    first & 0xffff
+                )
+            }
+            OpCode::Wide => {
+                let (_, inner, _, _) = decode_a(instr);
+                let first = extension.unwrap_or(0);
+                let second = second_extension.unwrap_or(0);
+                let a = first >> 16;
+                let b = first & 0xffff;
+                let c = second >> 16;
+                match OpCode::from_u8(inner) {
+                    Some(OpCode::Move) => format!("MoveWide r{a}, r{b}"),
+                    Some(OpCode::LoadNull) => format!("LoadNullWide r{a}"),
+                    Some(OpCode::Add) => format!("AddWide r{a}, r{b}, r{c}"),
+                    Some(OpCode::Return) => format!("ReturnWide r{a}"),
+                    Some(_) => format!("Wide {inner}, r{a}, r{b}, r{c}"),
+                    None => format!(".word 0x{instr:08x} ; invalid wide opcode {inner}"),
+                }
             }
             OpCode::GetUpval => {
                 let (_, a, upval_idx, _) = decode_a(instr);
@@ -554,26 +683,6 @@ impl<'a> DisasmContext<'a> {
                         dest, global_idx, nargs, name
                     ),
                     None => format!("CallGlobal r{}, {}, {}", dest, global_idx, nargs),
-                }
-            }
-            OpCode::CallGlobalMono => {
-                let (_, dest, global_idx, nargs) = decode_a(instr);
-                match self.global_name(global_idx as usize) {
-                    Some(name) => format!(
-                        "CallGlobalMono r{}, {}, {}  ; {}()",
-                        dest, global_idx, nargs, name
-                    ),
-                    None => format!("CallGlobalMono r{}, {}, {}", dest, global_idx, nargs),
-                }
-            }
-            OpCode::CallGlobalNative => {
-                let (_, dest, global_idx, nargs) = decode_a(instr);
-                match self.global_name(global_idx as usize) {
-                    Some(name) => format!(
-                        "CallGlobalNative r{}, {}, {}  ; {}()",
-                        dest, global_idx, nargs, name
-                    ),
-                    None => format!("CallGlobalNative r{}, {}, {}", dest, global_idx, nargs),
                 }
             }
             // CallUpval - combined GetUpval + Call (for recursive closures)
@@ -778,6 +887,14 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("ArrayLit  r{}, r{}, {}", a, b, c)
             }
+            OpCode::ArrayLitWide => {
+                let first = extension.unwrap_or(0);
+                let second = second_extension.unwrap_or(0);
+                let dest = first >> 16;
+                let start = first & 0xffff;
+                let count = second >> 16;
+                format!("ArrayLitWide r{dest}, r{start}, {count}")
+            }
             OpCode::ArrayLoadI => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("ArrayLoadI r{}, r{}, r{}", a, b, c)
@@ -851,6 +968,14 @@ impl<'a> DisasmContext<'a> {
             OpCode::VecLit => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("VecLit    r{}, r{}, {}", a, b, c)
+            }
+            OpCode::VecLitWide => {
+                let first = extension.unwrap_or(0);
+                let second = second_extension.unwrap_or(0);
+                let dest = first >> 16;
+                let start = first & 0xffff;
+                let count = second >> 16;
+                format!("VecLitWide r{dest}, r{start}, {count}")
             }
             OpCode::VecPushI => {
                 let (_, a, b, _) = decode_a(instr);
@@ -960,68 +1085,40 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, imm) = decode_b(instr);
                 format!("ArrayForLoop r{}, {}", a, imm)
             }
-            _ => format!(".word 0x{:08x}", instr),
         }
     }
 
-    fn format_constant(&self, value: &Value, nested_functions: &[Function]) -> String {
-        if value.is_null() {
-            "null".to_string()
-        } else if let Some(b) = value.as_bool() {
-            format!("bool {}", b)
-        } else if let Some(n) = value.as_int() {
-            format!("int {}", n)
-        } else if let Some(f) = value.as_float() {
-            if f.is_nan() {
-                "float nan".to_string()
-            } else if f.is_infinite() {
-                if f.is_sign_positive() {
+    fn format_constant(&self, value: &Constant, nested_functions: &[Function]) -> String {
+        match value {
+            Constant::Null => "null".to_string(),
+            Constant::Bool(value) => format!("bool {value}"),
+            Constant::Int(value) => format!("int {value}"),
+            Constant::Float(bits) => {
+                let value = f64::from_bits(*bits);
+                if value.is_nan() {
+                    "float nan".to_string()
+                } else if value == f64::INFINITY {
                     "float inf".to_string()
-                } else {
+                } else if value == f64::NEG_INFINITY {
                     "float -inf".to_string()
-                }
-            } else {
-                format!("float {}", f)
-            }
-        } else if let Some(func_idx) = value.as_nested_fn_marker() {
-            let name = nested_functions
-                .get(func_idx)
-                .and_then(|f| f.name.as_deref())
-                .or_else(|| self.nested_fn_name(func_idx));
-            match name {
-                Some(n) => format!("func @{} \"{}\"", func_idx + 1, escape_string(n)),
-                None => format!("func @{}", func_idx + 1),
-            }
-        } else if let Some(ptr) = value.as_ptr() {
-            if let Some(heap) = self.heap {
-                if let Some(obj) = heap.get(GcRef::new(ptr)) {
-                    match &obj.kind {
-                        ObjectKind::String(s) => {
-                            format!("string \"{}\"", escape_string(s.as_str()))
-                        }
-                        ObjectKind::Function(f) => {
-                            if let Some(name) = f.name() {
-                                format!("func \"{}\"", escape_string(name))
-                            } else {
-                                "func <anonymous>".to_string()
-                            }
-                        }
-                        ObjectKind::Native(n) => {
-                            format!("native \"{}\"", escape_string(&n.name))
-                        }
-                        ObjectKind::Upvalue(_) => "upvalue".to_string(),
-                        ObjectKind::Closure(_) => "closure".to_string(),
-                        ObjectKind::Array(a) => format!("array[{}]", a.len()),
-                        ObjectKind::Vec(v) => format!("vec[{}]", v.len()),
-                    }
                 } else {
-                    format!("ptr {}", ptr)
+                    format!("float {value}")
                 }
-            } else {
-                format!("ptr {}", ptr)
             }
-        } else {
-            format!("unknown 0x{:016x}", value.as_int().unwrap_or(0) as u64)
+            Constant::String(value) => format!("string \"{}\"", escape_string(value)),
+            Constant::NestedFunction(index) => {
+                let index = *index as usize;
+                let name = nested_functions
+                    .get(index)
+                    .and_then(|function| function.name.as_deref())
+                    .or_else(|| self.nested_fn_name(index));
+                match name {
+                    Some(name) => {
+                        format!("func @{} \"{}\"", index + 1, escape_string(name))
+                    }
+                    None => format!("func @{}", index + 1),
+                }
+            }
         }
     }
 }

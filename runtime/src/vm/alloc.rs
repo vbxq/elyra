@@ -1,6 +1,6 @@
 use super::{
     AelysFunction, GcObject, GcRef, Heap, NativeFn, NativeFunction, NativeFunctionImpl, ObjectKind,
-    VM,
+    VM, Value,
 };
 use aelys_bytecode::object::{AelysArray, AelysVec};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
@@ -8,7 +8,7 @@ use aelys_native::AelysNativeFn;
 
 impl VM {
     fn ensure_heap_capacity(&self, additional: u64) -> Result<(), RuntimeError> {
-        let heap_bytes = self.heap.bytes_allocated() as u64;
+        let heap_bytes = u64::try_from(self.heap.bytes_allocated()).unwrap_or(u64::MAX);
         let new_total = heap_bytes.checked_add(additional).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::OutOfMemory {
                 requested: additional,
@@ -25,13 +25,19 @@ impl VM {
     }
 
     pub fn alloc_object(&mut self, object: GcObject) -> Result<GcRef, RuntimeError> {
-        let size = Heap::estimate_object_size(&object) as u64;
+        self.maybe_collect();
+        self.alloc_object_without_collection(object)
+    }
+
+    fn alloc_object_without_collection(&mut self, object: GcObject) -> Result<GcRef, RuntimeError> {
+        let size = u64::try_from(Heap::estimate_object_size(&object)).unwrap_or(u64::MAX);
         self.ensure_heap_capacity(size)?;
         Ok(self.heap.alloc(object))
     }
 
     pub fn alloc_string(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
-        let size = Heap::estimate_string_size(s.len()) as u64;
+        self.maybe_collect();
+        let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
         self.ensure_heap_capacity(size)?;
         Ok(self.heap.alloc_string(s))
     }
@@ -40,20 +46,40 @@ impl VM {
         if let Some(existing) = self.heap.find_interned_string(s) {
             return Ok(existing);
         }
-        let size = Heap::estimate_string_size(s.len()) as u64;
+        self.maybe_collect();
+        self.intern_string_without_collection(s)
+    }
+
+    fn intern_string_without_collection(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
+        if let Some(existing) = self.heap.find_interned_string(s) {
+            return Ok(existing);
+        }
+        let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
         self.ensure_heap_capacity(size)?;
         Ok(self.heap.intern_string(s))
     }
 
     pub fn alloc_function(&mut self, func: super::Function) -> Result<GcRef, RuntimeError> {
-        let obj = GcObject::new(ObjectKind::Function(AelysFunction::new(func)));
-        self.alloc_object(obj)
+        self.maybe_collect();
+        let mut constants = Vec::with_capacity(func.constants.len());
+        for constant in &func.constants {
+            let value = if let aelys_bytecode::Constant::String(string) = constant {
+                Value::ptr(self.intern_string_without_collection(string)?.index())
+            } else {
+                constant.materialize(&mut self.heap)
+            };
+            constants.push(value);
+        }
+        let obj = GcObject::new(ObjectKind::Function(AelysFunction::with_constants(
+            func, constants,
+        )));
+        self.alloc_object_without_collection(obj)
     }
 
     pub fn alloc_native(
         &mut self,
         name: &str,
-        arity: u8,
+        arity: u16,
         func: NativeFn,
     ) -> Result<GcRef, RuntimeError> {
         self.native_registry
@@ -65,7 +91,7 @@ impl VM {
     pub fn alloc_foreign(
         &mut self,
         name: &str,
-        arity: u8,
+        arity: u16,
         func: AelysNativeFn,
     ) -> Result<GcRef, RuntimeError> {
         self.native_registry
@@ -75,17 +101,19 @@ impl VM {
     }
 
     pub fn alloc_array(&mut self, array: AelysArray) -> Result<GcRef, RuntimeError> {
-        let size = array.size_bytes() as u64;
+        self.maybe_collect();
+        let size = u64::try_from(array.size_bytes()).unwrap_or(u64::MAX);
         self.ensure_heap_capacity(size)?;
         let obj = GcObject::new(ObjectKind::Array(array));
-        self.alloc_object(obj)
+        self.alloc_object_without_collection(obj)
     }
 
     pub fn alloc_vec(&mut self, vec: AelysVec) -> Result<GcRef, RuntimeError> {
-        let size = vec.size_bytes() as u64;
+        self.maybe_collect();
+        let size = u64::try_from(vec.size_bytes()).unwrap_or(u64::MAX);
         self.ensure_heap_capacity(size)?;
         let obj = GcObject::new(ObjectKind::Vec(vec));
-        self.alloc_object(obj)
+        self.alloc_object_without_collection(obj)
     }
 
     pub fn heap(&self) -> &Heap {
@@ -94,14 +122,5 @@ impl VM {
 
     pub fn heap_mut(&mut self) -> &mut Heap {
         &mut self.heap
-    }
-
-    pub fn merge_heap(
-        &mut self,
-        compile_heap: &mut Heap,
-    ) -> Result<std::collections::HashMap<usize, usize>, RuntimeError> {
-        let added_bytes = compile_heap.bytes_allocated() as u64;
-        self.ensure_heap_capacity(added_bytes)?;
-        Ok(self.heap.merge(compile_heap))
     }
 }

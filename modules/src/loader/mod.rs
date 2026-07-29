@@ -1,3 +1,5 @@
 mod types;
 
-pub use types::{ExportInfo, FileFingerprint, LoadResult, LoadedNativeInfo, ModuleImports, ModuleInfo};
+pub use types::{
+    ExportInfo, FileFingerprint, LoadResult, LoadedNativeInfo, ModuleImports, ModuleInfo,
+};

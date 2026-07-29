@@ -9,7 +9,7 @@ impl Compiler {
         &mut self,
         name: &str,
         value: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         self.compile_typed_expr(value, dest)?;
@@ -50,7 +50,7 @@ impl Compiler {
             // For assignments to user-defined globals, use raw index without translation
             let idx = self.get_or_create_global_index_raw(name);
             self.accessed_globals.insert(name.to_string());
-            self.emit_b(OpCode::SetGlobalIdx, dest, idx as i16, span);
+            self.emit_set_global_index(dest, idx, span);
         }
 
         Ok(())

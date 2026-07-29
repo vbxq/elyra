@@ -35,7 +35,7 @@ pub fn get_function(vm: &VM, name: &str) -> Result<CallableFunction> {
     match &obj.kind {
         runtime::ObjectKind::Function(func) => {
             let bc = &func.function.bytecode;
-            let consts = &func.function.constants;
+            let consts = &func.constants;
             Ok(CallableFunction {
                 kind: CachedFuncKind::Function {
                     func_ref,
@@ -77,8 +77,8 @@ pub fn get_function(vm: &VM, name: &str) -> Result<CallableFunction> {
 enum CachedFuncKind {
     Function {
         func_ref: runtime::GcRef,
-        arity: u8,
-        num_registers: u8,
+        arity: u16,
+        num_registers: u32,
         bytecode_ptr: *const u32,
         bytecode_len: usize,
         constants_ptr: *const Value,
@@ -89,8 +89,8 @@ enum CachedFuncKind {
     },
     Closure {
         func_ref: runtime::GcRef,
-        arity: u8,
-        num_registers: u8,
+        arity: u16,
+        num_registers: u32,
         bytecode_ptr: *const u32,
         bytecode_len: usize,
         constants_ptr: *const Value,
@@ -106,7 +106,7 @@ pub struct CallableFunction {
 }
 
 impl CallableFunction {
-    pub fn arity(&self) -> u8 {
+    pub fn arity(&self) -> u16 {
         match &self.kind {
             CachedFuncKind::Function { arity, .. } | CachedFuncKind::Closure { arity, .. } => {
                 *arity

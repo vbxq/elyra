@@ -67,16 +67,13 @@ fn call_cached_zero_argument_is_emitted() {
         "test",
         "fn run() { let f = fn() { return 7 }\n f() }\nrun()",
     );
-    let (function, _) = pipeline.compile(source).expect("compile failed");
+    let function = pipeline.compile(source).expect("compile failed");
     fn contains_call_cached(function: &aelys_runtime::Function) -> bool {
         function
             .bytecode
             .iter()
             .any(|instruction| (instruction >> 24) as u8 == OpCode::CallCached as u8)
-            || function
-                .nested_functions
-                .iter()
-                .any(contains_call_cached)
+            || function.nested_functions.iter().any(contains_call_cached)
     }
     assert!(contains_call_cached(&function));
 }

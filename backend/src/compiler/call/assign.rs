@@ -1,12 +1,18 @@
 use super::super::Compiler;
-use aelys_bytecode::{OpCode, Value};
+use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
 use aelys_syntax::ast::{BinaryOp, Expr, ExprKind};
 
 impl Compiler {
-    pub fn compile_assign(&mut self, name: &str, value: &Expr, dest: u8, span: Span) -> Result<()> {
+    pub fn compile_assign(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
         if let Some((reg, mutable)) = self.resolve_variable(name) {
             if self.loop_variables.contains(&name.to_string()) {
                 return Err(CompileError::new(
@@ -37,7 +43,13 @@ impl Compiler {
                     && *n >= 0
                     && *n <= 255
                 {
-                    self.emit_a(OpCode::AddI, reg, reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::AddI,
+                        reg,
+                        reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     if reg != dest {
                         self.emit_a(OpCode::Move, dest, reg, 0, span);
                     }
@@ -48,7 +60,13 @@ impl Compiler {
                     && *n >= 0
                     && *n <= 255
                 {
-                    self.emit_a(OpCode::AddI, reg, reg, *n as u8, span);
+                    self.emit_a(
+                        OpCode::AddI,
+                        reg,
+                        reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        span,
+                    );
                     if reg != dest {
                         self.emit_a(OpCode::Move, dest, reg, 0, span);
                     }
@@ -66,7 +84,13 @@ impl Compiler {
                 && *n >= 0
                 && *n <= 255
             {
-                self.emit_a(OpCode::SubI, reg, reg, *n as u8, span);
+                self.emit_a(
+                    OpCode::SubI,
+                    reg,
+                    reg,
+                    u8::try_from(*n).expect("immediate was range checked"),
+                    span,
+                );
                 if reg != dest {
                     self.emit_a(OpCode::Move, dest, reg, 0, span);
                 }
@@ -103,35 +127,6 @@ impl Compiler {
                 .into());
             }
 
-            if !self.global_indices.contains_key(name)
-                && let ExprKind::Binary {
-                    left,
-                    op: BinaryOp::Add,
-                    right,
-                } = &value.kind
-            {
-                if let (ExprKind::Identifier(id), ExprKind::Int(n)) = (&left.kind, &right.kind)
-                    && id == name
-                    && *n >= 0
-                    && *n <= 255
-                {
-                    let name_ref = self.heap.intern_string(name);
-                    let const_idx = self.add_constant(Value::ptr(name_ref.index()), span)?;
-                    self.emit_c(OpCode::IncGlobalI, dest, const_idx as u8, *n as u8, span);
-                    return Ok(());
-                }
-                if let (ExprKind::Int(n), ExprKind::Identifier(id)) = (&left.kind, &right.kind)
-                    && id == name
-                    && *n >= 0
-                    && *n <= 255
-                {
-                    let name_ref = self.heap.intern_string(name);
-                    let const_idx = self.add_constant(Value::ptr(name_ref.index()), span)?;
-                    self.emit_c(OpCode::IncGlobalI, dest, const_idx as u8, *n as u8, span);
-                    return Ok(());
-                }
-            }
-
             self.compile_expr(value, dest)?;
 
             let idx = if let Some(&idx) = self.global_indices.get(name) {
@@ -143,7 +138,7 @@ impl Compiler {
                 idx
             };
             self.accessed_globals.insert(name.to_string());
-            self.emit_b(OpCode::SetGlobalIdx, dest, idx as i16, span);
+            self.emit_set_global_index(dest, idx, span);
 
             Ok(())
         } else {

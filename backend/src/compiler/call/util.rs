@@ -1,6 +1,9 @@
-pub(super) fn arg_range_available(register_pool: &[bool; 256], start: u8, args_len: usize) -> bool {
+pub(super) fn arg_range_available(register_pool: &[bool], start: u16, args_len: usize) -> bool {
     for i in 0..args_len {
-        let arg_reg = match start.checked_add(i as u8) {
+        let Some(offset) = u16::try_from(i).ok() else {
+            return false;
+        };
+        let arg_reg = match start.checked_add(offset) {
             Some(r) => r,
             None => return false,
         };

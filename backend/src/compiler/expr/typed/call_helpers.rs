@@ -8,10 +8,10 @@ impl Compiler {
         &mut self,
         name: &str,
         args: &[aelys_sema::TypedExpr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
-        // fallback to CallGlobalNative for builtins like 'type'
+        // Fallback for builtins like `type`.
         let idx = self.get_or_create_global_index(name);
         self.accessed_globals.insert(name.to_string());
 
@@ -21,7 +21,9 @@ impl Compiler {
         };
 
         for i in 0..args.len() {
-            let arg_reg = match arg_start.checked_add(i as u8) {
+            let arg_reg = match arg_start
+                .checked_add(u16::try_from(i).expect("register offset was range checked"))
+            {
                 Some(r) => r,
                 None => return self.compile_typed_call_generic(name, args, dest, span),
             };
@@ -34,23 +36,24 @@ impl Compiler {
         }
 
         for i in 0..args.len() {
-            let arg_reg = arg_start + i as u8;
+            let arg_reg = arg_start + u16::try_from(i).expect("register offset was range checked");
             self.register_pool[arg_reg as usize] = true;
-            if arg_reg >= self.next_register {
-                self.next_register = arg_reg + 1;
+            if u32::from(arg_reg) >= self.next_register {
+                self.next_register = u32::from(arg_reg) + 1;
             }
         }
 
         for (i, arg) in args.iter().enumerate() {
-            let arg_reg = arg_start + i as u8;
+            let arg_reg = arg_start + u16::try_from(i).expect("register offset was range checked");
             self.compile_typed_expr(arg, arg_reg)?;
         }
 
-        self.emit_call_global_cached(dest, idx, args.len() as u8, name, span);
+        let nargs = self.checked_call_arity(args.len(), span)?;
+        self.emit_call_global_cached(dest, idx, nargs, name, span);
 
         for i in (0..args.len()).rev() {
-            let arg_reg = arg_start + i as u8;
-            self.register_pool[arg_reg as usize] = false;
+            let arg_reg = arg_start + u16::try_from(i).expect("register offset was range checked");
+            self.free_register(arg_reg);
         }
 
         Ok(())
@@ -60,32 +63,34 @@ impl Compiler {
         &mut self,
         name: &str,
         args: &[aelys_sema::TypedExpr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
-        let nargs = args.len();
-        let callee_reg = self.alloc_consecutive_registers_for_call(nargs as u8 + 1, span)?;
+        let nargs = self.checked_call_arity(args.len(), span)?;
+        let register_count = args.len().saturating_add(1);
+        let callee_reg = self.alloc_consecutive_registers_for_call(register_count, span)?;
 
-        for i in 0..=nargs {
-            let reg = callee_reg + i as u8;
+        for i in 0..register_count {
+            let reg = callee_reg + u16::try_from(i).expect("argument count was range checked");
             self.register_pool[reg as usize] = true;
-            if reg >= self.next_register {
-                self.next_register = reg + 1;
+            if u32::from(reg) >= self.next_register {
+                self.next_register = u32::from(reg) + 1;
             }
         }
 
         self.compile_identifier(name, callee_reg, span)?;
 
         for (i, arg) in args.iter().enumerate() {
-            let arg_reg = callee_reg + 1 + i as u8;
+            let arg_reg =
+                callee_reg + 1 + u16::try_from(i).expect("argument count was range checked");
             self.compile_typed_expr(arg, arg_reg)?;
         }
 
-        self.emit_c(OpCode::Call, dest, callee_reg, args.len() as u8, span);
+        self.emit_c(OpCode::Call, dest, callee_reg, nargs, span);
 
-        for i in (0..=nargs).rev() {
-            let reg = callee_reg + i as u8;
-            self.register_pool[reg as usize] = false;
+        for i in (0..register_count).rev() {
+            let reg = callee_reg + u16::try_from(i).expect("argument count was range checked");
+            self.free_register(reg);
         }
 
         Ok(())

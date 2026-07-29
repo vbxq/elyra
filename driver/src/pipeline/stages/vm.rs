@@ -29,8 +29,8 @@ impl Stage for VMStage {
     } // side effects - don't cache
 
     fn execute(&mut self, input: StageInput) -> Result<StageOutput, PipelineError> {
-        let (mut function, mut compile_heap, source) = match input {
-            StageInput::Compiled(f, h, s) => (*f, h, s),
+        let (function, source) = match input {
+            StageInput::Compiled(f, s) => (*f, s),
             other => {
                 return Err(PipelineError::TypeMismatch {
                     expected: "Compiled",
@@ -46,14 +46,6 @@ impl Stage for VMStage {
                 message: e.to_string(),
             })?,
         };
-
-        let remap = vm
-            .merge_heap(&mut compile_heap)
-            .map_err(|e| PipelineError::StageError {
-                stage: "vm".to_string(),
-                message: e.to_string(),
-            })?;
-        function.remap_constants(&remap);
 
         let func_ref = vm
             .alloc_function(function)

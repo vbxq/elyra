@@ -3,7 +3,7 @@ use aelys_syntax::ast::{Expr, ExprKind, Function, Stmt, StmtKind};
 use aelys_syntax::{Source, Span};
 
 #[test]
-fn untyped_function_merges_call_site_slots_without_implicit_return() {
+fn untyped_function_needs_no_bytecode_call_site_slots() {
     let span = Span::dummy();
     let source = Source::new("<test>", "");
     let mut compiler = Compiler::new(None, source);
@@ -32,6 +32,4 @@ fn untyped_function_merges_call_site_slots_without_implicit_return() {
     };
 
     compiler.compile_function(&func).unwrap();
-
-    assert!(compiler.next_call_site_slot > 0);
 }

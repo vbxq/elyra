@@ -21,8 +21,12 @@ pub enum RuntimeErrorKind {
     UndefinedVariable(String),
     NotCallable(String),
     ArityMismatch {
-        expected: u8,
-        got: u8,
+        expected: u16,
+        got: u16,
+    },
+    ArgumentLimitExceeded {
+        count: usize,
+        max: u16,
     },
     StackOverflow,
     InvalidAllocationSize {
@@ -53,6 +57,17 @@ pub enum RuntimeErrorKind {
     NativeError {
         code: i32,
     },
+    NativePanic,
+    IntegerOverflow,
+    RuntimePanic {
+        message: String,
+    },
+    InstructionBudgetExceeded {
+        limit: u64,
+    },
+    DeadlineExceeded,
+    Interrupted,
+    Exit(i32),
     IndexOutOfBounds {
         index: i64,
         length: i64,
@@ -88,6 +103,9 @@ impl RuntimeErrorKind {
             Self::ArityMismatch { expected, got } => {
                 format!("expected {} arguments, got {}", expected, got)
             }
+            Self::ArgumentLimitExceeded { count, max } => {
+                format!("argument count {count} exceeds maximum {max}")
+            }
             Self::StackOverflow => "stack overflow".to_string(),
             Self::InvalidAllocationSize { size } => {
                 format!("invalid allocation size: {} (must be > 0)", size)
@@ -114,6 +132,17 @@ impl RuntimeErrorKind {
             }
             Self::InvalidBytecode(message) => format!("invalid bytecode: {}", message),
             Self::NativeError { code } => format!("native error: code {}", code),
+            Self::NativePanic => "native function panicked".to_string(),
+            Self::IntegerOverflow => {
+                "integer overflow outside the supported 48-bit range".to_string()
+            }
+            Self::RuntimePanic { message } => format!("runtime panic recovered: {message}"),
+            Self::InstructionBudgetExceeded { limit } => {
+                format!("instruction budget exhausted after {} instructions", limit)
+            }
+            Self::DeadlineExceeded => "execution deadline exceeded".to_string(),
+            Self::Interrupted => "execution interrupted".to_string(),
+            Self::Exit(code) => format!("execution exited with status {}", code),
             Self::IndexOutOfBounds { index, length } => {
                 format!(
                     "index out of bounds: index {} is out of bounds for length {}",

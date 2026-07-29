@@ -10,7 +10,7 @@ impl Compiler {
         &mut self,
         op: UnaryOp,
         operand: &Expr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let operand_reg = self.alloc_register()?;

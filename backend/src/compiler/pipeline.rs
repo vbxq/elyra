@@ -1,6 +1,7 @@
 use super::Compiler;
-use aelys_bytecode::{Function, GlobalLayout, Heap, OpCode};
+use aelys_bytecode::{Function, GlobalLayout, OpCode};
 use aelys_common::Result;
+use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +10,7 @@ impl Compiler {
     pub fn compile_typed(
         mut self,
         program: &TypedProgram,
-    ) -> Result<(Function, Heap, HashMap<String, bool>)> {
+    ) -> Result<(Function, HashMap<String, bool>)> {
         for stmt in &program.stmts {
             match &stmt.kind {
                 TypedStmtKind::Function(func) => {
@@ -82,22 +83,41 @@ impl Compiler {
         }
 
         self.current.num_registers = self.next_register;
-        self.current.call_site_count = self.next_call_site_slot;
         self.current.global_layout = self.build_global_layout();
         self.current.compute_global_layout_hash();
         self.current.finalize_bytecode();
 
-        Ok((self.current, self.heap, self.globals))
+        if self.current.wide_operand_error().is_some() {
+            return Err(CompileError::new(
+                CompileErrorKind::TooManyRegisters,
+                aelys_syntax::Span::dummy(),
+                self.source.clone(),
+            )
+            .into());
+        }
+        if let Some(distance) = self.current.jump_overflow() {
+            return Err(CompileError::new(
+                CompileErrorKind::JumpOffsetTooLarge { distance },
+                aelys_syntax::Span::dummy(),
+                self.source.clone(),
+            )
+            .into());
+        }
+
+        Ok((self.current, self.globals))
     }
 
     pub(super) fn build_global_layout(&self) -> Arc<GlobalLayout> {
         if self.accessed_globals.is_empty() {
             GlobalLayout::empty()
         } else {
-            let mut names = vec![String::new(); self.next_global_index as usize];
+            let global_count = usize::try_from(self.next_global_index)
+                .expect("u32 global count fits target usize");
+            let mut names = vec![String::new(); global_count];
             for (name, &idx) in &self.global_indices {
                 if self.accessed_globals.contains(name) {
-                    names[idx as usize] = name.clone();
+                    names[usize::try_from(idx).expect("u32 global index fits target usize")] =
+                        name.clone();
                 }
             }
             GlobalLayout::new(names)

@@ -93,7 +93,7 @@ pub fn get_std_module_name(path: &[String]) -> Option<&str> {
 #[derive(Debug, Clone)]
 pub struct StdModuleExports {
     pub all_exports: Vec<String>,
-    pub native_functions: Vec<String>, // for CallGlobalNative opt
+    pub native_functions: Vec<String>,
 }
 
 pub fn register_std_module(
@@ -225,7 +225,7 @@ pub fn register_native(
     vm: &mut VM,
     module_alias: &str,
     name: &str,
-    arity: u8,
+    arity: u16,
     func: crate::vm::NativeFn,
 ) -> Result<(), RuntimeError> {
     let qualified_name = format!("{}::{}", module_alias, name);

@@ -3,10 +3,22 @@
 
 pub use aelys_native_macros::{aelys_export, aelys_module};
 
-pub const AELYS_ABI_VERSION: u32 = 2;
-pub const AELYS_API_VERSION: u32 = 1;
+pub const AELYS_ABI_VERSION: u32 = 3;
+pub const AELYS_API_VERSION: u32 = 3;
 
-pub type AelysValue = u64;
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AelysValue(u64);
+
+impl AelysValue {
+    pub(crate) const fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
+
+    pub(crate) const fn bits(self) -> u64 {
+        self.0
+    }
+}
 
 mod abi;
 mod hash;
@@ -15,7 +27,7 @@ mod value;
 
 pub use abi::{
     AelysExport, AelysExportKind, AelysInitFn, AelysModuleDescriptor, AelysNativeFn,
-    AelysRequiredModule, AelysTypeDescriptor, AelysVmApi,
+    AelysRequiredModule, AelysTypeDescriptor, AelysVmApi, NativeContext, NativeHandle,
 };
 pub use hash::{compute_exports_hash, init_descriptor_exports_hash};
 pub use value::{
@@ -38,14 +50,14 @@ pub fn store_vm_api(api: &AelysVmApi) {
 /// # Safety
 /// `vm` must be a valid pointer to a live VM instance (clippy moment)
 pub unsafe fn read_string_from_value(
-    vm: *mut core::ffi::c_void,
+    context: *mut NativeContext,
     value: AelysValue,
 ) -> Option<String> {
     let api = VM_API.get()?;
     let read_fn = api.read_string?;
     let mut ptr: *const u8 = core::ptr::null();
     let mut len: usize = 0;
-    let status = read_fn(vm, value, &mut ptr, &mut len);
+    let status = read_fn(context, value, &mut ptr, &mut len);
     if status != 0 || ptr.is_null() {
         return None;
     }

@@ -3,18 +3,38 @@
 
 match opcode_byte {
     // MakeClosure (35)
-    35 => {
-        let (dest, const_idx, num_upvalues) = decode_abc(instr);
+    35 | 126 | 181 => {
+        let (narrow_dest, narrow_index, aux) = decode_abc(instr);
+        let (dest, const_idx, num_upvalues) = if opcode_byte == 126 {
+            let operands = unsafe { *bytecode_ptr.add(ip) };
+            let index = unsafe { *bytecode_ptr.add(ip + 1) } as usize;
+            ip += 2;
+            (
+                usize::try_from(operands >> 16).expect("wide destination fits usize"),
+                index,
+                usize::try_from(operands & 0xffff).expect("upvalue count fits usize"),
+            )
+        } else if opcode_byte == 181 {
+            let index = unsafe { *bytecode_ptr.add(ip) } as usize;
+            ip += 1;
+            (usize::from(narrow_dest), index, usize::from(aux))
+        } else {
+            (
+                usize::from(narrow_dest),
+                usize::from(narrow_index),
+                usize::from(aux),
+            )
+        };
 
         // Get the function value from constants (k{const_idx})
-        if (const_idx as usize) >= constants_len {
+        if const_idx >= constants_len {
             self.frames[current_frame_idx].ip = ip;
             return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
                 "invalid constant index: {} (max: {})",
                 const_idx, constants_len
             ))));
         }
-        let constant = unsafe { *constants_ptr.add(const_idx as usize) };
+        let constant = unsafe { *constants_ptr.add(const_idx) };
 
         // Check if this is a nested function marker (uses dedicated tag, can't collide with heap ptrs)
         let (nested_func_ref, upvalue_descriptors) = if let Some(nested_idx) = constant.as_nested_fn_marker() {
@@ -23,7 +43,6 @@ match opcode_byte {
             let nested_func = self.get_nested_function(func_ref, nested_idx)?;
             let upvalue_descs = nested_func.upvalue_descriptors.clone();
             self.verify_function_value(&nested_func)?;
-            self.maybe_collect();
             let nested_ref = self.alloc_function(nested_func)?;
             (nested_ref, upvalue_descs)
         } else if let Some(ptr_val) = constant.as_ptr() {
@@ -57,10 +76,11 @@ match opcode_byte {
                 got: self.value_type_name(constant).to_string(),
             }));
         };
+        reg_set!(base + dest, Value::ptr(nested_func_ref.index()));
 
         // Collect upvalue refs using the descriptors
-        let mut upvalue_refs = Vec::with_capacity(num_upvalues as usize);
-        for desc in upvalue_descriptors.iter().take(num_upvalues as usize) {
+        let mut upvalue_refs = Vec::with_capacity(num_upvalues);
+        for desc in upvalue_descriptors.iter().take(num_upvalues) {
             if desc.is_local {
                 // Create or reuse upvalue for local variable
                 let upval_ref = self.capture_upvalue(base, desc.index)?;
@@ -86,8 +106,8 @@ match opcode_byte {
                         (
                             f.function.bytecode.as_ptr(),
                             f.function.bytecode.len(),
-                            f.function.constants.as_ptr(),
-                            f.function.constants.len(),
+                            f.constants.as_ptr(),
+                            f.constants.len(),
                             f.function.arity,
                             f.function.num_registers,
                         )
@@ -100,7 +120,6 @@ match opcode_byte {
 
         // Allocate the closure with proper metadata
         self.frames[current_frame_idx].ip = ip;
-        self.maybe_collect();
         let closure = AelysClosure::with_cache(
             nested_func_ref,
             upvalue_refs,
@@ -115,7 +134,7 @@ match opcode_byte {
         );
         match self.alloc_object(GcObject::new(ObjectKind::Closure(closure))) {
             Ok(closure_ref) => {
-                reg_set!(base + dest as usize, Value::ptr(closure_ref.index()));
+                reg_set!(base + dest, Value::ptr(closure_ref.index()));
             }
             Err(e) => return Err(e),
         }

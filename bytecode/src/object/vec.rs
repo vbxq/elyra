@@ -151,7 +151,7 @@ impl AelysVec {
     }
     pub fn from_bools(data: Vec<bool>) -> Self {
         Self {
-            data: VecData::Bools(data.iter().map(|&b| b as u8).collect()),
+            data: VecData::Bools(data.iter().copied().map(u8::from).collect()),
         }
     }
     pub fn from_objects(data: Vec<Value>) -> Self {
@@ -208,7 +208,7 @@ impl AelysVec {
             }
             VecData::Bools(v) => {
                 if let Some(val) = value.as_bool() {
-                    v[index] = val as u8;
+                    v[index] = u8::from(val);
                     true
                 } else {
                     false
@@ -241,7 +241,7 @@ impl AelysVec {
             }
             VecData::Bools(v) => {
                 if let Some(val) = value.as_bool() {
-                    v.push(val as u8);
+                    v.push(u8::from(val));
                     true
                 } else {
                     false

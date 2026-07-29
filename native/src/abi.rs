@@ -3,8 +3,17 @@
 use crate::{AELYS_ABI_VERSION, AelysValue};
 use core::ffi::{c_char, c_void};
 
+#[repr(C)]
+pub struct NativeContext {
+    _private: [u8; 0],
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NativeHandle(u64);
+
 pub type AelysNativeFn = extern "C" fn(
-    vm: *mut c_void,
+    context: *mut NativeContext,
     args: *const AelysValue,
     arg_count: usize,
     out: *mut AelysValue,
@@ -18,7 +27,7 @@ pub struct AelysVmApi {
     pub api_version: u32,
     pub size: u32,
     pub register_function:
-        Option<extern "C" fn(name: *const c_char, arity: u8, func: AelysNativeFn) -> i32>,
+        Option<extern "C" fn(name: *const c_char, arity: u16, func: AelysNativeFn) -> i32>,
     pub register_constant: Option<extern "C" fn(name: *const c_char, value: AelysValue) -> i32>,
     pub register_type:
         Option<extern "C" fn(name: *const c_char, type_desc: *const AelysTypeDescriptor) -> i32>,
@@ -26,7 +35,7 @@ pub struct AelysVmApi {
         Option<extern "C" fn(bytes: *const u8, len: usize, out: *mut AelysValue) -> i32>,
     pub read_string: Option<
         extern "C" fn(
-            vm: *mut c_void,
+            context: *mut NativeContext,
             value: AelysValue,
             out_ptr: *mut *const u8,
             out_len: *mut usize,
@@ -56,8 +65,8 @@ pub enum AelysExportKind {
 pub struct AelysExport {
     pub name: *const c_char,
     pub kind: AelysExportKind,
-    pub arity: u8,
-    pub _padding: [u8; 3],
+    pub arity: u16,
+    pub _padding: [u8; 2],
     pub value: *const c_void,
 }
 

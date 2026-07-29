@@ -34,6 +34,15 @@ impl CompileErrorKind {
             Self::TooManyRegisters => "too many local variables in function".to_string(),
             Self::TooManyArguments => "too many arguments in function call".to_string(),
             Self::TooManyUpvalues => "too many captured variables (max 255)".to_string(),
+            Self::JumpOffsetTooLarge { distance } => {
+                format!(
+                    "jump offset {} exceeds the bytecode encoding limit",
+                    distance
+                )
+            }
+            Self::CompilationLimitExceeded(message) => {
+                format!("compilation limit exceeded: {message}")
+            }
             Self::BreakOutsideLoop => "'break' outside of loop".to_string(),
             Self::ContinueOutsideLoop => "'continue' outside of loop".to_string(),
             Self::ReturnOutsideFunction => "'return' outside of function".to_string(),

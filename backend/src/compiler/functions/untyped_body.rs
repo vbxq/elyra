@@ -36,11 +36,7 @@ pub(super) fn compile_untyped_body(
             let result_reg = func_compiler.alloc_register()?;
             func_compiler.compile_expr(expr, result_reg)?;
 
-
-            let line = func_compiler.current_line(last_stmt.span);
-            func_compiler
-                .current
-                .emit_a(OpCode::Return, result_reg, 0, 0, line);
+            func_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
             Ok(UntypedBodyResult::returned())
         }
         StmtKind::If {
@@ -65,11 +61,7 @@ pub(super) fn compile_untyped_body(
             }
             func_compiler.patch_jump(jump_to_end);
 
-
-            let line = func_compiler.current_line(last_stmt.span);
-            func_compiler
-                .current
-                .emit_a(OpCode::Return, result_reg, 0, 0, line);
+            func_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
 
             Ok(UntypedBodyResult::returned())
         }

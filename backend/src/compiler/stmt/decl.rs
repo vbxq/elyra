@@ -1,5 +1,4 @@
 use super::Compiler;
-use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_syntax::Span;
 use aelys_syntax::ast::{Expr, TypeAnnotation};
@@ -29,12 +28,7 @@ impl Compiler {
             self.compile_expr(initializer, temp_reg)?;
 
             self.accessed_globals.insert(name.to_string());
-            self.emit_b(
-                OpCode::SetGlobalIdx,
-                temp_reg,
-                global_idx as i16,
-                Span::dummy(),
-            );
+            self.emit_set_global_index(temp_reg, global_idx, Span::dummy());
             self.free_register(temp_reg);
         } else {
             let reg = self.declare_variable(name, mutable)?;
@@ -60,7 +54,7 @@ impl Compiler {
             let idx = self.get_or_create_global_index_raw(name);
             self.accessed_globals.insert(name.to_string());
 
-            self.emit_b(OpCode::SetGlobalIdx, reg, idx as i16, span);
+            self.emit_set_global_index(reg, idx, span);
             self.free_register(reg);
         } else {
             let reg = self.alloc_register()?;

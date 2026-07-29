@@ -1,5 +1,5 @@
 use super::super::Compiler;
-use aelys_bytecode::{GlobalLayout, OpCode, UpvalueDescriptor, Value};
+use aelys_bytecode::{GlobalLayout, UpvalueDescriptor};
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
@@ -10,7 +10,7 @@ pub(super) fn finalize_untyped_function(
     mut func_compiler: Compiler,
     func_name: &str,
     func_span: Span,
-    func_var_reg: u8,
+    func_var_reg: u16,
 ) -> Result<()> {
     func_compiler.current.global_layout = build_untyped_global_layout(&func_compiler);
     func_compiler.current.compute_global_layout_hash();
@@ -40,8 +40,6 @@ pub(super) fn finalize_untyped_function(
         .into());
     }
 
-    parent.heap = func_compiler.heap;
-
     for (name, &idx) in &func_compiler.global_indices {
         if !parent.global_indices.contains_key(name) {
             parent.global_indices.insert(name.clone(), idx);
@@ -50,38 +48,24 @@ pub(super) fn finalize_untyped_function(
     if func_compiler.next_global_index > parent.next_global_index {
         parent.next_global_index = func_compiler.next_global_index;
     }
-    if func_compiler.next_call_site_slot > parent.next_call_site_slot {
-        parent.next_call_site_slot = func_compiler.next_call_site_slot;
-    }
-
     let const_idx = parent.current.add_constant_function(compiled_func);
 
     if upvalue_count > 0 {
-        parent.emit_a(
-            OpCode::MakeClosure,
-            func_var_reg,
-            const_idx as u8,
-            upvalue_count as u8,
-            func_span,
-        );
+        let upvalue_count = u8::try_from(upvalue_count).map_err(|_| {
+            CompileError::new(
+                CompileErrorKind::TooManyUpvalues,
+                func_span,
+                parent.source.clone(),
+            )
+        })?;
+        parent.emit_make_closure(func_var_reg, const_idx, upvalue_count, func_span);
     } else {
-        parent.emit_b(OpCode::LoadK, func_var_reg, const_idx as i16, func_span);
+        parent.emit_load_constant(func_var_reg, const_idx, func_span);
     }
 
-    if let Some(&idx) = parent.global_indices.get(func_name) {
-        parent.accessed_globals.insert(func_name.to_string());
-        parent.emit_b(OpCode::SetGlobalIdx, func_var_reg, idx as i16, func_span);
-    } else {
-        let name_ref = parent.heap.intern_string(func_name);
-        let name_const_idx = parent.add_constant(Value::ptr(name_ref.index()), func_span)?;
-        parent.emit_a(
-            OpCode::SetGlobal,
-            func_var_reg,
-            name_const_idx as u8,
-            0,
-            func_span,
-        );
-    }
+    let idx = parent.get_or_create_global_index(func_name);
+    parent.accessed_globals.insert(func_name.to_string());
+    parent.emit_set_global_index(func_var_reg, idx, func_span);
 
     Ok(())
 }

@@ -8,7 +8,7 @@ pub struct ModuleInfo {
     pub file_path: PathBuf,
     pub version: Option<String>, // native only
     pub exports: HashMap<String, ExportInfo>,
-    pub native_functions: Vec<String>, // for CallGlobalNative opt
+    pub native_functions: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +42,7 @@ pub struct LoadedNativeInfo {
 pub struct ModuleImports {
     pub module_aliases: HashSet<String>, // "utils" from `needs utils`
     pub known_globals: HashSet<String>,  // wildcard/specific imports
-    pub known_native_globals: HashSet<String>, // for CallGlobalNative
+    pub known_native_globals: HashSet<String>,
     pub symbol_origins: HashMap<String, String>,
 }
 

@@ -5,7 +5,7 @@ impl Compiler {
     pub fn resolve_variable_typed(
         &self,
         name: &str,
-    ) -> Option<(u8, bool, &aelys_sema::ResolvedType)> {
+    ) -> Option<(u16, bool, &aelys_sema::ResolvedType)> {
         for local in self.locals.iter().rev() {
             if local.is_freed {
                 continue;
@@ -17,7 +17,7 @@ impl Compiler {
         None
     }
 
-    pub fn resolve_variable(&self, name: &str) -> Option<(u8, bool)> {
+    pub fn resolve_variable(&self, name: &str) -> Option<(u16, bool)> {
         for local in self.locals.iter().rev() {
             if local.is_freed {
                 continue;
@@ -32,7 +32,7 @@ impl Compiler {
     pub fn resolve_upvalue(&mut self, name: &str) -> Option<(u8, bool)> {
         for (i, upvalue) in self.upvalues.iter().enumerate() {
             if upvalue.name == name {
-                return Some((i as u8, upvalue.mutable));
+                return Some((u8::try_from(i).ok()?, upvalue.mutable));
             }
         }
 
@@ -43,7 +43,7 @@ impl Compiler {
                         locals[i].is_captured = true;
                     }
 
-                    let upvalue_index = self.upvalues.len() as u8;
+                    let upvalue_index = u8::try_from(self.upvalues.len()).unwrap_or(u8::MAX);
                     self.upvalues.push(Upvalue {
                         is_local: true,
                         index: local.register,
@@ -58,10 +58,10 @@ impl Compiler {
         if let Some(ref enclosing_upvalues) = self.enclosing_upvalues.clone() {
             for (i, upvalue) in enclosing_upvalues.iter().enumerate() {
                 if upvalue.name == name {
-                    let upvalue_index = self.upvalues.len() as u8;
+                    let upvalue_index = u8::try_from(self.upvalues.len()).unwrap_or(u8::MAX);
                     self.upvalues.push(Upvalue {
                         is_local: false,
-                        index: i as u8,
+                        index: u16::try_from(i).ok()?,
                         name: name.to_string(),
                         mutable: upvalue.mutable,
                     });
@@ -73,10 +73,10 @@ impl Compiler {
         for (depth, ancestor_locals) in self.all_enclosing_locals.iter().enumerate().skip(1) {
             for local in ancestor_locals.iter() {
                 if local.name == name {
-                    let upvalue_index = self.upvalues.len() as u8;
+                    let upvalue_index = u8::try_from(self.upvalues.len()).unwrap_or(u8::MAX);
                     self.upvalues.push(Upvalue {
                         is_local: false,
-                        index: (depth - 1) as u8 | 0x80,
+                        index: u16::try_from(depth - 1).ok()? | 0x80,
                         name: name.to_string(),
                         mutable: local.mutable,
                     });

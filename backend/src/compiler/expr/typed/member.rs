@@ -7,7 +7,7 @@ impl Compiler {
         &mut self,
         object: &aelys_sema::TypedExpr,
         member: &str,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         use aelys_sema::TypedExprKind;
@@ -18,7 +18,7 @@ impl Compiler {
             let global_name = format!("{}::{}", module_name, member);
             let idx = self.get_or_create_global_index(&global_name);
             self.accessed_globals.insert(global_name.clone());
-            self.emit_b(aelys_bytecode::OpCode::GetGlobalIdx, dest, idx as i16, span);
+            self.emit_get_global_index(dest, idx, span);
             return Ok(());
         }
 

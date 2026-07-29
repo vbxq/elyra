@@ -12,7 +12,7 @@ pub struct ModuleInfo {
     pub file_path: PathBuf,
     pub version: Option<String>, // native modules only
     pub exports: HashMap<String, ExportInfo>,
-    pub native_functions: Vec<String>, // qualified names for CallGlobalNative
+    pub native_functions: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +32,6 @@ pub struct ModuleImports {
     pub known_globals: HashSet<String>,  // direct imports
     pub known_native_globals: HashSet<String>, // native funcs for codegen opt
     pub symbol_origins: HashMap<String, String>, // symbol -> module_path
-    pub next_call_site_slot: u16,        // next available call site slot after loading all modules
 }
 
 pub enum LoadResult {
@@ -49,5 +48,4 @@ pub struct ModuleLoader {
     pub(crate) native_fingerprints: HashMap<String, FileFingerprint>,
     pub(crate) manifest: Option<Manifest>,
     pub(crate) loaded_native_modules: HashMap<String, LoadedNativeInfo>,
-    pub(crate) next_call_site_slot: u16,
 }

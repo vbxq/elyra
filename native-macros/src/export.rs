@@ -7,7 +7,7 @@ use syn::{FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type};
 
 pub struct ExportInfo {
     pub name: String,
-    pub arity: u8,
+    pub arity: u16,
     pub wrapper_name: Ident,
 }
 
@@ -19,7 +19,8 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
         let arity = if func.sig.inputs.len() >= 4 {
             0
         } else {
-            func.sig.inputs.len() as u8
+            u16::try_from(func.sig.inputs.len())
+                .map_err(|_| syn::Error::new(func.sig.inputs.span(), "too many parameters"))?
         };
 
         let wrapper = quote! {
@@ -40,7 +41,7 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
 
     let mut param_extractions = Vec::new();
     let mut call_args = Vec::new();
-    let mut arity: u8 = 0;
+    let mut arity: u16 = 0;
 
     for (i, arg) in func.sig.inputs.iter().enumerate() {
         if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
@@ -52,7 +53,9 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
             let extraction = generate_extraction(param_name, ty, i)?;
             param_extractions.push(extraction);
             call_args.push(quote! { #param_name });
-            arity += 1;
+            arity = arity
+                .checked_add(1)
+                .ok_or_else(|| syn::Error::new(arg.span(), "too many parameters"))?;
         }
     }
 
@@ -66,7 +69,7 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
         #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn #wrapper_name(
-            _vm: *mut ::core::ffi::c_void,
+            _context: *mut ::aelys_native::NativeContext,
             args: *const ::aelys_native::AelysValue,
             _arg_count: usize,
             out: *mut ::aelys_native::AelysValue,

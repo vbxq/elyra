@@ -2,6 +2,14 @@ use super::{GcRef, ObjectKind, VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use aelys_native::{AelysNativeFn, AelysValue, AelysVmApi};
 
+const NATIVE_CONTEXT_MAGIC: u64 = 0x4145_4c59_535f_5633;
+
+#[repr(C)]
+struct RuntimeNativeContext {
+    magic: u64,
+    vm: *mut VM,
+}
+
 pub type NativeFn = fn(&mut VM, &[Value]) -> Result<Value, RuntimeError>;
 
 #[derive(Clone, Copy)]
@@ -13,23 +21,30 @@ pub enum NativeFunctionImpl {
 impl NativeFunctionImpl {
     pub fn call(self, vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         match self {
-            NativeFunctionImpl::Rust(f) => f(vm, args),
+            NativeFunctionImpl::Rust(f) => {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(vm, args)))
+                    .map_err(|_| vm.runtime_error(RuntimeErrorKind::NativePanic))?
+            }
             NativeFunctionImpl::Foreign(f) => {
-                let mut arg_bits = Vec::with_capacity(args.len());
+                let mut native_args = Vec::with_capacity(args.len());
                 for arg in args {
-                    arg_bits.push(arg.raw_bits());
+                    native_args.push(unsafe { std::mem::transmute::<Value, AelysValue>(*arg) });
                 }
-                let mut out = Value::null().raw_bits();
+                let mut out = aelys_native::value_null();
+                let mut context = RuntimeNativeContext {
+                    magic: NATIVE_CONTEXT_MAGIC,
+                    vm,
+                };
                 let status = f(
-                    vm as *mut VM as *mut std::ffi::c_void,
-                    arg_bits.as_ptr(),
-                    arg_bits.len(),
-                    &mut out as *mut u64,
+                    (&mut context as *mut RuntimeNativeContext).cast(),
+                    native_args.as_ptr(),
+                    native_args.len(),
+                    &mut out,
                 );
                 if status != 0 {
                     return Err(vm.runtime_error(RuntimeErrorKind::NativeError { code: status }));
                 }
-                Ok(Value::from_raw(out))
+                vm.import_native_value(out)
             }
         }
     }
@@ -37,13 +52,20 @@ impl NativeFunctionImpl {
 
 /// C callback for native modules to read string values from the VM.
 extern "C" fn native_read_string_callback(
-    vm: *mut std::ffi::c_void,
+    context: *mut aelys_native::NativeContext,
     value: AelysValue,
     out_ptr: *mut *const u8,
     out_len: *mut usize,
 ) -> i32 {
-    let vm = unsafe { &*(vm as *const VM) };
-    let val = Value::from_raw(value);
+    if context.is_null() {
+        return 1;
+    }
+    let context = unsafe { &*(context as *const RuntimeNativeContext) };
+    if context.magic != NATIVE_CONTEXT_MAGIC || context.vm.is_null() {
+        return 1;
+    }
+    let vm = unsafe { &*context.vm };
+    let val = unsafe { std::mem::transmute::<AelysValue, Value>(value) };
     if let Some(ptr_idx) = val.as_ptr()
         && let Some(obj) = vm.heap.get(GcRef::new(ptr_idx))
         && let ObjectKind::String(s) = &obj.kind
@@ -62,12 +84,25 @@ extern "C" fn native_read_string_callback(
 pub fn build_native_vm_api() -> AelysVmApi {
     AelysVmApi {
         api_version: aelys_native::AELYS_API_VERSION,
-        size: std::mem::size_of::<AelysVmApi>() as u32,
+        size: u32::try_from(std::mem::size_of::<AelysVmApi>())
+            .expect("native ABI table size fits u32"),
         register_function: None,
         register_constant: None,
         register_type: None,
         alloc_string: None,
         read_string: Some(native_read_string_callback),
         _reserved: [0; 3],
+    }
+}
+
+impl VM {
+    pub fn import_native_value(&self, value: AelysValue) -> Result<Value, RuntimeError> {
+        let value = unsafe { std::mem::transmute::<AelysValue, Value>(value) };
+        if let Some(raw) = value.as_ptr()
+            && self.heap.get(GcRef::new(raw)).is_none()
+        {
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
+        }
+        Ok(value)
     }
 }

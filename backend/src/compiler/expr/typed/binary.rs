@@ -4,7 +4,7 @@ use aelys_syntax::Span;
 use aelys_syntax::ast::BinaryOp;
 
 impl Compiler {
-    fn get_typed_local_register(&self, expr: &aelys_sema::TypedExpr) -> Option<u8> {
+    fn get_typed_local_register(&self, expr: &aelys_sema::TypedExpr) -> Option<u16> {
         if let aelys_sema::TypedExprKind::Identifier(name) = &expr.kind
             && let Some((reg, _)) = self.resolve_variable(name)
         {
@@ -18,7 +18,7 @@ impl Compiler {
         left: &aelys_sema::TypedExpr,
         op: BinaryOp,
         right: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let left_resolved = aelys_sema::ResolvedType::from_infer_type(&left.ty);

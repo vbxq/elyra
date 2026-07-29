@@ -9,3 +9,6 @@ aelys-native-macros = { path = "../native-macros" }
 
 [lib]
 doctest = false
+
+[lints]
+workspace = true

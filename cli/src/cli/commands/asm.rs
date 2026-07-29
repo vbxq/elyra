@@ -77,8 +77,8 @@ fn disassemble_source(
 ) -> Result<Option<PathBuf>, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let (function, heap) = compile_source(path, &content, opt_level, config)?;
-    let text = disassemble_to_string(&function, Some(&heap));
+    let function = compile_source(path, &content, opt_level, config)?;
+    let text = disassemble_to_string(&function);
     write_output(path, output, stdout, text)
 }
 
@@ -89,9 +89,9 @@ fn disassemble_avbc(
 ) -> Result<Option<PathBuf>, String> {
     let bytes =
         std::fs::read(path).map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let (function, heap, _manifest, _bundles) =
+    let (function, _manifest, _bundles) =
         deserialize_with_manifest(&bytes).map_err(|err| err.to_string())?;
-    let text = disassemble_to_string(&function, Some(&heap));
+    let text = disassemble_to_string(&function);
     write_output(path, output, stdout, text)
 }
 
@@ -116,7 +116,7 @@ fn compile_source(
     content: &str,
     opt_level: OptimizationLevel,
     config: VmConfig,
-) -> Result<(aelys_bytecode::Function, aelys_bytecode::Heap), String> {
+) -> Result<aelys_bytecode::Function, String> {
     let name = path.display().to_string();
     let src = Source::new(&name, content);
 
@@ -160,7 +160,7 @@ fn compile_source(
     let mut optimizer = Optimizer::new(opt_level);
     let typed_program = optimizer.optimize(typed_program);
 
-    let (function, heap, _globals) = Compiler::with_modules(
+    let (function, _globals) = Compiler::with_modules(
         None,
         src.clone(),
         imports.module_aliases,
@@ -171,7 +171,7 @@ fn compile_source(
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;
 
-    Ok((function, heap))
+    Ok(function)
 }
 
 fn output_path_for(path: &Path, extension: &str) -> PathBuf {

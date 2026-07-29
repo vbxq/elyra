@@ -8,15 +8,20 @@ impl VM {
     pub fn call_cached_function(
         &mut self,
         func_ref: GcRef,
-        arity: u8,
-        num_registers: u8,
+        arity: u16,
+        num_registers: u32,
         bytecode_ptr: *const u32,
         bytecode_len: usize,
         constants_ptr: *const Value,
         constants_len: usize,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
-        let nargs = args.len() as u8;
+        let nargs = u16::try_from(args.len()).map_err(|_| {
+            self.runtime_error(RuntimeErrorKind::ArgumentLimitExceeded {
+                count: args.len(),
+                max: u16::MAX,
+            })
+        })?;
         if arity != nargs {
             return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                 expected: arity,
@@ -37,7 +42,7 @@ impl VM {
 
         let frame = CallFrame::new(
             func_ref,
-            0,
+            0usize,
             bytecode_ptr,
             bytecode_len,
             constants_ptr,
@@ -55,8 +60,8 @@ impl VM {
     pub fn call_cached_closure(
         &mut self,
         func_ref: GcRef,
-        arity: u8,
-        num_registers: u8,
+        arity: u16,
+        num_registers: u32,
         bytecode_ptr: *const u32,
         bytecode_len: usize,
         constants_ptr: *const Value,
@@ -65,7 +70,12 @@ impl VM {
         upvalues_len: usize,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
-        let nargs = args.len() as u8;
+        let nargs = u16::try_from(args.len()).map_err(|_| {
+            self.runtime_error(RuntimeErrorKind::ArgumentLimitExceeded {
+                count: args.len(),
+                max: u16::MAX,
+            })
+        })?;
         if arity != nargs {
             return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                 expected: arity,
@@ -87,7 +97,7 @@ impl VM {
         let frame = CallFrame::with_upvalues(
             func_ref,
             0,
-            0,
+            0u16,
             bytecode_ptr,
             bytecode_len,
             constants_ptr,
@@ -108,7 +118,12 @@ impl VM {
         native: &NativeFunction,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
-        let nargs = args.len() as u8;
+        let nargs = u16::try_from(args.len()).map_err(|_| {
+            self.runtime_error(RuntimeErrorKind::ArgumentLimitExceeded {
+                count: args.len(),
+                max: u16::MAX,
+            })
+        })?;
         if native.arity != nargs {
             return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                 expected: native.arity,

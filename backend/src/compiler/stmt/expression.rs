@@ -36,7 +36,13 @@ impl Compiler {
                     && *n >= 0
                     && *n <= 255
                 {
-                    self.emit_a(OpCode::AddI, reg, reg, *n as u8, expr.span);
+                    self.emit_a(
+                        OpCode::AddI,
+                        reg,
+                        reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        expr.span,
+                    );
                     return Ok(());
                 }
                 if let (ExprKind::Int(n), ExprKind::Identifier(id)) = (&left.kind, &right.kind)
@@ -44,7 +50,13 @@ impl Compiler {
                     && *n >= 0
                     && *n <= 255
                 {
-                    self.emit_a(OpCode::AddI, reg, reg, *n as u8, expr.span);
+                    self.emit_a(
+                        OpCode::AddI,
+                        reg,
+                        reg,
+                        u8::try_from(*n).expect("immediate was range checked"),
+                        expr.span,
+                    );
                     return Ok(());
                 }
             }
@@ -58,7 +70,13 @@ impl Compiler {
                 && *n >= 0
                 && *n <= 255
             {
-                self.emit_a(OpCode::SubI, reg, reg, *n as u8, expr.span);
+                self.emit_a(
+                    OpCode::SubI,
+                    reg,
+                    reg,
+                    u8::try_from(*n).expect("immediate was range checked"),
+                    expr.span,
+                );
                 return Ok(());
             }
             self.compile_expr(value, reg)?;

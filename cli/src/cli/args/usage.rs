@@ -15,6 +15,8 @@ Flags (any position):
   --stdout                   Print asm to stdout (asm)
   -ae.<k>=<v>                VM option (e.g., -ae.max-heap=64M)
   --ae-<k>=<v>               VM option (e.g., --ae-max-heap=64M)
+  --max-instructions <n>     Stop after n bytecode instructions
+  --timeout-ms <n>           Stop after n milliseconds
 
 Warning flags:
   -Wall                      Enable all warnings

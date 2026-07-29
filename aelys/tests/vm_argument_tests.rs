@@ -14,7 +14,7 @@ fn parse_vm_args_default() {
 
 #[test]
 fn parse_vm_args_dev_flag_enables_hot_reload() {
-    let parsed = parse_vm_args(&["--dev".to_string()]).expect("should parse");
+    let _parsed = parse_vm_args(&["--dev".to_string()]).expect("should parse");
 }
 
 #[test]
@@ -66,19 +66,19 @@ fn heap_limit_triggers_out_of_memory() {
     }
 }
 
-
-
 #[test]
-fn merge_heap_rejects_over_limit() {
+fn function_materialization_rejects_over_limit() {
     let config = VmConfig::new(2 * 1024 * 1024).expect("valid config");
     let src = Source::new("<test>", "");
     let mut vm = VM::with_config_and_args(src, config.clone(), Vec::new()).expect("vm init");
 
-    let mut compile_heap = aelys_runtime::Heap::new();
     let large = "x".repeat(2 * 1024 * 1024);
-    compile_heap.alloc_string(&large);
+    let mut function = aelys_runtime::Function::new(None, 0);
+    function
+        .constants
+        .push(aelys_bytecode::Constant::String(large));
 
-    let err = vm.merge_heap(&mut compile_heap).expect_err("should OOM");
+    let err = vm.alloc_function(function).expect_err("should OOM");
     match err.kind {
         RuntimeErrorKind::OutOfMemory { .. } => {}
         _ => panic!("expected OutOfMemory"),

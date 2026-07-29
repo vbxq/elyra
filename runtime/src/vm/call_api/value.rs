@@ -18,7 +18,12 @@ impl VM {
 
         match func_kind {
             FuncKind::Native { native } => {
-                let nargs = args.len() as u8;
+                let nargs = u16::try_from(args.len()).map_err(|_| {
+                    self.runtime_error(RuntimeErrorKind::ArgumentLimitExceeded {
+                        count: args.len(),
+                        max: u16::MAX,
+                    })
+                })?;
                 if native.arity != nargs {
                     return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
                         expected: native.arity,
@@ -81,7 +86,7 @@ impl VM {
         match &obj.kind {
             ObjectKind::Function(func) => {
                 let bc = &func.function.bytecode;
-                let consts = &func.function.constants;
+                let consts = &func.constants;
                 Ok(FuncKind::Function {
                     arity: func.arity(),
                     num_registers: func.num_registers(),

@@ -27,7 +27,7 @@ pub unsafe fn compute_exports_hash(exports: *const AelysExport, export_count: u3
         };
         hash_bytes(&mut hash, name_bytes);
         hash_u64(&mut hash, export.kind as u32 as u64);
-        hash_bytes(&mut hash, &[export.arity]);
+        hash_bytes(&mut hash, &export.arity.to_le_bytes());
         hash_u64(&mut hash, export.value as usize as u64);
     }
 

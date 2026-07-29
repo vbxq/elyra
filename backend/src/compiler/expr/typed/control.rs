@@ -8,7 +8,7 @@ impl Compiler {
         condition: &aelys_sema::TypedExpr,
         then_branch: &aelys_sema::TypedExpr,
         else_branch: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
     ) -> Result<()> {
         let cond_reg = self.alloc_register()?;
         self.compile_typed_expr(condition, cond_reg)?;

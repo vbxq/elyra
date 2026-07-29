@@ -9,7 +9,7 @@ impl Compiler {
     // Variable resolution order: local -> upvalue -> global.
     // Note: we used to emit GetGlobal (name-based lookup) for globals,
     // now we use GetGlobalIdx (index-based) for better performance
-    pub fn compile_identifier(&mut self, name: &str, dest: u8, span: Span) -> Result<()> {
+    pub fn compile_identifier(&mut self, name: &str, dest: u16, span: Span) -> Result<()> {
         // Local variable - just move from its register (or skip if already in dest)
         if let Some((reg, _mutable)) = self.resolve_variable(name) {
             if reg != dest {
@@ -54,12 +54,12 @@ impl Compiler {
                 .into());
             };
             self.accessed_globals.insert(actual_name);
-            self.emit_b(OpCode::GetGlobalIdx, dest, idx as i16, span);
+            self.emit_get_global_index(dest, idx, span);
             Ok(())
         }
     }
 
-    pub fn get_local_register(&self, expr: &Expr) -> Option<u8> {
+    pub fn get_local_register(&self, expr: &Expr) -> Option<u16> {
         if let ExprKind::Identifier(name) = &expr.kind
             && let Some((reg, _)) = self.resolve_variable(name)
         {

@@ -85,10 +85,36 @@ pub(super) fn check_jump(ip: usize, offset: i16, bc_len: usize, op: &str) -> Res
     let next_ip = ip
         .checked_add(1)
         .ok_or_else(|| format!("{} ip overflow", op))?;
-    let target = (next_ip as isize)
-        .checked_add(offset as isize)
+    let next_ip = i64::try_from(next_ip).map_err(|_| format!("{} ip exceeds i64", op))?;
+    let target = next_ip
+        .checked_add(i64::from(offset))
         .ok_or_else(|| format!("{} jump overflow", op))?;
-    if target < 0 || target as usize > bc_len {
+    let Ok(target_index) = usize::try_from(target) else {
+        return Err(format!("{} jump target {} out of bounds", op, target));
+    };
+    if target_index > bc_len {
+        return Err(format!("{} jump target {} out of bounds", op, target));
+    }
+    Ok(())
+}
+
+pub(super) fn check_jump_i32(
+    ip: usize,
+    offset: i32,
+    bc_len: usize,
+    op: &str,
+) -> Result<(), String> {
+    let next_ip = ip
+        .checked_add(2)
+        .ok_or_else(|| format!("{} ip overflow", op))?;
+    let next_ip = i64::try_from(next_ip).map_err(|_| format!("{} ip exceeds i64", op))?;
+    let target = next_ip
+        .checked_add(i64::from(offset))
+        .ok_or_else(|| format!("{} jump overflow", op))?;
+    let Ok(target_index) = usize::try_from(target) else {
+        return Err(format!("{} jump target {} out of bounds", op, target));
+    };
+    if target_index > bc_len {
         return Err(format!("{} jump target {} out of bounds", op, target));
     }
     Ok(())

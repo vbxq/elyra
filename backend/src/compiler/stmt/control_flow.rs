@@ -48,8 +48,7 @@ impl Compiler {
                     .into());
                 }
             } else {
-                let jump_dist = (self.current_offset() - loop_start + 1) as i16;
-                self.emit_b(OpCode::Jump, 0, -jump_dist, span);
+                self.emit_jump_back(loop_start, span);
             }
             Ok(())
         } else {
@@ -76,7 +75,6 @@ impl Compiler {
             .into());
         }
 
-
         if let Some(expr) = expr {
             let reg = self.alloc_register()?;
             self.compile_expr(expr, reg)?;
@@ -89,13 +87,10 @@ impl Compiler {
                 .min();
 
             if let Some(from_reg) = lowest_captured {
-                let line = self.current_line(span);
-                self.current
-                    .emit_a(OpCode::CloseUpvals, from_reg, 0, 0, line);
+                self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
             }
 
-            let line = self.current_line(span);
-            self.current.emit_a(OpCode::Return, reg, 0, 0, line);
+            self.emit_a(OpCode::Return, reg, 0, 0, span);
             self.free_register(reg);
         } else {
             let lowest_captured = self
@@ -106,9 +101,7 @@ impl Compiler {
                 .min();
 
             if let Some(from_reg) = lowest_captured {
-                let line = self.current_line(span);
-                self.current
-                    .emit_a(OpCode::CloseUpvals, from_reg, 0, 0, line);
+                self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
             }
 
             self.emit_return0(span);
@@ -129,7 +122,6 @@ impl Compiler {
             )
             .into());
         }
-
 
         if let Some(e) = expr {
             let reg = self.alloc_register()?;

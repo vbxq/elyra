@@ -10,9 +10,7 @@ impl VmConfig {
     pub const MIN_HEAP_BYTES: u64 = 1024 * 1024;
 
     pub fn new(max_heap_bytes: u64) -> Result<Self, VmConfigError> {
-        let config = Self {
-            max_heap_bytes,
-        };
+        let config = Self { max_heap_bytes };
         config.validate()?;
         Ok(config)
     }

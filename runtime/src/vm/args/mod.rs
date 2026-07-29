@@ -9,6 +9,8 @@ pub use parse::parse_vm_args;
 pub struct VmArgsParsed {
     pub config: VmConfig,
     pub program_args: Vec<String>,
+    pub max_instructions: Option<u64>,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug)]

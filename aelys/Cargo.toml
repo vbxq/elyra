@@ -19,9 +19,19 @@ aelys-driver = { path = "../driver" }
 tempfile = "3"
 aelys-opt = { path = "../opt" }
 aelys-bytecode = { path = "../bytecode" }
+criterion = "0.8.2"
+iai-callgrind = "0.16.1"
 
 [build-dependencies]
 regex = "1"
 
 [lib]
 doctest = false
+
+[[bench]]
+name = "criterion_runtime"
+harness = false
+
+[[bench]]
+name = "iai_runtime"
+harness = false

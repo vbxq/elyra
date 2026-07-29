@@ -13,16 +13,19 @@ impl Compiler {
         &mut self,
         callee: &Expr,
         args: &[Expr],
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
-        if args.len() > 255 {
+        if args.len() > usize::from(u16::MAX) {
             return Err(CompileError::new(
                 CompileErrorKind::TooManyArguments,
                 span,
                 self.source.clone(),
             )
             .into());
+        }
+        if args.len() > usize::from(u8::MAX) {
+            return self.compile_call_generic(callee, args, dest, span);
         }
 
         // Handle format string with placeholders: func("x={}", x) -> func("x=" + __tostring(x))
@@ -54,7 +57,7 @@ impl Compiler {
         }
 
         // CallCached: when the callee is in a local register (e.g., let f = func; f())
-        // Skips the global index lookup and 2 cache words of CallGlobal.
+        // Skips the global index lookup of CallGlobal.
         if self.try_compile_cached_call(callee, args, dest, span)? {
             return Ok(());
         }
@@ -87,7 +90,7 @@ impl Compiler {
         args: &[Expr],
         fmt_parts: &[FmtStringPart],
         placeholder_count: usize,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let extra_args_needed = placeholder_count;
@@ -110,13 +113,15 @@ impl Compiler {
 
         // Compile: func(fmt_string_expanded, remaining_args...)
         let total_args = 1 + remaining_args.len();
-        let func_reg = self.alloc_consecutive_registers_for_call(total_args as u8 + 1, span)?;
+        let call_arity = self.checked_call_arity(total_args, span)?;
+        let func_reg =
+            self.alloc_consecutive_registers_for_call(total_args.saturating_add(1), span)?;
 
         for i in 0..=total_args {
-            let reg = func_reg + i as u8;
+            let reg = func_reg + u16::try_from(i).expect("register offset was range checked");
             self.register_pool[reg as usize] = true;
-            if reg >= self.next_register {
-                self.next_register = reg + 1;
+            if u32::from(reg) >= self.next_register {
+                self.next_register = u32::from(reg) + 1;
             }
         }
 
@@ -128,7 +133,8 @@ impl Compiler {
 
         // remaining args
         for (i, arg) in remaining_args.iter().enumerate() {
-            let arg_reg = func_reg + 2 + i as u8;
+            let arg_reg =
+                func_reg + 2 + u16::try_from(i).expect("register offset was range checked");
             self.compile_expr(arg, arg_reg)?;
         }
 
@@ -136,40 +142,40 @@ impl Compiler {
             aelys_bytecode::OpCode::Call,
             dest,
             func_reg,
-            total_args as u8,
+            call_arity,
             span,
         );
 
         for i in (0..=total_args).rev() {
-            let reg = func_reg + i as u8;
-            self.register_pool[reg as usize] = false;
+            let reg = func_reg + u16::try_from(i).expect("register offset was range checked");
+            self.free_register(reg);
         }
 
         Ok(())
     }
 
-    pub(super) fn reserve_arg_registers(&mut self, start: u8, args_len: usize) -> bool {
+    pub(super) fn reserve_arg_registers(&mut self, start: u16, args_len: usize) -> bool {
         if !arg_range_available(&self.register_pool, start, args_len) {
             return false;
         }
         for i in 0..args_len {
-            let arg_reg = start + i as u8;
+            let arg_reg = start + u16::try_from(i).expect("register offset was range checked");
             self.register_pool[arg_reg as usize] = true;
-            if arg_reg >= self.next_register {
-                self.next_register = arg_reg + 1;
+            if u32::from(arg_reg) >= self.next_register {
+                self.next_register = u32::from(arg_reg) + 1;
             }
         }
         true
     }
 
-    pub(super) fn release_arg_registers(&mut self, start: u8, args_len: usize) {
+    pub(super) fn release_arg_registers(&mut self, start: u16, args_len: usize) {
         for i in (0..args_len).rev() {
-            let arg_reg = start + i as u8;
-            self.register_pool[arg_reg as usize] = false;
+            let arg_reg = start + u16::try_from(i).expect("register offset was range checked");
+            self.free_register(arg_reg);
         }
     }
 
-    pub(super) fn checked_arg_start(&self, dest: u8) -> Option<u8> {
+    pub(super) fn checked_arg_start(&self, dest: u16) -> Option<u16> {
         dest.checked_add(1)
     }
 

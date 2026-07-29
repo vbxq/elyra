@@ -1,5 +1,5 @@
 use super::super::Compiler;
-use aelys_bytecode::{OpCode, Value};
+use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_syntax::Span;
 
@@ -8,7 +8,7 @@ impl Compiler {
         &mut self,
         params: &[aelys_sema::TypedParam],
         body: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         self.compile_typed_lambda_impl(params, body, dest, span)
@@ -18,13 +18,12 @@ impl Compiler {
         &mut self,
         params: &[aelys_sema::TypedParam],
         body: &aelys_sema::TypedExpr,
-        dest: u8,
+        dest: u16,
         span: Span,
     ) -> Result<()> {
         let mut nested_compiler = super::super::Compiler::for_nested_function(
             Some("<lambda>".to_string()),
             self.source.clone(),
-            self.heap.clone(),
             self.globals.clone(),
             self.global_indices.clone(),
             self.next_global_index,
@@ -35,9 +34,14 @@ impl Compiler {
             self.known_globals.clone(),
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
-            self.next_call_site_slot,
         );
-        nested_compiler.current.arity = params.len() as u8;
+        nested_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
+            aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TooManyArguments,
+                span,
+                self.source.clone(),
+            )
+        })?;
 
         nested_compiler.begin_scope();
 
@@ -72,9 +76,6 @@ impl Compiler {
                 });
         }
 
-        let remap = self.heap.merge(&mut nested_compiler.heap);
-        compiled_func.remap_constants(&remap);
-
         for (name, idx) in &nested_compiler.global_indices {
             if !self.global_indices.contains_key(name) {
                 self.global_indices.insert(name.clone(), *idx);
@@ -82,27 +83,23 @@ impl Compiler {
         }
         self.next_global_index = nested_compiler.next_global_index;
 
-        if nested_compiler.next_call_site_slot > self.next_call_site_slot {
-            self.next_call_site_slot = nested_compiler.next_call_site_slot;
-        }
-
-        let func_ref = self.heap.alloc_function(compiled_func);
-        let const_idx = self.add_constant(Value::ptr(func_ref.index()), span)?;
+        let const_idx = self.current.add_constant_function(compiled_func);
 
         if nested_upvalues.is_empty() {
-            self.emit_b(OpCode::LoadK, dest, const_idx as i16, span);
+            self.emit_load_constant(dest, const_idx, span);
         } else {
-            self.emit_a(
-                OpCode::MakeClosure,
-                dest,
-                const_idx as u8,
-                nested_upvalues.len() as u8,
-                span,
-            );
+            let upvalue_count = u8::try_from(nested_upvalues.len()).map_err(|_| {
+                aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TooManyUpvalues,
+                    span,
+                    self.source.clone(),
+                )
+            })?;
+            self.emit_make_closure(dest, const_idx, upvalue_count, span);
 
             for upval in &nested_upvalues {
                 self.current
-                    .push_raw(((upval.is_local as u32) << 8) | (upval.index as u32));
+                    .push_raw((u32::from(upval.is_local) << 8) | u32::from(upval.index));
             }
         }
 

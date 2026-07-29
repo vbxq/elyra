@@ -2,7 +2,6 @@ use aelys_backend::Compiler;
 use aelys_bytecode::asm::{assemble, deserialize, disassemble, serialize};
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
-use aelys_runtime::Heap;
 use aelys_runtime::{VM, Value};
 use aelys_syntax::Source;
 
@@ -12,7 +11,7 @@ fn run_source(source: &str) -> Value {
 }
 
 /// Helper to compile source to bytecode and heap
-fn compile_source(source: &str) -> (aelys_runtime::Function, Heap) {
+fn compile_source(source: &str) -> aelys_runtime::Function {
     let src = Source::new("<test>", source);
     let tokens = Lexer::with_source(src.clone())
         .scan()
@@ -24,20 +23,17 @@ fn compile_source(source: &str) -> (aelys_runtime::Function, Heap) {
     // Use typed compilation pipeline
     let typed_program = aelys_sema::TypeInference::infer_program(stmts, src.clone())
         .expect("Type inference failed");
-    let (func, heap, _globals) = Compiler::new(None, src)
+    let (func, _globals) = Compiler::new(None, src)
         .compile_typed(&typed_program)
         .expect("Compiler failed");
 
-    (func, heap)
+    func
 }
 
 /// Run a function with a fresh heap (for roundtrip testing)
-fn run_function_with_heap(mut func: aelys_runtime::Function, mut heap: Heap) -> Value {
+fn run_function(func: aelys_runtime::Function) -> Value {
     let src = Source::new("<test>", "");
     let mut vm = VM::new(src).unwrap();
-
-    let remap = vm.merge_heap(&mut heap).unwrap();
-    func.remap_constants(&remap);
 
     let func_ref = vm.alloc_function(func).unwrap();
     vm.execute(func_ref).expect("Execution failed")
@@ -49,10 +45,10 @@ fn test_asm_roundtrip_simple() {
     let result_direct = run_source(source);
 
     // Roundtrip through .aasm
-    let (func, heap) = compile_source(source);
-    let asm_text = disassemble(&func, Some(&heap));
-    let (functions, asm_heap) = assemble(&asm_text).expect("Assemble failed");
-    let result_roundtrip = run_function_with_heap(functions.into_iter().next().unwrap(), asm_heap);
+    let func = compile_source(source);
+    let asm_text = disassemble(&func);
+    let functions = assemble(&asm_text).expect("Assemble failed");
+    let result_roundtrip = run_function(functions.into_iter().next().unwrap());
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
 }
@@ -68,8 +64,8 @@ fn test_bytecode_asm_roundtrip_api() {
   .code
     0000: Return0
 "#;
-    let (functions, heap) = aelys_bytecode::asm::assemble(src).expect("Assemble failed");
-    let text = aelys_bytecode::asm::disassemble(&functions[0], Some(&heap));
+    let functions = aelys_bytecode::asm::assemble(src).expect("Assemble failed");
+    let text = aelys_bytecode::asm::disassemble(&functions[0]);
     assert!(text.contains(".function 0"));
 }
 
@@ -78,10 +74,10 @@ fn test_asm_roundtrip_arithmetic() {
     let source = "(10 + 5) * 2 - 3";
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let asm_text = disassemble(&func, Some(&heap));
-    let (functions, asm_heap) = assemble(&asm_text).expect("Assemble failed");
-    let result_roundtrip = run_function_with_heap(functions.into_iter().next().unwrap(), asm_heap);
+    let func = compile_source(source);
+    let asm_text = disassemble(&func);
+    let functions = assemble(&asm_text).expect("Assemble failed");
+    let result_roundtrip = run_function(functions.into_iter().next().unwrap());
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
     assert_eq!(result_direct.as_int(), Some(27));
@@ -94,10 +90,10 @@ fn test_asm_roundtrip_conditionals() {
     let source = "10 > 5"; // Returns true/false - simpler test for jumps
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let asm_text = disassemble(&func, Some(&heap));
-    let (functions, asm_heap) = assemble(&asm_text).expect("Assemble failed");
-    let result_roundtrip = run_function_with_heap(functions.into_iter().next().unwrap(), asm_heap);
+    let func = compile_source(source);
+    let asm_text = disassemble(&func);
+    let functions = assemble(&asm_text).expect("Assemble failed");
+    let result_roundtrip = run_function(functions.into_iter().next().unwrap());
 
     assert_eq!(result_direct.as_bool(), result_roundtrip.as_bool());
     assert_eq!(result_direct.as_bool(), Some(true));
@@ -116,10 +112,10 @@ fn test_asm_roundtrip_while_loop() {
     "#;
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let asm_text = disassemble(&func, Some(&heap));
-    let (functions, asm_heap) = assemble(&asm_text).expect("Assemble failed");
-    let result_roundtrip = run_function_with_heap(functions.into_iter().next().unwrap(), asm_heap);
+    let func = compile_source(source);
+    let asm_text = disassemble(&func);
+    let functions = assemble(&asm_text).expect("Assemble failed");
+    let result_roundtrip = run_function(functions.into_iter().next().unwrap());
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
     assert_eq!(result_direct.as_int(), Some(15)); // 1+2+3+4+5
@@ -131,10 +127,10 @@ fn test_binary_roundtrip_simple() {
     let result_direct = run_source(source);
 
     // Roundtrip through .avbc
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
 }
@@ -148,10 +144,10 @@ fn test_binary_roundtrip_with_strings() {
     "#;
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
 }
@@ -161,10 +157,10 @@ fn test_binary_roundtrip_with_floats() {
     let source = "3.14159";
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     let direct_f = result_direct.as_float().expect("Expected float");
     let roundtrip_f = result_roundtrip.as_float().expect("Expected float");
@@ -179,10 +175,10 @@ fn test_binary_roundtrip_conditionals() {
     "#;
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
 }
@@ -198,14 +194,14 @@ fn test_double_roundtrip() {
     let result_direct = run_source(source);
 
     // First roundtrip: through .aasm
-    let (func, heap) = compile_source(source);
-    let asm_text = disassemble(&func, Some(&heap));
-    let (asm_funcs, asm_heap) = assemble(&asm_text).expect("Assemble failed");
+    let func = compile_source(source);
+    let asm_text = disassemble(&func);
+    let asm_funcs = assemble(&asm_text).expect("Assemble failed");
 
     // Second roundtrip: through .avbc
-    let bytes = serialize(&asm_funcs[0], &asm_heap);
-    let (final_func, final_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_final = run_function_with_heap(final_func, final_heap);
+    let bytes = serialize(&asm_funcs[0]).unwrap();
+    let final_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_final = run_function(final_func);
 
     assert_eq!(result_direct.as_int(), result_final.as_int());
     assert_eq!(result_direct.as_int(), Some(30));
@@ -214,16 +210,14 @@ fn test_double_roundtrip() {
 #[test]
 fn test_empty_function() {
     let func = aelys_runtime::Function::new(Some("empty".to_string()), 0);
-    let heap = Heap::new();
-
     // Test disassemble
-    let asm_text = disassemble(&func, Some(&heap));
+    let asm_text = disassemble(&func);
     assert!(asm_text.contains(".function 0"));
     assert!(asm_text.contains(".name \"empty\""));
 
     // Test binary roundtrip
-    let bytes = serialize(&func, &heap);
-    let (loaded, _) = deserialize(&bytes).expect("Deserialize failed");
+    let bytes = serialize(&func).unwrap();
+    let loaded = deserialize(&bytes).expect("Deserialize failed");
     assert_eq!(loaded.name, Some("empty".to_string()));
 }
 
@@ -232,10 +226,10 @@ fn test_negative_numbers() {
     let source = "-42";
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let asm_text = disassemble(&func, Some(&heap));
-    let (functions, asm_heap) = assemble(&asm_text).expect("Assemble failed");
-    let result_roundtrip = run_function_with_heap(functions.into_iter().next().unwrap(), asm_heap);
+    let func = compile_source(source);
+    let asm_text = disassemble(&func);
+    let functions = assemble(&asm_text).expect("Assemble failed");
+    let result_roundtrip = run_function(functions.into_iter().next().unwrap());
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
     assert_eq!(result_direct.as_int(), Some(-42));
@@ -247,10 +241,10 @@ fn test_large_numbers() {
     let result_direct = run_source(source);
 
     // Binary roundtrip
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     assert_eq!(result_direct.as_int(), result_roundtrip.as_int());
 }
@@ -260,10 +254,10 @@ fn test_booleans() {
     let source = "true";
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     assert_eq!(result_direct.as_bool(), result_roundtrip.as_bool());
     assert_eq!(result_direct.as_bool(), Some(true));
@@ -274,10 +268,10 @@ fn test_null() {
     let source = "null";
     let result_direct = run_source(source);
 
-    let (func, heap) = compile_source(source);
-    let bytes = serialize(&func, &heap);
-    let (loaded_func, loaded_heap) = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function_with_heap(loaded_func, loaded_heap);
+    let func = compile_source(source);
+    let bytes = serialize(&func).unwrap();
+    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
+    let result_roundtrip = run_function(loaded_func);
 
     assert!(result_direct.is_null());
     assert!(result_roundtrip.is_null());
@@ -287,12 +281,12 @@ fn test_null() {
 fn test_string_escaping() {
     // Test that strings with special characters survive roundtrip
     let source = r#""hello\nworld""#;
-    let (func, heap) = compile_source(source);
+    let func = compile_source(source);
 
     // Just verify it doesn't crash
-    let asm_text = disassemble(&func, Some(&heap));
+    let asm_text = disassemble(&func);
     assert!(asm_text.contains("\\n")); // Should be escaped
 
-    let bytes = serialize(&func, &heap);
-    let (_, _) = deserialize(&bytes).expect("Deserialize failed");
+    let bytes = serialize(&func).unwrap();
+    deserialize(&bytes).expect("Deserialize failed");
 }

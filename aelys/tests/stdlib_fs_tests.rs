@@ -189,8 +189,12 @@ fs.size("/nonexistent")
     // May fail due to OS error (file not found) or handle the error gracefully
     let result = run_aelys_result(code);
     match result {
-        Ok(v) => { assert!(v.is_int() || v.is_float(), "expected numeric result"); }
-        Err(e) => { assert!(!e.is_empty(), "expected error message"); }
+        Ok(v) => {
+            assert!(v.is_int() || v.is_float(), "expected numeric result");
+        }
+        Err(e) => {
+            assert!(!e.is_empty(), "expected error message");
+        }
     }
 }
 
