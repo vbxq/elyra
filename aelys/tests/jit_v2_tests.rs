@@ -21,6 +21,8 @@ fn compute(limit: int) -> int {
 compute(10000)
 "#;
 
+const NESTED_INCREMENT: &str = "fn increment(value: int) -> int { return value + 1 } increment(41)";
+
 #[test]
 fn baseline_jit_executes_and_shares_machine_code_between_isolates() {
     assert_send_sync::<Runtime>();
@@ -145,20 +147,79 @@ fn execution_control_keeps_nested_calls_in_the_interpreter() {
 #[test]
 fn nested_tiered_jit_uses_the_per_isolate_call_threshold() {
     let runtime = Runtime::with_jit_mode(JitMode::Tiered);
-    let module = runtime
-        .compile(NESTED_INTEGER_LOOP, CompileOptions::default())
-        .unwrap();
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime.compile(NESTED_INCREMENT, options).unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     for _ in 0..999 {
         assert_eq!(
             isolate.execute(&module, RunOptions::default()).unwrap(),
-            ExecutionOutcome::Returned(Value::int(49_995_000))
+            ExecutionOutcome::Returned(Value::int(42))
         );
     }
     assert_eq!(runtime.jit_cache_entries(), 0);
     assert_eq!(
         isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+}
+
+#[test]
+fn tiered_jit_compiles_at_the_backedge_threshold() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let module = runtime
+        .compile(NESTED_INTEGER_LOOP, CompileOptions::default())
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::int(49_995_000))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(49_995_000))
+    );
+}
+
+#[test]
+fn tiered_jit_aggregates_backedges_across_calls() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn compute() -> int {
+    let mut i = 0
+    while i < 100 {
+        i = i + 1
+    }
+    return i
+}
+compute()
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    for _ in 0..99 {
+        assert_eq!(
+            isolate.execute(&module, RunOptions::default()).unwrap(),
+            ExecutionOutcome::Returned(Value::int(100))
+        );
+    }
+    assert_eq!(runtime.jit_cache_entries(), 0);
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(100))
     );
     assert_eq!(runtime.jit_cache_entries(), 1);
 }

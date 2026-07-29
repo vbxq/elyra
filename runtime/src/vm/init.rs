@@ -40,6 +40,7 @@ impl VM {
             jit_executor: None,
             jit_function_keys: crate::jit::InlineMap::default(),
             jit_call_counts: crate::jit::InlineMap::default(),
+            jit_backedge_counts: crate::jit::InlineMap::default(),
             source,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),

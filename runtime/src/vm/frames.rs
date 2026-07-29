@@ -11,7 +11,7 @@ impl VM {
     }
 
     pub fn pop_frame(&mut self) -> Option<CallFrame> {
-        self.frames.pop()
+        self.pop_frame_with_jit_metadata()
     }
 
     pub fn current_frame(&self) -> Result<&CallFrame, RuntimeError> {

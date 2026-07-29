@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
 
+pub const JIT_TIER1_BACKEDGE_THRESHOLD: u64 = 10_000;
+
 pub(crate) struct InlineMap<K, V> {
     inline: SmallVec<[(K, V); 4]>,
     heap: Option<HashMap<K, V>>,
@@ -118,6 +120,8 @@ pub enum JitCallResult {
 
 pub trait JitExecutor: Send + Sync {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
+
+    fn observe_backedge(&self, key: &JitFunctionKey, function: &Function, backedges: u64);
 
     fn try_execute(
         &self,

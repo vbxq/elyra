@@ -21,6 +21,10 @@ pub struct CallFrame {
     pub upvalues_len: usize,
     pub num_registers: u32,
     pub global_mapping_id: usize,
+    pub(crate) jit_backedge_base: u64,
+    pub(crate) jit_backedges: u64,
+    pub(crate) jit_backedges_initialized: bool,
+    pub(crate) jit_backedge_compiled: bool,
 }
 
 impl CallFrame {
@@ -46,6 +50,10 @@ impl CallFrame {
             upvalues_len: 0,
             num_registers,
             global_mapping_id: 0,
+            jit_backedge_base: 0,
+            jit_backedges: 0,
+            jit_backedges_initialized: false,
+            jit_backedge_compiled: false,
         }
     }
 
@@ -74,6 +82,10 @@ impl CallFrame {
             upvalues_len: 0,
             num_registers,
             global_mapping_id: 0,
+            jit_backedge_base: 0,
+            jit_backedges: 0,
+            jit_backedges_initialized: false,
+            jit_backedge_compiled: false,
         }
     }
 
@@ -104,6 +116,10 @@ impl CallFrame {
             upvalues_len,
             num_registers,
             global_mapping_id: 0,
+            jit_backedge_base: 0,
+            jit_backedges: 0,
+            jit_backedges_initialized: false,
+            jit_backedge_compiled: false,
         }
     }
 

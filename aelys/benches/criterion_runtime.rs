@@ -127,6 +127,22 @@ fn tiered_cold_benchmarks(criterion: &mut Criterion) {
     let tiered_module = tiered
         .compile(source, options())
         .expect("cold tiered workload must compile");
+    let backedge_source = r#"
+fn count(limit: int) -> int {
+    let mut value = 0
+    while value < limit { value = value + 1 }
+    return value
+}
+count(1000)
+"#;
+    let interpreter_backedges = Runtime::with_jit_mode(JitMode::Off);
+    let interpreter_backedge_module = interpreter_backedges
+        .compile(backedge_source, CompileOptions::default())
+        .expect("cold interpreter backedge workload must compile");
+    let tiered_backedges = Runtime::with_jit_mode(JitMode::Tiered);
+    let tiered_backedge_module = tiered_backedges
+        .compile(backedge_source, CompileOptions::default())
+        .expect("cold tiered backedge workload must compile");
 
     let mut group = criterion.benchmark_group("tiered_cold");
     group.bench_function("interpreter", |bencher| {
@@ -134,6 +150,12 @@ fn tiered_cold_benchmarks(criterion: &mut Criterion) {
     });
     group.bench_function("tiered_before_threshold", |bencher| {
         bencher.iter(|| execute_once(&tiered, &tiered_module));
+    });
+    group.bench_function("interpreter_backedges", |bencher| {
+        bencher.iter(|| execute_once(&interpreter_backedges, &interpreter_backedge_module));
+    });
+    group.bench_function("tiered_backedges_before_threshold", |bencher| {
+        bencher.iter(|| execute_once(&tiered_backedges, &tiered_backedge_module));
     });
     group.finish();
 }

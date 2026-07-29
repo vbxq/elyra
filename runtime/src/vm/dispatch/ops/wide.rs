@@ -807,7 +807,7 @@ impl VM {
                 if needs_switch && caller_gmap != 0 {
                     self.sync_current_function_globals();
                 }
-                self.frames.pop();
+                self.pop_frame_with_jit_metadata();
                 if self.frames.is_empty() {
                     return Ok(DispatchControl::Returned(result));
                 }

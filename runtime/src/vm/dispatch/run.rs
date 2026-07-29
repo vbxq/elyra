@@ -88,7 +88,7 @@ impl VM {
         loop {
             // Check end of bytecode
             if ip >= bytecode_len {
-                self.frames.pop();
+                self.pop_frame_with_jit_metadata();
                 if self.frames.is_empty() {
                     return Ok(Value::null());
                 }
@@ -258,6 +258,7 @@ impl VM {
                 // ForLoopI(40), ForLoopIInc(41), LtImm(44)-GeImm(47), WhileLoopLt(48),
                 // StringForLoop(177), VecForLoop(178), ArrayForLoop(179)
                 17..=20 | 26..=33 | 40..=41 | 44..=48 | 124..=125 | 127 | 177..=179 => {
+                    let branch_origin = ip;
                     super::ops::control_flow::execute_control_flow!(
                         self,
                         opcode_byte,
@@ -272,6 +273,9 @@ impl VM {
                         reg_set,
                         int_value
                     );
+                    if JIT && ip < branch_origin {
+                        self.record_jit_backedge(func_ref);
+                    }
                 }
 
                 // Call operations: Call(21), Return(22), Return0(23), CallWide(34),
@@ -617,7 +621,7 @@ impl VM {
                                 self.sync_current_function_globals();
                             }
 
-                            self.frames.pop();
+                            self.pop_frame_with_jit_metadata();
 
                             if self.frames.is_empty() {
                                 return Ok(result);
@@ -649,7 +653,7 @@ impl VM {
                                 self.sync_current_function_globals();
                             }
 
-                            self.frames.pop();
+                            self.pop_frame_with_jit_metadata();
 
                             if self.frames.is_empty() {
                                 return Ok(Value::null());
@@ -1213,6 +1217,10 @@ impl VM {
                 }
 
                 184 => {
+                    let branch_origin = ip;
+                    let active_function = func_ref;
+                    let wide_opcode =
+                        u8::try_from((instr >> 16) & 0xff).expect("wide opcode occupies one byte");
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -1245,6 +1253,9 @@ impl VM {
                             regs_ptr = self.registers.as_mut_ptr();
                             reg_set!(base + usize::from(destination), value);
                         }
+                    }
+                    if JIT && wide_opcode == 48 && ip < branch_origin {
+                        self.record_jit_backedge(active_function);
                     }
                 }
 

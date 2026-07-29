@@ -40,6 +40,7 @@ pub struct VM {
     pub(crate) jit_executor: Option<Arc<dyn crate::JitExecutor>>,
     pub(crate) jit_function_keys: crate::jit::InlineMap<GcRef, crate::JitFunctionKey>,
     pub(crate) jit_call_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
+    pub(crate) jit_backedge_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
     pub(crate) source: Arc<Source>,
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,

@@ -1,4 +1,4 @@
-use super::{Function, GcRef, ObjectKind, VM, Value};
+use super::{CallFrame, Function, GcRef, ObjectKind, VM, Value};
 use crate::{JitCallResult, JitExecutor, JitFunctionKey};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use std::sync::Arc;
@@ -7,6 +7,7 @@ impl VM {
     pub fn configure_jit(&mut self, executor: Option<Arc<dyn JitExecutor>>) {
         self.jit_executor = executor;
         self.jit_call_counts.clear();
+        self.jit_backedge_counts.clear();
     }
 
     pub fn alloc_function_with_jit_key(
@@ -91,6 +92,90 @@ impl VM {
             })?
             .to_vec();
         Ok(self.try_execute_jit_call(function, &arguments))
+    }
+
+    #[inline(always)]
+    pub(crate) fn record_jit_backedge(&mut self, function: GcRef) {
+        let initialized = self
+            .frames
+            .last()
+            .map(|frame| frame.jit_backedges_initialized)
+            .unwrap_or(false);
+        if !initialized {
+            let Some(key) = self.jit_function_keys.get(&function) else {
+                return;
+            };
+            let base = self.jit_backedge_counts.get(key).copied().unwrap_or(0);
+            let Some(frame) = self.frames.last_mut() else {
+                return;
+            };
+            frame.jit_backedge_base = base;
+            frame.jit_backedges_initialized = true;
+        }
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        frame.jit_backedges = frame.jit_backedges.saturating_add(1);
+        let backedges = frame.jit_backedge_base.saturating_add(frame.jit_backedges);
+        if backedges != crate::JIT_TIER1_BACKEDGE_THRESHOLD {
+            return;
+        }
+        frame.jit_backedge_compiled = true;
+        let Some(key) = self.jit_function_keys.get(&function).cloned() else {
+            return;
+        };
+        self.compile_jit_backedge(function, &key, backedges);
+    }
+
+    #[inline(never)]
+    fn compile_jit_backedge(&self, function: GcRef, key: &JitFunctionKey, backedges: u64) {
+        let Some(executor) = self.jit_executor.as_ref().cloned() else {
+            return;
+        };
+        let Some(object) = self.heap.get(function) else {
+            return;
+        };
+        let ObjectKind::Function(function) = &object.kind else {
+            return;
+        };
+        executor.observe_backedge(key, &function.function, backedges);
+    }
+
+    pub(crate) fn pop_frame_with_jit_metadata(&mut self) -> Option<CallFrame> {
+        let frame = self.frames.pop()?;
+        self.flush_jit_backedges(&frame);
+        Some(frame)
+    }
+
+    pub(crate) fn reset_frame_jit_metadata(&mut self, frame_index: usize) {
+        let Some(frame) = self.frames.get(frame_index).cloned() else {
+            return;
+        };
+        self.flush_jit_backedges(&frame);
+        if let Some(frame) = self.frames.get_mut(frame_index) {
+            frame.jit_backedge_base = 0;
+            frame.jit_backedges = 0;
+            frame.jit_backedges_initialized = false;
+            frame.jit_backedge_compiled = false;
+        }
+    }
+
+    fn flush_jit_backedges(&mut self, frame: &CallFrame) {
+        if !frame.jit_backedges_initialized || frame.jit_backedges == 0 {
+            return;
+        }
+        let Some(key) = self.jit_function_keys.get(&frame.function).cloned() else {
+            return;
+        };
+        let previous = self.jit_backedge_counts.get(&key).copied().unwrap_or(0);
+        let backedges = previous.saturating_add(frame.jit_backedges);
+        self.jit_backedge_counts.insert(key.clone(), backedges);
+        if !frame.jit_backedge_compiled
+            && previous < crate::JIT_TIER1_BACKEDGE_THRESHOLD
+            && backedges >= crate::JIT_TIER1_BACKEDGE_THRESHOLD
+        {
+            self.compile_jit_backedge(frame.function, &key, backedges);
+        }
     }
 
     pub(crate) fn sweep_jit_metadata(&mut self) {

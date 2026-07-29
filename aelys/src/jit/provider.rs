@@ -58,6 +58,12 @@ impl JitExecutor for JitProvider {
             && self.engine.cached(&Self::key(key)).ok().flatten().is_some()
     }
 
+    fn observe_backedge(&self, key: &JitFunctionKey, function: &Function, backedges: u64) {
+        if backedges >= aelys_runtime::JIT_TIER1_BACKEDGE_THRESHOLD {
+            let _ = self.compiled(key, function, self.call_threshold);
+        }
+    }
+
     fn try_execute(
         &self,
         key: &JitFunctionKey,
