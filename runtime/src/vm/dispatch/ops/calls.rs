@@ -458,38 +458,30 @@
 
             // TailCallUpval (81) - Tail call function from upvalue
             81 => {
-                let mut dest: u8 = 0;
-                let mut upval_idx: u8 = 0;
-                let mut nargs: u8 = 0;
-                let mut callee_ref = GcRef::new(0);
-                enum TailCallData {
-                    Function {
-                        arity: u16,
-                        callee_gmap: usize,
-                        num_regs: u32,
-                        bc_ptr: *const u32,
-                        bc_len: usize,
-                        const_ptr: *const Value,
-                        const_len: usize,
-                    },
-                    Closure {
-                        arity: u16,
-                        callee_gmap: usize,
-                        num_regs: u32,
-                        inner_func: GcRef,
-                        bc_ptr: *const u32,
-                        bc_len: usize,
-                        const_ptr: *const Value,
-                        const_len: usize,
-                        upval_ptr: *const GcRef,
-                        upval_len: usize,
-                    },
-                    Invalid,
+                let state = DispatchState {
+                    base,
+                    constants: constants_ptr,
+                    constants_len,
+                    registers: regs_ptr,
+                    registers_len: regs_len,
+                    frame_index: current_frame_idx,
+                };
+                match super::ops::tail_call_upval::execute(
+                    self,
+                    &state,
+                    ip,
+                    upvalues_ptr,
+                    upvalues_len,
+                    global_mapping_id,
+                    instr,
+                )? {
+                    DispatchControl::ReloadFrame => reload_frame_state!(),
+                    DispatchControl::Continue
+                    | DispatchControl::Returned(_)
+                    | DispatchControl::ReturnToCaller { .. } => {
+                        unreachable!("tail call handler must reload the active frame")
+                    }
                 }
-                let mut call_data = TailCallData::Invalid;
-                let _ = (dest, upval_idx, nargs, callee_ref);
-                let _ = &call_data;
-        include!("tail_call_upval.rs");
             }
 
             _ => unreachable!(),

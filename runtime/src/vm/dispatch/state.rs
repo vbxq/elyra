@@ -3,6 +3,7 @@ use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 pub(super) enum DispatchControl {
     Continue,
+    ReloadFrame,
     Returned(Value),
     ReturnToCaller {
         destination: u16,

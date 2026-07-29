@@ -194,6 +194,9 @@ impl VM {
                         instr,
                     )? {
                         DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => {
+                            unreachable!("load/store handler cannot change frames")
+                        }
                         DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
                             unreachable!("load/store handler cannot change frames")
                         }
@@ -263,6 +266,9 @@ impl VM {
                         instr,
                     )? {
                         DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => {
+                            unreachable!("closure handler cannot change frames")
+                        }
                         DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
                             unreachable!("closure handler cannot change frames")
                         }
@@ -308,6 +314,7 @@ impl VM {
                         instr,
                     )? {
                         DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => reload_frame_state!(),
                         DispatchControl::Returned(value) => return Ok(value),
                         DispatchControl::ReturnToCaller {
                             destination,

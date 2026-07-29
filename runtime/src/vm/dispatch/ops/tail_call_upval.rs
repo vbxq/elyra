@@ -1,181 +1,227 @@
-// TailCallUpval (81) - Tail call function from upvalue
-// Consolidated from tail_call_upval_part_00.rs, tail_call_upval_part_01.rs, tail_call_upval_part_02.rs
-{
-    // Part 0: Decode and get function from upvalue
-    let (dest_tmp, upval_idx_tmp, nargs_tmp) = decode_abc(instr);
-    dest = dest_tmp;
-    upval_idx = upval_idx_tmp;
-    nargs = nargs_tmp;
+use super::super::decode::decode_abc;
+use super::super::state::{DispatchControl, DispatchState};
+use crate::vm::{GcRef, MAX_REGISTERS, ObjectKind, VM, Value};
+use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-    if upvalues_len == 0 || (upval_idx as usize) >= upvalues_len {
-        return Err(self.runtime_error(RuntimeErrorKind::UndefinedVariable(
-            "upvalue".to_string(),
-        )));
+enum TailCallData {
+    Function {
+        arity: u16,
+        callee_gmap: usize,
+        num_regs: u32,
+        bytecode: *const u32,
+        bytecode_len: usize,
+        constants: *const Value,
+        constants_len: usize,
+    },
+    Closure {
+        arity: u16,
+        callee_gmap: usize,
+        num_regs: u32,
+        inner_function: GcRef,
+        bytecode: *const u32,
+        bytecode_len: usize,
+        constants: *const Value,
+        constants_len: usize,
+        upvalues: *const GcRef,
+        upvalues_len: usize,
+    },
+    Invalid,
+}
+
+#[inline]
+pub(crate) fn execute(
+    vm: &mut VM,
+    state: &DispatchState,
+    instruction_pointer: usize,
+    upvalues: *const GcRef,
+    upvalues_len: usize,
+    global_mapping_id: usize,
+    instruction: u32,
+) -> Result<DispatchControl, RuntimeError> {
+    let (destination, upvalue_index, argument_count) = decode_abc(instruction);
+    state.save_ip(vm, instruction_pointer);
+
+    let upvalue_index = usize::from(upvalue_index);
+    if upvalue_index >= upvalues_len {
+        return Err(vm.runtime_error(RuntimeErrorKind::UndefinedVariable("upvalue".to_string())));
     }
 
-    let upval_ref = unsafe { *upvalues_ptr.add(upval_idx as usize) };
-    let func_value = self.get_upvalue_value(upval_ref);
+    // SAFETY: the upvalue index was checked against the active frame's upvalue count.
+    let upvalue = unsafe { *upvalues.add(upvalue_index) };
+    let callee_value = vm.get_upvalue_value(upvalue);
+    let callee = callee_value.as_ptr().map(GcRef::new).ok_or_else(|| {
+        vm.runtime_error(RuntimeErrorKind::NotCallable(
+            vm.value_type_name(callee_value).to_string(),
+        ))
+    })?;
 
-    let func_ptr = match func_value.as_ptr() {
-        Some(p) => p,
-        None => {
-            return Err(self.runtime_error(RuntimeErrorKind::NotCallable(
-                self.value_type_name(func_value).to_string(),
-            )));
-        }
-    };
-
-    callee_ref = GcRef::new(func_ptr);
-
-    // Part 1: Determine call type
-    call_data = match self.heap.get(callee_ref) {
-        Some(obj) => match &obj.kind {
-            ObjectKind::Function(func) => {
-                let bc = &func.function.bytecode;
-                let consts = &func.constants;
-                TailCallData::Function {
-                    arity: func.arity(),
-                    callee_gmap: self
-                        .global_mapping_id_for_layout(&func.function.global_layout),
-                    num_regs: func.num_registers(),
-                    bc_ptr: bc.as_ptr(),
-                    bc_len: bc.len(),
-                    const_ptr: consts.as_ptr(),
-                    const_len: consts.len(),
-                }
-            }
+    let call_data = match vm.heap.get(callee) {
+        Some(object) => match &object.kind {
+            ObjectKind::Function(function) => TailCallData::Function {
+                arity: function.arity(),
+                callee_gmap: vm.global_mapping_id_for_layout(&function.function.global_layout),
+                num_regs: function.num_registers(),
+                bytecode: function.function.bytecode.as_ptr(),
+                bytecode_len: function.function.bytecode.len(),
+                constants: function.constants.as_ptr(),
+                constants_len: function.constants.len(),
+            },
             ObjectKind::Closure(closure) => {
-                let inner_gmap = self
+                let callee_gmap = vm
                     .heap
                     .get(closure.function)
-                    .and_then(|inner| {
-                        if let ObjectKind::Function(f) = &inner.kind {
-                            Some(self.global_mapping_id_for_layout(
-                                &f.function.global_layout,
-                            ))
-                        } else {
-                            None
+                    .and_then(|inner| match &inner.kind {
+                        ObjectKind::Function(function) => {
+                            Some(vm.global_mapping_id_for_layout(&function.function.global_layout))
                         }
+                        _ => None,
                     })
                     .unwrap_or(0);
                 TailCallData::Closure {
                     arity: closure.arity,
-                    callee_gmap: inner_gmap,
+                    callee_gmap,
                     num_regs: closure.num_registers,
-                    inner_func: closure.function,
-                    bc_ptr: closure.bytecode_ptr,
-                    bc_len: closure.bytecode_len,
-                    const_ptr: closure.constants_ptr,
-                    const_len: closure.constants_len,
-                    upval_ptr: closure.upvalues.as_ptr(),
-                    upval_len: closure.upvalues.len(),
+                    inner_function: closure.function,
+                    bytecode: closure.bytecode_ptr,
+                    bytecode_len: closure.bytecode_len,
+                    constants: closure.constants_ptr,
+                    constants_len: closure.constants_len,
+                    upvalues: closure.upvalues.as_ptr(),
+                    upvalues_len: closure.upvalues.len(),
                 }
             }
             _ => TailCallData::Invalid,
         },
         None => {
-            return Err(self.runtime_error(RuntimeErrorKind::NotCallable(
+            return Err(vm.runtime_error(RuntimeErrorKind::NotCallable(
                 "invalid reference".to_string(),
             )));
         }
     };
 
-    // Part 2: Execute the tail call
-    match call_data {
-        #[allow(unused_variables)]
+    let (
+        function,
+        callee_gmap,
+        num_registers,
+        bytecode,
+        bytecode_len,
+        constants,
+        constants_len,
+        callee_upvalues,
+        callee_upvalues_len,
+    ) = match call_data {
         TailCallData::Function {
             arity,
             callee_gmap,
             num_regs,
-            bc_ptr,
-            bc_len,
-            const_ptr,
-            const_len,
+            bytecode,
+            bytecode_len,
+            constants,
+            constants_len,
         } => {
-            self.ensure_function_verified(callee_ref)?;
-            if arity != u16::from(nargs) {
-                return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
-                    expected: arity,
-                    got: u16::from(nargs),
-                }));
-            }
-            // Load callee's globals if mapping changes
-            if callee_gmap != 0 && callee_gmap != global_mapping_id {
-                if global_mapping_id != 0 {
-                    self.sync_current_function_globals();
-                }
-                self.prepare_globals_for_function(callee_ref);
-            }
-            // Copy args to start of current frame's register window
-            for i in 0..nargs {
-                reg_set!(
-                    base + i as usize,
-                    reg_get!(base + dest as usize + 1 + i as usize)
-                );
-            }
-            // Update current frame in-place
-            let frame = &mut self.frames[current_frame_idx];
-            frame.function = callee_ref;
-            frame.ip = 0;
-            frame.bytecode_ptr = bc_ptr;
-            frame.bytecode_len = bc_len;
-            frame.constants_ptr = const_ptr;
-            frame.constants_len = const_len;
-            frame.upvalues_ptr = std::ptr::null();
-            frame.upvalues_len = 0;
-            frame.num_registers = num_regs;
-            frame.global_mapping_id = callee_gmap;
-            reload_frame_state!();
+            vm.ensure_function_verified(callee)?;
+            validate_arity(vm, arity, argument_count)?;
+            (
+                callee,
+                callee_gmap,
+                num_regs,
+                bytecode,
+                bytecode_len,
+                constants,
+                constants_len,
+                std::ptr::null(),
+                0,
+            )
         }
         TailCallData::Closure {
             arity,
             callee_gmap,
             num_regs,
-            inner_func,
-            bc_ptr,
-            bc_len,
-            const_ptr,
-            const_len,
-            upval_ptr,
-            upval_len,
+            inner_function,
+            bytecode,
+            bytecode_len,
+            constants,
+            constants_len,
+            upvalues,
+            upvalues_len,
         } => {
-            self.ensure_function_verified(inner_func)?;
-            if arity != u16::from(nargs) {
-                return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
-                    expected: arity,
-                    got: u16::from(nargs),
-                }));
-            }
-            // Load callee's globals if mapping changes
-            if callee_gmap != 0 && callee_gmap != global_mapping_id {
-                if global_mapping_id != 0 {
-                    self.sync_current_function_globals();
-                }
-                self.prepare_globals_for_function(inner_func);
-            }
-            for i in 0..nargs {
-                reg_set!(
-                    base + i as usize,
-                    reg_get!(base + dest as usize + 1 + i as usize)
-                );
-            }
-            let frame = &mut self.frames[current_frame_idx];
-            frame.function = inner_func;
-            frame.ip = 0;
-            frame.bytecode_ptr = bc_ptr;
-            frame.bytecode_len = bc_len;
-            frame.constants_ptr = const_ptr;
-            frame.constants_len = const_len;
-            frame.upvalues_ptr = upval_ptr;
-            frame.upvalues_len = upval_len;
-            frame.num_registers = num_regs;
-            frame.global_mapping_id = callee_gmap;
-            reload_frame_state!();
+            vm.ensure_function_verified(inner_function)?;
+            validate_arity(vm, arity, argument_count)?;
+            (
+                inner_function,
+                callee_gmap,
+                num_regs,
+                bytecode,
+                bytecode_len,
+                constants,
+                constants_len,
+                upvalues,
+                upvalues_len,
+            )
         }
         TailCallData::Invalid => {
-            return Err(self.runtime_error(RuntimeErrorKind::NotCallable(
-                "non-callable".to_string(),
-            )));
+            return Err(vm.runtime_error(RuntimeErrorKind::NotCallable("non-callable".to_string())));
         }
+    };
+
+    if callee_gmap != 0 && callee_gmap != global_mapping_id {
+        if global_mapping_id != 0 {
+            vm.sync_current_function_globals();
+        }
+        vm.prepare_globals_for_function(function);
     }
+
+    for argument in 0..usize::from(argument_count) {
+        let value = state.read_register(
+            vm,
+            state.base + usize::from(destination) + 1 + argument,
+            instruction_pointer,
+        )?;
+        state.write_register(vm, state.base + argument, value, instruction_pointer)?;
+    }
+
+    let num_registers = usize::try_from(num_registers).map_err(|_| {
+        vm.runtime_error(RuntimeErrorKind::InvalidBytecode(
+            "register count does not fit this target".to_string(),
+        ))
+    })?;
+    let required_registers = state
+        .base
+        .checked_add(num_registers)
+        .ok_or_else(|| vm.runtime_error(RuntimeErrorKind::StackOverflow))?;
+    if required_registers > MAX_REGISTERS {
+        return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
+            reg: required_registers.saturating_sub(1),
+            max: MAX_REGISTERS.saturating_sub(1),
+        }));
+    }
+    if required_registers > vm.registers.len() {
+        vm.registers.resize(required_registers, Value::null());
+    }
+
+    let frame = &mut vm.frames[state.frame_index];
+    frame.function = function;
+    frame.ip = 0;
+    frame.bytecode_ptr = bytecode;
+    frame.bytecode_len = bytecode_len;
+    frame.constants_ptr = constants;
+    frame.constants_len = constants_len;
+    frame.upvalues_ptr = callee_upvalues;
+    frame.upvalues_len = callee_upvalues_len;
+    frame.num_registers = u32::try_from(num_registers).expect("validated register count fits u32");
+    frame.global_mapping_id = callee_gmap;
+
+    Ok(DispatchControl::ReloadFrame)
+}
+
+#[inline(always)]
+fn validate_arity(vm: &mut VM, expected: u16, actual: u8) -> Result<(), RuntimeError> {
+    let actual = u16::from(actual);
+    if expected != actual {
+        return Err(vm.runtime_error(RuntimeErrorKind::ArityMismatch {
+            expected,
+            got: actual,
+        }));
+    }
+    Ok(())
 }

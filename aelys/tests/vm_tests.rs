@@ -1,5 +1,6 @@
 //! Tests for the Aelys VM
 
+use aelys_bytecode::Register;
 use aelys_common::{RuntimeError, RuntimeErrorKind};
 use aelys_runtime::{
     AelysClosure, AelysUpvalue, CallFrame, Function, GcObject, GlobalLayout, MAX_FRAMES,
@@ -900,6 +901,101 @@ fn test_tail_call_upvalue_reloads_constant_bounds() {
     target.emit_a(OpCode::Return, 0, 0, 0, 1);
     target.finalize_bytecode();
     let target_ref = vm.alloc_function(target).unwrap();
+    let target_closure = {
+        let target = vm.heap().get(target_ref).unwrap();
+        let ObjectKind::Function(target) = &target.kind else {
+            panic!("allocated target is not a function");
+        };
+        AelysClosure::with_cache(
+            target_ref,
+            Vec::new(),
+            aelys_bytecode::ClosureCache {
+                bytecode_ptr: target.function.bytecode.as_ptr(),
+                bytecode_len: target.function.bytecode.len(),
+                constants_ptr: target.constants.as_ptr(),
+                constants_len: target.constants.len(),
+                arity: target.function.arity,
+                num_registers: target.function.num_registers,
+            },
+        )
+    };
+    let target_closure_ref = vm
+        .alloc_object(GcObject::new(ObjectKind::Closure(target_closure)))
+        .unwrap();
+
+    let mut caller = Function::new(Some("caller".to_string()), 0);
+    caller.num_registers = 1;
+    caller.upvalue_descriptors.push(UpvalueDescriptor {
+        is_local: false,
+        index: 0,
+    });
+    caller.emit_a(OpCode::TailCallUpval, 0, 0, 0, 1);
+    caller.finalize_bytecode();
+    let caller_ref = vm.alloc_function(caller).unwrap();
+
+    let (bytecode_ptr, bytecode_len, constants_ptr, constants_len, arity, num_registers) = {
+        let caller = vm.heap().get(caller_ref).unwrap();
+        let ObjectKind::Function(caller) = &caller.kind else {
+            panic!("allocated caller is not a function");
+        };
+        (
+            caller.function.bytecode.as_ptr(),
+            caller.function.bytecode.len(),
+            caller.constants.as_ptr(),
+            caller.constants.len(),
+            caller.function.arity,
+            caller.function.num_registers,
+        )
+    };
+    let mut upvalue = AelysUpvalue::new_open(0, 0);
+    upvalue.close(Value::ptr(target_closure_ref.index()));
+    let upvalue_ref = vm
+        .alloc_object(GcObject::new(ObjectKind::Upvalue(upvalue)))
+        .unwrap();
+    let closure = AelysClosure::with_cache(
+        caller_ref,
+        vec![upvalue_ref],
+        aelys_bytecode::ClosureCache {
+            bytecode_ptr,
+            bytecode_len,
+            constants_ptr,
+            constants_len,
+            arity,
+            num_registers,
+        },
+    );
+    let closure_ref = vm
+        .alloc_object(GcObject::new(ObjectKind::Closure(closure)))
+        .unwrap();
+
+    let result = vm.call_value(Value::ptr(closure_ref.index()), &[]).unwrap();
+    assert_eq!(result.as_int(), Some(77));
+}
+
+#[test]
+fn test_tail_call_upvalue_resizes_register_window() {
+    let source = make_test_source();
+    let mut vm = VM::new(source).unwrap();
+
+    let wide_register = Register::new(39_999);
+    let mut target = Function::new(Some("wide_target".to_string()), 0);
+    target.num_registers = 40_000;
+    target.emit_wide_abc(
+        OpCode::Move,
+        wide_register,
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    target.emit_wide_abc(
+        OpCode::Return,
+        wide_register,
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    target.finalize_bytecode();
+    let target_ref = vm.alloc_function(target).unwrap();
 
     let mut caller = Function::new(Some("caller".to_string()), 0);
     caller.num_registers = 1;
@@ -947,7 +1043,8 @@ fn test_tail_call_upvalue_reloads_constant_bounds() {
         .unwrap();
 
     let result = vm.call_value(Value::ptr(closure_ref.index()), &[]).unwrap();
-    assert_eq!(result.as_int(), Some(77));
+    assert!(result.is_null());
+    assert_eq!(vm.register_count(), 40_000);
 }
 
 #[test]
