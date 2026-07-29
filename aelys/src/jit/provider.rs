@@ -1,4 +1,4 @@
-use super::engine::{CompiledFunction, JitEngine, JitKey, JitTier};
+use super::engine::{CompiledFunction, JitEngine, JitExecution, JitKey, JitTier};
 use super::optimize::optimize_integer_ir;
 use super::translate::translate_integer_function;
 use aelys_bytecode::Function;
@@ -110,12 +110,30 @@ impl JitExecutor for JitProvider {
         else {
             return JitCallResult::Unsupported;
         };
-        let Ok(result) = compiled.execute_i64(&arguments) else {
+        let Ok(result) = compiled.execute(&arguments) else {
             return JitCallResult::Unsupported;
         };
-        match Value::int_checked(result) {
-            Ok(value) => JitCallResult::Returned(value),
-            Err(_) => JitCallResult::Unsupported,
+        match result {
+            JitExecution::Returned(result) => match Value::int_checked(result) {
+                Ok(value) => JitCallResult::Returned(value),
+                Err(_) => JitCallResult::Unsupported,
+            },
+            JitExecution::Deoptimized {
+                bytecode_ip,
+                registers,
+            } => {
+                let Some(registers) = registers
+                    .into_iter()
+                    .map(|(register, value)| Some((register, Value::int_checked(value).ok()?)))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return JitCallResult::Unsupported;
+                };
+                JitCallResult::Deoptimized {
+                    bytecode_ip,
+                    registers,
+                }
+            }
         }
     }
 }

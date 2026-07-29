@@ -1,4 +1,4 @@
-use super::engine::{JitEngine, JitKey, JitTier};
+use super::engine::{JitEngine, JitExecution, JitKey, JitTier};
 use super::ir::{
     BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
     IrTerminator, IrType, SourcePosition, ValueId,
@@ -248,5 +248,64 @@ fn verifier_covers_branches_guards_safepoints_and_deopt_maps() {
     assert_eq!(
         duplicate_deopt.verify(),
         Err(super::ir::IrError::DuplicateDeoptMap)
+    );
+}
+
+#[test]
+fn compiled_guard_returns_exact_deoptimization_state() {
+    let input = ValueId(0);
+    let zero = ValueId(1);
+    let condition = ValueId(2);
+    let ir = FunctionIr {
+        name: "guard_exit".to_string(),
+        entry: BlockId(0),
+        parameter_types: vec![IrType::I64],
+        return_type: IrType::I64,
+        blocks: vec![IrBlock {
+            id: BlockId(0),
+            parameters: vec![(input, IrType::I64)],
+            instructions: vec![
+                IrInstruction {
+                    result: Some((zero, IrType::I64)),
+                    kind: IrInstructionKind::Iconst(0),
+                    source: position(0),
+                },
+                IrInstruction {
+                    result: Some((condition, IrType::Bool)),
+                    kind: IrInstructionKind::Icmp {
+                        predicate: IntPredicate::Equal,
+                        left: input,
+                        right: zero,
+                    },
+                    source: position(1),
+                },
+                IrInstruction {
+                    result: None,
+                    kind: IrInstructionKind::Guard {
+                        condition,
+                        deopt: 4,
+                    },
+                    source: position(2),
+                },
+            ],
+            terminator: IrTerminator::Return(input),
+        }],
+        deopt_maps: vec![DeoptMap {
+            bytecode_ip: 4,
+            registers: vec![(0, input)],
+        }],
+    };
+    let engine = JitEngine::new(4).unwrap();
+    let compiled = engine
+        .compile(&JitKey::new(11, 0, JitTier::Optimized), &ir)
+        .unwrap();
+
+    assert_eq!(compiled.execute(&[0]).unwrap(), JitExecution::Returned(0));
+    assert_eq!(
+        compiled.execute(&[7]).unwrap(),
+        JitExecution::Deoptimized {
+            bytecode_ip: 4,
+            registers: vec![(0, 7)],
+        }
     );
 }

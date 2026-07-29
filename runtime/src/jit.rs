@@ -112,10 +112,14 @@ impl JitFunctionKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum JitCallResult {
     Unsupported,
     Returned(Value),
+    Deoptimized {
+        bytecode_ip: u32,
+        registers: Vec<(u16, Value)>,
+    },
 }
 
 pub trait JitExecutor: Send + Sync {

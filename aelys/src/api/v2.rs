@@ -436,6 +436,7 @@ impl Isolate {
         match provider.try_execute(&key, &module.function, &[], calls) {
             JitCallResult::Unsupported => None,
             JitCallResult::Returned(value) => Some(value),
+            JitCallResult::Deoptimized { .. } => None,
         }
     }
 

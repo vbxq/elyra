@@ -3,6 +3,15 @@ use crate::{JitCallResult, JitExecutor, JitFunctionKey};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use std::sync::Arc;
 
+pub(crate) enum JitRegisterCallResult {
+    Unsupported,
+    Returned(Value),
+    Deoptimized {
+        bytecode_ip: u32,
+        registers: Vec<(u16, Value)>,
+    },
+}
+
 impl VM {
     pub fn configure_jit(&mut self, executor: Option<Arc<dyn JitExecutor>>) {
         self.jit_executor = executor;
@@ -34,21 +43,24 @@ impl VM {
         &mut self,
         function: GcRef,
         arguments: &[Value],
-    ) -> Option<Value> {
+    ) -> JitCallResult {
         if self.execution_control_enabled() {
-            return None;
+            return JitCallResult::Unsupported;
         }
-        let executor = self.jit_executor.as_ref()?.clone();
-        let key = self.jit_function_keys.get(&function)?.clone();
-        let calls = self.jit_call_counts.get(&key).copied().unwrap_or(0);
-        let object = self.heap.get(function)?;
-        let ObjectKind::Function(function) = &object.kind else {
-            return None;
+        let Some(executor) = self.jit_executor.as_ref().cloned() else {
+            return JitCallResult::Unsupported;
         };
-        match executor.try_execute(&key, &function.function, arguments, calls) {
-            JitCallResult::Unsupported => None,
-            JitCallResult::Returned(value) => Some(value),
-        }
+        let Some(key) = self.jit_function_keys.get(&function).cloned() else {
+            return JitCallResult::Unsupported;
+        };
+        let calls = self.jit_call_counts.get(&key).copied().unwrap_or(0);
+        let Some(object) = self.heap.get(function) else {
+            return JitCallResult::Unsupported;
+        };
+        let ObjectKind::Function(function) = &object.kind else {
+            return JitCallResult::Unsupported;
+        };
+        executor.try_execute(&key, &function.function, arguments, calls)
     }
 
     pub(crate) fn prepare_jit_call(&mut self, function: GcRef) -> bool {
@@ -74,9 +86,9 @@ impl VM {
         function: GcRef,
         argument_start: usize,
         argument_count: u16,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<JitRegisterCallResult, RuntimeError> {
         if !self.prepare_jit_call(function) {
-            return Ok(None);
+            return Ok(JitRegisterCallResult::Unsupported);
         }
         let argument_end = argument_start
             .checked_add(usize::from(argument_count))
@@ -91,7 +103,17 @@ impl VM {
                 })
             })?
             .to_vec();
-        Ok(self.try_execute_jit_call(function, &arguments))
+        Ok(match self.try_execute_jit_call(function, &arguments) {
+            JitCallResult::Unsupported => JitRegisterCallResult::Unsupported,
+            JitCallResult::Returned(value) => JitRegisterCallResult::Returned(value),
+            JitCallResult::Deoptimized {
+                bytecode_ip,
+                registers,
+            } => JitRegisterCallResult::Deoptimized {
+                bytecode_ip,
+                registers,
+            },
+        })
     }
 
     #[inline(always)]
@@ -176,6 +198,47 @@ impl VM {
         {
             self.compile_jit_backedge(frame.function, &key, backedges);
         }
+    }
+
+    pub(crate) fn apply_jit_deoptimization(
+        &mut self,
+        frame: &mut CallFrame,
+        bytecode_ip: u32,
+        registers: Vec<(u16, Value)>,
+    ) -> Result<(), RuntimeError> {
+        let bytecode_ip = usize::try_from(bytecode_ip).map_err(|_| {
+            self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                "JIT deoptimization IP does not fit this target".to_string(),
+            ))
+        })?;
+        if bytecode_ip >= frame.bytecode_len {
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                "JIT deoptimization IP is outside the function".to_string(),
+            )));
+        }
+        for (register, value) in registers {
+            if u32::from(register) >= frame.num_registers {
+                return Err(self.runtime_error(RuntimeErrorKind::InvalidRegister {
+                    reg: usize::from(register),
+                    max: usize::try_from(frame.num_registers)
+                        .unwrap_or(usize::MAX)
+                        .saturating_sub(1),
+                }));
+            }
+            let index = frame
+                .base
+                .checked_add(usize::from(register))
+                .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
+            if index >= self.registers.len() {
+                return Err(self.runtime_error(RuntimeErrorKind::InvalidRegister {
+                    reg: index,
+                    max: self.registers.len().saturating_sub(1),
+                }));
+            }
+            self.registers[index] = value;
+        }
+        frame.ip = bytecode_ip;
+        Ok(())
     }
 
     pub(crate) fn sweep_jit_metadata(&mut self) {

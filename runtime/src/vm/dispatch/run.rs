@@ -443,6 +443,7 @@ impl VM {
                                             ));
                                         }
 
+                                        let mut jit_deopt = None;
                                         if JIT {
                                             let argument_start = base
                                                 .checked_add(usize::from(func_reg))
@@ -452,15 +453,19 @@ impl VM {
                                                         RuntimeErrorKind::StackOverflow,
                                                     )
                                                 })?;
-                                            if let Some(result) = self
-                                                .try_execute_jit_register_call(
+                                            match self.try_execute_jit_register_call(
                                                     callee_ref,
                                                     argument_start,
                                                     nargs,
-                                                )?
-                                            {
-                                                reg_set!(base + usize::from(dest), result);
-                                                continue;
+                                                )? {
+                                                crate::vm::jit::JitRegisterCallResult::Returned(result) => {
+                                                    reg_set!(base + usize::from(dest), result);
+                                                    continue;
+                                                }
+                                                crate::vm::jit::JitRegisterCallResult::Deoptimized { bytecode_ip, registers } => {
+                                                    jit_deopt = Some((bytecode_ip, registers));
+                                                }
+                                                crate::vm::jit::JitRegisterCallResult::Unsupported => {}
                                             }
                                         }
 
@@ -492,6 +497,13 @@ impl VM {
                                             callee_ref, new_base, dest, bc_ptr, bc_len, const_ptr,
                                             const_len, num_regs,
                                         );
+                                        if let Some((bytecode_ip, registers)) = jit_deopt {
+                                            self.apply_jit_deoptimization(
+                                                &mut new_frame,
+                                                bytecode_ip,
+                                                registers,
+                                            )?;
+                                        }
                                         new_frame.global_mapping_id = callee_gmap;
 
                                         if self.frames.len() >= crate::vm::MAX_FRAMES {
@@ -897,6 +909,7 @@ impl VM {
                                                 },
                                             ));
                                         }
+                                        let mut jit_deopt = None;
                                         if JIT {
                                             let argument_start = base
                                                 .checked_add(usize::from(dest))
@@ -906,15 +919,19 @@ impl VM {
                                                         RuntimeErrorKind::StackOverflow,
                                                     )
                                                 })?;
-                                            if let Some(result) = self
-                                                .try_execute_jit_register_call(
+                                            match self.try_execute_jit_register_call(
                                                     callee_ref,
                                                     argument_start,
                                                     u16::from(nargs),
-                                                )?
-                                            {
-                                                reg_set!(base + usize::from(dest), result);
-                                                continue;
+                                                )? {
+                                                crate::vm::jit::JitRegisterCallResult::Returned(result) => {
+                                                    reg_set!(base + usize::from(dest), result);
+                                                    continue;
+                                                }
+                                                crate::vm::jit::JitRegisterCallResult::Deoptimized { bytecode_ip, registers } => {
+                                                    jit_deopt = Some((bytecode_ip, registers));
+                                                }
+                                                crate::vm::jit::JitRegisterCallResult::Unsupported => {}
                                             }
                                         }
                                         if callee_gmap != 0 && callee_gmap != global_mapping_id {
@@ -943,6 +960,13 @@ impl VM {
                                             callee_ref, new_base, dest, bc_ptr, bc_len, const_ptr,
                                             const_len, num_regs,
                                         );
+                                        if let Some((bytecode_ip, registers)) = jit_deopt {
+                                            self.apply_jit_deoptimization(
+                                                &mut new_frame,
+                                                bytecode_ip,
+                                                registers,
+                                            )?;
+                                        }
                                         new_frame.global_mapping_id = callee_gmap;
                                         if self.frames.len() >= crate::vm::MAX_FRAMES {
                                             return Err(
