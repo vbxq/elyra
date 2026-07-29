@@ -63,6 +63,27 @@ fn test_closure_returns_closure() {
     assert_eq!(result.as_int(), Some(25));
 }
 
+#[test]
+fn test_closure_calls_captured_function_and_closure() {
+    let result = run_ok(
+        r#"
+        fn wrap(f) {
+            return fn(x) {
+                let value = f(x)
+                return value + 1
+            }
+        }
+        fn increment(x) { return x + 1 }
+        fn make_adder(amount) { return fn(x) { return x + amount } }
+
+        let call_function = wrap(increment)
+        let call_closure = wrap(make_adder(5))
+        call_function(10) + call_closure(10)
+    "#,
+    );
+    assert_eq!(result.as_int(), Some(28));
+}
+
 // =============================================================================
 // Mutable Upvalue Tests
 // =============================================================================

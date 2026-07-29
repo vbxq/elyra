@@ -422,38 +422,30 @@
 
             // CallUpval (80) - Call function from upvalue
             80 => {
-                let mut dest: u8 = 0;
-                let mut upval_idx: u8 = 0;
-                let mut nargs: u8 = 0;
-                let mut callee_ref = GcRef::new(0);
-                enum CallUpvalData {
-                    Function {
-                        arity: u16,
-                        callee_gmap: usize,
-                        num_regs: u32,
-                        bc_ptr: *const u32,
-                        bc_len: usize,
-                        const_ptr: *const Value,
-                        const_len: usize,
-                    },
-                    Closure {
-                        arity: u16,
-                        callee_gmap: usize,
-                        num_regs: u32,
-                        inner_func: GcRef,
-                        bc_ptr: *const u32,
-                        bc_len: usize,
-                        const_ptr: *const Value,
-                        const_len: usize,
-                        upval_ptr: *const GcRef,
-                        upval_len: usize,
-                    },
-                    Invalid,
+                let state = DispatchState {
+                    base,
+                    constants: constants_ptr,
+                    constants_len,
+                    registers: regs_ptr,
+                    registers_len: regs_len,
+                    frame_index: current_frame_idx,
+                };
+                match super::ops::call_upval::execute(
+                    self,
+                    &state,
+                    ip,
+                    upvalues_ptr,
+                    upvalues_len,
+                    global_mapping_id,
+                    instr,
+                )? {
+                    DispatchControl::ReloadFrame => reload_frame_state!(),
+                    DispatchControl::Continue
+                    | DispatchControl::Returned(_)
+                    | DispatchControl::ReturnToCaller { .. } => {
+                        unreachable!("upvalue call handler must enter a new frame")
+                    }
                 }
-                let mut call_data = CallUpvalData::Invalid;
-                let _ = (dest, upval_idx, nargs, callee_ref);
-                let _ = &call_data;
-        include!("call_upval.rs");
             }
 
             // TailCallUpval (81) - Tail call function from upvalue
