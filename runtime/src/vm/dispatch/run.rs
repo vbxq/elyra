@@ -3,7 +3,7 @@
 
 use super::decode::{decode_abc, decode_aimm};
 use super::state::{DispatchControl, DispatchState};
-use crate::vm::{CallFrame, GcRef, MAX_REGISTERS, ObjectKind, OpCode, VM, Value};
+use crate::vm::{CallFrame, GcRef, MAX_REGISTERS, ObjectKind, VM, Value};
 use aelys_bytecode::object::{AelysArray, AelysVec};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
@@ -243,6 +243,9 @@ impl VM {
                         instr,
                     )? {
                         DispatchControl::Continue => {}
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!("closure handler cannot change frames")
+                        }
                     }
                 }
 
@@ -267,7 +270,38 @@ impl VM {
                 }
 
                 184 => {
-                    include!("ops/wide.rs");
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_wide(
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        upvalues_ptr,
+                        upvalues_len,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::Returned(value) => return Ok(value),
+                        DispatchControl::ReturnToCaller {
+                            destination,
+                            value,
+                            switch_globals,
+                        } => {
+                            reload_frame_state!();
+                            if switch_globals {
+                                global_mapping_id = self.prepare_globals_for_function(func_ref);
+                            }
+                            regs_ptr = self.registers.as_mut_ptr();
+                            reg_set!(base + usize::from(destination), value);
+                        }
+                    }
                 }
 
                 _ => {

@@ -3,6 +3,12 @@ use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 pub(super) enum DispatchControl {
     Continue,
+    Returned(Value),
+    ReturnToCaller {
+        destination: u16,
+        value: Value,
+        switch_globals: bool,
+    },
 }
 
 pub(super) struct DispatchState {
