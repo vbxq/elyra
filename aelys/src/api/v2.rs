@@ -373,6 +373,15 @@ pub struct Isolate {
     _not_sync: Cell<()>,
 }
 
+enum RootJitResult {
+    Unsupported,
+    Returned(Value),
+    Deoptimized {
+        bytecode_ip: u32,
+        registers: Vec<(u16, Value)>,
+    },
+}
+
 fn register_standard_modules(vm: &mut VM) -> Result<(), AelysError> {
     aelys_runtime::stdlib::sys::register(vm).map_err(AelysError::Runtime)?;
     aelys_runtime::stdlib::fs::register(vm).map_err(AelysError::Runtime)?;
@@ -406,17 +415,19 @@ fn standard_module_symbols() -> Result<StandardSymbols, AelysError> {
 }
 
 impl Isolate {
-    fn try_execute_jit(&mut self, module: &CompiledModule, options: &RunOptions) -> Option<Value> {
+    fn try_execute_jit(&mut self, module: &CompiledModule, options: &RunOptions) -> RootJitResult {
         if self.runtime.jit_mode == JitMode::Off {
-            return None;
+            return RootJitResult::Unsupported;
         }
-        let provider = self.runtime.jit.as_ref()?;
+        let Some(provider) = self.runtime.jit.as_ref() else {
+            return RootJitResult::Unsupported;
+        };
         if options.max_instructions.is_some()
             || options.deadline.is_some()
             || options.interrupt.is_some()
             || options.report
         {
-            return None;
+            return RootJitResult::Unsupported;
         }
         let calls = if let Some((_, calls)) = self
             .jit_call_counts
@@ -431,12 +442,18 @@ impl Isolate {
         };
         let key = JitFunctionKey::root(module.module_id);
         if !provider.should_execute(&key, calls) {
-            return None;
+            return RootJitResult::Unsupported;
         }
         match provider.try_execute(&key, &module.function, &[], calls) {
-            JitCallResult::Unsupported => None,
-            JitCallResult::Returned(value) => Some(value),
-            JitCallResult::Deoptimized { .. } => None,
+            JitCallResult::Unsupported => RootJitResult::Unsupported,
+            JitCallResult::Returned(value) => RootJitResult::Returned(value),
+            JitCallResult::Deoptimized {
+                bytecode_ip,
+                registers,
+            } => RootJitResult::Deoptimized {
+                bytecode_ip,
+                registers,
+            },
         }
     }
 
@@ -445,9 +462,10 @@ impl Isolate {
         module: &CompiledModule,
         options: RunOptions,
     ) -> Result<ExecutionOutcome, AelysError> {
-        if let Some(value) = self.try_execute_jit(module, &options) {
+        let jit_result = self.try_execute_jit(module, &options);
+        if let RootJitResult::Returned(value) = &jit_result {
             self.last_report = None;
-            return Ok(ExecutionOutcome::Returned(value));
+            return Ok(ExecutionOutcome::Returned(*value));
         }
         self.vm.configure_execution(ExecutionControl {
             max_instructions: options.max_instructions,
@@ -463,7 +481,17 @@ impl Isolate {
             .vm
             .alloc_function_with_jit_key(function, JitFunctionKey::root(module.module_id))
             .map_err(AelysError::Runtime)?;
-        let result = self.vm.execute(function_ref);
+        let result = match jit_result {
+            RootJitResult::Deoptimized {
+                bytecode_ip,
+                registers,
+            } => self
+                .vm
+                .execute_deoptimized(function_ref, bytecode_ip, registers),
+            RootJitResult::Unsupported | RootJitResult::Returned(_) => {
+                self.vm.execute(function_ref)
+            }
+        };
         if options.report {
             let stats = self.vm.execution_stats();
             self.last_report = Some(ExecutionReport {

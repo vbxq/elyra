@@ -6,7 +6,26 @@ use std::sync::Arc;
 
 impl VM {
     pub fn execute(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
-        match catch_unwind(AssertUnwindSafe(|| self.execute_inner(function))) {
+        self.execute_with_deoptimization(function, None)
+    }
+
+    pub fn execute_deoptimized(
+        &mut self,
+        function: GcRef,
+        bytecode_ip: u32,
+        registers: Vec<(u16, Value)>,
+    ) -> Result<Value, RuntimeError> {
+        self.execute_with_deoptimization(function, Some((bytecode_ip, registers)))
+    }
+
+    fn execute_with_deoptimization(
+        &mut self,
+        function: GcRef,
+        deoptimization: Option<(u32, Vec<(u16, Value)>)>,
+    ) -> Result<Value, RuntimeError> {
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.execute_inner(function, deoptimization)
+        })) {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) => {
                 self.abort_execution();
@@ -37,7 +56,11 @@ impl VM {
         self.current_global_mapping_id = 0;
     }
 
-    fn execute_inner(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
+    fn execute_inner(
+        &mut self,
+        function: GcRef,
+        deoptimization: Option<(u32, Vec<(u16, Value)>)>,
+    ) -> Result<Value, RuntimeError> {
         self.ensure_function_verified(function)?;
         let (
             bytecode_ptr,
@@ -103,6 +126,17 @@ impl VM {
             constants_len,
             num_registers,
         );
+        let register_count = usize::try_from(num_registers).map_err(|_| {
+            self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                "register count does not fit this target".to_string(),
+            ))
+        })?;
+        if self.registers.len() < register_count {
+            self.registers.resize(register_count, Value::null());
+        }
+        if let Some((bytecode_ip, registers)) = deoptimization {
+            self.apply_jit_deoptimization(&mut frame, bytecode_ip, registers)?;
+        }
         frame.global_mapping_id = global_mapping_id;
         self.push_frame(frame)?;
         self.run_fast()

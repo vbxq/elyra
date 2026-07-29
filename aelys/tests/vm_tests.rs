@@ -45,6 +45,24 @@ fn test_push_pop_frame() {
 }
 
 #[test]
+fn root_deoptimization_resumes_at_the_exact_bytecode_ip() {
+    let mut vm = VM::new(make_test_source()).unwrap();
+    let mut function = Function::new(Some("deoptimized_root".to_string()), 0);
+    function.num_registers = 1;
+    function.emit_b(OpCode::LoadI, 0, 99, 1);
+    let return_ip = u32::try_from(function.current_offset()).unwrap();
+    function.emit_a(OpCode::Return, 0, 0, 0, 1);
+    function.finalize_bytecode();
+    let function = vm.alloc_function(function).unwrap();
+
+    let result = vm
+        .execute_deoptimized(function, return_ip, vec![(0, Value::int(42))])
+        .unwrap();
+
+    assert_eq!(result.as_int(), Some(42));
+}
+
+#[test]
 fn test_frame_stack_overflow() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
