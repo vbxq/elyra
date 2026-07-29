@@ -121,6 +121,36 @@ fn tiered_mode_promotes_to_an_optimized_cache_entry() {
 }
 
 #[test]
+fn profiled_numeric_guard_deoptimizes_to_the_exact_interpreter_state() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn increment(value: int) -> int { return value + 1 }
+let mut result = 0
+for index in 0..10000 {
+    result = increment(41)
+}
+increment(42)
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(43))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 2);
+    assert_eq!(runtime.jit_deoptimizations(), 1);
+}
+
+#[test]
 fn baseline_jit_compiles_nested_cfg_and_shares_it_between_isolates() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime

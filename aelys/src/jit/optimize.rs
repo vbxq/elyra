@@ -1,4 +1,7 @@
-use super::ir::{FunctionIr, IntPredicate, IrInstructionKind, IrTerminator, ValueId};
+use super::ir::{
+    DeoptMap, FunctionIr, IntPredicate, IrInstruction, IrInstructionKind, IrTerminator, IrType,
+    SourcePosition, ValueId,
+};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -98,6 +101,93 @@ pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
         }
     }
     report
+}
+
+pub(crate) fn specialize_integer_parameters(ir: &mut FunctionIr, profile: &[Option<i64>]) -> usize {
+    if !ir.deopt_maps.is_empty() {
+        return 0;
+    }
+    let mut next_value = ir
+        .blocks
+        .iter()
+        .flat_map(|block| {
+            block.parameters.iter().map(|(value, _)| value.0).chain(
+                block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| instruction.result.map(|(value, _)| value.0)),
+            )
+        })
+        .max()
+        .and_then(|value| value.checked_add(1))
+        .unwrap_or(0);
+    let Some(entry) = ir.blocks.iter_mut().find(|block| block.id == ir.entry) else {
+        return 0;
+    };
+    if profile.len() != entry.parameters.len() {
+        return 0;
+    }
+    let source = SourcePosition {
+        bytecode_ip: 0,
+        source_line: 0,
+    };
+    let mut guards = Vec::new();
+    for (&(parameter, ty), expected) in entry.parameters.iter().zip(profile) {
+        let Some(expected) = expected else {
+            continue;
+        };
+        if ty != IrType::I64 {
+            continue;
+        }
+        let constant = ValueId(next_value);
+        let Some(after_constant) = next_value.checked_add(1) else {
+            return 0;
+        };
+        let condition = ValueId(after_constant);
+        let Some(after_condition) = after_constant.checked_add(1) else {
+            return 0;
+        };
+        next_value = after_condition;
+        guards.push(IrInstruction {
+            result: Some((constant, IrType::I64)),
+            kind: IrInstructionKind::Iconst(*expected),
+            source,
+        });
+        guards.push(IrInstruction {
+            result: Some((condition, IrType::Bool)),
+            kind: IrInstructionKind::Icmp {
+                predicate: IntPredicate::Equal,
+                left: parameter,
+                right: constant,
+            },
+            source,
+        });
+        guards.push(IrInstruction {
+            result: None,
+            kind: IrInstructionKind::Guard {
+                condition,
+                deopt: 0,
+            },
+            source,
+        });
+    }
+    let specialized = guards.len() / 3;
+    if specialized == 0 {
+        return 0;
+    }
+    entry.instructions.splice(0..0, guards);
+    if !ir.deopt_maps.iter().any(|map| map.bytecode_ip == 0) {
+        ir.deopt_maps.push(DeoptMap {
+            bytecode_ip: 0,
+            registers: entry
+                .parameters
+                .iter()
+                .enumerate()
+                .filter_map(|(register, (value, _))| Some((u16::try_from(register).ok()?, *value)))
+                .collect(),
+        });
+    }
+    specialized
 }
 
 fn fold(kind: &IrInstructionKind, constants: &HashMap<ValueId, Constant>) -> Option<Constant> {

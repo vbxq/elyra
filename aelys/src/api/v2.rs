@@ -275,6 +275,14 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    pub fn jit_deoptimizations(&self) -> u64 {
+        self.inner
+            .jit
+            .as_ref()
+            .map(|jit| jit.deoptimizations())
+            .unwrap_or(0)
+    }
+
     pub fn compile(
         &self,
         source: &str,
