@@ -26,12 +26,21 @@ pub use aelys_runtime::InterruptHandle;
 const TIER1_CALL_THRESHOLD: u64 = 1_000;
 const TIER2_CALL_THRESHOLD: u64 = 10_000;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JitMode {
-    #[default]
     Off,
     Baseline,
     Tiered,
+}
+
+impl Default for JitMode {
+    fn default() -> Self {
+        if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Self::Tiered
+        } else {
+            Self::Off
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -377,7 +386,7 @@ impl Runtime {
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self::with_jit_mode(JitMode::Off)
+        Self::with_jit_mode(JitMode::default())
     }
 }
 

@@ -25,7 +25,8 @@ impl VM {
     }
 
     pub fn alloc_object(&mut self, object: GcObject) -> Result<GcRef, RuntimeError> {
-        self.maybe_collect();
+        let size = u64::try_from(Heap::estimate_object_size(&object)).unwrap_or(u64::MAX);
+        self.maybe_collect_for(size);
         self.alloc_object_without_collection(object)
     }
 
@@ -36,8 +37,8 @@ impl VM {
     }
 
     pub fn alloc_string(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
-        self.maybe_collect();
         let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
+        self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         Ok(self.heap.alloc_string(s))
     }
@@ -46,7 +47,8 @@ impl VM {
         if let Some(existing) = self.heap.find_interned_string(s) {
             return Ok(existing);
         }
-        self.maybe_collect();
+        let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
+        self.maybe_collect_for(size);
         self.intern_string_without_collection(s)
     }
 
@@ -60,7 +62,15 @@ impl VM {
     }
 
     pub fn alloc_function(&mut self, func: super::Function) -> Result<GcRef, RuntimeError> {
-        self.maybe_collect();
+        let mut required = u64::try_from(Heap::estimate_function_size(&func)).unwrap_or(u64::MAX);
+        for constant in &func.constants {
+            if let aelys_bytecode::Constant::String(string) = constant {
+                required = required.saturating_add(
+                    u64::try_from(Heap::estimate_string_size(string.len())).unwrap_or(u64::MAX),
+                );
+            }
+        }
+        self.maybe_collect_for(required);
         let mut constants = Vec::with_capacity(func.constants.len());
         for constant in &func.constants {
             let value = if let aelys_bytecode::Constant::String(string) = constant {
@@ -101,16 +111,16 @@ impl VM {
     }
 
     pub fn alloc_array(&mut self, array: AelysArray) -> Result<GcRef, RuntimeError> {
-        self.maybe_collect();
         let size = u64::try_from(array.size_bytes()).unwrap_or(u64::MAX);
+        self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         let obj = GcObject::new(ObjectKind::Array(array));
         self.alloc_object_without_collection(obj)
     }
 
     pub fn alloc_vec(&mut self, vec: AelysVec) -> Result<GcRef, RuntimeError> {
-        self.maybe_collect();
         let size = u64::try_from(vec.size_bytes()).unwrap_or(u64::MAX);
+        self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         let obj = GcObject::new(ObjectKind::Vec(vec));
         self.alloc_object_without_collection(obj)

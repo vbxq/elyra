@@ -253,16 +253,23 @@ impl Heap {
     pub fn estimate_object_size(obj: &crate::object::GcObject) -> usize {
         match &obj.kind {
             ObjectKind::String(s) => std::mem::size_of::<AelysString>() + s.len(),
-            ObjectKind::Function(f) => {
-                std::mem::size_of::<crate::object::AelysFunction>()
-                    + f.function.bytecode.len() * 4
-                    + f.constants.len() * std::mem::size_of::<Value>()
-            }
+            ObjectKind::Function(f) => Self::estimate_function_size(&f.function),
             ObjectKind::Native(_) => std::mem::size_of::<crate::object::NativeFunction>(),
             ObjectKind::Upvalue(_) => std::mem::size_of::<AelysUpvalue>(),
             ObjectKind::Closure(c) => std::mem::size_of::<AelysClosure>() + c.upvalues.len() * 8,
             ObjectKind::Array(a) => a.size_bytes(),
             ObjectKind::Vec(v) => v.size_bytes(),
         }
+    }
+
+    pub fn estimate_function_size(function: &crate::Function) -> usize {
+        std::mem::size_of::<crate::object::AelysFunction>()
+            .saturating_add(function.bytecode.len().saturating_mul(4))
+            .saturating_add(
+                function
+                    .constants
+                    .len()
+                    .saturating_mul(std::mem::size_of::<Value>()),
+            )
     }
 }

@@ -81,6 +81,62 @@ fn optimization_levels_preserve_values_and_random_streams() {
 }
 
 #[test]
+fn raizen_soak_replays_globals_allocations_and_gc_deterministically() {
+    let runtime = Runtime::with_jit_mode(aelys::JitMode::Tiered);
+    let module = runtime
+        .compile(
+            r#"
+let mut epoch = 0
+fn task_step(id: int, tick: int) -> int {
+    return (id * 17 + tick * 31 + epoch) % 997
+}
+let mut sum = 0
+for tick in 0..500 {
+    epoch = tick
+    let noise = sys.random_int(0, 31)
+    for id in 0..64 {
+        let transient = Vec[id, tick, noise, epoch]
+        sum = sum + task_step(transient[0], transient[1])
+    }
+}
+[sum, sys.random_state()]
+"#,
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let mut expected = None;
+
+    for _ in 0..2 {
+        let mut config = IsolateConfig::default()
+            .with_max_heap_bytes(1024 * 1024)
+            .unwrap();
+        config.random_seed = Some(0x5EED_2022);
+        let mut isolate = runtime.new_isolate(config);
+        let ExecutionOutcome::Returned(value) = isolate
+            .execute(
+                &module,
+                RunOptions {
+                    report: true,
+                    ..RunOptions::default()
+                },
+            )
+            .unwrap()
+        else {
+            panic!("soak workload unexpectedly exited");
+        };
+        let result = isolate.structured_clone(value).unwrap();
+        let report = isolate.last_report().unwrap();
+        assert!(report.allocations >= 32_000);
+        assert!(report.collections > 0);
+        if let Some(expected) = &expected {
+            assert_eq!(&result, expected);
+        } else {
+            expected = Some(result);
+        }
+    }
+}
+
+#[test]
 fn instruction_budget_and_interrupt_are_structured_errors() {
     let runtime = Runtime::new();
     let module = runtime

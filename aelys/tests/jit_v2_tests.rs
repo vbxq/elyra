@@ -1,6 +1,6 @@
 use aelys::{
     AelysError, CompileOptions, ExecutionOutcome, IsolateConfig, JitConfig, JitConfigError,
-    JitMode, RunOptions, Runtime, Value,
+    JitMode, RunOptions, Runtime, StructuredValue, Value,
 };
 use aelys_common::error::RuntimeErrorKind;
 use aelys_opt::OptimizationLevel;
@@ -22,6 +22,16 @@ compute(10000)
 "#;
 
 const NESTED_INCREMENT: &str = "fn increment(value: int) -> int { return value + 1 } increment(41)";
+
+#[test]
+fn default_jit_mode_matches_the_reference_target() {
+    let runtime = Runtime::new();
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        assert_eq!(runtime.jit_mode(), JitMode::Tiered);
+    } else {
+        assert_eq!(runtime.jit_mode(), JitMode::Off);
+    }
+}
 
 #[test]
 fn baseline_jit_executes_and_shares_machine_code_between_isolates() {
@@ -262,6 +272,130 @@ compute(100000) + 7
     );
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_osr_executions(), 1);
+}
+
+#[test]
+fn optimization_and_jit_tiers_preserve_values_and_rng_streams() {
+    let source = r#"
+fn compute(limit: int) -> int {
+    let mut index = 0
+    let mut total = 0
+    while index < limit {
+        total = total + index
+        index = index + 1
+    }
+    return total
+}
+[sys.random_int(0, 1000000), compute(20000), sys.random_int(0, 1000000)]
+"#;
+    let mut expected: Option<StructuredValue> = None;
+
+    for mode in [JitMode::Off, JitMode::Baseline, JitMode::Tiered] {
+        for optimization_level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            let runtime = Runtime::with_jit_mode(mode);
+            let module = runtime
+                .compile(
+                    source,
+                    CompileOptions {
+                        optimization_level,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap();
+            let mut config = IsolateConfig::default();
+            config.random_seed = Some(0xA3E1_5EED);
+            let mut isolate = runtime.new_isolate(config);
+            let ExecutionOutcome::Returned(value) =
+                isolate.execute(&module, RunOptions::default()).unwrap()
+            else {
+                panic!("differential workload unexpectedly exited");
+            };
+            let result = isolate.structured_clone(value).unwrap();
+            if let Some(expected) = &expected {
+                assert_eq!(
+                    &result, expected,
+                    "mode={mode:?}, opt={optimization_level:?}"
+                );
+            } else {
+                expected = Some(result);
+            }
+        }
+    }
+}
+
+#[test]
+fn optimization_and_jit_tiers_preserve_structured_errors() {
+    let source = r#"
+fn overflow(value: int) -> int { return value + 1 }
+let mut result = 0
+for index in 0..10000 {
+    result = overflow(41)
+}
+overflow(140737488355327)
+"#;
+
+    for mode in [JitMode::Off, JitMode::Baseline, JitMode::Tiered] {
+        for optimization_level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            let runtime = Runtime::with_jit_mode(mode);
+            let module = runtime
+                .compile(
+                    source,
+                    CompileOptions {
+                        optimization_level,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap();
+            let mut isolate = runtime.new_isolate(IsolateConfig::default());
+            let error = isolate.execute(&module, RunOptions::default()).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    AelysError::Runtime(ref error)
+                        if matches!(error.kind, RuntimeErrorKind::IntegerOverflow)
+                ),
+                "mode={mode:?}, opt={optimization_level:?}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_hundred_isolates_share_jit_code_concurrently() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let module = std::sync::Arc::new(
+        runtime
+            .compile(NESTED_INTEGER_LOOP, CompileOptions::default())
+            .unwrap(),
+    );
+    let threads = (0..100)
+        .map(|_| {
+            let runtime = runtime.clone();
+            let module = std::sync::Arc::clone(&module);
+            std::thread::spawn(move || {
+                let mut isolate = runtime.new_isolate(IsolateConfig::default());
+                isolate.execute(&module, RunOptions::default()).unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for thread in threads {
+        assert_eq!(
+            thread.join().unwrap(),
+            ExecutionOutcome::Returned(Value::int(49_995_000))
+        );
+    }
+    assert_eq!(runtime.jit_cache_entries(), 1);
 }
 
 #[test]

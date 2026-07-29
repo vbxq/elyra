@@ -6,6 +6,17 @@ impl VM {
     const GC_SLICE_BUDGET: Duration = Duration::from_micros(500);
 
     pub fn maybe_collect(&mut self) {
+        self.maybe_collect_for(0);
+    }
+
+    pub(crate) fn maybe_collect_for(&mut self, additional: u64) {
+        let projected = u64::try_from(self.heap.bytes_allocated())
+            .unwrap_or(u64::MAX)
+            .saturating_add(additional);
+        if projected > self.config.max_heap_bytes {
+            self.collect();
+            return;
+        }
         if self.heap.major_collection_active() {
             self.run_major_slice();
             return;
