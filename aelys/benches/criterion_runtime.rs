@@ -268,6 +268,35 @@ sum_to(100000)
         });
     });
     group.finish();
+
+    let osr_runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let osr_module = osr_runtime
+        .compile(source, CompileOptions::default())
+        .expect("OSR comparison workload must compile");
+    let mut osr_warmup = osr_runtime.new_isolate(IsolateConfig::default());
+    osr_warmup
+        .execute(&osr_module, RunOptions::default())
+        .expect("OSR comparison warmup must succeed");
+    assert_eq!(osr_runtime.jit_osr_executions(), 1);
+
+    let mut group = criterion.benchmark_group("osr_first_hot_loop");
+    group.bench_function("interpreter", |bencher| {
+        bencher.iter(|| {
+            let mut isolate = interpreter.new_isolate(IsolateConfig::default());
+            isolate
+                .execute(&interpreter_module, RunOptions::default())
+                .expect("OSR interpreter comparison must succeed")
+        });
+    });
+    group.bench_function("tiered_osr", |bencher| {
+        bencher.iter(|| {
+            let mut isolate = osr_runtime.new_isolate(IsolateConfig::default());
+            isolate
+                .execute(&osr_module, RunOptions::default())
+                .expect("OSR tiered comparison must succeed")
+        });
+    });
+    group.finish();
 }
 
 fn tiered_cold_benchmarks(criterion: &mut Criterion) {

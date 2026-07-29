@@ -1,6 +1,8 @@
 use super::engine::{CompiledFunction, JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
 use super::optimize::{optimize_integer_ir, specialize_integer_parameters};
-use super::translate::{translate_integer_function, translate_optimized_integer_function};
+use super::translate::{
+    translate_integer_function, translate_integer_osr, translate_optimized_integer_function,
+};
 use aelys_bytecode::Function;
 use aelys_runtime::{
     JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutor, JitFunctionKey,
@@ -59,6 +61,7 @@ pub(crate) struct JitProvider {
     has_compiled_code: AtomicBool,
     profiles: Mutex<HashMap<JitKey, NumericProfile>>,
     deoptimizations: AtomicU64,
+    osr_executions: AtomicU64,
 }
 
 impl JitProvider {
@@ -75,6 +78,7 @@ impl JitProvider {
             has_compiled_code: AtomicBool::new(false),
             profiles: Mutex::new(HashMap::new()),
             deoptimizations: AtomicU64::new(0),
+            osr_executions: AtomicU64::new(0),
         })
     }
 
@@ -84,6 +88,10 @@ impl JitProvider {
 
     pub(crate) fn deoptimizations(&self) -> u64 {
         self.deoptimizations.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn osr_executions(&self) -> u64 {
+        self.osr_executions.load(Ordering::Relaxed)
     }
 
     fn observe_profile(&self, key: &JitFunctionKey, arguments: &[i64]) {
@@ -182,7 +190,10 @@ impl JitExecutor for JitProvider {
             .iter()
             .map(|argument| match argument {
                 JitArgument::Integer(value) => Some(*value),
-                JitArgument::IntegerArray(_) | JitArgument::IntegerVec(_) => None,
+                JitArgument::Boolean(_)
+                | JitArgument::IntegerArray(_)
+                | JitArgument::IntegerVec(_)
+                | JitArgument::Unused => None,
             })
             .collect::<Option<Vec<_>>>();
         if let Some(threshold) = self.tier2_call_threshold
@@ -239,6 +250,36 @@ impl JitExecutor for JitProvider {
                     registers,
                 }
             }
+        }
+    }
+
+    fn try_execute_osr(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        bytecode_ip: u32,
+        registers: &[JitArgument<'_>],
+    ) -> JitCallResult {
+        let cache_key = JitKey::for_osr(key.module(), key.shared_path(), bytecode_ip);
+        let compiled = self.engine.cached(&cache_key).ok().flatten().or_else(|| {
+            let ir = translate_integer_osr(function, bytecode_ip)?;
+            self.engine.compile(&cache_key, &ir).ok()
+        });
+        let Some(compiled) = compiled else {
+            return JitCallResult::Unsupported;
+        };
+        let Ok(result) = compiled.execute_arguments(registers) else {
+            return JitCallResult::Unsupported;
+        };
+        match result {
+            JitExecution::Returned(value) => match Value::int_checked(value) {
+                Ok(value) => {
+                    self.osr_executions.fetch_add(1, Ordering::Relaxed);
+                    JitCallResult::Returned(value)
+                }
+                Err(_) => JitCallResult::Unsupported,
+            },
+            JitExecution::Deoptimized { .. } => JitCallResult::Unsupported,
         }
     }
 }

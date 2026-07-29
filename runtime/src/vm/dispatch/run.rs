@@ -273,8 +273,14 @@ impl VM {
                         reg_set,
                         int_value
                     );
-                    if JIT && ip < branch_origin {
-                        self.record_jit_backedge(func_ref);
+                    if JIT
+                        && ip < branch_origin
+                        && let Some(result) = self.record_jit_backedge(func_ref, ip)
+                    {
+                        if let Some(result) = self.finish_jit_osr(result)? {
+                            return Ok(result);
+                        }
+                        reload_frame_state!();
                     }
                 }
 
@@ -1278,8 +1284,15 @@ impl VM {
                             reg_set!(base + usize::from(destination), value);
                         }
                     }
-                    if JIT && wide_opcode == 48 && ip < branch_origin {
-                        self.record_jit_backedge(active_function);
+                    if JIT
+                        && wide_opcode == 48
+                        && ip < branch_origin
+                        && let Some(result) = self.record_jit_backedge(active_function, ip)
+                    {
+                        if let Some(result) = self.finish_jit_osr(result)? {
+                            return Ok(result);
+                        }
+                        reload_frame_state!();
                     }
                 }
 

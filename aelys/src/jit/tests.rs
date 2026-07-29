@@ -3,6 +3,7 @@ use super::ir::{
     BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
     IrTerminator, IrType, SourcePosition, ValueId,
 };
+use super::translate::translate_integer_osr;
 use super::translate::{translate_integer_function, translate_optimized_integer_function};
 use aelys_bytecode::{Function, OpCode};
 use aelys_driver::pipeline::compilation_pipeline_with_opt;
@@ -286,6 +287,31 @@ fn bytecode_cfg_loop_translates_and_executes() {
         .compile(&JitKey::new(9, 0, JitTier::Baseline), &ir)
         .unwrap();
     assert_eq!(compiled.execute_i64(&[10_000]).unwrap(), 49_995_000);
+
+    let osr = translate_integer_osr(
+        &function,
+        u32::try_from(loop_start).expect("test loop IP fits u32"),
+    )
+    .expect("loop header must become an OSR entry");
+    let osr_key = JitKey::for_osr(
+        9,
+        std::sync::Arc::from([0]),
+        u32::try_from(loop_start).unwrap(),
+    );
+    let osr_compiled = engine.compile(&osr_key, &osr).unwrap();
+    assert_eq!(osr_compiled.arity(), 5);
+    assert_eq!(
+        osr_compiled
+            .execute_arguments(&[
+                JitArgument::Integer(10_000),
+                JitArgument::Integer(5_000),
+                JitArgument::Integer(100),
+                JitArgument::Unused,
+                JitArgument::Unused,
+            ])
+            .unwrap(),
+        JitExecution::Returned(37_497_600)
+    );
 }
 
 #[test]

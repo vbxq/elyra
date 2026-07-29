@@ -227,10 +227,41 @@ fn tiered_jit_compiles_at_the_backedge_threshold() {
         ExecutionOutcome::Returned(Value::int(49_995_000))
     );
     assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_osr_executions(), 1);
     assert_eq!(
         isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::int(49_995_000))
     );
+}
+
+#[test]
+fn tiered_jit_enters_machine_code_from_the_hot_loop_header() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let module = runtime
+        .compile(
+            r#"
+fn compute(limit: int) -> int {
+    let mut index = 0
+    let mut total = 0
+    while index < limit {
+        total = total + index
+        index = index + 1
+    }
+    return total
+}
+compute(100000) + 7
+"#,
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(4_999_950_007))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_osr_executions(), 1);
 }
 
 #[test]

@@ -131,8 +131,10 @@ pub enum JitDeoptValue {
 #[derive(Clone, Copy, Debug)]
 pub enum JitArgument<'a> {
     Integer(i64),
+    Boolean(bool),
     IntegerArray(&'a [i64]),
     IntegerVec(&'a [i64]),
+    Unused,
 }
 
 pub trait JitExecutor: Send + Sync {
@@ -147,4 +149,14 @@ pub trait JitExecutor: Send + Sync {
         arguments: &[JitArgument<'_>],
         calls: u64,
     ) -> JitCallResult;
+
+    fn try_execute_osr(
+        &self,
+        _key: &JitFunctionKey,
+        _function: &Function,
+        _bytecode_ip: u32,
+        _registers: &[JitArgument<'_>],
+    ) -> JitCallResult {
+        JitCallResult::Unsupported
+    }
 }

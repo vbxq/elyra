@@ -160,36 +160,117 @@ impl VM {
     }
 
     #[inline(always)]
-    pub(crate) fn record_jit_backedge(&mut self, function: GcRef) {
+    pub(crate) fn record_jit_backedge(
+        &mut self,
+        function: GcRef,
+        bytecode_ip: usize,
+    ) -> Option<Value> {
         let initialized = self
             .frames
             .last()
             .map(|frame| frame.jit_backedges_initialized)
             .unwrap_or(false);
         if !initialized {
-            let Some(key) = self.jit_function_keys.get(&function) else {
-                return;
-            };
+            let key = self.jit_function_keys.get(&function)?;
             let base = self.jit_backedge_counts.get(key).copied().unwrap_or(0);
-            let Some(frame) = self.frames.last_mut() else {
-                return;
-            };
+            let frame = self.frames.last_mut()?;
             frame.jit_backedge_base = base;
             frame.jit_backedges_initialized = true;
         }
-        let Some(frame) = self.frames.last_mut() else {
-            return;
-        };
+        let frame = self.frames.last_mut()?;
         frame.jit_backedges = frame.jit_backedges.saturating_add(1);
         let backedges = frame.jit_backedge_base.saturating_add(frame.jit_backedges);
         if backedges != crate::JIT_TIER1_BACKEDGE_THRESHOLD {
-            return;
+            return None;
         }
         frame.jit_backedge_compiled = true;
-        let Some(key) = self.jit_function_keys.get(&function).cloned() else {
-            return;
-        };
+        let key = self.jit_function_keys.get(&function).cloned()?;
+        if let Some(result) = self.execute_jit_osr(function, &key, bytecode_ip) {
+            return Some(result);
+        }
         self.compile_jit_backedge(function, &key, backedges);
+        None
+    }
+
+    #[inline(never)]
+    fn execute_jit_osr(
+        &self,
+        function: GcRef,
+        key: &JitFunctionKey,
+        bytecode_ip: usize,
+    ) -> Option<Value> {
+        let executor = self.jit_executor.as_ref()?.clone();
+        let frame = self.frames.last()?;
+        let end = frame
+            .base
+            .checked_add(usize::try_from(frame.num_registers).ok()?)?;
+        let values = self.registers.get(frame.base..end)?;
+        let mut registers = smallvec::SmallVec::<[JitArgument<'_>; 16]>::new();
+        for value in values {
+            if let Some(value) = value.as_int() {
+                registers.push(JitArgument::Integer(value));
+            } else if let Some(value) = value.as_bool() {
+                registers.push(JitArgument::Boolean(value));
+            } else if let Some(reference) = value.as_ptr().map(GcRef::new) {
+                match &self.heap.get(reference)?.kind {
+                    ObjectKind::Array(array) => {
+                        registers.push(JitArgument::IntegerArray(array.data.as_ints()?));
+                    }
+                    ObjectKind::Vec(vector) => {
+                        registers.push(JitArgument::IntegerVec(vector.data.as_ints()?));
+                    }
+                    _ => registers.push(JitArgument::Unused),
+                }
+            } else {
+                registers.push(JitArgument::Unused);
+            }
+        }
+        let object = self.heap.get(function)?;
+        let ObjectKind::Function(function) = &object.kind else {
+            return None;
+        };
+        let bytecode_ip = u32::try_from(bytecode_ip).ok()?;
+        match executor.try_execute_osr(key, &function.function, bytecode_ip, &registers) {
+            JitCallResult::Returned(value) => Some(value),
+            JitCallResult::Unsupported | JitCallResult::Deoptimized { .. } => None,
+        }
+    }
+
+    pub(crate) fn finish_jit_osr(&mut self, result: Value) -> Result<Option<Value>, RuntimeError> {
+        let current = self
+            .frames
+            .last()
+            .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
+        let destination = current.return_dest();
+        let current_globals = current.global_mapping_id;
+        let caller_globals = self
+            .frames
+            .get(self.frames.len().saturating_sub(2))
+            .map_or(0, |frame| frame.global_mapping_id);
+        let switch_globals = current_globals != 0 && current_globals != caller_globals;
+        if switch_globals && caller_globals != 0 {
+            self.sync_current_function_globals();
+        }
+        self.pop_frame_with_jit_metadata();
+        let Some(caller) = self.frames.last() else {
+            return Ok(Some(result));
+        };
+        let caller_function = caller.function;
+        let destination = caller
+            .base
+            .checked_add(usize::from(destination))
+            .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
+        if switch_globals && caller_globals != 0 {
+            self.prepare_globals_for_function(caller_function);
+        }
+        if destination >= self.registers.len() {
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidRegister {
+                reg: destination,
+                max: self.registers.len().saturating_sub(1),
+            }));
+        }
+        self.registers[destination] = result;
+        Ok(None)
     }
 
     #[inline(never)]

@@ -10,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-pub(crate) const JIT_ABI_VERSION: u16 = 2;
+pub(crate) const JIT_ABI_VERSION: u16 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
@@ -24,6 +24,7 @@ pub(crate) struct JitKey {
     pub(crate) module: u64,
     pub(crate) function_path: Arc<[u32]>,
     pub(crate) tier: JitTier,
+    pub(crate) osr_ip: Option<u32>,
     pub(crate) abi: u16,
     pub(crate) cpu_features: u64,
 }
@@ -39,9 +40,16 @@ impl JitKey {
             module,
             function_path,
             tier,
+            osr_ip: None,
             abi: JIT_ABI_VERSION,
             cpu_features: cpu_feature_key(),
         }
+    }
+
+    pub(crate) fn for_osr(module: u64, function_path: Arc<[u32]>, bytecode_ip: u32) -> Self {
+        let mut key = Self::for_path(module, function_path, JitTier::Baseline);
+        key.osr_ip = Some(bytecode_ip);
+        key
     }
 }
 
@@ -153,6 +161,13 @@ impl CompiledFunction {
                         length: 0,
                     });
                 }
+                (JitArgument::Boolean(value), IrType::Bool) => {
+                    integers.push(i64::from(*value));
+                    collections.push(RawI64Collection {
+                        data: std::ptr::null(),
+                        length: 0,
+                    });
+                }
                 (JitArgument::IntegerArray(elements), IrType::I64Array) => {
                     integers.push(0);
                     collections.push(RawI64Collection {
@@ -167,6 +182,13 @@ impl CompiledFunction {
                         data: elements.as_ptr(),
                         length: u64::try_from(elements.len())
                             .map_err(|_| JitError::OffsetOverflow)?,
+                    });
+                }
+                (_, IrType::Uninitialized) => {
+                    integers.push(0);
+                    collections.push(RawI64Collection {
+                        data: std::ptr::null(),
+                        length: 0,
                     });
                 }
                 _ => return Err(JitError::ArgumentType(index)),

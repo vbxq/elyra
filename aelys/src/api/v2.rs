@@ -283,6 +283,14 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    pub fn jit_osr_executions(&self) -> u64 {
+        self.inner
+            .jit
+            .as_ref()
+            .map(|jit| jit.osr_executions())
+            .unwrap_or(0)
+    }
+
     pub fn compile(
         &self,
         source: &str,

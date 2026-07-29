@@ -24,6 +24,65 @@ pub(crate) fn translate_optimized_integer_function(function: &Function) -> Optio
     translate_function(function, true)
 }
 
+pub(crate) fn translate_integer_osr(function: &Function, bytecode_ip: u32) -> Option<FunctionIr> {
+    let mut ir = translate_function(function, false)?;
+    let target = ir.blocks.iter().find(|block| {
+        block
+            .instructions
+            .first()
+            .is_some_and(|instruction| instruction.source.bytecode_ip == bytecode_ip)
+    })?;
+    let target_id = target.id;
+    let parameter_types = target
+        .parameters
+        .iter()
+        .map(|(_, ty)| *ty)
+        .collect::<Vec<_>>();
+    let mut next_value = ir
+        .blocks
+        .iter()
+        .flat_map(|block| {
+            block.parameters.iter().map(|(value, _)| value.0).chain(
+                block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| instruction.result.map(|(value, _)| value.0)),
+            )
+        })
+        .max()
+        .and_then(|value| value.checked_add(1))
+        .unwrap_or(0);
+    let parameters = parameter_types
+        .iter()
+        .map(|ty| Some((next_id(&mut next_value)?, *ty)))
+        .collect::<Option<Vec<_>>>()?;
+    let arguments = parameters.iter().map(|(value, _)| *value).collect();
+    let entry_id = BlockId(
+        ir.blocks
+            .iter()
+            .map(|block| block.id.0)
+            .max()
+            .and_then(|block| block.checked_add(1))
+            .unwrap_or(0),
+    );
+    ir.entry = entry_id;
+    ir.parameter_types = parameter_types;
+    ir.blocks.insert(
+        0,
+        IrBlock {
+            id: entry_id,
+            parameters,
+            instructions: Vec::new(),
+            terminator: IrTerminator::Jump {
+                target: target_id,
+                arguments,
+            },
+        },
+    );
+    ir.verify().ok()?;
+    Some(ir)
+}
+
 fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<FunctionIr> {
     let register_count = usize::try_from(function.num_registers).ok()?;
     if register_count < usize::from(function.arity) || register_count > usize::from(u16::MAX) + 1 {
