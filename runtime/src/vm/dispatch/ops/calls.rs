@@ -383,41 +383,27 @@
 
             // CallCached (79) - Call with function in register
             79 => {
-                let mut dest: u8 = 0;
-                let mut func_reg: u8 = 0;
-                let mut nargs: u8 = 0;
-                let mut callee_ref = GcRef::new(0);
-                enum CallCachedData {
-                    Function {
-                        arity: u16,
-                        callee_gmap: usize,
-                        num_regs: u32,
-                        bc_ptr: *const u32,
-                        bc_len: usize,
-                        const_ptr: *const Value,
-                        const_len: usize,
-                    },
-                    Native {
-                        native: crate::vm::NativeFunction,
-                    },
-                    Closure {
-                        arity: u16,
-                        callee_gmap: usize,
-                        num_regs: u32,
-                        inner_func: GcRef,
-                        bc_ptr: *const u32,
-                        bc_len: usize,
-                        const_ptr: *const Value,
-                        const_len: usize,
-                        upval_ptr: *const GcRef,
-                        upval_len: usize,
-                    },
-                    Invalid,
+                let state = DispatchState {
+                    base,
+                    constants: constants_ptr,
+                    constants_len,
+                    registers: regs_ptr,
+                    registers_len: regs_len,
+                    frame_index: current_frame_idx,
+                };
+                match super::ops::call_cached::execute(
+                    self,
+                    &state,
+                    ip,
+                    global_mapping_id,
+                    instr,
+                )? {
+                    DispatchControl::Continue => {}
+                    DispatchControl::ReloadFrame => reload_frame_state!(),
+                    DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                        unreachable!("cached call handler cannot return from the active frame")
+                    }
                 }
-                let mut call_data = CallCachedData::Invalid;
-                let _ = (dest, func_reg, nargs, callee_ref);
-                let _ = &call_data;
-        include!("call_cached.rs");
             }
 
             // CallUpval (80) - Call function from upvalue
