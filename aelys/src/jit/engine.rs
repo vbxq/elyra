@@ -81,7 +81,8 @@ impl CompiledFunction {
 }
 
 pub(crate) struct JitEngine {
-    isa: OwnedTargetIsa,
+    baseline_isa: OwnedTargetIsa,
+    optimized_isa: OwnedTargetIsa,
     state: Mutex<EngineState>,
 }
 
@@ -97,19 +98,11 @@ impl JitEngine {
         if max_entries == 0 {
             return Err(JitError::InvalidCacheLimit);
         }
-        let mut flags = settings::builder();
-        flags
-            .set("use_colocated_libcalls", "false")
-            .map_err(|error| JitError::Configuration(error.to_string()))?;
-        flags
-            .set("is_pic", "false")
-            .map_err(|error| JitError::Configuration(error.to_string()))?;
-        let isa = cranelift_native::builder()
-            .map_err(|error| JitError::UnsupportedTarget(error.to_string()))?
-            .finish(settings::Flags::new(flags))
-            .map_err(|error| JitError::Configuration(error.to_string()))?;
+        let baseline_isa = native_isa("none")?;
+        let optimized_isa = native_isa("speed")?;
         Ok(Self {
-            isa,
+            baseline_isa,
+            optimized_isa,
             state: Mutex::new(EngineState {
                 entries: HashMap::new(),
                 lru: VecDeque::new(),
@@ -136,8 +129,12 @@ impl JitEngine {
 
         let symbol = format!("aelys_jit_{}", state.next_symbol);
         state.next_symbol = state.next_symbol.wrapping_add(1);
+        let isa = match key.tier {
+            JitTier::Baseline => &self.baseline_isa,
+            JitTier::Optimized => &self.optimized_isa,
+        };
         let mut module = JITModule::new(JITBuilder::with_isa(
-            Arc::clone(&self.isa),
+            Arc::clone(isa),
             cranelift_module::default_libcall_names(),
         ));
         let pointer_type = module.target_config().pointer_type();
@@ -197,6 +194,23 @@ impl JitEngine {
             .map(|state| state.entries.len())
             .map_err(|_| JitError::Poisoned)
     }
+}
+
+fn native_isa(opt_level: &str) -> Result<OwnedTargetIsa, JitError> {
+    let mut flags = settings::builder();
+    flags
+        .set("use_colocated_libcalls", "false")
+        .map_err(|error| JitError::Configuration(error.to_string()))?;
+    flags
+        .set("is_pic", "false")
+        .map_err(|error| JitError::Configuration(error.to_string()))?;
+    flags
+        .set("opt_level", opt_level)
+        .map_err(|error| JitError::Configuration(error.to_string()))?;
+    cranelift_native::builder()
+        .map_err(|error| JitError::UnsupportedTarget(error.to_string()))?
+        .finish(settings::Flags::new(flags))
+        .map_err(|error| JitError::Configuration(error.to_string()))
 }
 
 fn lower_function(

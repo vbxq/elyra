@@ -95,6 +95,17 @@ sum_to(100000)
         .execute(&baseline_module, RunOptions::default())
         .expect("baseline JIT comparison warmup must succeed");
 
+    let tiered = Runtime::with_jit_mode(JitMode::Tiered);
+    let tiered_module = tiered
+        .compile(source, CompileOptions::default())
+        .expect("optimized JIT comparison workload must compile");
+    let mut tiered_isolate = tiered.new_isolate(IsolateConfig::default());
+    for _ in 0..10_000 {
+        tiered_isolate
+            .execute(&tiered_module, RunOptions::default())
+            .expect("optimized JIT comparison warmup must succeed");
+    }
+
     let mut group = criterion.benchmark_group("tier1_integer_loop");
     group.bench_function("interpreter", |bencher| {
         bencher.iter(|| {
@@ -108,6 +119,13 @@ sum_to(100000)
             baseline_isolate
                 .execute(&baseline_module, RunOptions::default())
                 .expect("baseline JIT comparison must succeed")
+        });
+    });
+    group.bench_function("optimized_jit", |bencher| {
+        bencher.iter(|| {
+            tiered_isolate
+                .execute(&tiered_module, RunOptions::default())
+                .expect("optimized JIT comparison must succeed")
         });
     });
     group.finish();

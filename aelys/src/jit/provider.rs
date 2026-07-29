@@ -1,4 +1,5 @@
 use super::engine::{CompiledFunction, JitEngine, JitKey, JitTier};
+use super::optimize::optimize_integer_ir;
 use super::translate::translate_integer_function;
 use aelys_bytecode::Function;
 use aelys_runtime::{JitCallResult, JitExecutor, JitFunctionKey, Value};
@@ -8,15 +9,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) struct JitProvider {
     engine: JitEngine,
     call_threshold: u64,
+    tier2_call_threshold: Option<u64>,
     has_compiled_code: AtomicBool,
 }
 
 impl JitProvider {
-    pub(crate) fn new(max_entries: usize, call_threshold: u64) -> Result<Self, String> {
+    pub(crate) fn new(
+        max_entries: usize,
+        call_threshold: u64,
+        tier2_call_threshold: Option<u64>,
+    ) -> Result<Self, String> {
         let engine = JitEngine::new(max_entries).map_err(|error| error.to_string())?;
         Ok(Self {
             engine,
             call_threshold,
+            tier2_call_threshold,
             has_compiled_code: AtomicBool::new(false),
         })
     }
@@ -31,15 +38,34 @@ impl JitProvider {
         function: &Function,
         calls: u64,
     ) -> Option<Arc<CompiledFunction>> {
-        let key = JitKey::for_path(key.module(), key.shared_path(), JitTier::Baseline);
-        if let Some(compiled) = self.engine.cached(&key).ok().flatten() {
+        let tier = self
+            .tier2_call_threshold
+            .filter(|threshold| calls >= *threshold)
+            .map_or(JitTier::Baseline, |_| JitTier::Optimized);
+        let cache_key = JitKey::for_path(key.module(), key.shared_path(), tier);
+        if let Some(compiled) = self.engine.cached(&cache_key).ok().flatten() {
             return Some(compiled);
         }
         if calls < self.call_threshold {
             return None;
         }
-        let ir = translate_integer_function(function)?;
-        let compiled = self.engine.compile(&key, &ir).ok()?;
+        let mut ir = translate_integer_function(function)?;
+        if tier == JitTier::Optimized {
+            optimize_integer_ir(&mut ir);
+            ir.verify().ok()?;
+        }
+        let compiled = match self.engine.compile(&cache_key, &ir) {
+            Ok(compiled) => compiled,
+            Err(_) if tier == JitTier::Optimized => {
+                let baseline = JitKey::for_path(
+                    key.module(),
+                    Arc::clone(&cache_key.function_path),
+                    JitTier::Baseline,
+                );
+                self.engine.cached(&baseline).ok().flatten()?
+            }
+            Err(_) => return None,
+        };
         self.has_compiled_code.store(true, Ordering::Release);
         Some(compiled)
     }

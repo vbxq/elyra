@@ -104,6 +104,23 @@ fn tiered_mode_compiles_at_the_call_threshold_and_shares_the_result() {
 }
 
 #[test]
+fn tiered_mode_promotes_to_an_optimized_cache_entry() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let module = runtime
+        .compile("40 + 2", CompileOptions::default())
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    for _ in 0..10_000 {
+        assert_eq!(
+            isolate.execute(&module, RunOptions::default()).unwrap(),
+            ExecutionOutcome::Returned(Value::int(42))
+        );
+    }
+    assert_eq!(runtime.jit_cache_entries(), 2);
+}
+
+#[test]
 fn baseline_jit_compiles_nested_cfg_and_shares_it_between_isolates() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime

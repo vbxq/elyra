@@ -12,7 +12,7 @@ pub(crate) enum IrType {
     Bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum IntPredicate {
     Equal,
     NotEqual,

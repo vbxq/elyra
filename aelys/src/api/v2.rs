@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 pub use aelys_runtime::InterruptHandle;
 
 const TIER1_CALL_THRESHOLD: u64 = 1_000;
+const TIER2_CALL_THRESHOLD: u64 = 10_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum JitMode {
@@ -242,9 +243,15 @@ impl Runtime {
                 JitMode::Baseline => 1,
                 JitMode::Tiered => TIER1_CALL_THRESHOLD,
             };
+            let tier2_call_threshold =
+                (jit_mode == JitMode::Tiered).then_some(TIER2_CALL_THRESHOLD);
             Some(Arc::new(
-                JitProvider::new(config.max_cache_entries, call_threshold)
-                    .map_err(JitConfigError::Initialization)?,
+                JitProvider::new(
+                    config.max_cache_entries,
+                    call_threshold,
+                    tier2_call_threshold,
+                )
+                .map_err(JitConfigError::Initialization)?,
             ))
         };
         Ok(Self {

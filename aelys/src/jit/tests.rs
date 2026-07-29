@@ -59,6 +59,38 @@ fn cranelift_executes_verified_ssa_and_reuses_cache_entry() {
 }
 
 #[test]
+fn optimized_tier_has_a_distinct_cache_entry() {
+    let value = ValueId(0);
+    let ir = FunctionIr {
+        name: "optimized_constant".to_string(),
+        entry: BlockId(0),
+        parameter_types: Vec::new(),
+        return_type: IrType::I64,
+        blocks: vec![IrBlock {
+            id: BlockId(0),
+            parameters: Vec::new(),
+            instructions: vec![IrInstruction {
+                result: Some((value, IrType::I64)),
+                kind: IrInstructionKind::Iconst(42),
+                source: position(0),
+            }],
+            terminator: IrTerminator::Return(value),
+        }],
+        deopt_maps: Vec::new(),
+    };
+    let engine = JitEngine::new(4).unwrap();
+    let baseline_key = JitKey::new(7, 0, JitTier::Baseline);
+    let optimized_key = JitKey::new(7, 0, JitTier::Optimized);
+    let baseline = engine.compile(&baseline_key, &ir).unwrap();
+    let optimized = engine.compile(&optimized_key, &ir).unwrap();
+
+    assert_eq!(baseline.execute_i64(&[]).unwrap(), 42);
+    assert_eq!(optimized.execute_i64(&[]).unwrap(), 42);
+    assert!(!std::sync::Arc::ptr_eq(&baseline, &optimized));
+    assert_eq!(engine.cache_len().unwrap(), 2);
+}
+
+#[test]
 fn lru_evicts_the_oldest_cache_entry() {
     let value = ValueId(0);
     let ir = FunctionIr {
