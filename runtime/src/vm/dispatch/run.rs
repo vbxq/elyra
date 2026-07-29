@@ -242,7 +242,20 @@ impl VM {
                 // ForLoopI(40), ForLoopIInc(41), LtImm(44)-GeImm(47), WhileLoopLt(48),
                 // StringForLoop(177), VecForLoop(178), ArrayForLoop(179)
                 17..=20 | 26..=33 | 40..=41 | 44..=48 | 124..=125 | 127 | 177..=179 => {
-                    include!("ops/control_flow.rs");
+                    super::ops::control_flow::execute_control_flow!(
+                        self,
+                        opcode_byte,
+                        instr,
+                        base,
+                        current_frame_idx,
+                        ip,
+                        bytecode_ptr,
+                        bytecode_len,
+                        reg_get,
+                        reg_ref,
+                        reg_set,
+                        int_value
+                    );
                 }
 
                 // Call operations: Call(21), Return(22), Return0(23), CallWide(34),
