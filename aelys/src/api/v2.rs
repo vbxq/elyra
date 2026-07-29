@@ -1,3 +1,5 @@
+use crate::jit::engine::{JitEngine, JitKey, JitTier};
+use crate::jit::translate::translate_integer_function;
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize, serialize};
 use aelys_bytecode::object::{AelysArray, AelysVec};
@@ -13,9 +15,12 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub use aelys_runtime::InterruptHandle;
+
+const TIER1_CALL_THRESHOLD: u64 = 1_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum JitMode {
@@ -24,6 +29,53 @@ pub enum JitMode {
     Baseline,
     Tiered,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JitConfig {
+    max_cache_entries: usize,
+}
+
+impl JitConfig {
+    pub fn with_max_cache_entries(
+        mut self,
+        max_cache_entries: usize,
+    ) -> Result<Self, JitConfigError> {
+        if max_cache_entries == 0 {
+            return Err(JitConfigError::EmptyCache);
+        }
+        self.max_cache_entries = max_cache_entries;
+        Ok(self)
+    }
+
+    pub fn max_cache_entries(&self) -> usize {
+        self.max_cache_entries
+    }
+}
+
+impl Default for JitConfig {
+    fn default() -> Self {
+        Self {
+            max_cache_entries: 256,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JitConfigError {
+    EmptyCache,
+    Initialization(String),
+}
+
+impl fmt::Display for JitConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyCache => formatter.write_str("JIT cache must contain at least one entry"),
+            Self::Initialization(error) => write!(formatter, "JIT initialization failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for JitConfigError {}
 
 #[derive(Clone, Debug)]
 pub struct CompileOptions {
@@ -141,6 +193,8 @@ pub struct ExecutionReport {
 #[derive(Clone)]
 pub struct CompiledModule {
     avbc: Arc<[u8]>,
+    function: Arc<aelys_bytecode::Function>,
+    module_id: u64,
     source: Arc<Source>,
 }
 
@@ -157,6 +211,8 @@ pub struct Runtime {
 
 struct RuntimeInner {
     jit_mode: JitMode,
+    jit: Option<JitEngine>,
+    next_module_id: AtomicU64,
 }
 
 impl Runtime {
@@ -165,13 +221,43 @@ impl Runtime {
     }
 
     pub fn with_jit_mode(jit_mode: JitMode) -> Self {
-        Self {
-            inner: Arc::new(RuntimeInner { jit_mode }),
+        Self::with_jit_config(jit_mode, JitConfig::default())
+            .expect("default JIT configuration must initialize")
+    }
+
+    pub fn with_jit_config(jit_mode: JitMode, config: JitConfig) -> Result<Self, JitConfigError> {
+        if config.max_cache_entries == 0 {
+            return Err(JitConfigError::EmptyCache);
         }
+        let jit = if jit_mode == JitMode::Off
+            || !cfg!(all(target_os = "linux", target_arch = "x86_64"))
+        {
+            None
+        } else {
+            Some(
+                JitEngine::new(config.max_cache_entries)
+                    .map_err(|error| JitConfigError::Initialization(error.to_string()))?,
+            )
+        };
+        Ok(Self {
+            inner: Arc::new(RuntimeInner {
+                jit_mode,
+                jit,
+                next_module_id: AtomicU64::new(1),
+            }),
+        })
     }
 
     pub fn jit_mode(&self) -> JitMode {
         self.inner.jit_mode
+    }
+
+    pub fn jit_cache_entries(&self) -> usize {
+        self.inner
+            .jit
+            .as_ref()
+            .and_then(|jit| jit.cache_len().ok())
+            .unwrap_or(0)
     }
 
     pub fn compile(
@@ -219,8 +305,11 @@ impl Runtime {
                 source.clone(),
             )
         })?;
+        let module_id = self.inner.next_module_id.fetch_add(1, Ordering::Relaxed);
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
+            function: Arc::new(function),
+            module_id,
             source,
         })
     }
@@ -238,6 +327,8 @@ impl Runtime {
         }
         Ok(Isolate {
             vm,
+            runtime: Arc::clone(&self.inner),
+            jit_call_counts: HashMap::new(),
             last_report: None,
             _not_sync: Cell::new(()),
         })
@@ -257,6 +348,8 @@ impl Default for Runtime {
 
 pub struct Isolate {
     vm: VM,
+    runtime: Arc<RuntimeInner>,
+    jit_call_counts: HashMap<u64, u64>,
     last_report: Option<ExecutionReport>,
     _not_sync: Cell<()>,
 }
@@ -294,11 +387,55 @@ fn standard_module_symbols() -> Result<StandardSymbols, AelysError> {
 }
 
 impl Isolate {
+    fn try_execute_jit(&mut self, module: &CompiledModule, options: &RunOptions) -> Option<Value> {
+        if self.runtime.jit_mode == JitMode::Off {
+            return None;
+        }
+        let engine = self.runtime.jit.as_ref()?;
+        let key = JitKey::new(module.module_id, 0, JitTier::Baseline);
+        let cached = engine.cached(key).ok().flatten();
+        let should_compile = match self.runtime.jit_mode {
+            JitMode::Off => false,
+            JitMode::Baseline => true,
+            JitMode::Tiered => {
+                if cached.is_some() {
+                    true
+                } else {
+                    let calls = self.jit_call_counts.entry(module.module_id).or_default();
+                    *calls = calls.saturating_add(1);
+                    *calls >= TIER1_CALL_THRESHOLD
+                }
+            }
+        };
+        if !should_compile
+            || options.max_instructions.is_some()
+            || options.deadline.is_some()
+            || options.interrupt.is_some()
+            || options.report
+        {
+            return None;
+        }
+        let ir = translate_integer_function(&module.function)?;
+        if !ir.parameter_types.is_empty() {
+            return None;
+        }
+        let compiled = cached.or_else(|| engine.compile(key, &ir).ok())?;
+        if compiled.arity() != 0 {
+            return None;
+        }
+        let result = compiled.execute_i64(&[]).ok()?;
+        Value::int_checked(result).ok()
+    }
+
     pub fn execute(
         &mut self,
         module: &CompiledModule,
         options: RunOptions,
     ) -> Result<ExecutionOutcome, AelysError> {
+        if let Some(value) = self.try_execute_jit(module, &options) {
+            self.last_report = None;
+            return Ok(ExecutionOutcome::Returned(value));
+        }
         self.vm.configure_execution(ExecutionControl {
             max_instructions: options.max_instructions,
             deadline: options.deadline,

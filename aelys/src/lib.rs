@@ -15,6 +15,7 @@
 // TODO: (Optimization) Implement function inlining optimization pass (and @inline decorator)
 // TODO: Custom modules share VM's global namespace, risk of collision if two modules export the same symbol (efor example mod_a::shared overwrites mod_b::shared as both become just shared in VM)
 pub mod api;
+mod jit;
 
 pub use aelys_common::error::AelysError;
 pub use api::*;
