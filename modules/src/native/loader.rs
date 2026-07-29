@@ -177,7 +177,8 @@ impl NativeLoader {
             });
         }
 
-        let expected_size = std::mem::size_of::<AelysModuleDescriptor>() as u32;
+        let expected_size = u32::try_from(std::mem::size_of::<AelysModuleDescriptor>())
+            .expect("native descriptor size fits u32");
         if descriptor_ref.descriptor_size < expected_size {
             return Err(NativeError::InvalidDescriptor("descriptor size too small"));
         }
@@ -287,8 +288,9 @@ fn read_exports(
 
     // SAFETY: exports ptr validated non-null above, count validated <= MAX_EXPORT_COUNT.
     // The pointer comes from the module's static data, so it outlives this call.
-    let exports =
-        unsafe { std::slice::from_raw_parts(descriptor.exports, descriptor.export_count as usize) };
+    let export_count = usize::try_from(descriptor.export_count)
+        .expect("bounded native export count fits target usize");
+    let exports = unsafe { std::slice::from_raw_parts(descriptor.exports, export_count) };
     let mut map = HashMap::with_capacity(exports.len());
     for export in exports {
         let name = export_name(export)?;
@@ -335,7 +337,8 @@ fn read_required_modules(
     let entries = unsafe {
         std::slice::from_raw_parts(
             descriptor.required_modules,
-            descriptor.required_module_count as usize,
+            usize::try_from(descriptor.required_module_count)
+                .expect("bounded required module count fits target usize"),
         )
     };
     let mut modules = Vec::with_capacity(entries.len());

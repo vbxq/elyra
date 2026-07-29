@@ -41,9 +41,9 @@ pub fn value_as_int(v: AelysValue) -> i64 {
     if (v & (QNAN | 0x0007_0000_0000_0000)) == (QNAN | TAG_INT) {
         let payload = v & PAYLOAD_MASK;
         if payload & 0x0000_8000_0000_0000 != 0 {
-            (payload | 0xFFFF_0000_0000_0000) as i64
+            i64::from_ne_bytes((payload | 0xFFFF_0000_0000_0000).to_ne_bytes())
         } else {
-            payload as i64
+            i64::try_from(payload).expect("positive integer payload fits i64")
         }
     } else {
         0

@@ -13,12 +13,13 @@ const FNV_PRIME: u64 = 0x100000001b3;
 /// - Each export's `name` pointer must be a valid null-terminated C string or null.
 pub unsafe fn compute_exports_hash(exports: *const AelysExport, export_count: u32) -> u64 {
     let mut hash = FNV_OFFSET_BASIS;
-    hash_u64(&mut hash, export_count as u64);
+    hash_u64(&mut hash, u64::from(export_count));
     if export_count == 0 || exports.is_null() {
         return hash;
     }
 
-    let slice = unsafe { core::slice::from_raw_parts(exports, export_count as usize) };
+    let count = usize::try_from(export_count).expect("u32 export count fits target usize");
+    let slice = unsafe { core::slice::from_raw_parts(exports, count) };
     for export in slice {
         let name_bytes = if export.name.is_null() {
             &[][..]
@@ -26,9 +27,12 @@ pub unsafe fn compute_exports_hash(exports: *const AelysExport, export_count: u3
             unsafe { CStr::from_ptr(export.name) }.to_bytes()
         };
         hash_bytes(&mut hash, name_bytes);
-        hash_u64(&mut hash, export.kind as u32 as u64);
+        hash_u64(&mut hash, u64::from(export.kind as u32));
         hash_bytes(&mut hash, &export.arity.to_le_bytes());
-        hash_u64(&mut hash, export.value as usize as u64);
+        hash_u64(
+            &mut hash,
+            u64::try_from(export.value.addr()).expect("pointer address fits u64"),
+        );
     }
 
     hash

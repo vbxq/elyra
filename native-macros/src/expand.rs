@@ -47,6 +47,8 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
     }
 
     let export_count = exports.len();
+    let export_count_u32 = u32::try_from(export_count)
+        .map_err(|_| syn::Error::new(input.span(), "too many native exports"))?;
     let mut export_statics = Vec::new();
     let mut export_refs = Vec::new();
 
@@ -102,7 +104,7 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
             vm_version_max: ::core::ptr::null(),
             descriptor_hash: 0,
             exports_hash: 0,
-            export_count: #export_count as u32,
+            export_count: #export_count_u32,
             exports: __AELYS_EXPORTS.as_ptr(),
             required_module_count: 0,
             required_modules: ::core::ptr::null(),
