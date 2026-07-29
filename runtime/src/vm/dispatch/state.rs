@@ -1,6 +1,10 @@
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
+pub(super) enum DispatchControl {
+    Continue,
+}
+
 pub(super) struct DispatchState {
     pub(super) base: usize,
     pub(super) constants: *const Value,

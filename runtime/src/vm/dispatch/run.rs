@@ -2,10 +2,8 @@
 // FIXME: computed goto would be faster but Rust doesn't support it
 
 use super::decode::{decode_abc, decode_aimm};
-use super::state::DispatchState;
-use crate::vm::{
-    AelysClosure, CallFrame, GcObject, GcRef, MAX_REGISTERS, ObjectKind, OpCode, VM, Value,
-};
+use super::state::{DispatchControl, DispatchState};
+use crate::vm::{CallFrame, GcRef, MAX_REGISTERS, ObjectKind, OpCode, VM, Value};
 use aelys_bytecode::object::{AelysArray, AelysVec};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
@@ -225,7 +223,27 @@ impl VM {
                 // Closure operations: MakeClosure(35), GetUpval(36),
                 // SetUpval(37), CloseUpvals(38)
                 35..=38 | 126 | 181 => {
-                    include!("ops/closures.rs");
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match super::ops::closures::execute(
+                        self,
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        upvalues_ptr,
+                        upvalues_len,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                    }
                 }
 
                 // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),

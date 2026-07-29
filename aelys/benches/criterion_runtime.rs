@@ -2,7 +2,7 @@ use aelys::{CompileOptions, CompiledModule, IsolateConfig, RunOptions, Runtime};
 use aelys_runtime::{Function, OpCode};
 use criterion::{Criterion, criterion_group, criterion_main};
 
-const WORKLOADS: [(&str, &str); 7] = [
+const WORKLOADS: [(&str, &str); 8] = [
     (
         "calls",
         "fn inc(x) { return x + 1 } let mut n = 0; for i in 0..1000 { n = inc(n) } n",
@@ -27,6 +27,10 @@ const WORKLOADS: [(&str, &str); 7] = [
     (
         "raizen_scheduler",
         "fn task_step(id, tick) { return (id * 17 + tick * 31) % 997 } let mut sum = 0; for tick in 0..200 { for id in 0..64 { sum += task_step(id, tick) } } sum",
+    ),
+    (
+        "closure_calls",
+        "fn make_adder(x) { return fn(y) { return x + y } } let add_one = make_adder(1); let mut n = 0; for i in 0..1000 { n = add_one(n) } n",
     ),
 ];
 
