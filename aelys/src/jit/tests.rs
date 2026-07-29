@@ -170,6 +170,47 @@ fn bytecode_translation_rejects_uninitialized_and_out_of_bounds_registers() {
 }
 
 #[test]
+fn bytecode_collection_loads_carry_verified_dominating_bounds_proofs() {
+    for (opcode, expected_type) in [
+        (OpCode::ArrayLoadI, IrType::I64Array),
+        (OpCode::VecLoadI, IrType::I64Vec),
+    ] {
+        let mut function = Function::new(Some("collection_load".to_string()), 2);
+        function.num_registers = 3;
+        function.emit_a(opcode, 2, 0, 1, 1);
+        function.emit_a(OpCode::Return, 2, 0, 0, 1);
+        function.finalize_bytecode();
+
+        let ir = translate_integer_function(&function).expect("collection load must translate");
+        assert_eq!(ir.parameter_types, vec![expected_type, IrType::I64]);
+        let kinds = ir
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .map(|instruction| &instruction.kind)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            kinds
+                .iter()
+                .any(|kind| matches!(kind, IrInstructionKind::BoundsCheck { .. }))
+        );
+        assert!(kinds.iter().any(|kind| matches!(
+            kind,
+            IrInstructionKind::ArrayLoadIUnchecked { .. }
+                | IrInstructionKind::VecLoadIUnchecked { .. }
+        )));
+        assert!(!kinds.iter().any(|kind| matches!(
+            kind,
+            IrInstructionKind::ArrayLoadI { .. } | IrInstructionKind::VecLoadI { .. }
+        )));
+    }
+}
+
+#[test]
 fn verifier_covers_branches_guards_safepoints_and_deopt_maps() {
     let input = ValueId(0);
     let zero = ValueId(1);
@@ -372,7 +413,8 @@ fn compiled_bounds_check_deoptimizes_only_out_of_range_values() {
 fn compiled_integer_array_load_is_bounded_and_preserves_reference_on_deopt() {
     let array = ValueId(0);
     let index = ValueId(1);
-    let loaded = ValueId(2);
+    let length = ValueId(2);
+    let loaded = ValueId(3);
     let ir = FunctionIr {
         name: "array_load".to_string(),
         entry: BlockId(0),
@@ -381,15 +423,27 @@ fn compiled_integer_array_load_is_bounded_and_preserves_reference_on_deopt() {
         blocks: vec![IrBlock {
             id: BlockId(0),
             parameters: vec![(array, IrType::I64Array), (index, IrType::I64)],
-            instructions: vec![IrInstruction {
-                result: Some((loaded, IrType::I64)),
-                kind: IrInstructionKind::ArrayLoadI {
-                    array,
-                    index,
-                    deopt: 7,
+            instructions: vec![
+                IrInstruction {
+                    result: Some((length, IrType::I64)),
+                    kind: IrInstructionKind::ArrayLen(array),
+                    source: position(7),
                 },
-                source: position(7),
-            }],
+                IrInstruction {
+                    result: None,
+                    kind: IrInstructionKind::BoundsCheck {
+                        index,
+                        length,
+                        deopt: 7,
+                    },
+                    source: position(7),
+                },
+                IrInstruction {
+                    result: Some((loaded, IrType::I64)),
+                    kind: IrInstructionKind::ArrayLoadIUnchecked { array, index },
+                    source: position(7),
+                },
+            ],
             terminator: IrTerminator::Return(loaded),
         }],
         deopt_maps: vec![DeoptMap {
@@ -397,6 +451,12 @@ fn compiled_integer_array_load_is_bounded_and_preserves_reference_on_deopt() {
             registers: vec![(0, array), (1, index)],
         }],
     };
+    let mut unproven = ir.clone();
+    unproven.blocks[0].instructions.drain(0..2);
+    assert_eq!(
+        unproven.verify(),
+        Err(super::ir::IrError::MissingBoundsProof)
+    );
     let engine = JitEngine::new(4).unwrap();
     let compiled = engine
         .compile(&JitKey::new(13, 0, JitTier::Baseline), &ir)

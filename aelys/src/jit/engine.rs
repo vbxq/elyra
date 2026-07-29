@@ -646,6 +646,25 @@ fn lower_function(
                             .load(types::I64, MemFlagsData::trusted(), address, 0),
                     )
                 }
+                IrInstructionKind::ArrayLoadIUnchecked { array, index }
+                | IrInstructionKind::VecLoadIUnchecked {
+                    vector: array,
+                    index,
+                } => {
+                    let descriptor = values[&array];
+                    let index = values[&index];
+                    let data =
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), descriptor, 0);
+                    let byte_offset = builder.ins().ishl_imm_u(index, 3);
+                    let address = builder.ins().iadd(data, byte_offset);
+                    Some(
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), address, 0),
+                    )
+                }
                 IrInstructionKind::Safepoint { .. } => None,
             };
             if let Some((result_id, _)) = instruction.result {

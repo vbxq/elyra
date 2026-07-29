@@ -288,8 +288,10 @@ fn expression(kind: &IrInstructionKind) -> Option<Expression> {
         | IrInstructionKind::BoundsCheck { .. }
         | IrInstructionKind::ArrayLen(_)
         | IrInstructionKind::ArrayLoadI { .. }
+        | IrInstructionKind::ArrayLoadIUnchecked { .. }
         | IrInstructionKind::VecLen(_)
         | IrInstructionKind::VecLoadI { .. }
+        | IrInstructionKind::VecLoadIUnchecked { .. }
         | IrInstructionKind::Safepoint { .. } => None,
     }
 }
@@ -338,10 +340,18 @@ fn rewrite_instruction(kind: &mut IrInstructionKind, aliases: &HashMap<ValueId, 
             *array = resolve(*array, aliases);
             *index = resolve(*index, aliases);
         }
+        IrInstructionKind::ArrayLoadIUnchecked { array, index } => {
+            *array = resolve(*array, aliases);
+            *index = resolve(*index, aliases);
+        }
         IrInstructionKind::VecLen(vector) => {
             *vector = resolve(*vector, aliases);
         }
         IrInstructionKind::VecLoadI { vector, index, .. } => {
+            *vector = resolve(*vector, aliases);
+            *index = resolve(*index, aliases);
+        }
+        IrInstructionKind::VecLoadIUnchecked { vector, index } => {
             *vector = resolve(*vector, aliases);
             *index = resolve(*index, aliases);
         }
@@ -400,10 +410,18 @@ fn used_values(ir: &FunctionIr) -> HashSet<ValueId> {
                     used.insert(array);
                     used.insert(index);
                 }
+                IrInstructionKind::ArrayLoadIUnchecked { array, index } => {
+                    used.insert(array);
+                    used.insert(index);
+                }
                 IrInstructionKind::VecLen(vector) => {
                     used.insert(vector);
                 }
                 IrInstructionKind::VecLoadI { vector, index, .. } => {
+                    used.insert(vector);
+                    used.insert(index);
+                }
+                IrInstructionKind::VecLoadIUnchecked { vector, index } => {
                     used.insert(vector);
                     used.insert(index);
                 }

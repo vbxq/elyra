@@ -159,26 +159,45 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
                     let collection = *registers.get(instruction.b)?;
                     let index = *registers.get(instruction.c)?;
                     let bytecode_ip = push_deopt_map(instruction.ip, &registers, &mut deopt_maps)?;
-                    let kind = if instruction.opcode == OpCode::ArrayLoadI {
-                        IrInstructionKind::ArrayLoadI {
-                            array: collection,
-                            index,
-                            deopt: bytecode_ip,
-                        }
+                    let length = next_id(&mut next_value)?;
+                    let (length_kind, load_kind) = if instruction.opcode == OpCode::ArrayLoadI {
+                        (
+                            IrInstructionKind::ArrayLen(collection),
+                            IrInstructionKind::ArrayLoadIUnchecked {
+                                array: collection,
+                                index,
+                            },
+                        )
                     } else {
-                        IrInstructionKind::VecLoadI {
-                            vector: collection,
-                            index,
-                            deopt: bytecode_ip,
-                        }
+                        (
+                            IrInstructionKind::VecLen(collection),
+                            IrInstructionKind::VecLoadIUnchecked {
+                                vector: collection,
+                                index,
+                            },
+                        )
                     };
+                    instructions.push(IrInstruction {
+                        result: Some((length, IrType::I64)),
+                        kind: length_kind,
+                        source,
+                    });
+                    instructions.push(IrInstruction {
+                        result: None,
+                        kind: IrInstructionKind::BoundsCheck {
+                            index,
+                            length,
+                            deopt: bytecode_ip,
+                        },
+                        source,
+                    });
                     emit_value(
                         &mut registers,
                         &mut instructions,
                         &mut next_value,
                         instruction.a,
                         IrType::I64,
-                        kind,
+                        load_kind,
                         source,
                     )?;
                 }

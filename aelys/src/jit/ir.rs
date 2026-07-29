@@ -64,11 +64,19 @@ pub(crate) enum IrInstructionKind {
         index: ValueId,
         deopt: u32,
     },
+    ArrayLoadIUnchecked {
+        array: ValueId,
+        index: ValueId,
+    },
     VecLen(ValueId),
     VecLoadI {
         vector: ValueId,
         index: ValueId,
         deopt: u32,
+    },
+    VecLoadIUnchecked {
+        vector: ValueId,
+        index: ValueId,
     },
     Safepoint {
         deopt: u32,
@@ -172,8 +180,25 @@ impl FunctionIr {
                 .iter()
                 .map(|(value, _)| *value)
                 .collect::<HashSet<_>>();
+            let mut lengths = HashMap::new();
+            let mut bounds = HashSet::new();
             for instruction in &block.instructions {
                 verify_instruction(instruction, &value_types, &available, &deopt_by_id)?;
+                verify_collection_proof(instruction, &lengths, &bounds)?;
+                if let Some((result, _)) = instruction.result {
+                    match instruction.kind {
+                        IrInstructionKind::ArrayLen(array) => {
+                            lengths.insert(result, (array, IrType::I64Array));
+                        }
+                        IrInstructionKind::VecLen(vector) => {
+                            lengths.insert(result, (vector, IrType::I64Vec));
+                        }
+                        _ => {}
+                    }
+                }
+                if let IrInstructionKind::BoundsCheck { index, length, .. } = instruction.kind {
+                    bounds.insert((index, length));
+                }
                 if let Some((result, _)) = instruction.result {
                     available.insert(result);
                 }
@@ -253,6 +278,13 @@ fn verify_instruction(
             require_result(instruction, IrType::I64)?;
             require_deopt(deopts, available, deopt)
         }
+        IrInstructionKind::ArrayLoadIUnchecked { array, index } => {
+            require_available(available, array)?;
+            require_available(available, index)?;
+            require_type(values, array, IrType::I64Array)?;
+            require_type(values, index, IrType::I64)?;
+            require_result(instruction, IrType::I64)
+        }
         IrInstructionKind::VecLen(vector) => {
             require_available(available, vector)?;
             require_type(values, vector, IrType::I64Vec)?;
@@ -270,10 +302,37 @@ fn verify_instruction(
             require_result(instruction, IrType::I64)?;
             require_deopt(deopts, available, deopt)
         }
+        IrInstructionKind::VecLoadIUnchecked { vector, index } => {
+            require_available(available, vector)?;
+            require_available(available, index)?;
+            require_type(values, vector, IrType::I64Vec)?;
+            require_type(values, index, IrType::I64)?;
+            require_result(instruction, IrType::I64)
+        }
         IrInstructionKind::Safepoint { deopt } => {
             require_no_result(instruction)?;
             require_deopt(deopts, available, deopt)
         }
+    }
+}
+
+fn verify_collection_proof(
+    instruction: &IrInstruction,
+    lengths: &HashMap<ValueId, (ValueId, IrType)>,
+    bounds: &HashSet<(ValueId, ValueId)>,
+) -> Result<(), IrError> {
+    let (collection, index, ty) = match instruction.kind {
+        IrInstructionKind::ArrayLoadIUnchecked { array, index } => (array, index, IrType::I64Array),
+        IrInstructionKind::VecLoadIUnchecked { vector, index } => (vector, index, IrType::I64Vec),
+        _ => return Ok(()),
+    };
+    let proven = lengths.iter().any(|(length, &(source, source_type))| {
+        source == collection && source_type == ty && bounds.contains(&(index, *length))
+    });
+    if proven {
+        Ok(())
+    } else {
+        Err(IrError::MissingBoundsProof)
     }
 }
 
@@ -396,4 +455,5 @@ pub(crate) enum IrError {
     TypeMismatch,
     UnexpectedResult,
     BlockArgumentMismatch,
+    MissingBoundsProof,
 }
