@@ -1140,7 +1140,17 @@ impl VM {
 
                 // Array, Vec, and String operations: wide literals 122-123, compact 130-176
                 122..=123 | 130..=176 => {
-                    include!("ops/arrays.rs");
+                    super::ops::arrays::execute_arrays!(
+                        self,
+                        opcode_byte,
+                        instr,
+                        base,
+                        current_frame_idx,
+                        ip,
+                        bytecode_ptr,
+                        reg_get,
+                        reg_set
+                    );
                 }
 
                 184 => {
