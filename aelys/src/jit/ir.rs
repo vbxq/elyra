@@ -13,6 +13,16 @@ pub(crate) enum IrType {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IntPredicate {
+    Equal,
+    NotEqual,
+    SignedLessThan,
+    SignedLessThanOrEqual,
+    SignedGreaterThan,
+    SignedGreaterThanOrEqual,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourcePosition {
     pub(crate) bytecode_ip: u32,
     pub(crate) source_line: u32,
@@ -32,9 +42,18 @@ pub(crate) enum IrInstructionKind {
     Iadd(ValueId, ValueId),
     Isub(ValueId, ValueId),
     Imul(ValueId, ValueId),
-    IcmpEq(ValueId, ValueId),
-    Guard { condition: ValueId, deopt: u32 },
-    Safepoint { deopt: u32 },
+    Icmp {
+        predicate: IntPredicate,
+        left: ValueId,
+        right: ValueId,
+    },
+    Guard {
+        condition: ValueId,
+        deopt: u32,
+    },
+    Safepoint {
+        deopt: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,7 +189,7 @@ fn verify_instruction(
             require_type(values, right, IrType::I64)?;
             require_result(instruction, IrType::I64)
         }
-        IrInstructionKind::IcmpEq(left, right) => {
+        IrInstructionKind::Icmp { left, right, .. } => {
             require_available(available, left)?;
             require_available(available, right)?;
             let left_type = require_value(values, left)?;

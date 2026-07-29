@@ -10,6 +10,7 @@ aelys-bytecode = { path = "../bytecode" }
 aelys-modules = { path = "../modules" }
 aelys-native = { path = "../native" }
 libc = "0.2"
+smallvec = "1.15"
 
 [lib]
 doctest = false

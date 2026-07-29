@@ -74,6 +74,7 @@ impl VM {
                         Ok(nested_func) => {
                             self.verify_function_value(&nested_func)?;
                             let func_obj_ref = self.alloc_function(nested_func)?;
+                            self.inherit_jit_key(func_ref, func_obj_ref, func_idx);
                             reg_set!(base + a as usize, Value::ptr(func_obj_ref.index()));
                         }
                         Err(e) => return Err(e),
@@ -102,6 +103,7 @@ impl VM {
                         Ok(nested_func) => {
                             self.verify_function_value(&nested_func)?;
                             let func_obj_ref = self.alloc_function(nested_func)?;
+                            self.inherit_jit_key(func_ref, func_obj_ref, func_idx);
                             reg_set!(base + a as usize, Value::ptr(func_obj_ref.index()));
                         }
                         Err(error) => return Err(error),

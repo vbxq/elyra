@@ -80,6 +80,7 @@ pub(crate) fn execute(
                     let upvalue_descs = nested_func.upvalue_descriptors.clone();
                     vm.verify_function_value(&nested_func)?;
                     let nested_ref = vm.alloc_function(nested_func)?;
+                    vm.inherit_jit_key(func_ref, nested_ref, nested_idx);
                     (nested_ref, upvalue_descs)
                 } else if let Some(ptr_val) = constant.as_ptr() {
                     // Direct heap pointer - get function object

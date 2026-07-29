@@ -1,5 +1,4 @@
-use crate::jit::engine::{JitEngine, JitKey, JitTier};
-use crate::jit::translate::translate_integer_function;
+use crate::jit::provider::JitProvider;
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize, serialize};
 use aelys_bytecode::object::{AelysArray, AelysVec};
@@ -8,9 +7,13 @@ use aelys_common::error::{AelysError, CompileError, CompileErrorKind, RuntimeErr
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::{OptimizationLevel, Optimizer};
-use aelys_runtime::{ExecutionControl, VM, Value, VmConfig, VmConfigError};
+use aelys_runtime::{
+    ExecutionControl, JitCallResult, JitExecutor, JitFunctionKey, VM, Value, VmConfig,
+    VmConfigError,
+};
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
+use smallvec::SmallVec;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -211,7 +214,7 @@ pub struct Runtime {
 
 struct RuntimeInner {
     jit_mode: JitMode,
-    jit: Option<JitEngine>,
+    jit: Option<Arc<JitProvider>>,
     next_module_id: AtomicU64,
 }
 
@@ -234,10 +237,15 @@ impl Runtime {
         {
             None
         } else {
-            Some(
-                JitEngine::new(config.max_cache_entries)
-                    .map_err(|error| JitConfigError::Initialization(error.to_string()))?,
-            )
+            let call_threshold = match jit_mode {
+                JitMode::Off => unreachable!(),
+                JitMode::Baseline => 1,
+                JitMode::Tiered => TIER1_CALL_THRESHOLD,
+            };
+            Some(Arc::new(
+                JitProvider::new(config.max_cache_entries, call_threshold)
+                    .map_err(JitConfigError::Initialization)?,
+            ))
         };
         Ok(Self {
             inner: Arc::new(RuntimeInner {
@@ -256,7 +264,7 @@ impl Runtime {
         self.inner
             .jit
             .as_ref()
-            .and_then(|jit| jit.cache_len().ok())
+            .map(|jit| jit.cache_len())
             .unwrap_or(0)
     }
 
@@ -322,13 +330,17 @@ impl Runtime {
         )
         .map_err(AelysError::Runtime)?;
         register_standard_modules(&mut vm)?;
+        if let Some(jit) = &self.inner.jit {
+            let executor: Arc<dyn JitExecutor> = Arc::clone(jit) as Arc<dyn JitExecutor>;
+            vm.configure_jit(Some(executor));
+        }
         if let Some(seed) = config.random_seed {
             vm.set_random_seed(seed);
         }
         Ok(Isolate {
             vm,
             runtime: Arc::clone(&self.inner),
-            jit_call_counts: HashMap::new(),
+            jit_call_counts: SmallVec::new(),
             last_report: None,
             _not_sync: Cell::new(()),
         })
@@ -349,7 +361,7 @@ impl Default for Runtime {
 pub struct Isolate {
     vm: VM,
     runtime: Arc<RuntimeInner>,
-    jit_call_counts: HashMap<u64, u64>,
+    jit_call_counts: SmallVec<[(u64, u64); 4]>,
     last_report: Option<ExecutionReport>,
     _not_sync: Cell<()>,
 }
@@ -391,40 +403,33 @@ impl Isolate {
         if self.runtime.jit_mode == JitMode::Off {
             return None;
         }
-        let engine = self.runtime.jit.as_ref()?;
-        let key = JitKey::new(module.module_id, 0, JitTier::Baseline);
-        let cached = engine.cached(key).ok().flatten();
-        let should_compile = match self.runtime.jit_mode {
-            JitMode::Off => false,
-            JitMode::Baseline => true,
-            JitMode::Tiered => {
-                if cached.is_some() {
-                    true
-                } else {
-                    let calls = self.jit_call_counts.entry(module.module_id).or_default();
-                    *calls = calls.saturating_add(1);
-                    *calls >= TIER1_CALL_THRESHOLD
-                }
-            }
-        };
-        if !should_compile
-            || options.max_instructions.is_some()
+        let provider = self.runtime.jit.as_ref()?;
+        if options.max_instructions.is_some()
             || options.deadline.is_some()
             || options.interrupt.is_some()
             || options.report
         {
             return None;
         }
-        let ir = translate_integer_function(&module.function)?;
-        if !ir.parameter_types.is_empty() {
+        let calls = if let Some((_, calls)) = self
+            .jit_call_counts
+            .iter_mut()
+            .find(|(module_id, _)| *module_id == module.module_id)
+        {
+            *calls = calls.saturating_add(1);
+            *calls
+        } else {
+            self.jit_call_counts.push((module.module_id, 1));
+            1
+        };
+        let key = JitFunctionKey::root(module.module_id);
+        if !provider.should_execute(&key, calls) {
             return None;
         }
-        let compiled = cached.or_else(|| engine.compile(key, &ir).ok())?;
-        if compiled.arity() != 0 {
-            return None;
+        match provider.try_execute(&key, &module.function, &[], calls) {
+            JitCallResult::Unsupported => None,
+            JitCallResult::Returned(value) => Some(value),
         }
-        let result = compiled.execute_i64(&[]).ok()?;
-        Value::int_checked(result).ok()
     }
 
     pub fn execute(
@@ -448,7 +453,7 @@ impl Isolate {
         self.vm.set_source(Arc::clone(&module.source));
         let function_ref = self
             .vm
-            .alloc_function(function)
+            .alloc_function_with_jit_key(function, JitFunctionKey::root(module.module_id))
             .map_err(AelysError::Runtime)?;
         let result = self.vm.execute(function_ref);
         if options.report {

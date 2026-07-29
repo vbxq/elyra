@@ -14,6 +14,7 @@ mod gc;
 mod globals;
 mod init;
 mod inline_cache;
+mod jit;
 mod native;
 mod native_registry;
 mod random;

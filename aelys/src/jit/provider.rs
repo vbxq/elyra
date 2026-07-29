@@ -1,0 +1,89 @@
+use super::engine::{CompiledFunction, JitEngine, JitKey, JitTier};
+use super::translate::translate_integer_function;
+use aelys_bytecode::Function;
+use aelys_runtime::{JitCallResult, JitExecutor, JitFunctionKey, Value};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub(crate) struct JitProvider {
+    engine: JitEngine,
+    call_threshold: u64,
+    has_compiled_code: AtomicBool,
+}
+
+impl JitProvider {
+    pub(crate) fn new(max_entries: usize, call_threshold: u64) -> Result<Self, String> {
+        let engine = JitEngine::new(max_entries).map_err(|error| error.to_string())?;
+        Ok(Self {
+            engine,
+            call_threshold,
+            has_compiled_code: AtomicBool::new(false),
+        })
+    }
+
+    pub(crate) fn cache_len(&self) -> usize {
+        self.engine.cache_len().unwrap_or(0)
+    }
+
+    fn compiled(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        calls: u64,
+    ) -> Option<Arc<CompiledFunction>> {
+        let key = JitKey::for_path(key.module(), key.shared_path(), JitTier::Baseline);
+        if let Some(compiled) = self.engine.cached(&key).ok().flatten() {
+            return Some(compiled);
+        }
+        if calls < self.call_threshold {
+            return None;
+        }
+        let ir = translate_integer_function(function)?;
+        let compiled = self.engine.compile(&key, &ir).ok()?;
+        self.has_compiled_code.store(true, Ordering::Release);
+        Some(compiled)
+    }
+
+    fn key(key: &JitFunctionKey) -> JitKey {
+        JitKey::for_path(key.module(), key.shared_path(), JitTier::Baseline)
+    }
+}
+
+impl JitExecutor for JitProvider {
+    fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool {
+        if calls >= self.call_threshold {
+            return true;
+        }
+        self.has_compiled_code.load(Ordering::Acquire)
+            && self.engine.cached(&Self::key(key)).ok().flatten().is_some()
+    }
+
+    fn try_execute(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        arguments: &[Value],
+        calls: u64,
+    ) -> JitCallResult {
+        let Some(compiled) = self.compiled(key, function, calls) else {
+            return JitCallResult::Unsupported;
+        };
+        if compiled.arity() != arguments.len() {
+            return JitCallResult::Unsupported;
+        }
+        let Some(arguments) = arguments
+            .iter()
+            .map(Value::as_int)
+            .collect::<Option<Vec<_>>>()
+        else {
+            return JitCallResult::Unsupported;
+        };
+        let Ok(result) = compiled.execute_i64(&arguments) else {
+            return JitCallResult::Unsupported;
+        };
+        match Value::int_checked(result) {
+            Ok(value) => JitCallResult::Returned(value),
+            Err(_) => JitCallResult::Unsupported,
+        }
+    }
+}

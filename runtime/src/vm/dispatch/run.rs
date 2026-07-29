@@ -13,15 +13,17 @@ impl VM {
         match (
             self.execution_control.report,
             self.execution_control_enabled(),
+            self.jit_executor.is_some(),
         ) {
-            (true, _) => self.run_fast_impl::<true, true>(),
-            (false, true) => self.run_fast_impl::<false, true>(),
-            (false, false) => self.run_fast_impl::<false, false>(),
+            (true, _, _) => self.run_fast_impl::<true, true, false>(),
+            (false, true, _) => self.run_fast_impl::<false, true, false>(),
+            (false, false, true) => self.run_fast_impl::<false, false, true>(),
+            (false, false, false) => self.run_fast_impl::<false, false, false>(),
         }
     }
 
     #[allow(unused_unsafe)]
-    fn run_fast_impl<const REPORT: bool, const CONTROL: bool>(
+    fn run_fast_impl<const REPORT: bool, const CONTROL: bool, const JIT: bool>(
         &mut self,
     ) -> Result<Value, RuntimeError> {
         if self.frames.is_empty() {
@@ -435,6 +437,27 @@ impl VM {
                                                     got: nargs,
                                                 },
                                             ));
+                                        }
+
+                                        if JIT {
+                                            let argument_start = base
+                                                .checked_add(usize::from(func_reg))
+                                                .and_then(|value| value.checked_add(1))
+                                                .ok_or_else(|| {
+                                                    self.runtime_error(
+                                                        RuntimeErrorKind::StackOverflow,
+                                                    )
+                                                })?;
+                                            if let Some(result) = self
+                                                .try_execute_jit_register_call(
+                                                    callee_ref,
+                                                    argument_start,
+                                                    nargs,
+                                                )?
+                                            {
+                                                reg_set!(base + usize::from(dest), result);
+                                                continue;
+                                            }
                                         }
 
                                         if callee_gmap != 0 && callee_gmap != global_mapping_id {
@@ -869,6 +892,26 @@ impl VM {
                                                     got: u16::from(nargs),
                                                 },
                                             ));
+                                        }
+                                        if JIT {
+                                            let argument_start = base
+                                                .checked_add(usize::from(dest))
+                                                .and_then(|value| value.checked_add(1))
+                                                .ok_or_else(|| {
+                                                    self.runtime_error(
+                                                        RuntimeErrorKind::StackOverflow,
+                                                    )
+                                                })?;
+                                            if let Some(result) = self
+                                                .try_execute_jit_register_call(
+                                                    callee_ref,
+                                                    argument_start,
+                                                    u16::from(nargs),
+                                                )?
+                                            {
+                                                reg_set!(base + usize::from(dest), result);
+                                                continue;
+                                            }
                                         }
                                         if callee_gmap != 0 && callee_gmap != global_mapping_id {
                                             if global_mapping_id != 0 {

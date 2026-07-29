@@ -1,4 +1,4 @@
-use super::ir::{FunctionIr, IrError, IrInstructionKind, IrTerminator, IrType};
+use super::ir::{FunctionIr, IntPredicate, IrError, IrInstructionKind, IrTerminator, IrType};
 use cranelift_codegen::ir::{AbiParam, BlockArg, InstBuilder, MemFlagsData, UserFuncName, types};
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
@@ -18,20 +18,25 @@ pub(crate) enum JitTier {
     Optimized,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct JitKey {
     pub(crate) module: u64,
-    pub(crate) function: u32,
+    pub(crate) function_path: Arc<[u32]>,
     pub(crate) tier: JitTier,
     pub(crate) abi: u16,
     pub(crate) cpu_features: u64,
 }
 
 impl JitKey {
+    #[cfg(test)]
     pub(crate) fn new(module: u64, function: u32, tier: JitTier) -> Self {
+        Self::for_path(module, Arc::from([function]), tier)
+    }
+
+    pub(crate) fn for_path(module: u64, function_path: Arc<[u32]>, tier: JitTier) -> Self {
         Self {
             module,
-            function,
+            function_path,
             tier,
             abi: JIT_ABI_VERSION,
             cpu_features: cpu_feature_key(),
@@ -116,7 +121,7 @@ impl JitEngine {
 
     pub(crate) fn compile(
         &self,
-        key: JitKey,
+        key: &JitKey,
         ir: &FunctionIr,
     ) -> Result<Arc<CompiledFunction>, JitError> {
         ir.verify().map_err(JitError::InvalidIr)?;
@@ -124,8 +129,8 @@ impl JitEngine {
             return Err(JitError::UnsupportedIr("non-i64 return type"));
         }
         let mut state = self.state.lock().map_err(|_| JitError::Poisoned)?;
-        if let Some(entry) = state.entries.get(&key).cloned() {
-            touch_lru(&mut state.lru, key);
+        if let Some(entry) = state.entries.get(key).cloned() {
+            touch_lru(&mut state.lru, key.clone());
             return Ok(entry);
         }
 
@@ -156,7 +161,7 @@ impl JitEngine {
         lower_function(ir, &mut context.func, frontend_config)?;
         module
             .define_function(function_id, &mut context)
-            .map_err(|error| JitError::Module(error.to_string()))?;
+            .map_err(|error| JitError::Module(format!("{error:?}")))?;
         module.clear_context(&mut context);
         module
             .finalize_definitions()
@@ -167,8 +172,8 @@ impl JitEngine {
             arity: ir.parameter_types.len(),
             _module: Mutex::new(module),
         });
-        state.entries.insert(key, Arc::clone(&entry));
-        touch_lru(&mut state.lru, key);
+        state.entries.insert(key.clone(), Arc::clone(&entry));
+        touch_lru(&mut state.lru, key.clone());
         while state.entries.len() > state.max_entries {
             if let Some(evicted) = state.lru.pop_front() {
                 state.entries.remove(&evicted);
@@ -177,11 +182,11 @@ impl JitEngine {
         Ok(entry)
     }
 
-    pub(crate) fn cached(&self, key: JitKey) -> Result<Option<Arc<CompiledFunction>>, JitError> {
+    pub(crate) fn cached(&self, key: &JitKey) -> Result<Option<Arc<CompiledFunction>>, JitError> {
         let mut state = self.state.lock().map_err(|_| JitError::Poisoned)?;
-        let entry = state.entries.get(&key).cloned();
+        let entry = state.entries.get(key).cloned();
         if entry.is_some() {
-            touch_lru(&mut state.lru, key);
+            touch_lru(&mut state.lru, key.clone());
         }
         Ok(entry)
     }
@@ -207,6 +212,7 @@ fn lower_function(
         .map(|block| (block.id, builder.create_block()))
         .collect::<HashMap<_, _>>();
     let entry = blocks[&ir.entry];
+    let integer_overflow = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     let mut values = HashMap::new();
     for block in &ir.blocks {
@@ -241,16 +247,47 @@ fn lower_function(
                     Some(builder.ins().iconst(types::I8, i64::from(value)))
                 }
                 IrInstructionKind::Iadd(left, right) => {
-                    Some(builder.ins().iadd(values[&left], values[&right]))
+                    let result = builder.ins().iadd(values[&left], values[&right]);
+                    Some(check_integer_result(
+                        &mut builder,
+                        result,
+                        None,
+                        integer_overflow,
+                    ))
                 }
                 IrInstructionKind::Isub(left, right) => {
-                    Some(builder.ins().isub(values[&left], values[&right]))
+                    let result = builder.ins().isub(values[&left], values[&right]);
+                    Some(check_integer_result(
+                        &mut builder,
+                        result,
+                        None,
+                        integer_overflow,
+                    ))
                 }
                 IrInstructionKind::Imul(left, right) => {
-                    Some(builder.ins().imul(values[&left], values[&right]))
+                    let left = values[&left];
+                    let right = values[&right];
+                    let result = builder.ins().imul(left, right);
+                    let high = builder.ins().smulhi(left, right);
+                    let sign = builder.ins().sshr_imm_u(result, 63);
+                    let overflow = builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                        high,
+                        sign,
+                    );
+                    Some(check_integer_result(
+                        &mut builder,
+                        result,
+                        Some(overflow),
+                        integer_overflow,
+                    ))
                 }
-                IrInstructionKind::IcmpEq(left, right) => Some(builder.ins().icmp(
-                    cranelift_codegen::ir::condcodes::IntCC::Equal,
+                IrInstructionKind::Icmp {
+                    predicate,
+                    left,
+                    right,
+                } => Some(builder.ins().icmp(
+                    lower_predicate(predicate),
                     values[&left],
                     values[&right],
                 )),
@@ -308,9 +345,42 @@ fn lower_function(
             }
         }
     }
+    builder.switch_to_block(integer_overflow);
+    let overflow_sentinel = builder.ins().iconst(types::I64, i64::MIN);
+    builder.ins().return_(&[overflow_sentinel]);
     builder.seal_all_blocks();
     builder.finalize(frontend_config);
     Ok(())
+}
+
+fn check_integer_result(
+    builder: &mut FunctionBuilder<'_>,
+    result: cranelift_codegen::ir::Value,
+    machine_overflow: Option<cranelift_codegen::ir::Value>,
+    overflow_block: cranelift_codegen::ir::Block,
+) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::condcodes::IntCC;
+    let minimum = builder
+        .ins()
+        .iconst(types::I64, aelys_bytecode::Value::INT_MIN);
+    let maximum = builder
+        .ins()
+        .iconst(types::I64, aelys_bytecode::Value::INT_MAX);
+    let below = builder.ins().icmp(IntCC::SignedLessThan, result, minimum);
+    let above = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThan, result, maximum);
+    let mut overflow = builder.ins().bor(below, above);
+    if let Some(machine_overflow) = machine_overflow {
+        overflow = builder.ins().bor(overflow, machine_overflow);
+    }
+    let continuation = builder.create_block();
+    builder
+        .ins()
+        .brif(overflow, overflow_block, &[], continuation, &[]);
+    builder.switch_to_block(continuation);
+    builder.seal_block(continuation);
+    result
 }
 
 fn lower_type(ty: IrType) -> cranelift_codegen::ir::Type {
@@ -320,8 +390,20 @@ fn lower_type(ty: IrType) -> cranelift_codegen::ir::Type {
     }
 }
 
+fn lower_predicate(predicate: IntPredicate) -> cranelift_codegen::ir::condcodes::IntCC {
+    use cranelift_codegen::ir::condcodes::IntCC;
+    match predicate {
+        IntPredicate::Equal => IntCC::Equal,
+        IntPredicate::NotEqual => IntCC::NotEqual,
+        IntPredicate::SignedLessThan => IntCC::SignedLessThan,
+        IntPredicate::SignedLessThanOrEqual => IntCC::SignedLessThanOrEqual,
+        IntPredicate::SignedGreaterThan => IntCC::SignedGreaterThan,
+        IntPredicate::SignedGreaterThanOrEqual => IntCC::SignedGreaterThanOrEqual,
+    }
+}
+
 fn touch_lru(lru: &mut VecDeque<JitKey>, key: JitKey) {
-    if let Some(position) = lru.iter().position(|candidate| *candidate == key) {
+    if let Some(position) = lru.iter().position(|candidate| candidate == &key) {
         lru.remove(position);
     }
     lru.push_back(key);

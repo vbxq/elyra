@@ -83,6 +83,7 @@ impl VM {
                     let nested_function = self.get_nested_function(func_ref, function_index)?;
                     self.verify_function_value(&nested_function)?;
                     let function_ref = self.alloc_function(nested_function)?;
+                    self.inherit_jit_key(func_ref, function_ref, function_index);
                     reg_set!(base + a, Value::ptr(function_ref.index()));
                 } else {
                     reg_set!(base + a, constant);

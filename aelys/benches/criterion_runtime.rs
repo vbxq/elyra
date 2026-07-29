@@ -1,4 +1,5 @@
-use aelys::{CompileOptions, CompiledModule, IsolateConfig, RunOptions, Runtime};
+use aelys::{CompileOptions, CompiledModule, IsolateConfig, JitMode, RunOptions, Runtime};
+use aelys_opt::OptimizationLevel;
 use aelys_runtime::{Function, OpCode};
 use criterion::{Criterion, criterion_group, criterion_main};
 
@@ -59,6 +60,80 @@ fn runtime_benchmarks(criterion: &mut Criterion) {
     });
     group.bench_function("bitwise", |bencher| {
         bencher.iter(|| execute_function(&bitwise));
+    });
+    group.finish();
+
+    tier1_integer_loop_benchmarks(criterion);
+    tiered_cold_benchmarks(criterion);
+}
+
+fn tier1_integer_loop_benchmarks(criterion: &mut Criterion) {
+    let source = r#"
+fn sum_to(limit: int) -> int {
+    let mut index = 0
+    let mut sum = 0
+    while index < limit {
+        sum = sum + index
+        index = index + 1
+    }
+    return sum
+}
+sum_to(100000)
+"#;
+    let interpreter = Runtime::with_jit_mode(JitMode::Off);
+    let interpreter_module = interpreter
+        .compile(source, CompileOptions::default())
+        .expect("interpreter JIT comparison workload must compile");
+    let mut interpreter_isolate = interpreter.new_isolate(IsolateConfig::default());
+
+    let baseline = Runtime::with_jit_mode(JitMode::Baseline);
+    let baseline_module = baseline
+        .compile(source, CompileOptions::default())
+        .expect("baseline JIT comparison workload must compile");
+    let mut baseline_isolate = baseline.new_isolate(IsolateConfig::default());
+    baseline_isolate
+        .execute(&baseline_module, RunOptions::default())
+        .expect("baseline JIT comparison warmup must succeed");
+
+    let mut group = criterion.benchmark_group("tier1_integer_loop");
+    group.bench_function("interpreter", |bencher| {
+        bencher.iter(|| {
+            interpreter_isolate
+                .execute(&interpreter_module, RunOptions::default())
+                .expect("interpreter JIT comparison must succeed")
+        });
+    });
+    group.bench_function("baseline_jit", |bencher| {
+        bencher.iter(|| {
+            baseline_isolate
+                .execute(&baseline_module, RunOptions::default())
+                .expect("baseline JIT comparison must succeed")
+        });
+    });
+    group.finish();
+}
+
+fn tiered_cold_benchmarks(criterion: &mut Criterion) {
+    let source = "fn increment(value: int) -> int { return value + 1 } increment(41)";
+    let options = || CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let interpreter = Runtime::with_jit_mode(JitMode::Off);
+    let interpreter_module = interpreter
+        .compile(source, options())
+        .expect("cold interpreter workload must compile");
+    let tiered = Runtime::with_jit_mode(JitMode::Tiered);
+    let tiered_module = tiered
+        .compile(source, options())
+        .expect("cold tiered workload must compile");
+
+    let mut group = criterion.benchmark_group("tiered_cold");
+    group.bench_function("interpreter", |bencher| {
+        bencher.iter(|| execute_once(&interpreter, &interpreter_module));
+    });
+    group.bench_function("tiered_before_threshold", |bencher| {
+        bencher.iter(|| execute_once(&tiered, &tiered_module));
     });
     group.finish();
 }

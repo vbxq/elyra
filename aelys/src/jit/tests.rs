@@ -1,8 +1,10 @@
 use super::engine::{JitEngine, JitKey, JitTier};
 use super::ir::{
-    BlockId, DeoptMap, FunctionIr, IrBlock, IrInstruction, IrInstructionKind, IrTerminator, IrType,
-    SourcePosition, ValueId,
+    BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
+    IrTerminator, IrType, SourcePosition, ValueId,
 };
+use super::translate::translate_integer_function;
+use aelys_bytecode::{Function, OpCode};
 
 fn position(ip: u32) -> SourcePosition {
     SourcePosition {
@@ -49,10 +51,10 @@ fn cranelift_executes_verified_ssa_and_reuses_cache_entry() {
     };
     let engine = JitEngine::new(4).expect("native JIT must initialize");
     let key = JitKey::new(7, 0, JitTier::Baseline);
-    let compiled = engine.compile(key, &ir).expect("IR must compile");
+    let compiled = engine.compile(&key, &ir).expect("IR must compile");
     assert_eq!(compiled.arity(), 2);
     assert_eq!(compiled.execute_i64(&[19, 2]).unwrap(), 42);
-    let cached = engine.cached(key).unwrap().expect("entry must be cached");
+    let cached = engine.cached(&key).unwrap().expect("entry must be cached");
     assert!(std::sync::Arc::ptr_eq(&compiled, &cached));
 }
 
@@ -79,13 +81,59 @@ fn lru_evicts_the_oldest_cache_entry() {
     let engine = JitEngine::new(1).unwrap();
     let first_key = JitKey::new(1, 0, JitTier::Baseline);
     let second_key = JitKey::new(2, 0, JitTier::Baseline);
-    let first = engine.compile(first_key, &ir).unwrap();
+    let first = engine.compile(&first_key, &ir).unwrap();
     assert_eq!(first.execute_i64(&[]).unwrap(), 42);
-    let second = engine.compile(second_key, &ir).unwrap();
+    let second = engine.compile(&second_key, &ir).unwrap();
     assert_eq!(second.execute_i64(&[]).unwrap(), 42);
-    assert!(engine.cached(first_key).unwrap().is_none());
-    assert!(engine.cached(second_key).unwrap().is_some());
+    assert!(engine.cached(&first_key).unwrap().is_none());
+    assert!(engine.cached(&second_key).unwrap().is_some());
     assert_eq!(engine.cache_len().unwrap(), 1);
+}
+
+#[test]
+fn bytecode_cfg_loop_translates_and_executes() {
+    let mut function = Function::new(Some("sum_while".to_string()), 1);
+    function.num_registers = 5;
+    function.emit_b(OpCode::LoadI, 1, 0, 1);
+    function.emit_b(OpCode::LoadI, 2, 0, 1);
+    let loop_start = function.current_offset();
+    function.emit_a(OpCode::LtII, 3, 1, 0, 1);
+    let exit = function.emit_jump_if(OpCode::JumpIfNot, 3, 1);
+    function.emit_a(OpCode::AddII, 3, 2, 1, 1);
+    function.emit_a(OpCode::Move, 2, 3, 0, 1);
+    function.emit_b(OpCode::LoadI, 4, 1, 1);
+    function.emit_a(OpCode::AddII, 3, 1, 4, 1);
+    function.emit_a(OpCode::Move, 1, 3, 0, 1);
+    function.emit_jump_back(loop_start, 1);
+    function.patch_jump(exit);
+    function.emit_a(OpCode::Move, 0, 2, 0, 1);
+    function.emit_a(OpCode::Return, 0, 0, 0, 1);
+    function.emit_a(OpCode::Return0, 0, 0, 0, 1);
+    function.finalize_bytecode();
+
+    let ir = translate_integer_function(&function).expect("typed loop must translate");
+    assert_eq!(ir.deopt_maps.len(), 1);
+    let engine = JitEngine::new(4).unwrap();
+    let compiled = engine
+        .compile(&JitKey::new(9, 0, JitTier::Baseline), &ir)
+        .unwrap();
+    assert_eq!(compiled.execute_i64(&[10_000]).unwrap(), 49_995_000);
+}
+
+#[test]
+fn bytecode_translation_rejects_uninitialized_and_out_of_bounds_registers() {
+    let mut uninitialized = Function::new(Some("uninitialized".to_string()), 0);
+    uninitialized.num_registers = 1;
+    uninitialized.emit_a(OpCode::Return, 0, 0, 0, 1);
+    uninitialized.finalize_bytecode();
+    assert!(translate_integer_function(&uninitialized).is_none());
+
+    let mut out_of_bounds = Function::new(Some("out_of_bounds".to_string()), 0);
+    out_of_bounds.num_registers = 1;
+    out_of_bounds.emit_a(OpCode::LoadI, 255, 1, 0, 1);
+    out_of_bounds.emit_a(OpCode::Return, 0, 0, 0, 1);
+    out_of_bounds.finalize_bytecode();
+    assert!(translate_integer_function(&out_of_bounds).is_none());
 }
 
 #[test]
@@ -111,7 +159,11 @@ fn verifier_covers_branches_guards_safepoints_and_deopt_maps() {
                     },
                     IrInstruction {
                         result: Some((condition, IrType::Bool)),
-                        kind: IrInstructionKind::IcmpEq(input, zero),
+                        kind: IrInstructionKind::Icmp {
+                            predicate: IntPredicate::Equal,
+                            left: input,
+                            right: zero,
+                        },
                         source: position(1),
                     },
                     IrInstruction {

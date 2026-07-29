@@ -40,6 +40,7 @@ impl VM {
         let started = Instant::now();
         self.heap.mark_young(self.root_refs());
         self.heap.sweep_young();
+        self.sweep_jit_metadata();
         self.globals_by_index_cache.clear();
         self.record_gc_slice(started);
         self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
@@ -52,6 +53,7 @@ impl VM {
         let result = self.heap.major_collection_slice(Self::GC_SLICE_BUDGET);
         self.record_gc_slice(started);
         if matches!(result, MajorSliceResult::Complete { .. }) {
+            self.sweep_jit_metadata();
             self.globals_by_index_cache.clear();
             self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
             self.execution_stats.major_collections =
