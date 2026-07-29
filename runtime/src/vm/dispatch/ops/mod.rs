@@ -1,3 +1,4 @@
+pub(super) mod arithmetic;
 pub(super) mod bitwise;
 pub(super) mod call_cached;
 pub(super) mod call_upval;

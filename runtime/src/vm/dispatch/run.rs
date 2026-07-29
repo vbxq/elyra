@@ -207,7 +207,18 @@ impl VM {
                 // AddI(42), SubI(43), AddII(49)-ModII(53), AddFF(54)-ModFF(58),
                 // AddIIG(82)-ModIIG(86), AddFFG(87)-ModFFG(91)
                 5..=10 | 42..=43 | 49..=58 | 82..=91 => {
-                    include!("ops/arithmetic.rs");
+                    super::ops::arithmetic::execute_arithmetic!(
+                        self,
+                        opcode_byte,
+                        instr,
+                        base,
+                        current_frame_idx,
+                        ip,
+                        reg_get,
+                        reg_ref,
+                        reg_set,
+                        int_value
+                    );
                 }
 
                 // Comparison operations: Eq(11), Ne(12), Lt(13), Le(14), Gt(15), Ge(16),
