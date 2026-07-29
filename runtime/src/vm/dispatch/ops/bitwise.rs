@@ -1,33 +1,53 @@
 use super::super::decode::decode_abc;
-use super::super::state::DispatchState;
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn execute(
     vm: &mut VM,
-    state: &DispatchState,
+    ip: usize,
+    base: usize,
+    current_frame_idx: usize,
+    registers: *mut Value,
+    registers_len: usize,
     opcode_byte: u8,
     instr: u32,
 ) -> Result<(), RuntimeError> {
-    let base = state.base;
-    let ip = state.ip;
-    let current_frame_idx = state.frame_index;
-
     macro_rules! reg_get {
-        ($index:expr) => {
-            state.read_register(vm, $index)?
-        };
+        ($index:expr) => {{
+            let index = $index;
+            if index >= registers_len {
+                vm.frames[current_frame_idx].ip = ip;
+                return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
+                    reg: index,
+                    max: registers_len,
+                }));
+            }
+            // SAFETY: bounds checked above
+            unsafe { *registers.add(index) }
+        }};
     }
     macro_rules! reg_ref {
         ($index:expr) => {
-            state.read_register(vm, $index)?
+            reg_get!($index)
         };
     }
     macro_rules! reg_set {
-        ($index:expr, $value:expr) => {
-            state.write_register(vm, $index, $value)?
-        };
+        ($index:expr, $value:expr) => {{
+            let index = $index;
+            if index >= registers_len {
+                vm.frames[current_frame_idx].ip = ip;
+                return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
+                    reg: index,
+                    max: registers_len,
+                }));
+            }
+            // SAFETY: bounds checked above
+            unsafe {
+                *registers.add(index) = $value;
+            }
+        }};
     }
 
     // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),

@@ -120,19 +120,12 @@
             frame.bytecode_ptr = bc_ptr;
             frame.bytecode_len = bc_len;
             frame.constants_ptr = const_ptr;
+            frame.constants_len = const_len;
             frame.upvalues_ptr = std::ptr::null();
             frame.upvalues_len = 0;
             frame.num_registers = num_regs;
             frame.global_mapping_id = callee_gmap;
-            // Update local state
-            ip = 0;
-            func_ref = callee_ref;
-            bytecode_ptr = bc_ptr;
-            bytecode_len = bc_len;
-            constants_ptr = const_ptr;
-            upvalues_ptr = std::ptr::null();
-            upvalues_len = 0;
-            global_mapping_id = callee_gmap;
+            reload_frame_state!();
         }
         TailCallData::Closure {
             arity,
@@ -142,7 +135,7 @@
             bc_ptr,
             bc_len,
             const_ptr,
-            const_len: _const_len,
+            const_len,
             upval_ptr,
             upval_len,
         } => {
@@ -172,18 +165,12 @@
             frame.bytecode_ptr = bc_ptr;
             frame.bytecode_len = bc_len;
             frame.constants_ptr = const_ptr;
+            frame.constants_len = const_len;
             frame.upvalues_ptr = upval_ptr;
             frame.upvalues_len = upval_len;
             frame.num_registers = num_regs;
             frame.global_mapping_id = callee_gmap;
-            ip = 0;
-            func_ref = inner_func;
-            bytecode_ptr = bc_ptr;
-            bytecode_len = bc_len;
-            constants_ptr = const_ptr;
-            upvalues_ptr = upval_ptr;
-            upvalues_len = upval_len;
-            global_mapping_id = callee_gmap;
+            reload_frame_state!();
         }
         TailCallData::Invalid => {
             return Err(self.runtime_error(RuntimeErrorKind::NotCallable(

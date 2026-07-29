@@ -2,7 +2,6 @@ use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 pub(super) struct DispatchState {
-    pub(super) ip: usize,
     pub(super) base: usize,
     pub(super) constants: *const Value,
     pub(super) constants_len: usize,
@@ -13,9 +12,14 @@ pub(super) struct DispatchState {
 
 impl DispatchState {
     #[inline(always)]
-    pub(super) fn read_register(&self, vm: &mut VM, index: usize) -> Result<Value, RuntimeError> {
+    pub(super) fn read_register(
+        &self,
+        vm: &mut VM,
+        index: usize,
+        ip: usize,
+    ) -> Result<Value, RuntimeError> {
         if index >= self.registers_len {
-            vm.frames[self.frame_index].ip = self.ip;
+            vm.frames[self.frame_index].ip = ip;
             return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
                 reg: index,
                 max: self.registers_len,
@@ -31,9 +35,10 @@ impl DispatchState {
         vm: &mut VM,
         index: usize,
         value: Value,
+        ip: usize,
     ) -> Result<(), RuntimeError> {
         if index >= self.registers_len {
-            vm.frames[self.frame_index].ip = self.ip;
+            vm.frames[self.frame_index].ip = ip;
             return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
                 reg: index,
                 max: self.registers_len,
@@ -56,7 +61,7 @@ impl DispatchState {
     }
 
     #[inline(always)]
-    pub(super) fn save_ip(&self, vm: &mut VM) {
-        vm.frames[self.frame_index].ip = self.ip;
+    pub(super) fn save_ip(&self, vm: &mut VM, ip: usize) {
+        vm.frames[self.frame_index].ip = ip;
     }
 }

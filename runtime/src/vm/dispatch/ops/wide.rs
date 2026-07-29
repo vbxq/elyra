@@ -835,32 +835,11 @@
                     if self.frames.is_empty() {
                         return Ok(result);
                     }
-                    current_frame_idx = self.frames.len() - 1;
-                    let caller_frame = &self.frames[current_frame_idx];
-                    let caller_base = caller_frame.base;
-                    let caller_func = caller_frame.function;
-                    let caller_ip = caller_frame.ip;
-                    let caller_bc_ptr = caller_frame.bytecode_ptr;
-                    let caller_bc_len = caller_frame.bytecode_len;
-                    let caller_const_ptr = caller_frame.constants_ptr;
-                    let caller_const_len = caller_frame.constants_len;
-                    let caller_upval_ptr = caller_frame.upvalues_ptr;
-                    let caller_upval_len = caller_frame.upvalues_len;
-                    let caller_gmap_id = caller_frame.global_mapping_id;
+                    reload_frame_state!();
                     if needs_switch && caller_gmap != 0 {
-                        self.prepare_globals_for_function(caller_func);
+                        self.prepare_globals_for_function(func_ref);
                     }
-                    reg_set!(caller_base + dest as usize, result);
-                    ip = caller_ip;
-                    base = caller_base;
-                    func_ref = caller_func;
-                    bytecode_ptr = caller_bc_ptr;
-                    bytecode_len = caller_bc_len;
-                    constants_ptr = caller_const_ptr;
-                    constants_len = caller_const_len;
-                    upvalues_ptr = caller_upval_ptr;
-                    upvalues_len = caller_upval_len;
-                    global_mapping_id = caller_gmap_id;
+                    reg_set!(base + dest as usize, result);
                 }
                 _ => {
                     self.frames[current_frame_idx].ip = ip;

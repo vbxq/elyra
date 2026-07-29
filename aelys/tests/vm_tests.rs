@@ -1,7 +1,10 @@
 //! Tests for the Aelys VM
 
 use aelys_common::{RuntimeError, RuntimeErrorKind};
-use aelys_runtime::{CallFrame, Function, GlobalLayout, MAX_FRAMES, OpCode, VM, Value};
+use aelys_runtime::{
+    AelysClosure, AelysUpvalue, CallFrame, Function, GcObject, GlobalLayout, MAX_FRAMES,
+    ObjectKind, OpCode, UpvalueDescriptor, VM, Value,
+};
 use aelys_syntax::Source;
 use std::sync::Arc;
 
@@ -815,6 +818,103 @@ fn test_callglobal_user_defined_function() {
     assert!(result.is_ok());
     let value = result.unwrap();
     assert_eq!(value.as_int(), Some(30), "add(10, 20) should return 30");
+}
+
+#[test]
+fn test_dispatch_state_survives_frame_switch_and_register_resize() {
+    let source = make_test_source();
+    let mut vm = VM::new(source).unwrap();
+
+    let mut callee = Function::new(Some("large_callee".to_string()), 0);
+    callee.num_registers = 20_000;
+    callee.emit_b(OpCode::LoadI, 0, 42, 1);
+    callee.emit_a(OpCode::Return, 0, 0, 0, 1);
+    callee.finalize_bytecode();
+    let callee_ref = vm.alloc_function(callee).unwrap();
+
+    vm.set_global_by_index(0, Value::ptr(callee_ref.index()));
+    vm.set_global("large_callee".to_string(), Value::ptr(callee_ref.index()));
+
+    let mut main = Function::new(Some("main".to_string()), 0);
+    main.num_registers = 4;
+    main.global_layout = GlobalLayout::new(vec!["large_callee".to_string()]);
+    let answer =
+        main.add_structural_constant(aelys_bytecode::Constant::String("answer".to_string()));
+    let answer = u8::try_from(answer).unwrap();
+    main.emit_a(OpCode::CallGlobal, 0, 0, 0, 1);
+    main.emit_b(OpCode::LoadI, 1, 15, 1);
+    main.emit_a(OpCode::BitAnd, 2, 0, 1, 1);
+    main.emit_a(OpCode::SetGlobal, 2, answer, 0, 1);
+    main.emit_a(OpCode::GetGlobal, 3, answer, 0, 1);
+    main.emit_a(OpCode::Return, 3, 0, 0, 1);
+    main.finalize_bytecode();
+    let main_ref = vm.alloc_function(main).unwrap();
+
+    assert_eq!(vm.execute(main_ref).unwrap().as_int(), Some(10));
+    assert_eq!(vm.get_global("answer").unwrap().as_int(), Some(10));
+}
+
+#[test]
+fn test_tail_call_upvalue_reloads_constant_bounds() {
+    let source = make_test_source();
+    let mut vm = VM::new(source).unwrap();
+
+    let mut target = Function::new(Some("target".to_string()), 0);
+    target.num_registers = 1;
+    target.add_constant(Value::int(11));
+    target.add_constant(Value::int(77));
+    target.emit_b(OpCode::LoadK, 0, 1, 1);
+    target.emit_a(OpCode::Return, 0, 0, 0, 1);
+    target.finalize_bytecode();
+    let target_ref = vm.alloc_function(target).unwrap();
+
+    let mut caller = Function::new(Some("caller".to_string()), 0);
+    caller.num_registers = 1;
+    caller.upvalue_descriptors.push(UpvalueDescriptor {
+        is_local: false,
+        index: 0,
+    });
+    caller.emit_a(OpCode::TailCallUpval, 0, 0, 0, 1);
+    caller.finalize_bytecode();
+    let caller_ref = vm.alloc_function(caller).unwrap();
+
+    let (bytecode_ptr, bytecode_len, constants_ptr, constants_len, arity, num_registers) = {
+        let caller = vm.heap().get(caller_ref).unwrap();
+        let ObjectKind::Function(caller) = &caller.kind else {
+            panic!("allocated caller is not a function");
+        };
+        (
+            caller.function.bytecode.as_ptr(),
+            caller.function.bytecode.len(),
+            caller.constants.as_ptr(),
+            caller.constants.len(),
+            caller.function.arity,
+            caller.function.num_registers,
+        )
+    };
+    let mut upvalue = AelysUpvalue::new_open(0, 0);
+    upvalue.close(Value::ptr(target_ref.index()));
+    let upvalue_ref = vm
+        .alloc_object(GcObject::new(ObjectKind::Upvalue(upvalue)))
+        .unwrap();
+    let closure = AelysClosure::with_cache(
+        caller_ref,
+        vec![upvalue_ref],
+        aelys_bytecode::ClosureCache {
+            bytecode_ptr,
+            bytecode_len,
+            constants_ptr,
+            constants_len,
+            arity,
+            num_registers,
+        },
+    );
+    let closure_ref = vm
+        .alloc_object(GcObject::new(ObjectKind::Closure(closure)))
+        .unwrap();
+
+    let result = vm.call_value(Value::ptr(closure_ref.index()), &[]).unwrap();
+    assert_eq!(result.as_int(), Some(77));
 }
 
 #[test]

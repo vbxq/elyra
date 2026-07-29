@@ -120,16 +120,7 @@
                         return Err(self.runtime_error(RuntimeErrorKind::StackOverflow));
                     }
                     self.frames.push(new_frame);
-                    current_frame_idx = self.frames.len() - 1;
-                    ip = 0;
-                    base = new_base;
-                    func_ref = callee_ref;
-                    bytecode_ptr = bc_ptr;
-                    bytecode_len = bc_len;
-                    constants_ptr = const_ptr;
-                    upvalues_ptr = std::ptr::null();
-                    upvalues_len = 0;
-                    global_mapping_id = callee_gmap;
+                    reload_frame_state!();
                 }
                 CallCachedData::Native { native } => {
                     if native.arity != u16::from(nargs) {
@@ -196,16 +187,7 @@
                         return Err(self.runtime_error(RuntimeErrorKind::StackOverflow));
                     }
                     self.frames.push(new_frame);
-                    current_frame_idx = self.frames.len() - 1;
-                    ip = 0;
-                    base = new_base;
-                    func_ref = inner_func;
-                    bytecode_ptr = bc_ptr;
-                    bytecode_len = bc_len;
-                    constants_ptr = const_ptr;
-                    upvalues_ptr = upval_ptr;
-                    upvalues_len = upval_len;
-                    global_mapping_id = callee_gmap;
+                    reload_frame_state!();
                 }
                 CallCachedData::Invalid => {
                     return Err(self.runtime_error(RuntimeErrorKind::NotCallable(

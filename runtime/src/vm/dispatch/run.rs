@@ -68,14 +68,8 @@ impl VM {
         let mut current_frame_idx = frame_idx;
         let mut global_mapping_id = frame.global_mapping_id;
 
-        loop {
-            // Check end of bytecode
-            if ip >= bytecode_len {
-                self.frames.pop();
-                if self.frames.is_empty() {
-                    return Ok(Value::null());
-                }
-                // Reload frame state
+        macro_rules! reload_frame_state {
+            () => {{
                 current_frame_idx = self.frames.len() - 1;
                 let frame = &self.frames[current_frame_idx];
                 ip = frame.ip;
@@ -87,8 +81,21 @@ impl VM {
                 constants_len = frame.constants_len;
                 upvalues_ptr = frame.upvalues_ptr;
                 upvalues_len = frame.upvalues_len;
-                let new_gmap = frame.global_mapping_id;
-                if new_gmap != 0 && new_gmap != global_mapping_id {
+                global_mapping_id = frame.global_mapping_id;
+            }};
+        }
+
+        loop {
+            // Check end of bytecode
+            if ip >= bytecode_len {
+                self.frames.pop();
+                if self.frames.is_empty() {
+                    return Ok(Value::null());
+                }
+                let previous_gmap = global_mapping_id;
+                // Reload frame state
+                reload_frame_state!();
+                if global_mapping_id != 0 && global_mapping_id != previous_gmap {
                     global_mapping_id = self.prepare_globals_for_function(func_ref);
                 }
                 continue;
@@ -205,7 +212,6 @@ impl VM {
                 // Global variable operations: GetGlobal(24), SetGlobal(25)
                 24..=25 => {
                     let state = DispatchState {
-                        ip,
                         base,
                         constants: constants_ptr,
                         constants_len,
@@ -213,7 +219,7 @@ impl VM {
                         registers_len: regs_len,
                         frame_index: current_frame_idx,
                     };
-                    super::ops::globals::execute(self, &state, opcode_byte, instr)?;
+                    super::ops::globals::execute(self, &state, ip, opcode_byte, instr)?;
                 }
 
                 // Closure operations: MakeClosure(35), GetUpval(36),
@@ -225,16 +231,16 @@ impl VM {
                 // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),
                 // BitNot(110), ShlII(111)-XorII(115), NotI(116), ShlIImm(117)-XorIImm(121)
                 105..=121 => {
-                    let state = DispatchState {
+                    super::ops::bitwise::execute(
+                        self,
                         ip,
                         base,
-                        constants: constants_ptr,
-                        constants_len,
-                        registers: regs_ptr,
-                        registers_len: regs_len,
-                        frame_index: current_frame_idx,
-                    };
-                    super::ops::bitwise::execute(self, &state, opcode_byte, instr)?;
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        opcode_byte,
+                        instr,
+                    )?;
                 }
 
                 // Array, Vec, and String operations: wide literals 122-123, compact 130-176

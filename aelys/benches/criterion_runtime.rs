@@ -1,4 +1,5 @@
 use aelys::{CompileOptions, CompiledModule, IsolateConfig, RunOptions, Runtime};
+use aelys_runtime::{Function, OpCode};
 use criterion::{Criterion, criterion_group, criterion_main};
 
 const WORKLOADS: [(&str, &str); 7] = [
@@ -45,6 +46,17 @@ fn runtime_benchmarks(criterion: &mut Criterion) {
         });
     }
     group.finish();
+
+    let globals = globals_dispatch_function();
+    let bitwise = bitwise_dispatch_function();
+    let mut group = criterion.benchmark_group("dispatch_handlers");
+    group.bench_function("globals", |bencher| {
+        bencher.iter(|| execute_function(&globals));
+    });
+    group.bench_function("bitwise", |bencher| {
+        bencher.iter(|| execute_function(&bitwise));
+    });
+    group.finish();
 }
 
 fn execute_once(runtime: &Runtime, module: &CompiledModule) {
@@ -52,6 +64,44 @@ fn execute_once(runtime: &Runtime, module: &CompiledModule) {
     isolate
         .execute(module, RunOptions::default())
         .expect("benchmark execution must succeed");
+}
+
+fn execute_function(function: &Function) {
+    let mut vm = aelys::new_vm().expect("benchmark VM creation must succeed");
+    let function = vm
+        .alloc_function(function.clone())
+        .expect("benchmark function allocation must succeed");
+    vm.execute(function)
+        .expect("benchmark function execution must succeed");
+}
+
+fn globals_dispatch_function() -> Function {
+    let mut function = Function::new(Some("globals_dispatch".to_string()), 0);
+    function.num_registers = 2;
+    let name =
+        function.add_structural_constant(aelys_bytecode::Constant::String("value".to_string()));
+    let name = u8::try_from(name).expect("benchmark constant index fits u8");
+    for value in 0..4_096 {
+        function.emit_b(OpCode::LoadI, 0, value, 1);
+        function.emit_a(OpCode::SetGlobal, 0, name, 0, 1);
+        function.emit_a(OpCode::GetGlobal, 1, name, 0, 1);
+    }
+    function.emit_a(OpCode::Return, 1, 0, 0, 1);
+    function.finalize_bytecode();
+    function
+}
+
+fn bitwise_dispatch_function() -> Function {
+    let mut function = Function::new(Some("bitwise_dispatch".to_string()), 0);
+    function.num_registers = 2;
+    function.emit_b(OpCode::LoadI, 0, 1, 1);
+    function.emit_b(OpCode::LoadI, 1, 3, 1);
+    for _ in 0..12_288 {
+        function.emit_a(OpCode::BitXor, 0, 0, 1, 1);
+    }
+    function.emit_a(OpCode::Return, 0, 0, 0, 1);
+    function.finalize_bytecode();
+    function
 }
 
 criterion_group!(runtime, runtime_benchmarks);
