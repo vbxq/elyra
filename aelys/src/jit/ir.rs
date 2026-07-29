@@ -8,6 +8,7 @@ pub(crate) struct ValueId(pub(crate) u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IrType {
+    Uninitialized,
     I64,
     Bool,
     I64Array,
@@ -238,7 +239,7 @@ fn verify_instruction(
             require_available(available, right)?;
             let left_type = require_value(values, left)?;
             let right_type = require_value(values, right)?;
-            if left_type != right_type {
+            if left_type == IrType::Uninitialized || left_type != right_type {
                 return Err(IrError::TypeMismatch);
             }
             require_result(instruction, IrType::Bool)
@@ -381,7 +382,9 @@ fn verify_edge(
     }
     for (&argument, &(_, expected)) in arguments.iter().zip(&target.parameters) {
         require_available(available, argument)?;
-        require_type(values, argument, expected)?;
+        if expected != IrType::Uninitialized {
+            require_type(values, argument, expected)?;
+        }
     }
     Ok(())
 }

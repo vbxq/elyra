@@ -64,7 +64,87 @@ fn runtime_benchmarks(criterion: &mut Criterion) {
     group.finish();
 
     tier1_integer_loop_benchmarks(criterion);
+    jit_collection_loop_benchmarks(criterion);
     tiered_cold_benchmarks(criterion);
+}
+
+fn jit_collection_loop_benchmarks(criterion: &mut Criterion) {
+    let elements = (0..4096)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!(
+        r#"
+fn sum(values: Array<Int>) -> int {{
+    let mut index = 0
+    let mut total = 0
+    while index < values.len() {{
+        total = total + values[index]
+        index = index + 1
+    }}
+    return total
+}}
+let values = Array[{elements}]
+let mut result = 0
+for repeat in 0..10 {{
+    result = sum(values)
+}}
+result
+"#
+    );
+    let options = || CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let interpreter = Runtime::with_jit_mode(JitMode::Off);
+    let interpreter_module = interpreter
+        .compile(&source, options())
+        .expect("array interpreter benchmark must compile");
+    let mut interpreter_isolate = interpreter.new_isolate(IsolateConfig::default());
+
+    let baseline = Runtime::with_jit_mode(JitMode::Baseline);
+    let baseline_module = baseline
+        .compile(&source, options())
+        .expect("array baseline JIT benchmark must compile");
+    let mut baseline_isolate = baseline.new_isolate(IsolateConfig::default());
+    baseline_isolate
+        .execute(&baseline_module, RunOptions::default())
+        .expect("array baseline JIT warmup must succeed");
+
+    let tiered = Runtime::with_jit_mode(JitMode::Tiered);
+    let tiered_module = tiered
+        .compile(&source, options())
+        .expect("array tiered JIT benchmark must compile");
+    let mut tiered_isolate = tiered.new_isolate(IsolateConfig::default());
+    for _ in 0..1_000 {
+        tiered_isolate
+            .execute(&tiered_module, RunOptions::default())
+            .expect("array tiered JIT warmup must succeed");
+    }
+
+    let mut group = criterion.benchmark_group("jit_integer_array_loop");
+    group.bench_function("interpreter", |bencher| {
+        bencher.iter(|| {
+            interpreter_isolate
+                .execute(&interpreter_module, RunOptions::default())
+                .expect("array interpreter benchmark must succeed")
+        });
+    });
+    group.bench_function("baseline_jit", |bencher| {
+        bencher.iter(|| {
+            baseline_isolate
+                .execute(&baseline_module, RunOptions::default())
+                .expect("array baseline JIT benchmark must succeed")
+        });
+    });
+    group.bench_function("optimized_jit", |bencher| {
+        bencher.iter(|| {
+            tiered_isolate
+                .execute(&tiered_module, RunOptions::default())
+                .expect("array tiered JIT benchmark must succeed")
+        });
+    });
+    group.finish();
 }
 
 fn tier1_integer_loop_benchmarks(criterion: &mut Criterion) {

@@ -455,3 +455,68 @@ read(values, 2)
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 1);
 }
+
+#[test]
+fn baseline_jit_executes_integer_array_loops() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn sum(values: Array<Int>) -> int {
+    let mut index = 0
+    let mut total = 0
+    while index < values.len() {
+        total = total + values[index]
+        index = index + 1
+    }
+    return total
+}
+let values = Array[1, 2, 3, 4, 5, 6, 7, 8]
+sum(values)
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(36))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+}
+
+#[test]
+fn tiered_collection_calls_reuse_baseline_code_until_collection_optimization() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn read(values: Array<Int>) -> int { return values[1] }
+let values = Array[19, 42]
+let mut result = 0
+for index in 0..10000 {
+    result = read(values)
+}
+result
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 2);
+    assert_eq!(runtime.jit_deoptimizations(), 0);
+}

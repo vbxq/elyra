@@ -1,4 +1,5 @@
 use super::engine::{CompiledFunction, JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
+use super::ir::IrType;
 use super::optimize::{optimize_integer_ir, specialize_integer_parameters};
 use super::translate::translate_integer_function;
 use aelys_bytecode::Function;
@@ -124,6 +125,29 @@ impl JitProvider {
             return None;
         }
         let mut ir = translate_integer_function(function)?;
+        if tier == JitTier::Optimized
+            && ir
+                .parameter_types
+                .iter()
+                .any(|ty| matches!(ty, IrType::I64Array | IrType::I64Vec))
+        {
+            let baseline = JitKey::for_path(
+                key.module(),
+                Arc::clone(&cache_key.function_path),
+                JitTier::Baseline,
+            );
+            let compiled = self
+                .engine
+                .cached(&baseline)
+                .ok()
+                .flatten()
+                .or_else(|| self.engine.compile(&baseline, &ir).ok())?;
+            self.engine
+                .cache_alias(cache_key, Arc::clone(&compiled))
+                .ok()?;
+            self.has_compiled_code.store(true, Ordering::Release);
+            return Some(compiled);
+        }
         if tier == JitTier::Optimized {
             optimize_integer_ir(&mut ir);
             if let Some(profile) = profile {

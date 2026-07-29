@@ -97,7 +97,7 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
         let mut registers = Vec::with_capacity(register_count);
         for &ty in input_types {
             let value = next_id(&mut next_value)?;
-            let ty = ty.unwrap_or(IrType::I64);
+            let ty = ty.unwrap_or(IrType::Uninitialized);
             parameters.push((value, ty));
             registers.push(value);
         }
@@ -248,7 +248,13 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
                         source,
                     )?;
                 }
-                OpCode::LtII
+                OpCode::Lt
+                | OpCode::Le
+                | OpCode::Gt
+                | OpCode::Ge
+                | OpCode::Eq
+                | OpCode::Ne
+                | OpCode::LtII
                 | OpCode::LeII
                 | OpCode::GtII
                 | OpCode::GeII
@@ -518,7 +524,18 @@ fn transfer_types(instruction: DecodedInstruction, registers: &mut [Option<IrTyp
             require_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
         }
-        OpCode::LtII | OpCode::LeII | OpCode::GtII | OpCode::GeII | OpCode::EqII | OpCode::NeII => {
+        OpCode::Lt
+        | OpCode::Le
+        | OpCode::Gt
+        | OpCode::Ge
+        | OpCode::Eq
+        | OpCode::Ne
+        | OpCode::LtII
+        | OpCode::LeII
+        | OpCode::GtII
+        | OpCode::GeII
+        | OpCode::EqII
+        | OpCode::NeII => {
             require_register_type(registers, instruction.b, IrType::I64)?;
             require_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::Bool);
@@ -547,12 +564,12 @@ fn successors(instruction: DecodedInstruction, block_end: usize) -> Option<Vec<u
 
 fn predicate(opcode: OpCode) -> Option<IntPredicate> {
     match opcode {
-        OpCode::LtII => Some(IntPredicate::SignedLessThan),
-        OpCode::LeII => Some(IntPredicate::SignedLessThanOrEqual),
-        OpCode::GtII => Some(IntPredicate::SignedGreaterThan),
-        OpCode::GeII => Some(IntPredicate::SignedGreaterThanOrEqual),
-        OpCode::EqII => Some(IntPredicate::Equal),
-        OpCode::NeII => Some(IntPredicate::NotEqual),
+        OpCode::Lt | OpCode::LtII => Some(IntPredicate::SignedLessThan),
+        OpCode::Le | OpCode::LeII => Some(IntPredicate::SignedLessThanOrEqual),
+        OpCode::Gt | OpCode::GtII => Some(IntPredicate::SignedGreaterThan),
+        OpCode::Ge | OpCode::GeII => Some(IntPredicate::SignedGreaterThanOrEqual),
+        OpCode::Eq | OpCode::EqII => Some(IntPredicate::Equal),
+        OpCode::Ne | OpCode::NeII => Some(IntPredicate::NotEqual),
         _ => None,
     }
 }
@@ -621,6 +638,12 @@ fn infer_parameter_types(
             | OpCode::AddII
             | OpCode::SubII
             | OpCode::MulII
+            | OpCode::Lt
+            | OpCode::Le
+            | OpCode::Gt
+            | OpCode::Ge
+            | OpCode::Eq
+            | OpCode::Ne
             | OpCode::LtII
             | OpCode::LeII
             | OpCode::GtII
@@ -661,6 +684,12 @@ fn infer_parameter_types(
                     | OpCode::AddII
                     | OpCode::SubII
                     | OpCode::MulII
+                    | OpCode::Lt
+                    | OpCode::Le
+                    | OpCode::Gt
+                    | OpCode::Ge
+                    | OpCode::Eq
+                    | OpCode::Ne
                     | OpCode::LtII
                     | OpCode::LeII
                     | OpCode::GtII
