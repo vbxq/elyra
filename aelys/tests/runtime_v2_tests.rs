@@ -128,6 +128,7 @@ for tick in 0..500 {
         let report = isolate.last_report().unwrap();
         assert!(report.allocations >= 32_000);
         assert!(report.collections > 0);
+        assert!(report.gc_pause_max_ns < 2_000_000);
         if let Some(expected) = &expected {
             assert_eq!(&result, expected);
         } else {

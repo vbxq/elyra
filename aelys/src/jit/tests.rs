@@ -98,7 +98,7 @@ fn optimized_tier_has_a_distinct_cache_entry() {
 #[test]
 fn optimized_translation_inlines_bounded_structural_leaf_calls() {
     let mut leaf = Function::new(Some("increment".to_string()), 1);
-    for _ in 0..12 {
+    for _ in 0..20 {
         leaf.emit_a(OpCode::AddI, 0, 0, 1, 1);
     }
     leaf.emit_a(OpCode::Return, 0, 0, 0, 1);
@@ -127,13 +127,13 @@ fn optimized_translation_inlines_bounded_structural_leaf_calls() {
     let compiled = engine
         .compile(&JitKey::new(9, 0, JitTier::Optimized), &ir)
         .unwrap();
-    assert_eq!(compiled.execute_i64(&[41]).unwrap(), 53);
+    assert_eq!(compiled.execute_i64(&[41]).unwrap(), 61);
 
     let provider = super::provider::JitProvider::new(2, 1, Some(1)).unwrap();
     let key = JitFunctionKey::root(9);
     assert_eq!(
         provider.try_execute(&key, &caller, &[JitArgument::Integer(41)], 1),
-        JitCallResult::Returned(Value::int(53))
+        JitCallResult::Returned(Value::int(61))
     );
     assert_eq!(
         provider.try_execute(&key, &caller, &[JitArgument::Integer(Value::INT_MAX)], 2),
@@ -179,6 +179,14 @@ fn outer(value: int) -> int {
         result = result + 1
         result = result + 1
         result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
         return result
     }
     return advance(value) + 1
@@ -200,7 +208,7 @@ outer(20)
     let compiled = engine
         .compile(&JitKey::new(10, 0, JitTier::Optimized), &ir)
         .unwrap();
-    assert_eq!(compiled.execute_i64(&[20]).unwrap(), 33);
+    assert_eq!(compiled.execute_i64(&[20]).unwrap(), 41);
 }
 
 #[test]

@@ -493,7 +493,7 @@ fn inline_integer_leaf(
     source: SourcePosition,
 ) -> Option<ValueId> {
     const INLINE_INSTRUCTION_BUDGET: usize = 64;
-    const INLINE_MINIMUM_INSTRUCTIONS: usize = 12;
+    const INLINE_MINIMUM_INSTRUCTIONS: usize = 20;
     const INLINE_REGISTER_BUDGET: usize = 64;
 
     let register_count = usize::try_from(function.num_registers).ok()?;

@@ -711,6 +711,14 @@ fn outer(value: int) -> int {
         result = result + 1
         result = result + 1
         result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
         return result
     }
     return advance(value) + 1
@@ -725,13 +733,13 @@ outer(20)
     for _ in 0..9_999 {
         assert_eq!(
             isolate.execute(&module, RunOptions::default()).unwrap(),
-            ExecutionOutcome::Returned(Value::int(33))
+            ExecutionOutcome::Returned(Value::int(41))
         );
     }
     assert_eq!(runtime.jit_cache_entries(), 0);
     assert_eq!(
         isolate.execute(&module, RunOptions::default()).unwrap(),
-        ExecutionOutcome::Returned(Value::int(33))
+        ExecutionOutcome::Returned(Value::int(41))
     );
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 0);

@@ -1,6 +1,19 @@
 # Performance Benchmarks
 
-These benchmarks were run on Linux x86_64. Your results will vary based on hardware
+These benchmarks were run on Linux x86_64. Results vary by hardware. The Fibonacci and cross-language figures below are historical interpreter measurements; use the repository's Criterion suite for current comparisons.
+
+## Runtime v2 tiering reference
+
+The final 0.22 local gate used 30 samples, a 1 second warmup, a 2 second measurement window, and a fixed CPU. Representative medians were:
+
+| Workload | Interpreter | Tiered/JIT | Speedup |
+|----------|-------------|------------|---------|
+| Typed integer loop after warmup | 3.788 ms | 105.47 µs | 35.9x |
+| First hot loop with OSR | 3.611 ms | 638.11 µs | 5.66x |
+| Integer array loop | 2.666 ms | 234.45 µs | 11.37x |
+| Cold call before threshold | 186.32 µs | 185.25 µs | no cold penalty |
+
+Run `cargo bench -p aelys --bench criterion_runtime` to reproduce the suite locally.
 
 ## Recursive Fibonacci
 
@@ -55,15 +68,12 @@ The VM starts with a small heap and grows as needed. Typical memory usage:
 Memory usage is dominated by the Rust runtime and stdlib. Aelys's own data structures are pretty compact.
 
 
-## What's Slow
+## Tiering and remaining fallbacks
 
-- **No JIT**: Everything is interpreted bytecode. Compared to V8, LuaJIT, or even PyPy, we're at a disadvantage for compute-heavy code.
-- **GC pauses**: The GC is stop-the-world (mark and sweep), for most code this is « fine » but if you're allocating heavily in a loop, you'll feel it.
-
-I plan on adding a JIT compiler in the future but that's a big project  
-Either using LLVM or Cranelift as a backend
-
-Regarding the GC, I'll probably use this in the future : https://github.com/kyren/gc-arena
+- **Portable targets**: unsupported JIT targets execute the AVBC v2 interpreter.
+- **Unsupported machine-code shapes**: closures, native/resource operations, and dynamic shapes fall back to the interpreter.
+- **Cold code**: tiering deliberately avoids compilation before the hotness thresholds.
+- **Allocation-heavy code**: the generational GC bounds incremental old-generation slices, but allocation and collection costs still need workload-specific measurement.
 
 ## What's Fast
 

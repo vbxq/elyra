@@ -2,6 +2,16 @@
 
 All notable changes to Aelys, roughly grouped by version. I don't always tag releases perfectly, so this is reconstructed from git history
 
+## 0.22.x - runtime v2
+
+- Breaking AVBC v2 format with typed wide operands and immutable bytecode.
+- Shared `Runtime`, immutable `CompiledModule`, and isolated `Isolate` embedding API.
+- Opaque 64-bit values, generation-checked heap handles, and native ABI v3.
+- Generational non-moving GC with remembered sets and incremental old-generation slices.
+- Structured execution limits, interruption, exit outcomes, reports, and deterministic RNG replay.
+- Tiered Cranelift JIT on Linux x86_64 with shared LRU code cache, profiling, guards, exact deoptimization, collection bounds proofs, LICM, bounded leaf inlining, and OSR.
+- Local `cargo xtask ci` and `cargo xtask ci-full` validation gates.
+
 ## 0.21.x - vm rework
 
 split aelys llvm & aelys vm into separate repo

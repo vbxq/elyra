@@ -36,7 +36,7 @@ const WORKLOADS: [(&str, &str); 8] = [
 ];
 
 fn runtime_benchmarks(criterion: &mut Criterion) {
-    let runtime = Runtime::new();
+    let runtime = Runtime::with_jit_mode(JitMode::Off);
     let modules = WORKLOADS.map(|(name, source)| {
         let module = runtime
             .compile(source, CompileOptions::default())
@@ -74,6 +74,14 @@ fn jit_profiled_leaf_inlining_benchmarks(criterion: &mut Criterion) {
 fn outer(value: int) -> int {
     fn advance(inner: int) -> int {
         let mut result = inner
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
         result = result + 1
         result = result + 1
         result = result + 1

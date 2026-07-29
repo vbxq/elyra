@@ -12,18 +12,16 @@ After encoding type tags, there are 48 bits left for integer payloads. That's ro
 
 ### Is Aelys fast?
 
-Depends what you mean by fast, it's a bytecode interpreter, so it won't match compiled languages or JIT-based runtimes.
+The portable tier is a bytecode interpreter. On Linux x86_64, Aelys 0.22 additionally enables a tiered Cranelift JIT by default for supported typed integer and collection workloads.
 
-For the fibonacci benchmark, it's roughly on par with Python. Node.js with V8 is about 10x faster. LuaJIT would be even faster.
+Cold programs stay in the interpreter until a call or loop becomes hot. Hot loops can enter machine code through on-stack replacement, while unsupported operations safely continue in the interpreter.
 
-Aelys is "fast enough" for scripting, tools, and applications where you're not CPU-bound. For tight numerical loops, consider writing a native module.
-
-But I plan on writing a JIT (LLVM or Cranelift based) in the future to improve performance ! 
+Performance depends heavily on type information and workload shape. Run the repository's Criterion suite on the deployment machine before using a native module solely for speed.
 ### How does the GC work?
 
-Mark-and-sweep, stop-the-world, but I plan on using https://github.com/kyren/gc-arena in the future  
+The heap is non-moving and generational. Minor collections trace young objects from roots and the remembered set; the old generation uses incremental mark-and-sweep slices with write barriers on mutations.
 
-For most programs, pauses are imperceptible. Profile allocation-heavy workloads before optimizing them.
+GC slices run at safepoints with a default 500 µs budget. Execution reports expose allocation, collection, and pause telemetry.
 
 ## Practical
 
@@ -33,9 +31,8 @@ Not yet but planned very soon. You can use `print` statements (sorry) or inspect
 
 ### Can I embed Aelys in my Rust application?
 
-Yes ! The `aelys` crate exposes the VM and compiler. The API isn't documented yet and might change, but it works. Look at the `aelys-cli` source for examples.
+Yes. The 0.22 API exposes a shared `Runtime`, immutable `CompiledModule`, and per-thread `Isolate`. Use `Runtime::compile`, `Runtime::new_isolate`, and `Isolate::execute`; configure fuel, deadlines, interruption, and reports through `RunOptions`.
 
 ### Are there tests?
 
-Yes, run `cargo test`. The test suite covers the compiler, VM, and standard library. There's 596 of them at the tiime of writing this (0.17.6-a)
--line input and module loading. It's functional but not polished, you can use the source files for now
+Yes. Run `cargo xtask ci` for the reproducible local format, Clippy, workspace-test, and diff gate. `cargo xtask ci-full` adds release tests, locally available sanitizer/Miri/fuzz checks, and benchmark compilation.

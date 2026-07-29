@@ -1,8 +1,8 @@
-use aelys::{CompileOptions, IsolateConfig, RunOptions, Runtime};
+use aelys::{CompileOptions, IsolateConfig, JitMode, RunOptions, Runtime};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 
 fn execute(source: &str) {
-    let runtime = Runtime::new();
+    let runtime = Runtime::with_jit_mode(JitMode::Off);
     let module = runtime
         .compile(source, CompileOptions::default())
         .expect("benchmark workload must compile");
