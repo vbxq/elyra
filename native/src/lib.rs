@@ -33,8 +33,9 @@ pub use abi::{
 };
 pub use hash::{compute_exports_hash, init_descriptor_exports_hash};
 pub use value::{
-    value_as_bool, value_as_float, value_as_int, value_as_ptr, value_bool, value_float, value_int,
-    value_is_bool, value_is_float, value_is_int, value_is_null, value_is_ptr, value_null,
+    value_as_bool, value_as_float, value_as_handle, value_as_int, value_bool, value_float,
+    value_from_handle, value_int, value_is_bool, value_is_float, value_is_int, value_is_null,
+    value_is_ptr, value_null,
 };
 
 use std::sync::OnceLock;

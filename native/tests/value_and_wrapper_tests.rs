@@ -1,6 +1,6 @@
 use aelys_native::{
-    AELYS_NATIVE_INTEGER_OVERFLOW, AELYS_NATIVE_INVALID_ARGUMENT, aelys_module, value_as_int,
-    value_bool, value_int, value_null,
+    AELYS_NATIVE_INTEGER_OVERFLOW, AELYS_NATIVE_INVALID_ARGUMENT, aelys_module, value_as_handle,
+    value_as_int, value_bool, value_int, value_null,
 };
 
 #[aelys_module(name = "checked_values", version = "0.22.0")]
@@ -27,6 +27,7 @@ fn native_integer_constructor_checks_nan_boxing_range() {
     assert!(value_int(maximum + 1).is_none());
     assert!(value_int(i64::MIN).is_none());
     assert!(value_int(i64::MAX).is_none());
+    assert!(value_as_handle(value_null()).is_none());
 }
 
 #[test]

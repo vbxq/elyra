@@ -1,7 +1,7 @@
 // NaN-boxing helpers for native modules
 // mirrors aelys-runtime/src/vm/value.rs
 
-use crate::AelysValue;
+use crate::{AelysValue, NativeHandle};
 
 const QNAN: u64 = 0x7FF8_0000_0000_0000;
 const TAG_INT: u64 = 0x0001_0000_0000_0000;
@@ -90,7 +90,10 @@ pub fn value_is_ptr(v: AelysValue) -> bool {
     let v = v.bits();
     (v & (QNAN | 0x0007_0000_0000_0000)) == QNAN
 }
-pub fn value_as_ptr(v: AelysValue) -> usize {
-    let v = v.bits();
-    (v & PAYLOAD_MASK) as usize
+pub fn value_as_handle(v: AelysValue) -> Option<NativeHandle> {
+    value_is_ptr(v).then(|| NativeHandle::from_payload(v.bits() & PAYLOAD_MASK))
+}
+
+pub fn value_from_handle(handle: NativeHandle) -> AelysValue {
+    AelysValue::from_bits(QNAN | handle.payload())
 }

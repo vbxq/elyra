@@ -99,6 +99,16 @@ impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
 }
 
+impl NativeHandle {
+    pub(crate) const fn from_payload(payload: u64) -> Self {
+        Self(payload)
+    }
+
+    pub(crate) const fn payload(self) -> u64 {
+        self.0
+    }
+}
+
 unsafe impl Sync for AelysExport {}
 unsafe impl Sync for AelysRequiredModule {}
 unsafe impl Sync for AelysModuleDescriptor {}
