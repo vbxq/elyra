@@ -177,7 +177,27 @@ impl VM {
                 // Load/Store operations: Move(0), LoadI(1), LoadK(2), LoadNull(3), LoadBool(4),
                 // GetGlobalIdx(75), SetGlobalIdx(76)
                 0..=4 | 75..=76 | 180 | 182..=183 => {
-                    include!("ops/load_store.rs");
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_load_store(
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!("load/store handler cannot change frames")
+                        }
+                    }
                 }
 
                 // Arithmetic operations: Add(5), Sub(6), Mul(7), Div(8), Mod(9), Neg(10),
