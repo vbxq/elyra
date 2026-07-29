@@ -18,7 +18,7 @@ extern "C" fn dep_c_fn(
     out: *mut AelysValue,
 ) -> i32 {
     unsafe {
-        *out = value_int(20);
+        *out = value_int(20).expect("fixture integer fits");
     }
     0
 }

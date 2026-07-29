@@ -12,7 +12,7 @@ extern "C" fn test_add(
     _out: *mut AelysValue,
 ) -> i32 {
     unsafe {
-        *_out = value_int(10);
+        *_out = value_int(10).expect("fixture integer fits");
     }
     0
 }

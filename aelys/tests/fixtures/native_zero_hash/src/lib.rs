@@ -14,7 +14,7 @@ extern "C" fn zero_hash_fn(
     out: *mut AelysValue,
 ) -> i32 {
     unsafe {
-        *out = value_int(0);
+        *out = value_int(0).expect("fixture integer fits");
     }
     0
 }

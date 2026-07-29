@@ -18,9 +18,14 @@ pub fn value_bool(b: bool) -> AelysValue {
     AelysValue::from_bits(QNAN | TAG_BOOL | u64::from(b))
 }
 
-pub fn value_int(n: i64) -> AelysValue {
-    let payload = (n as u64) & PAYLOAD_MASK;
-    AelysValue::from_bits(QNAN | TAG_INT | payload)
+pub fn value_int(n: i64) -> Option<AelysValue> {
+    const INT_MIN: i64 = -(1i64 << 47);
+    const INT_MAX: i64 = (1i64 << 47) - 1;
+    if !(INT_MIN..=INT_MAX).contains(&n) {
+        return None;
+    }
+    let payload = u64::from_ne_bytes(n.to_ne_bytes()) & PAYLOAD_MASK;
+    Some(AelysValue::from_bits(QNAN | TAG_INT | payload))
 }
 
 pub fn value_float(n: f64) -> AelysValue {

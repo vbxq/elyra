@@ -35,12 +35,14 @@ impl NativeFunctionImpl {
                     magic: NATIVE_CONTEXT_MAGIC,
                     vm,
                 };
-                let status = f(
-                    (&mut context as *mut RuntimeNativeContext).cast(),
-                    native_args.as_ptr(),
-                    native_args.len(),
-                    &mut out,
-                );
+                let status = unsafe {
+                    f(
+                        (&mut context as *mut RuntimeNativeContext).cast(),
+                        native_args.as_ptr(),
+                        native_args.len(),
+                        &mut out,
+                    )
+                };
                 if status != 0 {
                     return Err(vm.runtime_error(RuntimeErrorKind::NativeError { code: status }));
                 }

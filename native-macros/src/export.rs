@@ -60,7 +60,7 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
     }
 
     let return_conversion = match &func.sig.output {
-        ReturnType::Default => quote! { ::aelys_native::value_null() },
+        ReturnType::Default => quote! { Ok(::aelys_native::value_null()) },
         ReturnType::Type(_, ty) => generate_return_conversion(ty)?,
     };
 
@@ -68,17 +68,28 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
     let wrapper = quote! {
         #[doc(hidden)]
         #[unsafe(no_mangle)]
-        pub extern "C" fn #wrapper_name(
+        pub unsafe extern "C" fn #wrapper_name(
             _context: *mut ::aelys_native::NativeContext,
             args: *const ::aelys_native::AelysValue,
             _arg_count: usize,
             out: *mut ::aelys_native::AelysValue,
         ) -> i32 {
-            let result = (|| {
+            if out.is_null()
+                || _arg_count != usize::from(#arity)
+                || (_arg_count != 0 && args.is_null())
+            {
+                return ::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+            }
+            let result: Result<::aelys_native::AelysValue, i32> = (|| {
                 #(#param_extractions)*
                 let ret = #mod_name::#fn_name(#(#call_args),*);
                 #return_conversion
             })();
+
+            let result = match result {
+                Ok(value) => value,
+                Err(status) => return status,
+            };
 
             unsafe {
                 *out = result;
@@ -103,18 +114,27 @@ fn generate_extraction(name: &Ident, ty: &Type, index: usize) -> syn::Result<Tok
 
     let extraction = match ty_str.as_str() {
         "i64" => quote! {
+            if !unsafe { ::aelys_native::value_is_int(*args.add(#idx)) } {
+                return Err(::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT);
+            }
             let #name: i64 = unsafe { ::aelys_native::value_as_int(*args.add(#idx)) };
         },
         "f64" => quote! {
+            if !unsafe { ::aelys_native::value_is_float(*args.add(#idx)) } {
+                return Err(::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT);
+            }
             let #name: f64 = unsafe { ::aelys_native::value_as_float(*args.add(#idx)) };
         },
         "bool" => quote! {
+            if !unsafe { ::aelys_native::value_is_bool(*args.add(#idx)) } {
+                return Err(::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT);
+            }
             let #name: bool = unsafe { ::aelys_native::value_as_bool(*args.add(#idx)) };
         },
         "String" => quote! {
             let #name: String = unsafe {
-                ::aelys_native::read_string_from_value(_vm, *args.add(#idx))
-            }.unwrap_or_default();
+                ::aelys_native::read_string_from_value(_context, *args.add(#idx))
+            }.ok_or(::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT)?;
         },
         _ => {
             return Err(syn::Error::new(
@@ -134,10 +154,13 @@ fn generate_return_conversion(ty: &Type) -> syn::Result<TokenStream2> {
     let ty_str = quote!(#ty).to_string().replace(' ', "");
 
     let conversion = match ty_str.as_str() {
-        "i64" => quote! { ::aelys_native::value_int(ret) },
-        "f64" => quote! { ::aelys_native::value_float(ret) },
-        "bool" => quote! { ::aelys_native::value_bool(ret) },
-        "()" => quote! { { ret; ::aelys_native::value_null() } },
+        "i64" => quote! {
+            ::aelys_native::value_int(ret)
+                .ok_or(::aelys_native::AELYS_NATIVE_INTEGER_OVERFLOW)
+        },
+        "f64" => quote! { Ok(::aelys_native::value_float(ret)) },
+        "bool" => quote! { Ok(::aelys_native::value_bool(ret)) },
+        "()" => quote! { { ret; Ok(::aelys_native::value_null()) } },
         _ => {
             return Err(syn::Error::new(
                 ty.span(),

@@ -5,6 +5,8 @@ pub use aelys_native_macros::{aelys_export, aelys_module};
 
 pub const AELYS_ABI_VERSION: u32 = 3;
 pub const AELYS_API_VERSION: u32 = 3;
+pub const AELYS_NATIVE_INVALID_ARGUMENT: i32 = 1;
+pub const AELYS_NATIVE_INTEGER_OVERFLOW: i32 = 2;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

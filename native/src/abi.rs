@@ -12,7 +12,7 @@ pub struct NativeContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NativeHandle(u64);
 
-pub type AelysNativeFn = extern "C" fn(
+pub type AelysNativeFn = unsafe extern "C" fn(
     context: *mut NativeContext,
     args: *const AelysValue,
     arg_count: usize,

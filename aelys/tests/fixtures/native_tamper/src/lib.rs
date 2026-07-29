@@ -14,7 +14,7 @@ extern "C" fn tamper_ok(
     out: *mut AelysValue,
 ) -> i32 {
     unsafe {
-        *out = value_int(7);
+        *out = value_int(7).expect("fixture integer fits");
     }
     0
 }
