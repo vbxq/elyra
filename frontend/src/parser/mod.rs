@@ -10,7 +10,7 @@ use aelys_syntax::Source;
 use aelys_syntax::{Stmt, Token, TokenKind};
 use std::sync::Arc;
 
-const MAX_RECURSION_DEPTH: usize = 1000; // pathological nesting guard
+const MAX_RECURSION_DEPTH: usize = 16; // pathological nesting guard
 
 pub struct Parser {
     tokens: Vec<Token>,

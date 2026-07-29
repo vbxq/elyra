@@ -60,7 +60,7 @@ fn ci_full() -> Result<(), String> {
                     "-p",
                     "aelys-runtime",
                 ],
-                &[],
+                &[("MIRIFLAGS", "-Zmiri-disable-isolation")],
             )
         },
     )?;
@@ -86,11 +86,19 @@ fn ci_full() -> Result<(), String> {
 
     optional_tool(
         "fuzz smoke",
-        Path::new("fuzz/Cargo.toml").is_file() && tool_available("cargo", &["fuzz", "--version"]),
+        Path::new("fuzz/Cargo.toml").is_file()
+            && tool_available("cargo", &["+nightly", "fuzz", "--version"]),
         || {
             command(
                 "cargo",
-                &["fuzz", "run", "smoke", "--", "-max_total_time=10"],
+                &[
+                    "+nightly",
+                    "fuzz",
+                    "run",
+                    "smoke",
+                    "--",
+                    "-max_total_time=10",
+                ],
                 &[],
             )
         },

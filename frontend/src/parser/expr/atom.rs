@@ -121,6 +121,9 @@ impl Parser {
     }
 
     pub(super) fn primary(&mut self) -> Result<Expr> {
+        if self.is_at_end() {
+            return Err(self.error(CompileErrorKind::ExpectedExpression));
+        }
         let token = self.advance();
         let span = token.span;
         let token_kind = token.kind.clone();

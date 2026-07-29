@@ -2,6 +2,7 @@ use aelys::{CompileOptions, ExecutionOutcome, IsolateConfig, RunOptions, Runtime
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize, serialize};
 use aelys_bytecode::{Function, OpCode, Register};
+use aelys_common::{AelysError, CompileErrorKind};
 use aelys_runtime::{VM, Value};
 use aelys_syntax::Source;
 
@@ -813,6 +814,31 @@ fn inference_depth_limit_is_a_compile_error_instead_of_null_bytecode() {
         panic!("inference depth overflow must reject compilation");
     };
     assert!(error.to_string().contains("recursion limit"));
+}
+
+#[test]
+fn truncated_grouping_is_a_compile_error_instead_of_parser_recursion() {
+    let Err(error) = Runtime::new().compile("(\n", CompileOptions::default()) else {
+        panic!("truncated grouping must be rejected");
+    };
+    assert!(matches!(
+        error,
+        AelysError::Compile(error) if matches!(error.kind, CompileErrorKind::ExpectedExpression)
+    ));
+}
+
+#[test]
+fn deeply_nested_grouping_hits_the_parser_recursion_limit() {
+    let depth = 100;
+    let source = format!("{}0{}", "(".repeat(depth), ")".repeat(depth));
+    let Err(error) = Runtime::new().compile(&source, CompileOptions::default()) else {
+        panic!("deeply nested grouping must be rejected");
+    };
+    assert!(matches!(
+        error,
+        AelysError::Compile(error)
+            if matches!(error.kind, CompileErrorKind::RecursionDepthExceeded { max: 16 })
+    ));
 }
 
 #[test]
