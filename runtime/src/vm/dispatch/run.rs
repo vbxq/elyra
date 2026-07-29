@@ -225,7 +225,17 @@ impl VM {
                 // LtII(59)-NeII(64), LtFF(65)-NeFF(70), LtIImm(71)-GeIImm(74),
                 // LtIIG(92)-NeIIG(97), LtFFG(98)-NeFFG(103)
                 11..=16 | 59..=74 | 92..=103 => {
-                    include!("ops/comparison.rs");
+                    super::ops::comparison::execute_comparison!(
+                        self,
+                        opcode_byte,
+                        instr,
+                        base,
+                        current_frame_idx,
+                        ip,
+                        reg_get,
+                        reg_ref,
+                        reg_set
+                    );
                 }
 
                 // Control flow operations: Not(17), Jump(18), JumpIf(19), JumpIfNot(20),
