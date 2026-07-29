@@ -309,3 +309,60 @@ fn compiled_guard_returns_exact_deoptimization_state() {
         }
     );
 }
+
+#[test]
+fn compiled_bounds_check_deoptimizes_only_out_of_range_values() {
+    let index = ValueId(0);
+    let length = ValueId(1);
+    let ir = FunctionIr {
+        name: "bounds_exit".to_string(),
+        entry: BlockId(0),
+        parameter_types: vec![IrType::I64],
+        return_type: IrType::I64,
+        blocks: vec![IrBlock {
+            id: BlockId(0),
+            parameters: vec![(index, IrType::I64)],
+            instructions: vec![
+                IrInstruction {
+                    result: Some((length, IrType::I64)),
+                    kind: IrInstructionKind::Iconst(4),
+                    source: position(0),
+                },
+                IrInstruction {
+                    result: None,
+                    kind: IrInstructionKind::BoundsCheck {
+                        index,
+                        length,
+                        deopt: 3,
+                    },
+                    source: position(1),
+                },
+            ],
+            terminator: IrTerminator::Return(index),
+        }],
+        deopt_maps: vec![DeoptMap {
+            bytecode_ip: 3,
+            registers: vec![(0, index)],
+        }],
+    };
+    let engine = JitEngine::new(4).unwrap();
+    let compiled = engine
+        .compile(&JitKey::new(12, 0, JitTier::Optimized), &ir)
+        .unwrap();
+
+    assert_eq!(compiled.execute(&[2]).unwrap(), JitExecution::Returned(2));
+    assert_eq!(
+        compiled.execute(&[-1]).unwrap(),
+        JitExecution::Deoptimized {
+            bytecode_ip: 3,
+            registers: vec![(0, -1)],
+        }
+    );
+    assert_eq!(
+        compiled.execute(&[4]).unwrap(),
+        JitExecution::Deoptimized {
+            bytecode_ip: 3,
+            registers: vec![(0, 4)],
+        }
+    );
+}

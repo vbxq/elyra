@@ -411,6 +411,37 @@ fn lower_function(
                     )?;
                     None
                 }
+                IrInstructionKind::BoundsCheck {
+                    index,
+                    length,
+                    deopt,
+                } => {
+                    use cranelift_codegen::ir::condcodes::IntCC;
+                    let zero = builder.ins().iconst(types::I64, 0);
+                    let non_negative =
+                        builder
+                            .ins()
+                            .icmp(IntCC::SignedGreaterThanOrEqual, values[&index], zero);
+                    let below_length =
+                        builder
+                            .ins()
+                            .icmp(IntCC::SignedLessThan, values[&index], values[&length]);
+                    let in_bounds = builder.ins().band(non_negative, below_length);
+                    let map = ir
+                        .deopt_maps
+                        .iter()
+                        .find(|map| map.bytecode_ip == deopt)
+                        .ok_or(JitError::InvalidIr(IrError::UnknownDeoptMap(deopt)))?;
+                    lower_guard(
+                        &mut builder,
+                        in_bounds,
+                        map,
+                        &values,
+                        exit_state,
+                        deopt_registers,
+                    )?;
+                    None
+                }
                 IrInstructionKind::Safepoint { .. } => None,
             };
             if let Some((result_id, _)) = instruction.result {

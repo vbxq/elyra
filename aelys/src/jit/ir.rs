@@ -51,6 +51,11 @@ pub(crate) enum IrInstructionKind {
         condition: ValueId,
         deopt: u32,
     },
+    BoundsCheck {
+        index: ValueId,
+        length: ValueId,
+        deopt: u32,
+    },
     Safepoint {
         deopt: u32,
     },
@@ -202,6 +207,18 @@ fn verify_instruction(
         IrInstructionKind::Guard { condition, deopt } => {
             require_available(available, condition)?;
             require_type(values, condition, IrType::Bool)?;
+            require_no_result(instruction)?;
+            require_deopt(deopts, available, deopt)
+        }
+        IrInstructionKind::BoundsCheck {
+            index,
+            length,
+            deopt,
+        } => {
+            require_available(available, index)?;
+            require_available(available, length)?;
+            require_type(values, index, IrType::I64)?;
+            require_type(values, length, IrType::I64)?;
             require_no_result(instruction)?;
             require_deopt(deopts, available, deopt)
         }

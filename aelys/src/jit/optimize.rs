@@ -9,6 +9,7 @@ pub(crate) struct OptimizationReport {
     pub(crate) constants_folded: u64,
     pub(crate) redundant_instructions: u64,
     pub(crate) dead_instructions: u64,
+    pub(crate) bounds_checks_eliminated: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -66,6 +67,25 @@ pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
         }
         block.instructions = retained;
         rewrite_terminator(&mut block.terminator, &aliases);
+    }
+
+    let constants = constant_values(ir);
+    for block in &mut ir.blocks {
+        block.instructions.retain(|instruction| {
+            let IrInstructionKind::BoundsCheck { index, length, .. } = instruction.kind else {
+                return true;
+            };
+            let proven = match (constants.get(&index), constants.get(&length)) {
+                (Some(Constant::Integer(index)), Some(Constant::Integer(length))) => {
+                    *index >= 0 && index < length
+                }
+                _ => false,
+            };
+            if proven {
+                report.bounds_checks_eliminated = report.bounds_checks_eliminated.saturating_add(1);
+            }
+            !proven
+        });
     }
 
     for block in &mut ir.blocks {
@@ -238,6 +258,14 @@ fn constant(kind: &IrInstructionKind) -> Option<Constant> {
     }
 }
 
+fn constant_values(ir: &FunctionIr) -> HashMap<ValueId, Constant> {
+    ir.blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| Some((instruction.result?.0, constant(&instruction.kind)?)))
+        .collect()
+}
+
 fn expression(kind: &IrInstructionKind) -> Option<Expression> {
     match *kind {
         IrInstructionKind::Iconst(value) => Some(Expression::Integer(value)),
@@ -256,7 +284,9 @@ fn expression(kind: &IrInstructionKind) -> Option<Expression> {
             left,
             right,
         } => Some(Expression::Compare(predicate, left, right)),
-        IrInstructionKind::Guard { .. } | IrInstructionKind::Safepoint { .. } => None,
+        IrInstructionKind::Guard { .. }
+        | IrInstructionKind::BoundsCheck { .. }
+        | IrInstructionKind::Safepoint { .. } => None,
     }
 }
 
@@ -292,6 +322,10 @@ fn rewrite_instruction(kind: &mut IrInstructionKind, aliases: &HashMap<ValueId, 
         }
         IrInstructionKind::Guard { condition, .. } => {
             *condition = resolve(*condition, aliases);
+        }
+        IrInstructionKind::BoundsCheck { index, length, .. } => {
+            *index = resolve(*index, aliases);
+            *length = resolve(*length, aliases);
         }
         IrInstructionKind::Iconst(_)
         | IrInstructionKind::Bconst(_)
@@ -337,6 +371,10 @@ fn used_values(ir: &FunctionIr) -> HashSet<ValueId> {
                 IrInstructionKind::Guard { condition, .. } => {
                     used.insert(condition);
                 }
+                IrInstructionKind::BoundsCheck { index, length, .. } => {
+                    used.insert(index);
+                    used.insert(length);
+                }
                 IrInstructionKind::Iconst(_)
                 | IrInstructionKind::Bconst(_)
                 | IrInstructionKind::Safepoint { .. } => {}
@@ -368,7 +406,9 @@ fn used_values(ir: &FunctionIr) -> HashSet<ValueId> {
 fn is_pure(kind: &IrInstructionKind) -> bool {
     !matches!(
         kind,
-        IrInstructionKind::Guard { .. } | IrInstructionKind::Safepoint { .. }
+        IrInstructionKind::Guard { .. }
+            | IrInstructionKind::BoundsCheck { .. }
+            | IrInstructionKind::Safepoint { .. }
     )
 }
 
@@ -422,5 +462,77 @@ mod tests {
         assert_eq!(ir.blocks[0].instructions.len(), 1);
         assert_eq!(ir.blocks[0].terminator, IrTerminator::Return(ValueId(2)));
         assert_eq!(ir.deopt_maps[0].registers, vec![(0, ValueId(2))]);
+    }
+
+    #[test]
+    fn eliminates_only_statically_proven_bounds_checks() {
+        let mut ir = FunctionIr {
+            name: "bounds".to_string(),
+            entry: BlockId(0),
+            parameter_types: Vec::new(),
+            return_type: IrType::I64,
+            blocks: vec![IrBlock {
+                id: BlockId(0),
+                parameters: Vec::new(),
+                instructions: vec![
+                    instruction(0, IrInstructionKind::Iconst(2)),
+                    instruction(1, IrInstructionKind::Iconst(4)),
+                    IrInstruction {
+                        result: None,
+                        kind: IrInstructionKind::BoundsCheck {
+                            index: ValueId(0),
+                            length: ValueId(1),
+                            deopt: 7,
+                        },
+                        source: SourcePosition {
+                            bytecode_ip: 7,
+                            source_line: 1,
+                        },
+                    },
+                ],
+                terminator: IrTerminator::Return(ValueId(0)),
+            }],
+            deopt_maps: vec![DeoptMap {
+                bytecode_ip: 7,
+                registers: vec![(0, ValueId(0))],
+            }],
+        };
+
+        let mut failing = ir.clone();
+        let report = optimize_integer_ir(&mut ir);
+
+        assert_eq!(ir.verify(), Ok(()));
+        assert_eq!(report.bounds_checks_eliminated, 1);
+        assert!(
+            ir.blocks[0]
+                .instructions
+                .iter()
+                .all(|instruction| !matches!(
+                    instruction.kind,
+                    IrInstructionKind::BoundsCheck { .. }
+                ))
+        );
+
+        failing.blocks[0]
+            .instructions
+            .insert(0, instruction(2, IrInstructionKind::Iconst(-1)));
+        let check = failing.blocks[0]
+            .instructions
+            .iter_mut()
+            .find(|instruction| matches!(instruction.kind, IrInstructionKind::BoundsCheck { .. }))
+            .unwrap();
+        let IrInstructionKind::BoundsCheck { index, .. } = &mut check.kind else {
+            unreachable!()
+        };
+        *index = ValueId(2);
+        failing.deopt_maps[0].registers = vec![(0, ValueId(2))];
+
+        let report = optimize_integer_ir(&mut failing);
+
+        assert_eq!(failing.verify(), Ok(()));
+        assert_eq!(report.bounds_checks_eliminated, 0);
+        assert!(failing.blocks[0].instructions.iter().any(|instruction| {
+            matches!(instruction.kind, IrInstructionKind::BoundsCheck { .. })
+        }));
     }
 }
