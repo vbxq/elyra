@@ -1,6 +1,6 @@
 use super::ir::{
-    DeoptMap, FunctionIr, IntPredicate, IrInstruction, IrInstructionKind, IrTerminator, IrType,
-    SourcePosition, ValueId,
+    BlockId, CollectionIdentity, DeoptMap, FunctionIr, IntPredicate, IrInstruction,
+    IrInstructionKind, IrTerminator, IrType, SourcePosition, ValueId, collection_identities,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -10,6 +10,7 @@ pub(crate) struct OptimizationReport {
     pub(crate) redundant_instructions: u64,
     pub(crate) dead_instructions: u64,
     pub(crate) bounds_checks_eliminated: u64,
+    pub(crate) collection_lengths_hoisted: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -30,7 +31,11 @@ enum Expression {
 
 pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
     let mut report = OptimizationReport::default();
+    while hoist_one_collection_length(ir) {
+        report.collection_lengths_hoisted = report.collection_lengths_hoisted.saturating_add(1);
+    }
     let mut aliases = HashMap::new();
+    let protected = uninitialized_edge_values(ir);
 
     for block in &mut ir.blocks {
         let mut constants = HashMap::new();
@@ -54,7 +59,9 @@ pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
                 retained.push(instruction);
                 continue;
             };
-            if let Some(existing) = expressions.get(&expression).copied() {
+            if !protected.contains(&result)
+                && let Some(existing) = expressions.get(&expression).copied()
+            {
                 aliases.insert(result, resolve(existing, &aliases));
                 report.redundant_instructions = report.redundant_instructions.saturating_add(1);
                 continue;
@@ -121,6 +128,326 @@ pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
         }
     }
     report
+}
+
+#[derive(Clone)]
+struct NaturalLoop {
+    header: BlockId,
+    blocks: HashSet<BlockId>,
+    preheader: BlockId,
+}
+
+fn hoist_one_collection_length(ir: &mut FunctionIr) -> bool {
+    let collections = collection_identities(ir);
+    for natural_loop in natural_loops(ir) {
+        let candidate = natural_loop.blocks.iter().find_map(|block_id| {
+            let block = ir.blocks.iter().find(|block| block.id == *block_id)?;
+            block.instructions.iter().find_map(|instruction| {
+                let collection = match instruction.kind {
+                    IrInstructionKind::ArrayLen(array) => array,
+                    IrInstructionKind::VecLen(vector) => vector,
+                    _ => return None,
+                };
+                Some((collections.get(&collection).copied()?, instruction.source))
+            })
+        });
+        let Some((identity, source)) = candidate else {
+            continue;
+        };
+        if hoist_collection_length(ir, &natural_loop, identity, source, &collections) {
+            return true;
+        }
+    }
+    false
+}
+
+fn hoist_collection_length(
+    ir: &mut FunctionIr,
+    natural_loop: &NaturalLoop,
+    identity: CollectionIdentity,
+    source: SourcePosition,
+    collections: &HashMap<ValueId, CollectionIdentity>,
+) -> bool {
+    let Some(header) = ir
+        .blocks
+        .iter()
+        .find(|block| block.id == natural_loop.header)
+    else {
+        return false;
+    };
+    let Some(collection_index) = header.parameters.iter().position(|(value, ty)| {
+        *ty == identity.ty && collections.get(value).copied() == Some(identity)
+    }) else {
+        return false;
+    };
+    let outside_edges = edges(ir)
+        .into_iter()
+        .filter(|(_, target, _)| *target == natural_loop.header)
+        .filter(|(source, _, _)| !natural_loop.blocks.contains(source))
+        .collect::<Vec<_>>();
+    if outside_edges.len() != 1 || outside_edges[0].0 != natural_loop.preheader {
+        return false;
+    }
+    let Some(&source_collection) = outside_edges[0].2.get(collection_index) else {
+        return false;
+    };
+    if collections.get(&source_collection).copied() != Some(identity) {
+        return false;
+    }
+    if edges(ir).iter().any(|(source, target, _)| {
+        natural_loop.blocks.contains(target)
+            && !natural_loop.blocks.contains(source)
+            && !(*source == natural_loop.preheader && *target == natural_loop.header)
+    }) {
+        return false;
+    }
+
+    let Some(preheader_index) = ir
+        .blocks
+        .iter()
+        .position(|block| block.id == natural_loop.preheader)
+    else {
+        return false;
+    };
+    if natural_loop.blocks.iter().any(|block_id| {
+        ir.blocks
+            .iter()
+            .position(|block| block.id == *block_id)
+            .is_none_or(|index| index <= preheader_index)
+    }) {
+        return false;
+    }
+    let Some(next_value) = next_value_id(ir) else {
+        return false;
+    };
+    let hoisted = ValueId(next_value);
+    let kind = match identity.ty {
+        IrType::I64Array => IrInstructionKind::ArrayLen(source_collection),
+        IrType::I64Vec => IrInstructionKind::VecLen(source_collection),
+        IrType::Uninitialized | IrType::I64 | IrType::Bool => return false,
+    };
+    ir.blocks[preheader_index].instructions.push(IrInstruction {
+        result: Some((hoisted, IrType::I64)),
+        kind,
+        source,
+    });
+
+    let mut aliases = HashMap::new();
+    for block in &mut ir.blocks {
+        if !natural_loop.blocks.contains(&block.id) {
+            continue;
+        }
+        block.instructions.retain(|instruction| {
+            let collection = match instruction.kind {
+                IrInstructionKind::ArrayLen(array) | IrInstructionKind::VecLen(array) => array,
+                _ => return true,
+            };
+            if collections.get(&collection).copied() != Some(identity) {
+                return true;
+            }
+            if let Some((result, _)) = instruction.result {
+                aliases.insert(result, hoisted);
+            }
+            false
+        });
+    }
+    for block in &mut ir.blocks {
+        for instruction in &mut block.instructions {
+            rewrite_instruction(&mut instruction.kind, &aliases);
+        }
+        rewrite_terminator(&mut block.terminator, &aliases);
+    }
+    for map in &mut ir.deopt_maps {
+        for (_, value) in &mut map.registers {
+            *value = resolve(*value, &aliases);
+        }
+    }
+    true
+}
+
+fn natural_loops(ir: &FunctionIr) -> Vec<NaturalLoop> {
+    let predecessors = predecessors(ir);
+    let dominators = dominators(ir, &predecessors);
+    let mut by_header = HashMap::<BlockId, HashSet<BlockId>>::new();
+    for (source, target, _) in edges(ir) {
+        if dominators
+            .get(&source)
+            .is_some_and(|blocks| blocks.contains(&target))
+        {
+            let blocks = by_header
+                .entry(target)
+                .or_insert_with(|| HashSet::from([target]));
+            blocks.insert(source);
+            let mut pending = vec![source];
+            while let Some(block) = pending.pop() {
+                for predecessor in predecessors.get(&block).into_iter().flatten() {
+                    if blocks.insert(*predecessor) && *predecessor != target {
+                        pending.push(*predecessor);
+                    }
+                }
+            }
+        }
+    }
+    by_header
+        .into_iter()
+        .filter_map(|(header, blocks)| {
+            let outside = predecessors
+                .get(&header)?
+                .iter()
+                .copied()
+                .filter(|block| !blocks.contains(block))
+                .collect::<HashSet<_>>();
+            (outside.len() == 1).then(|| NaturalLoop {
+                header,
+                blocks,
+                preheader: *outside.iter().next().expect("one preheader"),
+            })
+        })
+        .collect()
+}
+
+fn predecessors(ir: &FunctionIr) -> HashMap<BlockId, HashSet<BlockId>> {
+    let mut predecessors = ir
+        .blocks
+        .iter()
+        .map(|block| (block.id, HashSet::new()))
+        .collect::<HashMap<_, _>>();
+    for (source, target, _) in edges(ir) {
+        predecessors.entry(target).or_default().insert(source);
+    }
+    predecessors
+}
+
+fn dominators(
+    ir: &FunctionIr,
+    predecessors: &HashMap<BlockId, HashSet<BlockId>>,
+) -> HashMap<BlockId, HashSet<BlockId>> {
+    let all = ir
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<HashSet<_>>();
+    let mut dominators = ir
+        .blocks
+        .iter()
+        .map(|block| {
+            let blocks = if block.id == ir.entry {
+                HashSet::from([ir.entry])
+            } else {
+                all.clone()
+            };
+            (block.id, blocks)
+        })
+        .collect::<HashMap<_, _>>();
+    loop {
+        let mut changed = false;
+        for block in &ir.blocks {
+            if block.id == ir.entry {
+                continue;
+            }
+            let Some(incoming) = predecessors.get(&block.id) else {
+                continue;
+            };
+            let mut next = incoming
+                .iter()
+                .filter_map(|predecessor| dominators.get(predecessor).cloned())
+                .reduce(|left, right| left.intersection(&right).copied().collect())
+                .unwrap_or_default();
+            next.insert(block.id);
+            if dominators.get(&block.id) != Some(&next) {
+                dominators.insert(block.id, next);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    dominators
+}
+
+fn edges(ir: &FunctionIr) -> Vec<(BlockId, BlockId, Vec<ValueId>)> {
+    let mut edges = Vec::new();
+    for block in &ir.blocks {
+        match &block.terminator {
+            IrTerminator::Jump { target, arguments } => {
+                edges.push((block.id, *target, arguments.clone()));
+            }
+            IrTerminator::Branch {
+                then_target,
+                then_arguments,
+                else_target,
+                else_arguments,
+                ..
+            } => {
+                edges.push((block.id, *then_target, then_arguments.clone()));
+                edges.push((block.id, *else_target, else_arguments.clone()));
+            }
+            IrTerminator::Return(_) => {}
+        }
+    }
+    edges
+}
+
+fn next_value_id(ir: &FunctionIr) -> Option<u32> {
+    ir.blocks
+        .iter()
+        .flat_map(|block| {
+            block.parameters.iter().map(|(value, _)| value.0).chain(
+                block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| instruction.result.map(|(value, _)| value.0)),
+            )
+        })
+        .max()
+        .map_or(Some(0), |value| value.checked_add(1))
+}
+
+fn uninitialized_edge_values(ir: &FunctionIr) -> HashSet<ValueId> {
+    let block_types = ir
+        .blocks
+        .iter()
+        .map(|block| {
+            (
+                block.id,
+                block
+                    .parameters
+                    .iter()
+                    .map(|(_, ty)| *ty)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut protected = HashSet::new();
+    let mut protect_edge = |target, arguments: &[ValueId]| {
+        if let Some(types) = block_types.get(&target) {
+            protected.extend(
+                arguments
+                    .iter()
+                    .copied()
+                    .zip(types)
+                    .filter_map(|(value, ty)| (*ty == IrType::Uninitialized).then_some(value)),
+            );
+        }
+    };
+    for block in &ir.blocks {
+        match &block.terminator {
+            IrTerminator::Jump { target, arguments } => protect_edge(*target, arguments),
+            IrTerminator::Branch {
+                then_target,
+                then_arguments,
+                else_target,
+                else_arguments,
+                ..
+            } => {
+                protect_edge(*then_target, then_arguments);
+                protect_edge(*else_target, else_arguments);
+            }
+            IrTerminator::Return(_) => {}
+        }
+    }
+    protected
 }
 
 pub(crate) fn specialize_integer_parameters(ir: &mut FunctionIr, profile: &[Option<i64>]) -> usize {
@@ -514,6 +841,176 @@ mod tests {
         assert_eq!(ir.blocks[0].instructions.len(), 1);
         assert_eq!(ir.blocks[0].terminator, IrTerminator::Return(ValueId(2)));
         assert_eq!(ir.deopt_maps[0].registers, vec![(0, ValueId(2))]);
+    }
+
+    #[test]
+    fn preserves_distinct_values_feeding_uninitialized_block_parameters() {
+        let mut ir = FunctionIr {
+            name: "uninitialized_edges".to_string(),
+            entry: BlockId(0),
+            parameter_types: Vec::new(),
+            return_type: IrType::I64,
+            blocks: vec![
+                IrBlock {
+                    id: BlockId(0),
+                    parameters: Vec::new(),
+                    instructions: vec![
+                        instruction(0, IrInstructionKind::Iconst(0)),
+                        instruction(1, IrInstructionKind::Iconst(0)),
+                        instruction(2, IrInstructionKind::Iconst(7)),
+                        instruction(3, IrInstructionKind::Iconst(7)),
+                    ],
+                    terminator: IrTerminator::Jump {
+                        target: BlockId(1),
+                        arguments: vec![ValueId(0), ValueId(1), ValueId(3)],
+                    },
+                },
+                IrBlock {
+                    id: BlockId(1),
+                    parameters: vec![
+                        (ValueId(4), IrType::Uninitialized),
+                        (ValueId(5), IrType::Uninitialized),
+                        (ValueId(6), IrType::I64),
+                    ],
+                    instructions: Vec::new(),
+                    terminator: IrTerminator::Return(ValueId(6)),
+                },
+            ],
+            deopt_maps: Vec::new(),
+        };
+
+        let report = optimize_integer_ir(&mut ir);
+
+        assert_eq!(ir.verify(), Ok(()));
+        assert_eq!(report.redundant_instructions, 1);
+        assert_eq!(ir.blocks[0].instructions.len(), 3);
+        assert_eq!(
+            ir.blocks[0].terminator,
+            IrTerminator::Jump {
+                target: BlockId(1),
+                arguments: vec![ValueId(0), ValueId(1), ValueId(2)],
+            }
+        );
+    }
+
+    #[test]
+    fn hoists_collection_lengths_through_verified_loop_parameters() {
+        let source = SourcePosition {
+            bytecode_ip: 1,
+            source_line: 1,
+        };
+        let mut ir = FunctionIr {
+            name: "collection_loop".to_string(),
+            entry: BlockId(0),
+            parameter_types: vec![IrType::I64Array],
+            return_type: IrType::I64,
+            blocks: vec![
+                IrBlock {
+                    id: BlockId(0),
+                    parameters: vec![(ValueId(0), IrType::I64Array)],
+                    instructions: vec![instruction(1, IrInstructionKind::Iconst(0))],
+                    terminator: IrTerminator::Jump {
+                        target: BlockId(1),
+                        arguments: vec![ValueId(0), ValueId(1)],
+                    },
+                },
+                IrBlock {
+                    id: BlockId(1),
+                    parameters: vec![(ValueId(2), IrType::I64Array), (ValueId(3), IrType::I64)],
+                    instructions: vec![
+                        instruction(4, IrInstructionKind::ArrayLen(ValueId(2))),
+                        IrInstruction {
+                            result: Some((ValueId(5), IrType::Bool)),
+                            kind: IrInstructionKind::Icmp {
+                                predicate: IntPredicate::SignedLessThan,
+                                left: ValueId(3),
+                                right: ValueId(4),
+                            },
+                            source,
+                        },
+                    ],
+                    terminator: IrTerminator::Branch {
+                        condition: ValueId(5),
+                        then_target: BlockId(2),
+                        then_arguments: vec![ValueId(2), ValueId(3)],
+                        else_target: BlockId(3),
+                        else_arguments: vec![ValueId(3)],
+                    },
+                },
+                IrBlock {
+                    id: BlockId(2),
+                    parameters: vec![(ValueId(6), IrType::I64Array), (ValueId(7), IrType::I64)],
+                    instructions: vec![
+                        instruction(8, IrInstructionKind::ArrayLen(ValueId(6))),
+                        IrInstruction {
+                            result: None,
+                            kind: IrInstructionKind::BoundsCheck {
+                                index: ValueId(7),
+                                length: ValueId(8),
+                                deopt: 10,
+                            },
+                            source,
+                        },
+                        instruction(
+                            9,
+                            IrInstructionKind::ArrayLoadIUnchecked {
+                                array: ValueId(6),
+                                index: ValueId(7),
+                            },
+                        ),
+                        instruction(10, IrInstructionKind::Iconst(1)),
+                        instruction(11, IrInstructionKind::Iadd(ValueId(7), ValueId(9))),
+                    ],
+                    terminator: IrTerminator::Jump {
+                        target: BlockId(1),
+                        arguments: vec![ValueId(6), ValueId(11)],
+                    },
+                },
+                IrBlock {
+                    id: BlockId(3),
+                    parameters: vec![(ValueId(12), IrType::I64)],
+                    instructions: Vec::new(),
+                    terminator: IrTerminator::Return(ValueId(12)),
+                },
+            ],
+            deopt_maps: vec![DeoptMap {
+                bytecode_ip: 10,
+                registers: vec![(0, ValueId(6)), (1, ValueId(7))],
+            }],
+        };
+        assert_eq!(ir.verify(), Ok(()));
+
+        let report = optimize_integer_ir(&mut ir);
+
+        assert_eq!(report.collection_lengths_hoisted, 1);
+        assert_eq!(ir.verify(), Ok(()));
+        assert_eq!(
+            ir.blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter(|instruction| matches!(instruction.kind, IrInstructionKind::ArrayLen(_)))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            ir.blocks[0]
+                .instructions
+                .last()
+                .map(|instruction| &instruction.kind),
+            Some(IrInstructionKind::ArrayLen(ValueId(0)))
+        ));
+
+        let mut forged = ir.clone();
+        let IrInstructionKind::BoundsCheck { length, .. } =
+            &mut forged.blocks[2].instructions[0].kind
+        else {
+            panic!("loop body must retain its bounds check");
+        };
+        *length = ValueId(7);
+        assert_eq!(
+            forged.verify(),
+            Err(super::super::ir::IrError::MissingBoundsProof)
+        );
     }
 
     #[test]

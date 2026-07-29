@@ -491,7 +491,7 @@ sum(values)
 }
 
 #[test]
-fn tiered_collection_calls_reuse_baseline_code_until_collection_optimization() {
+fn tiered_collection_calls_compile_optimized_code() {
     let runtime = Runtime::with_jit_mode(JitMode::Tiered);
     let options = CompileOptions {
         optimization_level: OptimizationLevel::None,

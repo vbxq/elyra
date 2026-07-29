@@ -416,22 +416,6 @@ impl JitEngine {
         Ok(entry)
     }
 
-    pub(crate) fn cache_alias(
-        &self,
-        key: JitKey,
-        entry: Arc<CompiledFunction>,
-    ) -> Result<(), JitError> {
-        let mut state = self.state.lock().map_err(|_| JitError::Poisoned)?;
-        state.entries.insert(key.clone(), entry);
-        touch_lru(&mut state.lru, key);
-        while state.entries.len() > state.max_entries {
-            if let Some(evicted) = state.lru.pop_front() {
-                state.entries.remove(&evicted);
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn cache_len(&self) -> Result<usize, JitError> {
         self.state
             .lock()

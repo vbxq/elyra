@@ -6,7 +6,7 @@ pub(crate) struct BlockId(pub(crate) u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ValueId(pub(crate) u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum IrType {
     Uninitialized,
     I64,
@@ -175,31 +175,34 @@ impl FunctionIr {
                 require_value(&value_types, value)?;
             }
         }
+        let definitions = self
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block
+                    .parameters
+                    .iter()
+                    .map(|(value, _)| (*value, block.id))
+                    .chain(block.instructions.iter().filter_map(|instruction| {
+                        instruction.result.map(|(value, _)| (value, block.id))
+                    }))
+            })
+            .collect::<HashMap<_, _>>();
+        let dominators = block_dominators(self);
         for block in &self.blocks {
-            let mut available = block
-                .parameters
+            let mut available = definitions
                 .iter()
-                .map(|(value, _)| *value)
+                .filter_map(|(value, definition)| {
+                    (*definition != block.id
+                        && dominators
+                            .get(&block.id)
+                            .is_some_and(|blocks| blocks.contains(definition)))
+                    .then_some(*value)
+                })
+                .chain(block.parameters.iter().map(|(value, _)| *value))
                 .collect::<HashSet<_>>();
-            let mut lengths = HashMap::new();
-            let mut bounds = HashSet::new();
             for instruction in &block.instructions {
                 verify_instruction(instruction, &value_types, &available, &deopt_by_id)?;
-                verify_collection_proof(instruction, &lengths, &bounds)?;
-                if let Some((result, _)) = instruction.result {
-                    match instruction.kind {
-                        IrInstructionKind::ArrayLen(array) => {
-                            lengths.insert(result, (array, IrType::I64Array));
-                        }
-                        IrInstructionKind::VecLen(vector) => {
-                            lengths.insert(result, (vector, IrType::I64Vec));
-                        }
-                        _ => {}
-                    }
-                }
-                if let IrInstructionKind::BoundsCheck { index, length, .. } = instruction.kind {
-                    bounds.insert((index, length));
-                }
                 if let Some((result, _)) = instruction.result {
                     available.insert(result);
                 }
@@ -212,8 +215,261 @@ impl FunctionIr {
                 self.return_type,
             )?;
         }
+        let collections = collection_identities(self);
+        let lengths = length_identities(self, &value_types, &collections);
+        for block in &self.blocks {
+            let mut bounds = HashSet::new();
+            for instruction in &block.instructions {
+                verify_collection_proof(instruction, &collections, &lengths, &bounds)?;
+                if let IrInstructionKind::BoundsCheck { index, length, .. } = instruction.kind {
+                    bounds.insert((index, length));
+                }
+            }
+        }
         Ok(())
     }
+}
+
+fn block_dominators(ir: &FunctionIr) -> HashMap<BlockId, HashSet<BlockId>> {
+    let mut predecessors = ir
+        .blocks
+        .iter()
+        .map(|block| (block.id, HashSet::new()))
+        .collect::<HashMap<_, _>>();
+    for block in &ir.blocks {
+        match &block.terminator {
+            IrTerminator::Jump { target, .. } => {
+                predecessors.entry(*target).or_default().insert(block.id);
+            }
+            IrTerminator::Branch {
+                then_target,
+                else_target,
+                ..
+            } => {
+                predecessors
+                    .entry(*then_target)
+                    .or_default()
+                    .insert(block.id);
+                predecessors
+                    .entry(*else_target)
+                    .or_default()
+                    .insert(block.id);
+            }
+            IrTerminator::Return(_) => {}
+        }
+    }
+    let all = ir
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<HashSet<_>>();
+    let mut dominators = ir
+        .blocks
+        .iter()
+        .map(|block| {
+            let blocks = if block.id == ir.entry {
+                HashSet::from([ir.entry])
+            } else {
+                all.clone()
+            };
+            (block.id, blocks)
+        })
+        .collect::<HashMap<_, _>>();
+    loop {
+        let mut changed = false;
+        for block in &ir.blocks {
+            if block.id == ir.entry {
+                continue;
+            }
+            let mut next = predecessors
+                .get(&block.id)
+                .into_iter()
+                .flatten()
+                .filter_map(|predecessor| dominators.get(predecessor).cloned())
+                .reduce(|left, right| left.intersection(&right).copied().collect())
+                .unwrap_or_default();
+            next.insert(block.id);
+            if dominators.get(&block.id) != Some(&next) {
+                dominators.insert(block.id, next);
+                changed = true;
+            }
+        }
+        if !changed {
+            return dominators;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct CollectionIdentity {
+    pub(super) origin: ValueId,
+    pub(super) ty: IrType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProofState {
+    Unknown,
+    Known(CollectionIdentity),
+    Invalid,
+}
+
+pub(super) fn collection_identities(ir: &FunctionIr) -> HashMap<ValueId, CollectionIdentity> {
+    let incoming = incoming_arguments(ir);
+    let mut states = HashMap::new();
+    for block in &ir.blocks {
+        for &(value, ty) in &block.parameters {
+            if !matches!(ty, IrType::I64Array | IrType::I64Vec) {
+                continue;
+            }
+            let state = if block.id == ir.entry {
+                ProofState::Known(CollectionIdentity { origin: value, ty })
+            } else {
+                ProofState::Unknown
+            };
+            states.insert(value, state);
+        }
+    }
+    propagate_parameter_proofs(ir, &incoming, &mut states);
+    states
+        .into_iter()
+        .filter_map(|(value, state)| match state {
+            ProofState::Known(identity) => Some((value, identity)),
+            ProofState::Unknown | ProofState::Invalid => None,
+        })
+        .collect()
+}
+
+fn length_identities(
+    ir: &FunctionIr,
+    value_types: &HashMap<ValueId, IrType>,
+    collections: &HashMap<ValueId, CollectionIdentity>,
+) -> HashMap<ValueId, CollectionIdentity> {
+    let incoming = incoming_arguments(ir);
+    let mut states = HashMap::new();
+    for (&value, &ty) in value_types {
+        if ty == IrType::I64 {
+            states.insert(value, ProofState::Invalid);
+        }
+    }
+    for block in &ir.blocks {
+        if block.id != ir.entry {
+            for &(value, ty) in &block.parameters {
+                if ty == IrType::I64 {
+                    states.insert(value, ProofState::Unknown);
+                }
+            }
+        }
+        for instruction in &block.instructions {
+            let Some((result, IrType::I64)) = instruction.result else {
+                continue;
+            };
+            let collection = match instruction.kind {
+                IrInstructionKind::ArrayLen(array) => collections.get(&array).copied(),
+                IrInstructionKind::VecLen(vector) => collections.get(&vector).copied(),
+                _ => None,
+            };
+            if let Some(collection) = collection {
+                states.insert(result, ProofState::Known(collection));
+            }
+        }
+    }
+    propagate_parameter_proofs(ir, &incoming, &mut states);
+    states
+        .into_iter()
+        .filter_map(|(value, state)| match state {
+            ProofState::Known(identity) => Some((value, identity)),
+            ProofState::Unknown | ProofState::Invalid => None,
+        })
+        .collect()
+}
+
+fn propagate_parameter_proofs(
+    ir: &FunctionIr,
+    incoming: &HashMap<BlockId, Vec<Vec<ValueId>>>,
+    states: &mut HashMap<ValueId, ProofState>,
+) {
+    loop {
+        let mut changed = false;
+        for block in &ir.blocks {
+            if block.id == ir.entry {
+                continue;
+            }
+            let Some(edges) = incoming.get(&block.id) else {
+                continue;
+            };
+            for (index, &(parameter, _)) in block.parameters.iter().enumerate() {
+                if !states.contains_key(&parameter) {
+                    continue;
+                }
+                let next = merge_proofs(
+                    edges
+                        .iter()
+                        .filter_map(|arguments| arguments.get(index))
+                        .map(|argument| {
+                            states.get(argument).copied().unwrap_or(ProofState::Invalid)
+                        }),
+                );
+                if states.get(&parameter).copied() != Some(next) {
+                    states.insert(parameter, next);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn merge_proofs(states: impl Iterator<Item = ProofState>) -> ProofState {
+    let mut known = None;
+    let mut saw_edge = false;
+    for state in states {
+        saw_edge = true;
+        match state {
+            ProofState::Unknown => {}
+            ProofState::Invalid => return ProofState::Invalid,
+            ProofState::Known(identity) => match known {
+                Some(existing) if existing != identity => return ProofState::Invalid,
+                Some(_) => {}
+                None => known = Some(identity),
+            },
+        }
+    }
+    if !saw_edge {
+        ProofState::Invalid
+    } else {
+        known.map_or(ProofState::Unknown, ProofState::Known)
+    }
+}
+
+fn incoming_arguments(ir: &FunctionIr) -> HashMap<BlockId, Vec<Vec<ValueId>>> {
+    let mut incoming = HashMap::<BlockId, Vec<Vec<ValueId>>>::new();
+    for block in &ir.blocks {
+        match &block.terminator {
+            IrTerminator::Jump { target, arguments } => {
+                incoming.entry(*target).or_default().push(arguments.clone());
+            }
+            IrTerminator::Branch {
+                then_target,
+                then_arguments,
+                else_target,
+                else_arguments,
+                ..
+            } => {
+                incoming
+                    .entry(*then_target)
+                    .or_default()
+                    .push(then_arguments.clone());
+                incoming
+                    .entry(*else_target)
+                    .or_default()
+                    .push(else_arguments.clone());
+            }
+            IrTerminator::Return(_) => {}
+        }
+    }
+    incoming
 }
 
 fn verify_instruction(
@@ -319,7 +575,8 @@ fn verify_instruction(
 
 fn verify_collection_proof(
     instruction: &IrInstruction,
-    lengths: &HashMap<ValueId, (ValueId, IrType)>,
+    collections: &HashMap<ValueId, CollectionIdentity>,
+    lengths: &HashMap<ValueId, CollectionIdentity>,
     bounds: &HashSet<(ValueId, ValueId)>,
 ) -> Result<(), IrError> {
     let (collection, index, ty) = match instruction.kind {
@@ -327,8 +584,9 @@ fn verify_collection_proof(
         IrInstructionKind::VecLoadIUnchecked { vector, index } => (vector, index, IrType::I64Vec),
         _ => return Ok(()),
     };
-    let proven = lengths.iter().any(|(length, &(source, source_type))| {
-        source == collection && source_type == ty && bounds.contains(&(index, *length))
+    let collection = collections.get(&collection).copied();
+    let proven = lengths.iter().any(|(length, identity)| {
+        collection == Some(*identity) && identity.ty == ty && bounds.contains(&(index, *length))
     });
     if proven {
         Ok(())
