@@ -3,9 +3,12 @@ use super::ir::{
     BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
     IrTerminator, IrType, SourcePosition, ValueId,
 };
-use super::translate::translate_integer_function;
+use super::translate::{translate_integer_function, translate_optimized_integer_function};
 use aelys_bytecode::{Function, OpCode};
-use aelys_runtime::JitArgument;
+use aelys_driver::pipeline::compilation_pipeline_with_opt;
+use aelys_opt::OptimizationLevel;
+use aelys_runtime::{JitArgument, JitCallResult, JitExecutor, JitFunctionKey, Value};
+use aelys_syntax::Source;
 
 fn position(ip: u32) -> SourcePosition {
     SourcePosition {
@@ -89,6 +92,138 @@ fn optimized_tier_has_a_distinct_cache_entry() {
     assert_eq!(optimized.execute_i64(&[]).unwrap(), 42);
     assert!(!std::sync::Arc::ptr_eq(&baseline, &optimized));
     assert_eq!(engine.cache_len().unwrap(), 2);
+}
+
+#[test]
+fn optimized_translation_inlines_bounded_structural_leaf_calls() {
+    let mut leaf = Function::new(Some("increment".to_string()), 1);
+    for _ in 0..12 {
+        leaf.emit_a(OpCode::AddI, 0, 0, 1, 1);
+    }
+    leaf.emit_a(OpCode::Return, 0, 0, 0, 1);
+    leaf.finalize_bytecode();
+
+    let mut caller = Function::new(Some("caller".to_string()), 1);
+    let constant = caller.add_constant_function(leaf);
+    caller.emit_a(OpCode::Move, 2, 0, 0, 1);
+    caller.emit_b(
+        OpCode::LoadK,
+        3,
+        i16::try_from(constant).expect("test constant index"),
+        1,
+    );
+    caller.emit_a(OpCode::Call, 1, 3, 1, 1);
+    caller.emit_a(OpCode::Return, 1, 0, 0, 1);
+    caller.finalize_bytecode();
+
+    assert!(translate_integer_function(&caller).is_none());
+    let mut ir = translate_optimized_integer_function(&caller)
+        .expect("optimized translation must inline the immutable leaf");
+    super::optimize::optimize_integer_ir(&mut ir);
+    assert_eq!(ir.verify(), Ok(()));
+
+    let engine = JitEngine::new(2).unwrap();
+    let compiled = engine
+        .compile(&JitKey::new(9, 0, JitTier::Optimized), &ir)
+        .unwrap();
+    assert_eq!(compiled.execute_i64(&[41]).unwrap(), 53);
+
+    let provider = super::provider::JitProvider::new(2, 1, Some(1)).unwrap();
+    let key = JitFunctionKey::root(9);
+    assert_eq!(
+        provider.try_execute(&key, &caller, &[JitArgument::Integer(41)], 1),
+        JitCallResult::Returned(Value::int(53))
+    );
+    assert_eq!(
+        provider.try_execute(&key, &caller, &[JitArgument::Integer(Value::INT_MAX)], 2),
+        JitCallResult::Deoptimized {
+            bytecode_ip: 0,
+            registers: vec![(
+                0,
+                aelys_runtime::JitDeoptValue::Value(Value::int(Value::INT_MAX))
+            )],
+        }
+    );
+    let overflow_provider = super::provider::JitProvider::new(2, 1, Some(1)).unwrap();
+    assert_eq!(
+        overflow_provider.try_execute(
+            &JitFunctionKey::root(10),
+            &caller,
+            &[JitArgument::Integer(Value::INT_MAX)],
+            1
+        ),
+        JitCallResult::Unsupported
+    );
+}
+
+#[test]
+fn optimized_translation_inlines_compiler_emitted_nested_leaf_calls() {
+    let mut pipeline = compilation_pipeline_with_opt(OptimizationLevel::None);
+    let root = pipeline
+        .compile(Source::new(
+            "jit_inline",
+            r#"
+fn outer(value: int) -> int {
+    fn advance(inner: int) -> int {
+        let mut result = inner
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        return result
+    }
+    return advance(value) + 1
+}
+outer(20)
+"#,
+        ))
+        .unwrap();
+    let outer = root
+        .nested_functions
+        .iter()
+        .find(|function| function.name.as_deref() == Some("outer"))
+        .expect("compiler must emit outer as a nested function");
+    let mut ir = translate_optimized_integer_function(outer)
+        .expect("compiler-emitted immutable leaf must inline");
+    super::optimize::optimize_integer_ir(&mut ir);
+    assert_eq!(ir.verify(), Ok(()));
+    let engine = JitEngine::new(2).unwrap();
+    let compiled = engine
+        .compile(&JitKey::new(10, 0, JitTier::Optimized), &ir)
+        .unwrap();
+    assert_eq!(compiled.execute_i64(&[20]).unwrap(), 33);
+}
+
+#[test]
+fn optimized_translation_keeps_tiny_nested_leaf_calls_in_the_interpreter() {
+    let mut pipeline = compilation_pipeline_with_opt(OptimizationLevel::None);
+    let root = pipeline
+        .compile(Source::new(
+            "jit_inline_cost",
+            r#"
+fn outer(value: int) -> int {
+    fn increment(inner: int) -> int { return inner + 1 }
+    return increment(value)
+}
+outer(41)
+"#,
+        ))
+        .unwrap();
+    let outer = root
+        .nested_functions
+        .iter()
+        .find(|function| function.name.as_deref() == Some("outer"))
+        .expect("compiler must emit outer as a nested function");
+
+    assert!(translate_optimized_integer_function(outer).is_none());
 }
 
 #[test]

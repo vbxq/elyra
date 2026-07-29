@@ -520,3 +520,54 @@ result
     assert_eq!(runtime.jit_cache_entries(), 2);
     assert_eq!(runtime.jit_deoptimizations(), 0);
 }
+
+#[test]
+fn tiered_jit_inlines_hot_immutable_nested_leaf_calls() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let options = CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let module = runtime
+        .compile(
+            r#"
+fn outer(value: int) -> int {
+    fn advance(inner: int) -> int {
+        let mut result = inner
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        return result
+    }
+    return advance(value) + 1
+}
+outer(20)
+"#,
+            options,
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    for _ in 0..9_999 {
+        assert_eq!(
+            isolate.execute(&module, RunOptions::default()).unwrap(),
+            ExecutionOutcome::Returned(Value::int(33))
+        );
+    }
+    assert_eq!(runtime.jit_cache_entries(), 0);
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(33))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_deoptimizations(), 0);
+}

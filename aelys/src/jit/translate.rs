@@ -2,7 +2,7 @@ use super::ir::{
     BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
     IrTerminator, IrType, SourcePosition, ValueId,
 };
-use aelys_bytecode::{Function, OpCode};
+use aelys_bytecode::{Constant, Function, OpCode};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
 #[derive(Clone, Copy)]
@@ -17,6 +17,14 @@ struct DecodedInstruction {
 }
 
 pub(crate) fn translate_integer_function(function: &Function) -> Option<FunctionIr> {
+    translate_function(function, false)
+}
+
+pub(crate) fn translate_optimized_integer_function(function: &Function) -> Option<FunctionIr> {
+    translate_function(function, true)
+}
+
+fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<FunctionIr> {
     let register_count = usize::try_from(function.num_registers).ok()?;
     if register_count < usize::from(function.arity) || register_count > usize::from(u16::MAX) + 1 {
         return None;
@@ -26,6 +34,7 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
         infer_parameter_types(usize::from(function.arity), register_count, &decoded)?;
     let (leaders, instruction_by_ip) = leaders(function, &decoded)?;
     let block_types = infer_block_types(
+        function,
         register_count,
         &parameter_types,
         &leaders,
@@ -102,15 +111,59 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
             registers.push(value);
         }
         let mut instructions = Vec::new();
+        let mut nested_functions = vec![None; register_count];
         let mut terminator = None;
         let mut cursor = leader;
         while cursor < end {
             let instruction = *decoded.get(*instruction_by_ip.get(&cursor)?)?;
             let source = position(function, instruction.ip);
+            if matches!(
+                instruction.opcode,
+                OpCode::LoadI
+                    | OpCode::LoadBool
+                    | OpCode::LoadK
+                    | OpCode::ArrayLen
+                    | OpCode::VecLen
+                    | OpCode::ArrayLoadI
+                    | OpCode::VecLoadI
+                    | OpCode::AddI
+                    | OpCode::SubI
+                    | OpCode::Add
+                    | OpCode::Sub
+                    | OpCode::Mul
+                    | OpCode::AddII
+                    | OpCode::SubII
+                    | OpCode::MulII
+                    | OpCode::Lt
+                    | OpCode::Le
+                    | OpCode::Gt
+                    | OpCode::Ge
+                    | OpCode::Eq
+                    | OpCode::Ne
+                    | OpCode::LtII
+                    | OpCode::LeII
+                    | OpCode::GtII
+                    | OpCode::GeII
+                    | OpCode::EqII
+                    | OpCode::NeII
+            ) {
+                *nested_functions.get_mut(instruction.a)? = None;
+            }
             match instruction.opcode {
                 OpCode::Move => {
                     let value = *registers.get(instruction.b)?;
                     *registers.get_mut(instruction.a)? = value;
+                    *nested_functions.get_mut(instruction.a)? =
+                        *nested_functions.get(instruction.b)?;
+                }
+                OpCode::LoadK if inline_leaf_calls => {
+                    let index = constant_index(function, instruction)?;
+                    let Constant::NestedFunction(index) = function.constants.get(index)? else {
+                        return None;
+                    };
+                    let index = usize::try_from(*index).ok()?;
+                    function.nested_functions.get(index)?;
+                    *nested_functions.get_mut(instruction.a)? = Some(index);
                 }
                 OpCode::LoadI => {
                     let word = function.bytecode.as_slice()[instruction.ip];
@@ -321,6 +374,25 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
                     terminator = Some(IrTerminator::Return(*registers.get(instruction.a)?));
                     break;
                 }
+                OpCode::Call | OpCode::CallCached if inline_leaf_calls => {
+                    let nested = (*nested_functions.get(instruction.b)?)?;
+                    let callee = function.nested_functions.get(nested)?;
+                    if usize::from(callee.arity) != instruction.c {
+                        return None;
+                    }
+                    let argument_start = instruction.a.checked_add(1)?;
+                    let argument_end = argument_start.checked_add(instruction.c)?;
+                    let arguments = registers.get(argument_start..argument_end)?;
+                    let result = inline_integer_leaf(
+                        callee,
+                        arguments,
+                        &mut instructions,
+                        &mut next_value,
+                        source,
+                    )?;
+                    *registers.get_mut(instruction.a)? = result;
+                    *nested_functions.get_mut(instruction.a)? = None;
+                }
                 _ => return None,
             }
             cursor = instruction.next;
@@ -352,6 +424,136 @@ pub(crate) fn translate_integer_function(function: &Function) -> Option<Function
     };
     ir.verify().ok()?;
     Some(ir)
+}
+
+fn inline_integer_leaf(
+    function: &Function,
+    arguments: &[ValueId],
+    instructions: &mut Vec<IrInstruction>,
+    next_value: &mut u32,
+    source: SourcePosition,
+) -> Option<ValueId> {
+    const INLINE_INSTRUCTION_BUDGET: usize = 64;
+    const INLINE_MINIMUM_INSTRUCTIONS: usize = 12;
+    const INLINE_REGISTER_BUDGET: usize = 64;
+
+    let register_count = usize::try_from(function.num_registers).ok()?;
+    if arguments.len() != usize::from(function.arity)
+        || register_count < arguments.len()
+        || register_count > INLINE_REGISTER_BUDGET
+    {
+        return None;
+    }
+    let decoded = decode(function)?;
+    if decoded.len() < INLINE_MINIMUM_INSTRUCTIONS || decoded.len() > INLINE_INSTRUCTION_BUDGET {
+        return None;
+    }
+    let mut registers = arguments.to_vec();
+    for _ in arguments.len()..register_count {
+        let value = next_id(next_value)?;
+        instructions.push(IrInstruction {
+            result: Some((value, IrType::I64)),
+            kind: IrInstructionKind::Iconst(0),
+            source,
+        });
+        registers.push(value);
+    }
+    for instruction in decoded {
+        match instruction.opcode {
+            OpCode::Move => {
+                *registers.get_mut(instruction.a)? = *registers.get(instruction.b)?;
+            }
+            OpCode::LoadI => {
+                let word = function.bytecode.as_slice()[instruction.ip];
+                let immediate = u16::try_from(word & 0xffff).ok()?;
+                emit_value(
+                    &mut registers,
+                    instructions,
+                    next_value,
+                    instruction.a,
+                    IrType::I64,
+                    IrInstructionKind::Iconst(i64::from(i16::from_ne_bytes(
+                        immediate.to_ne_bytes(),
+                    ))),
+                    source,
+                )?;
+            }
+            OpCode::LoadK => {
+                let Constant::Int(value) = function
+                    .constants
+                    .get(constant_index(function, instruction)?)?
+                else {
+                    return None;
+                };
+                emit_value(
+                    &mut registers,
+                    instructions,
+                    next_value,
+                    instruction.a,
+                    IrType::I64,
+                    IrInstructionKind::Iconst(*value),
+                    source,
+                )?;
+            }
+            OpCode::AddI | OpCode::SubI => {
+                let immediate = next_id(next_value)?;
+                instructions.push(IrInstruction {
+                    result: Some((immediate, IrType::I64)),
+                    kind: IrInstructionKind::Iconst(i64::try_from(instruction.c).ok()?),
+                    source,
+                });
+                let left = *registers.get(instruction.b)?;
+                let kind = if instruction.opcode == OpCode::AddI {
+                    IrInstructionKind::Iadd(left, immediate)
+                } else {
+                    IrInstructionKind::Isub(left, immediate)
+                };
+                emit_value(
+                    &mut registers,
+                    instructions,
+                    next_value,
+                    instruction.a,
+                    IrType::I64,
+                    kind,
+                    source,
+                )?;
+            }
+            OpCode::Add
+            | OpCode::Sub
+            | OpCode::Mul
+            | OpCode::AddII
+            | OpCode::SubII
+            | OpCode::MulII => {
+                let left = *registers.get(instruction.b)?;
+                let right = *registers.get(instruction.c)?;
+                let kind = match instruction.opcode {
+                    OpCode::Add | OpCode::AddII => IrInstructionKind::Iadd(left, right),
+                    OpCode::Sub | OpCode::SubII => IrInstructionKind::Isub(left, right),
+                    OpCode::Mul | OpCode::MulII => IrInstructionKind::Imul(left, right),
+                    _ => return None,
+                };
+                emit_value(
+                    &mut registers,
+                    instructions,
+                    next_value,
+                    instruction.a,
+                    IrType::I64,
+                    kind,
+                    source,
+                )?;
+            }
+            OpCode::Return => {
+                return registers.get(instruction.a).copied();
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn constant_index(function: &Function, instruction: DecodedInstruction) -> Option<usize> {
+    let word = *function.bytecode.as_slice().get(instruction.ip)?;
+    usize::try_from(word & 0xffff).ok()
 }
 
 fn decode(function: &Function) -> Option<Vec<DecodedInstruction>> {
@@ -423,6 +625,7 @@ fn leaders(
 }
 
 fn infer_block_types(
+    function: &Function,
     register_count: usize,
     parameter_types: &[IrType],
     leaders: &[usize],
@@ -443,7 +646,7 @@ fn infer_block_types(
         let mut cursor = leader;
         let successors = loop {
             let instruction = *decoded.get(*instruction_by_ip.get(&cursor)?)?;
-            transfer_types(instruction, &mut types)?;
+            transfer_types(function, instruction, &mut types)?;
             if let Some(successors) = successors(instruction, end) {
                 break successors;
             }
@@ -488,7 +691,11 @@ fn merge_types(existing: &mut [Option<IrType>], incoming: &[Option<IrType>]) -> 
     Some(changed)
 }
 
-fn transfer_types(instruction: DecodedInstruction, registers: &mut [Option<IrType>]) -> Option<()> {
+fn transfer_types(
+    function: &Function,
+    instruction: DecodedInstruction,
+    registers: &mut [Option<IrType>],
+) -> Option<()> {
     let destination = instruction.a;
     match instruction.opcode {
         OpCode::Move => {
@@ -497,6 +704,13 @@ fn transfer_types(instruction: DecodedInstruction, registers: &mut [Option<IrTyp
         }
         OpCode::LoadI => *registers.get_mut(destination)? = Some(IrType::I64),
         OpCode::LoadBool => *registers.get_mut(destination)? = Some(IrType::Bool),
+        OpCode::LoadK => {
+            let index = constant_index(function, instruction)?;
+            if !matches!(function.constants.get(index)?, Constant::NestedFunction(_)) {
+                return None;
+            }
+            *registers.get_mut(destination)? = None;
+        }
         OpCode::ArrayLen => {
             require_register_type(registers, instruction.b, IrType::I64Array)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
@@ -544,6 +758,9 @@ fn transfer_types(instruction: DecodedInstruction, registers: &mut [Option<IrTyp
             require_register_type(registers, instruction.a, IrType::Bool)?;
         }
         OpCode::Return => require_register_type(registers, instruction.a, IrType::I64)?,
+        OpCode::Call | OpCode::CallCached => {
+            *registers.get_mut(destination)? = Some(IrType::I64);
+        }
         OpCode::Jump | OpCode::JumpLong => {}
         _ => return None,
     }
@@ -700,6 +917,8 @@ fn infer_parameter_types(
                     | OpCode::ArrayLoadI
                     | OpCode::VecLen
                     | OpCode::VecLoadI
+                    | OpCode::Call
+                    | OpCode::CallCached
             ) {
                 origins[instruction.a] = None;
             }

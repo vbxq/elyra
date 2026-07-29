@@ -1,6 +1,6 @@
 use super::engine::{CompiledFunction, JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
 use super::optimize::{optimize_integer_ir, specialize_integer_parameters};
-use super::translate::translate_integer_function;
+use super::translate::{translate_integer_function, translate_optimized_integer_function};
 use aelys_bytecode::Function;
 use aelys_runtime::{
     JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutor, JitFunctionKey,
@@ -123,7 +123,11 @@ impl JitProvider {
         if calls < self.call_threshold {
             return None;
         }
-        let mut ir = translate_integer_function(function)?;
+        let mut ir = if tier == JitTier::Optimized {
+            translate_optimized_integer_function(function)?
+        } else {
+            translate_integer_function(function)?
+        };
         if tier == JitTier::Optimized {
             optimize_integer_ir(&mut ir);
             if let Some(profile) = profile {

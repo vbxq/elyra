@@ -65,7 +65,66 @@ fn runtime_benchmarks(criterion: &mut Criterion) {
 
     tier1_integer_loop_benchmarks(criterion);
     jit_collection_loop_benchmarks(criterion);
+    jit_profiled_leaf_inlining_benchmarks(criterion);
     tiered_cold_benchmarks(criterion);
+}
+
+fn jit_profiled_leaf_inlining_benchmarks(criterion: &mut Criterion) {
+    let source = r#"
+fn outer(value: int) -> int {
+    fn advance(inner: int) -> int {
+        let mut result = inner
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        result = result + 1
+        return result
+    }
+    return advance(value) + 1
+}
+outer(20)
+"#;
+    let options = || CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    };
+    let interpreter = Runtime::with_jit_mode(JitMode::Off);
+    let interpreter_module = interpreter.compile(source, options()).unwrap();
+    let mut interpreter_isolate = interpreter.new_isolate(IsolateConfig::default());
+
+    let tiered = Runtime::with_jit_mode(JitMode::Tiered);
+    let tiered_module = tiered.compile(source, options()).unwrap();
+    let mut tiered_isolate = tiered.new_isolate(IsolateConfig::default());
+    for _ in 0..10_000 {
+        tiered_isolate
+            .execute(&tiered_module, RunOptions::default())
+            .expect("profiled leaf inlining warmup must succeed");
+    }
+
+    let mut group = criterion.benchmark_group("jit_profiled_leaf_inlining");
+    group.bench_function("interpreter", |bencher| {
+        bencher.iter(|| {
+            interpreter_isolate
+                .execute(&interpreter_module, RunOptions::default())
+                .expect("profiled leaf interpreter benchmark must succeed")
+        });
+    });
+    group.bench_function("optimized_jit", |bencher| {
+        bencher.iter(|| {
+            tiered_isolate
+                .execute(&tiered_module, RunOptions::default())
+                .expect("profiled leaf JIT benchmark must succeed")
+        });
+    });
+    group.finish();
 }
 
 fn jit_collection_loop_benchmarks(criterion: &mut Criterion) {
