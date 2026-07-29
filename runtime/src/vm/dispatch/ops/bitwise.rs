@@ -4,6 +4,51 @@ use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
+pub(crate) fn execute_xor(
+    vm: &mut VM,
+    ip: usize,
+    base: usize,
+    current_frame_idx: usize,
+    registers: *mut Value,
+    registers_len: usize,
+    instr: u32,
+) -> Result<(), RuntimeError> {
+    let (dest, left, right) = decode_abc(instr);
+    let dest = base + usize::from(dest);
+    let left = base + usize::from(left);
+    let right = base + usize::from(right);
+    if dest >= registers_len || left >= registers_len || right >= registers_len {
+        vm.frames[current_frame_idx].ip = ip;
+        let reg = dest.max(left).max(right);
+        return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
+            reg,
+            max: registers_len,
+        }));
+    }
+    // SAFETY: all three register indices are checked against the stable register window above.
+    let (left, right) = unsafe { (*registers.add(left), *registers.add(right)) };
+    if let (Some(left), Some(right)) = (left.as_int(), right.as_int()) {
+        // SAFETY: the destination register index is checked against the stable window above.
+        unsafe {
+            *registers.add(dest) = Value::int_wrapping(left ^ right);
+        }
+        Ok(())
+    } else {
+        vm.frames[current_frame_idx].ip = ip;
+        Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+            operation: "^",
+            expected: "integer",
+            got: format!(
+                "{} and {}",
+                vm.value_type_name(left),
+                vm.value_type_name(right)
+            ),
+        }))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
 pub(crate) fn execute(
     vm: &mut VM,
     ip: usize,
@@ -146,24 +191,15 @@ pub(crate) fn execute(
 
         // BitXor (109) - Generic bitwise XOR
         109 => {
-            let (a, b, c) = decode_abc(instr);
-            let left = reg_get!(base + b as usize);
-            let right = reg_get!(base + c as usize);
-
-            if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                reg_set!(base + a as usize, Value::int_wrapping(l ^ r));
-            } else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-                    operation: "^",
-                    expected: "integer",
-                    got: format!(
-                        "{} and {}",
-                        vm.value_type_name(left),
-                        vm.value_type_name(right)
-                    ),
-                }));
-            }
+            execute_xor(
+                vm,
+                ip,
+                base,
+                current_frame_idx,
+                registers,
+                registers_len,
+                instr,
+            )?;
         }
 
         // BitNot (110) - Generic bitwise NOT

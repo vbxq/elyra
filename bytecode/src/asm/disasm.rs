@@ -695,6 +695,10 @@ impl<'a> DisasmContext<'a> {
                 let (_, dest, upval_idx, nargs) = decode_a(instr);
                 format!("TailCallUpval r{}, upval[{}], {}", dest, upval_idx, nargs)
             }
+            OpCode::AddGlobalI => {
+                let (_, dest, source, global) = decode_a(instr);
+                format!("AddGlobalI r{}, r{}, {}", dest, source, global)
+            }
 
             // Guarded integer arithmetic
             OpCode::AddIIG => {

@@ -36,6 +36,7 @@ pub struct VM {
     pub(crate) globals_by_index: Vec<Value>,
     pub(crate) global_generations: Vec<u64>,
     pub(crate) inline_call_cache: HashMap<InlineCacheKey, InlineCallCacheEntry>,
+    pub(crate) last_inline_call_cache: Option<(InlineCacheKey, InlineCallCacheEntry)>,
     pub(crate) source: Arc<Source>,
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,

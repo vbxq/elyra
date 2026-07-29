@@ -16,6 +16,9 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
             OpCode::Move => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None)
             }
+            OpCode::AddGlobalI => {
+                update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None)
+            }
             OpCode::LoadI
             | OpCode::LoadNull
             | OpCode::LoadBool

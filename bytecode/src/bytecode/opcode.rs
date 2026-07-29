@@ -40,6 +40,7 @@ pub enum OpCode {
     GetUpval,
     SetUpval,
     CloseUpvals,
+    AddGlobalI,
     ForLoopI = 40,
     ForLoopIInc,
     AddI,
@@ -217,8 +218,7 @@ impl From<OpCode> for u8 {
 
 impl OpCode {
     pub fn from_u8(byte: u8) -> Option<Self> {
-        if byte <= 38
-            || (40..=77).contains(&byte)
+        if byte <= 77
             || (79..=103).contains(&byte)
             || (105..=127).contains(&byte)
             || (130..=184).contains(&byte)

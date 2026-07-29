@@ -203,6 +203,20 @@ impl VM {
                     }
                 }
 
+                39 => {
+                    let (dest, source, global) = decode_abc(instr);
+                    let left = self
+                        .globals_by_index
+                        .get(usize::from(global))
+                        .copied()
+                        .unwrap_or_else(Value::null)
+                        .as_int_unchecked();
+                    let right = reg_ref!(base + usize::from(source)).as_int_unchecked();
+                    let result = int_value!(left.wrapping_add(right));
+                    self.set_global_by_index(usize::from(global), result);
+                    reg_set!(base + usize::from(dest), result);
+                }
+
                 // Arithmetic operations: Add(5), Sub(6), Mul(7), Div(8), Mod(9), Neg(10),
                 // AddI(42), SubI(43), AddII(49)-ModII(53), AddFF(54)-ModFF(58),
                 // AddIIG(82)-ModIIG(86), AddFFG(87)-ModFFG(91)
@@ -742,13 +756,12 @@ impl VM {
                                 };
                                 let global_generation =
                                     self.global_generations.get(idx).copied().unwrap_or(0);
-                                let cache_hit =
-                                    self.inline_call_cache.get(&cache_key).is_some_and(|entry| {
-                                        entry.global_index == idx
-                                            && entry.global_generation == global_generation
-                                            && entry.target == callee_ref
-                                            && self.heap.get(entry.target).is_some()
-                                    });
+                                let cache_hit = self.probe_inline_call_cache(
+                                    cache_key,
+                                    idx,
+                                    global_generation,
+                                    callee_ref,
+                                );
                                 if cache_hit {
                                     if REPORT {
                                         self.execution_stats.cache_hits =
@@ -759,14 +772,6 @@ impl VM {
                                         self.execution_stats.cache_misses =
                                             self.execution_stats.cache_misses.saturating_add(1);
                                     }
-                                    self.inline_call_cache.insert(
-                                        cache_key,
-                                        crate::vm::core::InlineCallCacheEntry {
-                                            global_index: idx,
-                                            global_generation,
-                                            target: callee_ref,
-                                        },
-                                    );
                                 }
 
                                 // Part 1: Determine call type
@@ -1125,7 +1130,18 @@ impl VM {
 
                 // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),
                 // BitNot(110), ShlII(111)-XorII(115), NotI(116), ShlIImm(117)-XorIImm(121)
-                105..=121 => {
+                109 => {
+                    super::ops::bitwise::execute_xor(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        instr,
+                    )?;
+                }
+                105..=108 | 110..=121 => {
                     super::ops::bitwise::execute(
                         self,
                         ip,

@@ -109,6 +109,9 @@ impl NativeHandle {
     }
 }
 
+// SAFETY: these descriptors contain immutable C ABI metadata. Safe Rust can only
+// mutate their public fields through exclusive access; dereferencing embedded raw
+// pointers remains confined to explicitly unsafe loader and hashing operations.
 unsafe impl Sync for AelysExport {}
 unsafe impl Sync for AelysRequiredModule {}
 unsafe impl Sync for AelysModuleDescriptor {}

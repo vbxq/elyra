@@ -719,6 +719,14 @@ impl<'a> AasmParser<'a> {
                 let nargs = self.parse_u8()?;
                 encode_a(OpCode::TailCallUpval, dest, upval_idx, nargs)
             }
+            "AddGlobalI" => {
+                let dest = self.parse_register()?;
+                self.skip_comma()?;
+                let source = self.parse_register()?;
+                self.skip_comma()?;
+                let global = self.parse_u8()?;
+                encode_a(OpCode::AddGlobalI, dest, source, global)
+            }
             "AddIIG" => self.parse_ternary_reg(OpCode::AddIIG)?,
             "SubIIG" => self.parse_ternary_reg(OpCode::SubIIG)?,
             "MulIIG" => self.parse_ternary_reg(OpCode::MulIIG)?,

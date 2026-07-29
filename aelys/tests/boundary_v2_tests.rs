@@ -223,9 +223,38 @@ fn array_and_vec_literals_with_256_elements_execute_with_wide_counts() {
 
 #[test]
 fn invalid_opcode_gap_is_rejected_without_constructing_an_enum() {
-    for opcode in [39, 128, 129] {
+    for opcode in [78, 104, 128, 129] {
         assert_eq!(OpCode::from_u8(opcode), None);
     }
+}
+
+#[test]
+fn compact_global_integer_add_roundtrips_and_executes() {
+    let runtime = Runtime::new();
+    let module = runtime
+        .compile(
+            "let mut total = 0; for value in 0..10 { total += value } total",
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let function = deserialize(module.avbc()).unwrap();
+    assert!(
+        function
+            .bytecode
+            .iter()
+            .any(|word| (word >> 24) == u32::from(OpCode::AddGlobalI as u8))
+    );
+    let assembly = aelys_bytecode::asm::disassemble(&function);
+    let assembled = aelys_bytecode::asm::assemble(&assembly).unwrap();
+    assert_eq!(assembled[0].bytecode, function.bytecode);
+
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    let ExecutionOutcome::Returned(value) =
+        isolate.execute(&module, RunOptions::default()).unwrap()
+    else {
+        panic!("global integer add unexpectedly exited");
+    };
+    assert_eq!(value.as_int(), Some(45));
 }
 
 #[test]

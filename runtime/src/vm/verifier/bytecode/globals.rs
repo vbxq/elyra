@@ -22,6 +22,10 @@ pub(super) fn verify(
         OpCode::GetGlobalIdx | OpCode::SetGlobalIdx => {
             verify_reg(a, num_regs, "GlobalIdx")?;
         }
+        OpCode::AddGlobalI => {
+            verify_reg(a, num_regs, "global integer add")?;
+            verify_reg(b, num_regs, "global integer add")?;
+        }
         OpCode::CallGlobal => {
             verify_reg(a, num_regs, "CallGlobal")?;
             verify_call_args(a, c, num_regs, "CallGlobal")?;

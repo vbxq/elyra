@@ -13,6 +13,7 @@ mod frames;
 mod gc;
 mod globals;
 mod init;
+mod inline_cache;
 mod native;
 mod native_registry;
 mod random;

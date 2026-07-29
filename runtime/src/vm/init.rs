@@ -36,6 +36,7 @@ impl VM {
             globals_by_index: Vec::with_capacity(64),
             global_generations: Vec::with_capacity(64),
             inline_call_cache: HashMap::with_capacity(64),
+            last_inline_call_cache: None,
             source,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),
