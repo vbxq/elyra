@@ -5,3 +5,4 @@ Cargo.lock
 \target
 .idea/
 AELYS_TECHNICAL_REFERENCE.md
+fuzz/corpus/smoke/**

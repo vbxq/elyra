@@ -170,57 +170,99 @@ impl NativeLoader {
 
         // SAFETY: just checked non-null above. Lifetime tied to lib which we keep alive.
         let descriptor_ref = unsafe { &*descriptor };
-        if descriptor_ref.abi_version != AELYS_ABI_VERSION {
-            return Err(NativeError::InvalidAbi {
-                expected: AELYS_ABI_VERSION,
-                found: descriptor_ref.abi_version,
-            });
-        }
-
-        let expected_size = u32::try_from(std::mem::size_of::<AelysModuleDescriptor>())
-            .expect("native descriptor size fits u32");
-        if descriptor_ref.descriptor_size < expected_size {
-            return Err(NativeError::InvalidDescriptor("descriptor size too small"));
-        }
-
-        let module_name = if descriptor_ref.module_name.is_null() {
-            name.to_string()
-        } else {
-            cstr_to_string(descriptor_ref.module_name)?
-        };
-
-        let module_version = if descriptor_ref.module_version.is_null() {
-            None
-        } else {
-            Some(cstr_to_string(descriptor_ref.module_version)?)
-        };
-
-        if descriptor_ref.exports_hash == 0 {
-            return Err(NativeError::InvalidDescriptor("exports_hash is missing"));
-        }
-
-        let required_modules = read_required_modules(descriptor_ref)?;
-        let exports = read_exports(descriptor_ref)?;
-        let computed_hash = unsafe {
-            aelys_native::compute_exports_hash(descriptor_ref.exports, descriptor_ref.export_count)
-        };
-        if descriptor_ref.exports_hash != computed_hash {
-            return Err(NativeError::InvalidExportsHash {
-                expected: descriptor_ref.exports_hash,
-                found: computed_hash,
-            });
-        }
+        // SAFETY: the descriptor was produced by `#[aelys_module]` in the
+        // library we just loaded, and `lib` is kept alive by the returned
+        // `NativeModule`, so every pointer it embeds stays valid.
+        let contents = unsafe { validate_descriptor(descriptor_ref, Some(name)) }?;
 
         Ok(NativeModule {
-            name: module_name,
-            version: module_version,
-            required_modules,
-            exports,
+            name: contents.name,
+            version: contents.version,
+            required_modules: contents.required_modules,
+            exports: contents.exports,
             descriptor,
             _lib: lib,
             _embedded: embedded,
         })
     }
+}
+
+/// The metadata and exports read out of a validated module descriptor.
+pub struct DescriptorContents {
+    pub name: String,
+    pub version: Option<String>,
+    pub required_modules: Vec<RequiredModule>,
+    pub exports: HashMap<String, NativeExport>,
+}
+
+pub unsafe fn validate_descriptor(
+    descriptor: &AelysModuleDescriptor,
+    fallback_name: Option<&str>,
+) -> Result<DescriptorContents, NativeError> {
+    check_descriptor_layout(descriptor)?;
+
+    let name = if descriptor.module_name.is_null() {
+        fallback_name
+            .ok_or(NativeError::InvalidDescriptor("module name is null"))?
+            .to_string()
+    } else {
+        cstr_to_string(descriptor.module_name)?
+    };
+
+    let version = if descriptor.module_version.is_null() {
+        None
+    } else {
+        Some(cstr_to_string(descriptor.module_version)?)
+    };
+
+    if descriptor.exports_hash == 0 {
+        return Err(NativeError::InvalidDescriptor("exports_hash is missing"));
+    }
+
+    let required_modules = read_required_modules(descriptor)?;
+    let exports = read_exports(descriptor)?;
+    // SAFETY: `read_exports` has already bounded `export_count` and rejected a
+    // null `exports` pointer for a non-zero count.
+    let computed_hash =
+        unsafe { aelys_native::compute_exports_hash(descriptor.exports, descriptor.export_count) };
+    if descriptor.exports_hash != computed_hash {
+        return Err(NativeError::InvalidExportsHash {
+            expected: descriptor.exports_hash,
+            found: computed_hash,
+        });
+    }
+
+    Ok(DescriptorContents {
+        name,
+        version,
+        required_modules,
+        exports,
+    })
+}
+
+fn check_descriptor_layout(descriptor: &AelysModuleDescriptor) -> Result<(), NativeError> {
+    if descriptor.abi_version != AELYS_ABI_VERSION {
+        return Err(NativeError::InvalidAbi {
+            expected: AELYS_ABI_VERSION,
+            found: descriptor.abi_version,
+        });
+    }
+
+    let expected_size = u32::try_from(std::mem::size_of::<AelysModuleDescriptor>())
+        .expect("native descriptor size fits u32");
+    if descriptor.descriptor_size < expected_size {
+        return Err(NativeError::InvalidDescriptor("descriptor size too small"));
+    }
+
+    Ok(())
+}
+
+pub unsafe fn descriptor_module_name(descriptor: &AelysModuleDescriptor) -> Option<String> {
+    check_descriptor_layout(descriptor).ok()?;
+    if descriptor.module_name.is_null() {
+        return None;
+    }
+    cstr_to_string(descriptor.module_name).ok()
 }
 
 fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result<(), NativeError> {

@@ -73,7 +73,7 @@ pub fn get_function(vm: &VM, name: &str) -> Result<CallableFunction> {
 }
 
 // pre-extracted metadata for fast calls (no hashmap lookup per call)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum CachedFuncKind {
     Function {
         func_ref: runtime::GcRef,
@@ -100,7 +100,7 @@ enum CachedFuncKind {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CallableFunction {
     kind: CachedFuncKind,
 }

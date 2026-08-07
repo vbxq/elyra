@@ -1,12 +1,17 @@
+use super::native_registry::{NativeModuleRegistration, invalid_module_reason};
 use crate::jit::provider::JitProvider;
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize, serialize};
 use aelys_bytecode::object::{AelysArray, AelysVec};
 use aelys_bytecode::{GcRef, ObjectKind};
-use aelys_common::error::{AelysError, CompileError, CompileErrorKind, RuntimeErrorKind};
+use aelys_common::error::{
+    AelysError, CompileError, CompileErrorKind, RuntimeError, RuntimeErrorKind,
+};
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
+use aelys_native::AelysModuleDescriptor;
 use aelys_opt::{OptimizationLevel, Optimizer};
+use aelys_runtime::stdlib::StdModuleExports;
 use aelys_runtime::{
     ExecutionControl, JitArgument, JitCallResult, JitDeoptValue, JitExecutor, JitFunctionKey, VM,
     Value, VmConfig, VmConfigError,
@@ -17,10 +22,13 @@ use smallvec::SmallVec;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// A function resolved once and called many times. Re-exported here so an
+/// embedder holding a [`Runtime`] never has to depend on `aelys-driver`.
+pub use aelys_driver::CallableFunction;
 pub use aelys_runtime::InterruptHandle;
 
 const TIER1_CALL_THRESHOLD: u64 = 1_000;
@@ -225,8 +233,11 @@ pub struct Runtime {
 struct RuntimeInner {
     jit_mode: JitMode,
     jit: Option<Arc<JitProvider>>,
-    next_module_id: AtomicU64,
+    native_modules: Mutex<Vec<Arc<NativeModuleRegistration>>>,
 }
+
+/// Distinguishes compiled modules
+static NEXT_MODULE_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Runtime {
     pub fn new() -> Self {
@@ -267,7 +278,7 @@ impl Runtime {
             inner: Arc::new(RuntimeInner {
                 jit_mode,
                 jit,
-                next_module_id: AtomicU64::new(1),
+                native_modules: Mutex::new(Vec::new()),
             }),
         })
     }
@@ -300,6 +311,65 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    /// Makes a statically linked native module visible to this runtime
+    pub unsafe fn register_native_module(
+        &self,
+        module: &'static AelysModuleDescriptor,
+    ) -> Result<(), AelysError> {
+        // SAFETY: forwarded to this function's own contract, which is the same one `validate` states.
+        let validated = unsafe { NativeModuleRegistration::validate(module) }?;
+        if is_standard_module_alias(validated.alias())? {
+            return Err(invalid_module_reason(
+                validated.alias(),
+                "alias is reserved by a standard module",
+            ));
+        }
+        self.reject_taken_alias(validated.alias())?;
+
+        // two threads registering the same alias can both reach `init` before either pushes, only one of them registers, the check below runs again under the lock on the state that push will see.
+        let registration = Arc::new(validated.initialize()?);
+        let mut modules = self
+            .inner
+            .native_modules
+            .lock()
+            .expect("native module registry poisoned");
+        if modules
+            .iter()
+            .any(|existing| existing.alias == registration.alias)
+        {
+            return Err(duplicate_alias(&registration.alias));
+        }
+        modules.push(registration);
+        Ok(())
+    }
+
+    fn reject_taken_alias(&self, alias: &str) -> Result<(), AelysError> {
+        let modules = self
+            .inner
+            .native_modules
+            .lock()
+            .expect("native module registry poisoned");
+        if modules.iter().any(|existing| existing.alias == alias) {
+            return Err(duplicate_alias(alias));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn native_module_symbols(&self) -> (HashSet<String>, HashSet<String>) {
+        let modules = self
+            .inner
+            .native_modules
+            .lock()
+            .expect("native module registry poisoned");
+        let mut aliases = HashSet::new();
+        let mut natives = HashSet::new();
+        for registration in modules.iter() {
+            aliases.insert(registration.alias.clone());
+            natives.extend(registration.qualified_names());
+        }
+        (aliases, natives)
+    }
+
     pub fn compile(
         &self,
         source: &str,
@@ -308,7 +378,12 @@ impl Runtime {
         let source = Source::new(options.source_name, source);
         let tokens = Lexer::with_source(source.clone()).scan()?;
         let statements = Parser::new(tokens, source.clone()).parse()?;
-        let (module_aliases, known_globals, known_native_globals) = standard_module_symbols()?;
+        let (mut module_aliases, mut known_globals, mut known_native_globals) =
+            standard_module_symbols()?;
+        let (native_aliases, native_globals) = self.native_module_symbols();
+        module_aliases.extend(native_aliases);
+        known_globals.extend(native_globals.iter().cloned());
+        known_native_globals.extend(native_globals);
         let typed = TypeInference::infer_program_with_imports(
             statements,
             source.clone(),
@@ -345,7 +420,7 @@ impl Runtime {
                 source.clone(),
             )
         })?;
-        let module_id = self.inner.next_module_id.fetch_add(1, Ordering::Relaxed);
+        let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
             function: Arc::new(function),
@@ -362,6 +437,7 @@ impl Runtime {
         )
         .map_err(AelysError::Runtime)?;
         register_standard_modules(&mut vm)?;
+        self.bind_native_modules(&mut vm)?;
         if let Some(jit) = &self.inner.jit {
             let executor: Arc<dyn JitExecutor> = Arc::clone(jit) as Arc<dyn JitExecutor>;
             vm.configure_jit(Some(executor));
@@ -370,6 +446,7 @@ impl Runtime {
             vm.set_random_seed(seed);
         }
         Ok(Isolate {
+            id: NEXT_ISOLATE_ID.fetch_add(1, Ordering::Relaxed),
             vm,
             runtime: Arc::clone(&self.inner),
             jit_call_counts: SmallVec::new(),
@@ -382,6 +459,30 @@ impl Runtime {
         self.try_new_isolate(config)
             .expect("validated isolate configuration must initialize")
     }
+
+    fn bind_native_modules(&self, vm: &mut VM) -> Result<(), AelysError> {
+        let modules = self
+            .inner
+            .native_modules
+            .lock()
+            .expect("native module registry poisoned");
+        for registration in modules.iter() {
+            for (qualified_name, arity, function) in &registration.functions {
+                let reference = vm
+                    .alloc_foreign(qualified_name, *arity, *function)
+                    .map_err(AelysError::Runtime)?;
+                vm.set_global(qualified_name.clone(), Value::ptr(reference.index()));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn duplicate_alias(alias: &str) -> AelysError {
+    invalid_module_reason(
+        alias,
+        "a native module with this alias is already registered",
+    )
 }
 
 impl Default for Runtime {
@@ -390,7 +491,20 @@ impl Default for Runtime {
     }
 }
 
+pub struct ModuleInstance {
+    isolate_id: u64,
+    module_id: u64,
+    avbc: Arc<[u8]>,
+    function_ref: Cell<GcRef>,
+    global_layout: Arc<aelys_bytecode::GlobalLayout>,
+    jit_function: Arc<aelys_bytecode::Function>,
+    source: Arc<Source>,
+}
+
+static NEXT_ISOLATE_ID: AtomicU64 = AtomicU64::new(1);
+
 pub struct Isolate {
+    id: u64,
     vm: VM,
     runtime: Arc<RuntimeInner>,
     jit_call_counts: SmallVec<[(u64, u64); 4]>,
@@ -407,29 +521,36 @@ enum RootJitResult {
     },
 }
 
+type StandardModuleRegister = fn(&mut VM) -> Result<StdModuleExports, RuntimeError>;
+
+const STANDARD_MODULES: [(&str, StandardModuleRegister); 4] = [
+    ("sys", aelys_runtime::stdlib::sys::register),
+    ("fs", aelys_runtime::stdlib::fs::register),
+    ("net", aelys_runtime::stdlib::net::register),
+    ("bytes", aelys_runtime::stdlib::bytes::register),
+];
+
 fn register_standard_modules(vm: &mut VM) -> Result<(), AelysError> {
-    aelys_runtime::stdlib::sys::register(vm).map_err(AelysError::Runtime)?;
-    aelys_runtime::stdlib::fs::register(vm).map_err(AelysError::Runtime)?;
-    aelys_runtime::stdlib::net::register(vm).map_err(AelysError::Runtime)?;
-    aelys_runtime::stdlib::bytes::register(vm).map_err(AelysError::Runtime)?;
+    for (_, register) in STANDARD_MODULES {
+        register(vm).map_err(AelysError::Runtime)?;
+    }
     Ok(())
+}
+
+fn is_standard_module_alias(alias: &str) -> Result<bool, AelysError> {
+    let (aliases, _, _) = standard_module_symbols()?;
+    Ok(aliases.contains(alias))
 }
 
 type StandardSymbols = (HashSet<String>, HashSet<String>, HashSet<String>);
 
 fn standard_module_symbols() -> Result<StandardSymbols, AelysError> {
     let mut vm = VM::new(Source::new("<compile-context>", "")).map_err(AelysError::Runtime)?;
-    let modules = [
-        ("sys", aelys_runtime::stdlib::sys::register(&mut vm)),
-        ("fs", aelys_runtime::stdlib::fs::register(&mut vm)),
-        ("net", aelys_runtime::stdlib::net::register(&mut vm)),
-        ("bytes", aelys_runtime::stdlib::bytes::register(&mut vm)),
-    ];
-    let mut aliases = HashSet::new();
-    let mut globals = HashSet::new();
-    let mut natives = HashSet::new();
-    for (module, exports) in modules {
-        let exports = exports.map_err(AelysError::Runtime)?;
+    let mut aliases = vm.repl_module_aliases().clone();
+    let mut globals = vm.repl_known_globals().clone();
+    let mut natives = vm.repl_known_native_globals().clone();
+    for (module, register) in STANDARD_MODULES {
+        let exports = register(&mut vm).map_err(AelysError::Runtime)?;
         aliases.insert(module.to_string());
         for name in exports.all_exports {
             globals.insert(format!("{module}::{name}"));
@@ -440,7 +561,12 @@ fn standard_module_symbols() -> Result<StandardSymbols, AelysError> {
 }
 
 impl Isolate {
-    fn try_execute_jit(&mut self, module: &CompiledModule, options: &RunOptions) -> RootJitResult {
+    fn try_execute_jit(
+        &mut self,
+        module_id: u64,
+        function: &aelys_bytecode::Function,
+        options: &RunOptions,
+    ) -> RootJitResult {
         if self.runtime.jit_mode == JitMode::Off {
             return RootJitResult::Unsupported;
         }
@@ -450,26 +576,25 @@ impl Isolate {
         if options.max_instructions.is_some()
             || options.deadline.is_some()
             || options.interrupt.is_some()
-            || options.report
         {
             return RootJitResult::Unsupported;
         }
         let calls = if let Some((_, calls)) = self
             .jit_call_counts
             .iter_mut()
-            .find(|(module_id, _)| *module_id == module.module_id)
+            .find(|(id, _)| *id == module_id)
         {
             *calls = calls.saturating_add(1);
             *calls
         } else {
-            self.jit_call_counts.push((module.module_id, 1));
+            self.jit_call_counts.push((module_id, 1));
             1
         };
-        let key = JitFunctionKey::root(module.module_id);
+        let key = JitFunctionKey::root(module_id);
         if !provider.should_execute(&key, calls) {
             return RootJitResult::Unsupported;
         }
-        match provider.try_execute(&key, &module.function, &[] as &[JitArgument<'_>], calls) {
+        match provider.try_execute(&key, function, &[] as &[JitArgument<'_>], calls) {
             JitCallResult::Unsupported => RootJitResult::Unsupported,
             JitCallResult::Returned(value) => RootJitResult::Returned(value),
             JitCallResult::Deoptimized {
@@ -499,11 +624,68 @@ impl Isolate {
         module: &CompiledModule,
         options: RunOptions,
     ) -> Result<ExecutionOutcome, AelysError> {
-        let jit_result = self.try_execute_jit(module, &options);
+        self.configure_run(&options);
+        let jit_result = self.try_execute_jit(module.module_id, &module.function, &options);
         if let RootJitResult::Returned(value) = &jit_result {
-            self.last_report = None;
+            self.last_report = self.jit_report(&options, &module.function, &module.source);
             return Ok(ExecutionOutcome::Returned(*value));
         }
+        let instance = self.instantiate(module)?;
+        self.run_instance(&instance, jit_result, options)
+    }
+
+    pub fn instantiate(&mut self, module: &CompiledModule) -> Result<ModuleInstance, AelysError> {
+        let function = self.deserialize_root(module.avbc())?;
+        let global_layout = Arc::clone(&function.global_layout);
+        self.vm.set_source(Arc::clone(&module.source));
+        let function_ref = self.alloc_root_function(function, module.module_id)?;
+        Ok(ModuleInstance {
+            isolate_id: self.id,
+            module_id: module.module_id,
+            avbc: Arc::clone(&module.avbc),
+            function_ref: Cell::new(function_ref),
+            global_layout,
+            jit_function: Arc::clone(&module.function),
+            source: Arc::clone(&module.source),
+        })
+    }
+
+    pub fn execute_instance(
+        &mut self,
+        instance: &ModuleInstance,
+        options: RunOptions,
+    ) -> Result<ExecutionOutcome, AelysError> {
+        if instance.isolate_id != self.id {
+            return Err(self.foreign_instance_error());
+        }
+        self.configure_run(&options);
+        let jit_result = self.try_execute_jit(instance.module_id, &instance.jit_function, &options);
+        if let RootJitResult::Returned(value) = &jit_result {
+            self.last_report = self.jit_report(&options, &instance.jit_function, &instance.source);
+            return Ok(ExecutionOutcome::Returned(*value));
+        }
+        self.run_instance(instance, jit_result, options)
+    }
+
+    fn jit_report(
+        &self,
+        options: &RunOptions,
+        function: &aelys_bytecode::Function,
+        source: &Source,
+    ) -> Option<ExecutionReport> {
+        if !options.report {
+            return None;
+        }
+        Some(ExecutionReport {
+            allocated_bytes: self.vm.heap().bytes_allocated(),
+            function: Some(function.name.as_deref().unwrap_or("<main>").to_string()),
+            source: source.name.clone(),
+            random_seed: self.vm.random_seed(),
+            ..ExecutionReport::default()
+        })
+    }
+
+    fn configure_run(&mut self, options: &RunOptions) {
         self.vm.configure_execution(ExecutionControl {
             max_instructions: options.max_instructions,
             deadline: options.deadline,
@@ -511,13 +693,47 @@ impl Isolate {
             safepoint_interval: options.safepoint_interval,
             report: options.report,
         });
-        let function = deserialize(module.avbc())
-            .map_err(|error| self.invalid_bytecode_error(error.to_string()))?;
-        self.vm.set_source(Arc::clone(&module.source));
-        let function_ref = self
+    }
+
+    fn deserialize_root(&self, avbc: &[u8]) -> Result<aelys_bytecode::Function, AelysError> {
+        deserialize(avbc).map_err(|error| self.invalid_bytecode_error(error.to_string()))
+    }
+
+    fn alloc_root_function(
+        &mut self,
+        function: aelys_bytecode::Function,
+        module_id: u64,
+    ) -> Result<GcRef, AelysError> {
+        self.vm
+            .alloc_function_with_jit_key(function, JitFunctionKey::root(module_id))
+            .map_err(AelysError::Runtime)
+    }
+
+    fn live_function_ref(&mut self, instance: &ModuleInstance) -> Result<GcRef, AelysError> {
+        let reference = instance.function_ref.get();
+        let alive = self
             .vm
-            .alloc_function_with_jit_key(function, JitFunctionKey::root(module.module_id))
-            .map_err(AelysError::Runtime)?;
+            .heap()
+            .get(reference)
+            .is_some_and(|object| matches!(object.kind, ObjectKind::Function(_)));
+        if alive {
+            return Ok(reference);
+        }
+        let function = self.deserialize_root(&instance.avbc)?;
+        let reference = self.alloc_root_function(function, instance.module_id)?;
+        instance.function_ref.set(reference);
+        Ok(reference)
+    }
+
+    fn run_instance(
+        &mut self,
+        instance: &ModuleInstance,
+        jit_result: RootJitResult,
+        options: RunOptions,
+    ) -> Result<ExecutionOutcome, AelysError> {
+        let global_layout = Arc::clone(&instance.global_layout);
+        self.vm.set_source(Arc::clone(&instance.source));
+        let function_ref = self.live_function_ref(instance)?;
         let result = match jit_result {
             RootJitResult::Deoptimized {
                 bytecode_ip,
@@ -529,6 +745,9 @@ impl Isolate {
                 self.vm.execute(function_ref)
             }
         };
+        if result.is_ok() {
+            self.vm.sync_globals_to_hashmap(global_layout.names());
+        }
         if options.report {
             let stats = self.vm.execution_stats();
             self.last_report = Some(ExecutionReport {
@@ -542,7 +761,7 @@ impl Isolate {
                 cache_misses: stats.cache_misses,
                 function: self.vm.last_execution_function_name(),
                 instruction_pointer: stats.last_instruction_pointer,
-                source: module.source.name.clone(),
+                source: instance.source.name.clone(),
                 random_seed: self.vm.random_seed(),
             });
         } else {
@@ -556,6 +775,18 @@ impl Isolate {
                 _ => Err(AelysError::Runtime(error)),
             },
         }
+    }
+
+    pub fn get_function(&self, name: &str) -> Result<CallableFunction, AelysError> {
+        aelys_driver::get_function(&self.vm, name)
+    }
+
+    pub fn call(
+        &mut self,
+        function: &CallableFunction,
+        args: &[Value],
+    ) -> Result<Value, AelysError> {
+        function.call(&mut self.vm, args)
     }
 
     pub fn last_report(&self) -> Option<&ExecutionReport> {
@@ -679,6 +910,14 @@ impl Isolate {
                     .map_err(StructuredCloneError::Runtime)
             }
         }
+    }
+
+    fn foreign_instance_error(&self) -> AelysError {
+        AelysError::Runtime(RuntimeError::new(
+            RuntimeErrorKind::InvalidMemoryHandle,
+            Vec::new(),
+            Arc::clone(self.vm.source()),
+        ))
     }
 
     fn invalid_bytecode_error(&self, message: String) -> AelysError {

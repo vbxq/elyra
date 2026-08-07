@@ -12,6 +12,7 @@ aelys-opt = { path = "../opt" }
 aelys-bytecode = { path = "../bytecode" }
 aelys-backend = { path = "../backend" }
 aelys-runtime = { path = "../runtime" }
+aelys-native = { path = "../native" }
 aelys-modules = { path = "../modules" }
 aelys-driver = { path = "../driver" }
 cranelift-codegen = "0.134.2"
