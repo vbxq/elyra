@@ -1,6 +1,6 @@
 use aelys::{
-    AelysError, CompileOptions, ExecutionOutcome, IsolateConfig, JitConfig, JitConfigError,
-    JitMode, RunOptions, Runtime, StructuredValue, Value,
+    AelysError, CompileOptions, ExecutionOutcome, InterruptHandle, IsolateConfig, JitConfig,
+    JitConfigError, JitMode, RunOptions, Runtime, StructuredValue, Value,
 };
 use aelys_common::error::RuntimeErrorKind;
 use aelys_opt::OptimizationLevel;
@@ -743,4 +743,140 @@ outer(20)
     );
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 0);
+}
+
+const JITTABLE_TOP_LEVEL: &str = "let left = 19; let right = 2; (left + right) * 2";
+
+#[test]
+fn requesting_a_report_does_not_disable_the_jit() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let module = runtime
+        .compile(
+            JITTABLE_TOP_LEVEL,
+            CompileOptions {
+                source_name: "hot.aelys".to_string(),
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap();
+    let mut config = IsolateConfig::default();
+    config.random_seed = Some(4_242);
+    let mut isolate = runtime.new_isolate(config);
+
+    let outcome = isolate
+        .execute(
+            &module,
+            RunOptions {
+                report: true,
+                ..RunOptions::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(outcome, ExecutionOutcome::Returned(Value::int(42)));
+    let report = isolate
+        .last_report()
+        .expect("a run that was asked for a report must produce one");
+    assert_eq!(
+        report.instructions, 0,
+        "the interpreter ran this module, so the JIT root path was refused"
+    );
+    assert_eq!(report.source, "hot.aelys");
+    assert_eq!(report.function.as_deref(), Some("<main>"));
+    assert_eq!(report.random_seed, 4_242);
+    assert_eq!(report.cache_hits, 0);
+    assert_eq!(report.cache_misses, 0);
+    assert_eq!(report.instruction_pointer, None);
+}
+
+#[test]
+fn hard_limits_still_force_the_interpreter() {
+    let limits: [(&str, RunOptions); 3] = [
+        (
+            "max_instructions",
+            RunOptions {
+                max_instructions: Some(1_000_000),
+                report: true,
+                ..RunOptions::default()
+            },
+        ),
+        (
+            "deadline",
+            RunOptions {
+                report: true,
+                ..RunOptions::default()
+            }
+            .with_timeout(std::time::Duration::from_secs(60)),
+        ),
+        (
+            "interrupt",
+            RunOptions {
+                interrupt: Some(InterruptHandle::new()),
+                report: true,
+                ..RunOptions::default()
+            },
+        ),
+    ];
+
+    for (limit, options) in limits {
+        let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+        let module = runtime
+            .compile(JITTABLE_TOP_LEVEL, CompileOptions::default())
+            .unwrap();
+        let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+        assert_eq!(
+            isolate.execute(&module, options).unwrap(),
+            ExecutionOutcome::Returned(Value::int(42))
+        );
+        assert!(
+            isolate.last_report().unwrap().instructions > 0,
+            "a run bounded by {limit} must stay in the interpreter, \
+             which is the only place that bound is enforced"
+        );
+    }
+}
+
+#[test]
+fn a_hot_instance_switches_to_the_jit_while_reporting() {
+    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
+    let module = runtime
+        .compile(JITTABLE_TOP_LEVEL, CompileOptions::default())
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    let instance = isolate.instantiate(&module).unwrap();
+    let options = RunOptions {
+        report: true,
+        ..RunOptions::default()
+    };
+
+    assert_eq!(
+        isolate
+            .execute_instance(&instance, options.clone())
+            .unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
+    );
+    assert!(
+        isolate.last_report().unwrap().instructions > 0,
+        "the first run is below the tier-1 threshold and must be interpreted"
+    );
+    assert_eq!(runtime.jit_cache_entries(), 0);
+
+    for _ in 0..999 {
+        assert_eq!(
+            isolate
+                .execute_instance(&instance, options.clone())
+                .unwrap(),
+            ExecutionOutcome::Returned(Value::int(42))
+        );
+    }
+
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_deoptimizations(), 0);
+    let report = isolate.last_report().unwrap();
+    assert_eq!(
+        report.instructions, 0,
+        "past the threshold the JIT serves the instance, even with reports on"
+    );
+    assert_eq!(report.allocations, 0);
 }

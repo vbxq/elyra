@@ -1,3 +1,6 @@
 mod loader;
 
-pub use loader::{NativeError, NativeExport, NativeLoader, NativeModule};
+pub use loader::{
+    DescriptorContents, NativeError, NativeExport, NativeLoader, NativeModule, RequiredModule,
+    descriptor_module_name, validate_descriptor,
+};
