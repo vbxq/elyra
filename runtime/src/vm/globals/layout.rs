@@ -34,51 +34,37 @@ impl VM {
 
     /// Prepare globals_by_index for a function call.
     pub fn prepare_globals_for_function(&mut self, func_ref: GcRef) -> usize {
-        let (mapping_id, global_layout): (usize, Option<Arc<super::super::GlobalLayout>>) = {
-            if let Some(obj) = self.heap.get(func_ref) {
-                match &obj.kind {
-                    ObjectKind::Function(f) => {
-                        let layout = Arc::clone(&f.function.global_layout);
-                        let id = self.global_mapping_id_for_layout(&layout);
-                        if layout.names().is_empty() {
-                            (id, None)
-                        } else {
-                            (id, Some(layout))
-                        }
-                    }
-                    ObjectKind::Closure(c) => {
-                        if let Some(inner_obj) = self.heap.get(c.function) {
-                            if let ObjectKind::Function(f) = &inner_obj.kind {
-                                let layout = Arc::clone(&f.function.global_layout);
-                                let id = self.global_mapping_id_for_layout(&layout);
-                                if layout.names().is_empty() {
-                                    (id, None)
-                                } else {
-                                    (id, Some(layout))
-                                }
-                            } else {
-                                (0, None)
-                            }
-                        } else {
-                            (0, None)
-                        }
-                    }
-                    _ => (0, None),
+        let layout = if let Some(obj) = self.heap.get(func_ref) {
+            match &obj.kind {
+                ObjectKind::Function(function) => {
+                    Some(Arc::clone(&function.function.global_layout))
                 }
-            } else {
-                (0, None)
+                ObjectKind::Closure(closure) => self.heap.get(closure.function).and_then(|inner| {
+                    if let ObjectKind::Function(function) = &inner.kind {
+                        Some(Arc::clone(&function.function.global_layout))
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
             }
+        } else {
+            None
         };
-
-        if mapping_id == self.current_global_mapping_id {
-            return mapping_id;
+        match layout {
+            Some(layout) if !layout.names().is_empty() => self.prepare_globals_for_layout(&layout),
+            Some(layout) => self.prepare_empty_global_mapping(layout.id()),
+            None => self.prepare_empty_global_mapping(0),
         }
+    }
 
-        if global_layout.is_none() {
-            self.globals_by_index.clear();
-            self.current_global_mapping_id = mapping_id;
-            self.globals_by_index_cache
-                .insert(mapping_id, Arc::new(Vec::new()));
+    /// Prepare globals_by_index for a compiled function that has not yet been
+    /// allocated in this VM. This is needed by root JIT calls, which execute
+    /// before an interpreter frame (and therefore before a function object)
+    /// exists.
+    pub fn prepare_globals_for_layout(&mut self, layout: &super::super::GlobalLayout) -> usize {
+        let mapping_id = layout.id();
+        if mapping_id == self.current_global_mapping_id {
             return mapping_id;
         }
 
@@ -99,13 +85,6 @@ impl VM {
             return mapping_id;
         }
 
-        let layout = match global_layout.as_ref() {
-            Some(layout) => layout,
-            None => {
-                self.current_global_mapping_id = mapping_id;
-                return mapping_id;
-            }
-        };
         let names = layout.names();
 
         let needed_len = names.len();
@@ -126,6 +105,17 @@ impl VM {
         self.current_global_mapping_id = mapping_id;
         self.globals_by_index_cache
             .insert(mapping_id, Arc::new(self.globals_by_index.clone()));
+        mapping_id
+    }
+
+    fn prepare_empty_global_mapping(&mut self, mapping_id: usize) -> usize {
+        if mapping_id == self.current_global_mapping_id {
+            return mapping_id;
+        }
+        self.globals_by_index.clear();
+        self.current_global_mapping_id = mapping_id;
+        self.globals_by_index_cache
+            .insert(mapping_id, Arc::new(Vec::new()));
         mapping_id
     }
 }
