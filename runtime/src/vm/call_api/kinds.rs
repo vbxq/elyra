@@ -1,4 +1,5 @@
 use super::super::{CallFrame, GcRef, NativeFunction, VM, Value};
+use crate::JitCallResult;
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use std::sync::Arc;
 
@@ -56,6 +57,23 @@ impl VM {
         }
 
         self.ensure_function_verified(func_ref)?;
+
+        // Host-resolved callables are the hot entry point for embedders. Give
+        // them the same JIT opportunity as a bytecode Call. A deoptimization
+        // simply falls through to the interpreter from the function entry;
+        // no interpreter frame has been published yet, so that is an exact
+        // and safe fallback.
+        if self.prepare_jit_call(func_ref) {
+            match self.try_execute_jit_call(func_ref, args) {
+                JitCallResult::Returned(value) => return Ok(value),
+                JitCallResult::Aborted => {
+                    return Err(self
+                        .take_jit_control_error()
+                        .unwrap_or_else(|| self.runtime_error(RuntimeErrorKind::Interrupted)));
+                }
+                JitCallResult::Unsupported | JitCallResult::Deoptimized { .. } => {}
+            }
+        }
 
         let needed = num_registers as usize;
         if needed > self.registers.len() {
