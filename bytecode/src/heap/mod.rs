@@ -16,7 +16,7 @@ pub enum HeapGeneration {
 }
 
 struct HeapSlot {
-    generation: u16,
+    generation: u32,
     heap_generation: HeapGeneration,
     survival_count: u8,
     object: Option<GcObject>,
@@ -36,7 +36,10 @@ pub enum MajorSliceResult {
 }
 
 pub struct Heap {
-    objects: Vec<HeapSlot>,
+    // Keep each slot in its own allocation.  Frames cache pointers into
+    // function/closure objects for the duration of a run; growing the slot
+    // table must not move those objects.
+    objects: Vec<Box<HeapSlot>>,
     free_list: Vec<u32>,
     bytes_allocated: usize,
     next_gc: usize,
