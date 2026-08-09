@@ -30,6 +30,9 @@ enum Expression {
 }
 
 pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
+    if ir_contains_float(ir) {
+        return OptimizationReport::default();
+    }
     let mut report = OptimizationReport::default();
     while hoist_one_collection_length(ir) {
         report.collection_lengths_hoisted = report.collection_lengths_hoisted.saturating_add(1);
@@ -130,6 +133,21 @@ pub(crate) fn optimize_integer_ir(ir: &mut FunctionIr) -> OptimizationReport {
     report
 }
 
+fn ir_contains_float(ir: &FunctionIr) -> bool {
+    ir.return_type == IrType::F64
+        || ir.parameter_types.contains(&IrType::F64)
+        || ir.blocks.iter().any(|block| {
+            block.parameters.iter().any(|(_, ty)| *ty == IrType::F64)
+                || block.instructions.iter().any(|instruction| {
+                    instruction.result.is_some_and(|(_, ty)| ty == IrType::F64)
+                        || matches!(
+                            instruction.kind,
+                            IrInstructionKind::Fdiv(_, _) | IrInstructionKind::Fneg(_)
+                        )
+                })
+        })
+}
+
 #[derive(Clone)]
 struct NaturalLoop {
     header: BlockId,
@@ -224,7 +242,7 @@ fn hoist_collection_length(
     let kind = match identity.ty {
         IrType::I64Array => IrInstructionKind::ArrayLen(source_collection),
         IrType::I64Vec => IrInstructionKind::VecLen(source_collection),
-        IrType::Uninitialized | IrType::I64 | IrType::Bool => return false,
+        IrType::Uninitialized | IrType::I64 | IrType::F64 | IrType::Bool => return false,
     };
     ir.blocks[preheader_index].instructions.push(IrInstruction {
         result: Some((hoisted, IrType::I64)),
@@ -611,6 +629,7 @@ fn expression(kind: &IrInstructionKind) -> Option<Expression> {
             left,
             right,
         } => Some(Expression::Compare(predicate, left, right)),
+        IrInstructionKind::Fdiv(_, _) | IrInstructionKind::Fneg(_) => None,
         IrInstructionKind::Guard { .. }
         | IrInstructionKind::BoundsCheck { .. }
         | IrInstructionKind::ArrayLen(_)
@@ -619,6 +638,8 @@ fn expression(kind: &IrInstructionKind) -> Option<Expression> {
         | IrInstructionKind::VecLen(_)
         | IrInstructionKind::VecLoadI { .. }
         | IrInstructionKind::VecLoadIUnchecked { .. }
+        | IrInstructionKind::NativeCall { .. }
+        | IrInstructionKind::JitPoll
         | IrInstructionKind::Safepoint { .. } => None,
     }
 }
@@ -649,6 +670,11 @@ fn rewrite_instruction(kind: &mut IrInstructionKind, aliases: &HashMap<ValueId, 
             *left = resolve(*left, aliases);
             *right = resolve(*right, aliases);
         }
+        IrInstructionKind::Fdiv(left, right) => {
+            *left = resolve(*left, aliases);
+            *right = resolve(*right, aliases);
+        }
+        IrInstructionKind::Fneg(value) => *value = resolve(*value, aliases),
         IrInstructionKind::Icmp { left, right, .. } => {
             *left = resolve(*left, aliases);
             *right = resolve(*right, aliases);
@@ -682,8 +708,12 @@ fn rewrite_instruction(kind: &mut IrInstructionKind, aliases: &HashMap<ValueId, 
             *vector = resolve(*vector, aliases);
             *index = resolve(*index, aliases);
         }
+        IrInstructionKind::NativeCall { arguments, .. } => {
+            rewrite_values(arguments, aliases);
+        }
         IrInstructionKind::Iconst(_)
         | IrInstructionKind::Bconst(_)
+        | IrInstructionKind::JitPoll
         | IrInstructionKind::Safepoint { .. } => {}
     }
 }
@@ -723,6 +753,13 @@ fn used_values(ir: &FunctionIr) -> HashSet<ValueId> {
                     used.insert(left);
                     used.insert(right);
                 }
+                IrInstructionKind::Fdiv(left, right) => {
+                    used.insert(left);
+                    used.insert(right);
+                }
+                IrInstructionKind::Fneg(value) => {
+                    used.insert(value);
+                }
                 IrInstructionKind::Guard { condition, .. } => {
                     used.insert(condition);
                 }
@@ -752,8 +789,12 @@ fn used_values(ir: &FunctionIr) -> HashSet<ValueId> {
                     used.insert(vector);
                     used.insert(index);
                 }
+                IrInstructionKind::NativeCall { ref arguments, .. } => {
+                    used.extend(arguments.iter().copied());
+                }
                 IrInstructionKind::Iconst(_)
                 | IrInstructionKind::Bconst(_)
+                | IrInstructionKind::JitPoll
                 | IrInstructionKind::Safepoint { .. } => {}
             }
         }
@@ -787,6 +828,8 @@ fn is_pure(kind: &IrInstructionKind) -> bool {
             | IrInstructionKind::BoundsCheck { .. }
             | IrInstructionKind::ArrayLoadI { .. }
             | IrInstructionKind::VecLoadI { .. }
+            | IrInstructionKind::NativeCall { .. }
+            | IrInstructionKind::JitPoll
             | IrInstructionKind::Safepoint { .. }
     )
 }
