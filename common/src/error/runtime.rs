@@ -116,7 +116,9 @@ impl RuntimeErrorKind {
                     requested, max
                 )
             }
-            Self::InvalidMemoryHandle => "invalid memory handle".to_string(),
+            Self::InvalidMemoryHandle => {
+                "invalid or stale memory handle (possibly from another isolate)".to_string()
+            }
             Self::DoubleFree => "double free: pointer was already freed".to_string(),
             Self::UseAfterFree => "use after free: pointer was already freed".to_string(),
             Self::MemoryOutOfBounds { offset, size } => format!(
