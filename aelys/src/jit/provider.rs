@@ -1,12 +1,13 @@
 use super::engine::{CompiledFunction, JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
 use super::optimize::{optimize_integer_ir, specialize_integer_parameters};
 use super::translate::{
+    translate_controlled_integer_function, translate_controlled_integer_osr,
     translate_integer_function, translate_integer_osr, translate_optimized_integer_function,
 };
 use aelys_bytecode::Function;
 use aelys_runtime::{
-    JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutor, JitFunctionKey,
-    Value,
+    JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutionContext,
+    JitExecutor, JitFunctionKey, Value,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -119,19 +120,23 @@ impl JitProvider {
         function: &Function,
         calls: u64,
         profile: Option<&[Option<i64>]>,
+        controlled: bool,
     ) -> Option<Arc<CompiledFunction>> {
         let tier = self
             .tier2_call_threshold
             .filter(|threshold| calls >= *threshold)
             .map_or(JitTier::Baseline, |_| JitTier::Optimized);
-        let cache_key = JitKey::for_path(key.module(), key.shared_path(), tier);
+        let cache_key =
+            JitKey::for_path_with_control(key.module(), key.shared_path(), tier, controlled);
         if let Some(compiled) = self.engine.cached(&cache_key).ok().flatten() {
             return Some(compiled);
         }
         if calls < self.call_threshold {
             return None;
         }
-        let mut ir = if tier == JitTier::Optimized {
+        let mut ir = if controlled {
+            translate_controlled_integer_function(function)?
+        } else if tier == JitTier::Optimized {
             translate_optimized_integer_function(function)?
         } else {
             translate_integer_function(function)?
@@ -146,10 +151,11 @@ impl JitProvider {
         let compiled = match self.engine.compile(&cache_key, &ir) {
             Ok(compiled) => compiled,
             Err(_) if tier == JitTier::Optimized => {
-                let baseline = JitKey::for_path(
+                let baseline = JitKey::for_path_with_control(
                     key.module(),
                     Arc::clone(&cache_key.function_path),
                     JitTier::Baseline,
+                    controlled,
                 );
                 self.engine.cached(&baseline).ok().flatten()?
             }
@@ -175,7 +181,7 @@ impl JitExecutor for JitProvider {
 
     fn observe_backedge(&self, key: &JitFunctionKey, function: &Function, backedges: u64) {
         if backedges >= aelys_runtime::JIT_TIER1_BACKEDGE_THRESHOLD {
-            let _ = self.compiled(key, function, self.call_threshold, None);
+            let _ = self.compiled(key, function, self.call_threshold, None, false);
         }
     }
 
@@ -186,11 +192,72 @@ impl JitExecutor for JitProvider {
         arguments: &[JitArgument<'_>],
         calls: u64,
     ) -> JitCallResult {
+        self.try_execute_inner(key, function, arguments, calls, false, None)
+    }
+
+    fn try_execute_with_context(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        arguments: &[JitArgument<'_>],
+        calls: u64,
+        context: Option<&JitExecutionContext>,
+    ) -> JitCallResult {
+        self.try_execute_inner(
+            key,
+            function,
+            arguments,
+            calls,
+            context.is_some_and(|context| context.controlled),
+            context,
+        )
+    }
+
+    fn try_execute_osr(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        bytecode_ip: u32,
+        registers: &[JitArgument<'_>],
+    ) -> JitCallResult {
+        self.try_execute_osr_inner(key, function, bytecode_ip, registers, false, None)
+    }
+
+    fn try_execute_osr_with_context(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        bytecode_ip: u32,
+        registers: &[JitArgument<'_>],
+        context: Option<&JitExecutionContext>,
+    ) -> JitCallResult {
+        self.try_execute_osr_inner(
+            key,
+            function,
+            bytecode_ip,
+            registers,
+            context.is_some_and(|context| context.controlled),
+            context,
+        )
+    }
+}
+
+impl JitProvider {
+    fn try_execute_inner(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        arguments: &[JitArgument<'_>],
+        calls: u64,
+        controlled: bool,
+        context: Option<&JitExecutionContext>,
+    ) -> JitCallResult {
         let integer_arguments = arguments
             .iter()
             .map(|argument| match argument {
                 JitArgument::Integer(value) => Some(*value),
-                JitArgument::Boolean(_)
+                JitArgument::Float(_)
+                | JitArgument::Boolean(_)
                 | JitArgument::IntegerArray(_)
                 | JitArgument::IntegerVec(_)
                 | JitArgument::Unused => None,
@@ -206,25 +273,23 @@ impl JitExecutor for JitProvider {
             .tier2_call_threshold
             .filter(|threshold| calls >= *threshold)
             .and_then(|_| self.profile(key));
-        let Some(compiled) = self.compiled(key, function, calls, profile.as_deref()) else {
+        let Some(compiled) = self.compiled(key, function, calls, profile.as_deref(), controlled)
+        else {
             return JitCallResult::Unsupported;
         };
         if compiled.arity() != arguments.len() {
             return JitCallResult::Unsupported;
         }
-        let result = if let Some(integer_arguments) = &integer_arguments {
-            compiled.execute(integer_arguments)
-        } else {
-            compiled.execute_arguments(arguments)
-        };
+        let result = compiled.execute_arguments_with_context(arguments, context);
         let Ok(result) = result else {
             return JitCallResult::Unsupported;
         };
         match result {
-            JitExecution::Returned(result) => match Value::int_checked(result) {
-                Ok(value) => JitCallResult::Returned(value),
-                Err(_) => JitCallResult::Unsupported,
+            JitExecution::Returned(result) => match returned_value(&compiled, result) {
+                Some(value) => JitCallResult::Returned(value),
+                None => JitCallResult::Unsupported,
             },
+            JitExecution::Aborted => JitCallResult::Aborted,
             JitExecution::Deoptimized {
                 bytecode_ip,
                 registers,
@@ -236,6 +301,12 @@ impl JitExecutor for JitProvider {
                         let value = match value {
                             JitDeoptValue::Integer(value) => {
                                 RuntimeDeoptValue::Value(Value::int_checked(value).ok()?)
+                            }
+                            JitDeoptValue::Float(bits) => {
+                                RuntimeDeoptValue::Value(Value::float(f64::from_bits(bits)))
+                            }
+                            JitDeoptValue::Boolean(value) => {
+                                RuntimeDeoptValue::Value(Value::bool(value))
                             }
                             JitDeoptValue::Argument(index) => RuntimeDeoptValue::Argument(index),
                         };
@@ -252,34 +323,57 @@ impl JitExecutor for JitProvider {
             }
         }
     }
+}
 
-    fn try_execute_osr(
+impl JitProvider {
+    fn try_execute_osr_inner(
         &self,
         key: &JitFunctionKey,
         function: &Function,
         bytecode_ip: u32,
         registers: &[JitArgument<'_>],
+        controlled: bool,
+        context: Option<&JitExecutionContext>,
     ) -> JitCallResult {
-        let cache_key = JitKey::for_osr(key.module(), key.shared_path(), bytecode_ip);
+        let cache_key =
+            JitKey::for_osr_with_control(key.module(), key.shared_path(), bytecode_ip, controlled);
         let compiled = self.engine.cached(&cache_key).ok().flatten().or_else(|| {
-            let ir = translate_integer_osr(function, bytecode_ip)?;
+            let ir = if controlled {
+                translate_controlled_integer_osr(function, bytecode_ip)?
+            } else {
+                translate_integer_osr(function, bytecode_ip)?
+            };
             self.engine.compile(&cache_key, &ir).ok()
         });
         let Some(compiled) = compiled else {
             return JitCallResult::Unsupported;
         };
-        let Ok(result) = compiled.execute_arguments(registers) else {
+        let Ok(result) = compiled.execute_arguments_with_context(registers, context) else {
             return JitCallResult::Unsupported;
         };
         match result {
-            JitExecution::Returned(value) => match Value::int_checked(value) {
-                Ok(value) => {
+            JitExecution::Returned(value) => match returned_value(&compiled, value) {
+                Some(value) => {
                     self.osr_executions.fetch_add(1, Ordering::Relaxed);
                     JitCallResult::Returned(value)
                 }
-                Err(_) => JitCallResult::Unsupported,
+                None => JitCallResult::Unsupported,
             },
+            JitExecution::Aborted => JitCallResult::Aborted,
             JitExecution::Deoptimized { .. } => JitCallResult::Unsupported,
         }
+    }
+}
+
+fn returned_value(compiled: &CompiledFunction, raw: i64) -> Option<Value> {
+    match compiled.return_type() {
+        super::ir::IrType::I64 => Value::int_checked(raw).ok(),
+        super::ir::IrType::F64 => Some(Value::float(f64::from_bits(u64::from_ne_bytes(
+            raw.to_ne_bytes(),
+        )))),
+        super::ir::IrType::Bool => Some(Value::bool(raw != 0)),
+        super::ir::IrType::Uninitialized
+        | super::ir::IrType::I64Array
+        | super::ir::IrType::I64Vec => None,
     }
 }
