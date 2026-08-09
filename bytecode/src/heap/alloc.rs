@@ -12,19 +12,19 @@ impl Heap {
 
         // reuse free slots when possible
         if let Some(idx) = self.free_list.pop() {
-            let slot = &mut self.objects[idx as usize];
+            let slot = self.objects[idx as usize].as_mut();
             slot.object = Some(obj);
             slot.heap_generation = super::HeapGeneration::Young;
             slot.survival_count = 0;
             GcRef::from_parts(idx, slot.generation)
         } else {
             let idx = u32::try_from(self.objects.len()).expect("heap slot limit exceeded");
-            self.objects.push(super::HeapSlot {
+            self.objects.push(Box::new(super::HeapSlot {
                 generation: 0,
                 heap_generation: super::HeapGeneration::Young,
                 survival_count: 0,
                 object: Some(obj),
-            });
+            }));
             GcRef::from_parts(idx, 0)
         }
     }
