@@ -5,6 +5,9 @@ use aelys_common::error::RuntimeError;
 use aelys_syntax::Source;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_VM_ID: AtomicU64 = AtomicU64::new(1);
 
 impl VM {
     pub fn new(source: Arc<Source>) -> Result<Self, RuntimeError> {
@@ -51,6 +54,9 @@ impl VM {
             random_seed,
             execution_control: super::ExecutionControl::default(),
             execution_stats: super::ExecutionStats::default(),
+            jit_control_error: None,
+            host_roots: Arc::new(super::roots::HostRootSet::new()),
+            id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
             current_global_mapping_id: 0,
             program_args,
             script_path: None,
