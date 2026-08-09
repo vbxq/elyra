@@ -113,6 +113,8 @@ impl VM {
                 }
             }
             self.bump_global_generations(needed_len);
+        } else {
+            self.globals_by_index.clear();
         }
 
         self.current_global_mapping_id = global_mapping_id;
