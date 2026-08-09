@@ -1,10 +1,23 @@
 use crate::{Function, Value};
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::hash::Hash;
 use std::sync::Arc;
 
 pub const JIT_TIER1_BACKEDGE_THRESHOLD: u64 = 10_000;
+
+/// Per-invocation state passed to JIT code that runs under execution control.
+///
+/// The context is borrowed for the duration of one synchronous machine-code
+/// call. The runtime owns the callback, so control state remains isolate-local.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct JitExecutionContext {
+    pub data: *mut c_void,
+    pub poll: unsafe extern "C" fn(*mut c_void) -> i64,
+    pub controlled: bool,
+}
 
 pub(crate) struct InlineMap<K, V> {
     inline: SmallVec<[(K, V); 4]>,
@@ -116,6 +129,7 @@ impl JitFunctionKey {
 pub enum JitCallResult {
     Unsupported,
     Returned(Value),
+    Aborted,
     Deoptimized {
         bytecode_ip: u32,
         registers: Vec<(u16, JitDeoptValue)>,
@@ -131,6 +145,7 @@ pub enum JitDeoptValue {
 #[derive(Clone, Copy, Debug)]
 pub enum JitArgument<'a> {
     Integer(i64),
+    Float(f64),
     Boolean(bool),
     IntegerArray(&'a [i64]),
     IntegerVec(&'a [i64]),
@@ -150,6 +165,20 @@ pub trait JitExecutor: Send + Sync {
         calls: u64,
     ) -> JitCallResult;
 
+    /// Execute with an isolate-local control context. Providers that do not
+    /// support controlled machine code retain the old fallback behavior.
+    fn try_execute_with_context(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        arguments: &[JitArgument<'_>],
+        calls: u64,
+        context: Option<&JitExecutionContext>,
+    ) -> JitCallResult {
+        let _ = context;
+        self.try_execute(key, function, arguments, calls)
+    }
+
     fn try_execute_osr(
         &self,
         _key: &JitFunctionKey,
@@ -158,5 +187,17 @@ pub trait JitExecutor: Send + Sync {
         _registers: &[JitArgument<'_>],
     ) -> JitCallResult {
         JitCallResult::Unsupported
+    }
+
+    fn try_execute_osr_with_context(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        bytecode_ip: u32,
+        registers: &[JitArgument<'_>],
+        context: Option<&JitExecutionContext>,
+    ) -> JitCallResult {
+        let _ = context;
+        self.try_execute_osr(key, function, bytecode_ip, registers)
     }
 }
