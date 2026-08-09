@@ -183,7 +183,7 @@ impl Heap {
         if let ObjectKind::String(string) = &object.kind {
             self.intern_table.remove(&string.hash());
         }
-        if slot.generation != u16::MAX {
+        if slot.generation != GcRef::MAX_GENERATION {
             slot.generation += 1;
             self.free_list
                 .push(u32::try_from(index).expect("heap slot index exceeds u32"));
