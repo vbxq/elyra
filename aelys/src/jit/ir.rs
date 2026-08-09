@@ -10,6 +10,7 @@ pub(crate) struct ValueId(pub(crate) u32);
 pub(crate) enum IrType {
     Uninitialized,
     I64,
+    F64,
     Bool,
     I64Array,
     I64Vec,
@@ -45,6 +46,8 @@ pub(crate) enum IrInstructionKind {
     Iadd(ValueId, ValueId),
     Isub(ValueId, ValueId),
     Imul(ValueId, ValueId),
+    Fdiv(ValueId, ValueId),
+    Fneg(ValueId),
     Icmp {
         predicate: IntPredicate,
         left: ValueId,
@@ -79,6 +82,11 @@ pub(crate) enum IrInstructionKind {
         vector: ValueId,
         index: ValueId,
     },
+    NativeCall {
+        global_index: u32,
+        arguments: Vec<ValueId>,
+    },
+    JitPoll,
     Safepoint {
         deopt: u32,
     },
@@ -479,23 +487,41 @@ fn verify_instruction(
     deopts: &HashMap<u32, &DeoptMap>,
 ) -> Result<(), IrError> {
     match instruction.kind {
-        IrInstructionKind::Iconst(_) => require_result(instruction, IrType::I64),
+        IrInstructionKind::Iconst(_) => match instruction.result {
+            Some((_, IrType::I64 | IrType::F64)) => Ok(()),
+            _ => Err(IrError::TypeMismatch),
+        },
         IrInstructionKind::Bconst(_) => require_result(instruction, IrType::Bool),
         IrInstructionKind::Iadd(left, right)
         | IrInstructionKind::Isub(left, right)
         | IrInstructionKind::Imul(left, right) => {
             require_available(available, left)?;
             require_available(available, right)?;
-            require_type(values, left, IrType::I64)?;
-            require_type(values, right, IrType::I64)?;
-            require_result(instruction, IrType::I64)
+            let left_type = require_value(values, left)?;
+            let right_type = require_value(values, right)?;
+            if !matches!(left_type, IrType::I64 | IrType::F64) || left_type != right_type {
+                return Err(IrError::TypeMismatch);
+            }
+            require_result(instruction, left_type)
+        }
+        IrInstructionKind::Fdiv(left, right) => {
+            require_available(available, left)?;
+            require_available(available, right)?;
+            require_type(values, left, IrType::F64)?;
+            require_type(values, right, IrType::F64)?;
+            require_result(instruction, IrType::F64)
+        }
+        IrInstructionKind::Fneg(value) => {
+            require_available(available, value)?;
+            require_type(values, value, IrType::F64)?;
+            require_result(instruction, IrType::F64)
         }
         IrInstructionKind::Icmp { left, right, .. } => {
             require_available(available, left)?;
             require_available(available, right)?;
             let left_type = require_value(values, left)?;
             let right_type = require_value(values, right)?;
-            if left_type == IrType::Uninitialized || left_type != right_type {
+            if !matches!(left_type, IrType::I64 | IrType::F64) || left_type != right_type {
                 return Err(IrError::TypeMismatch);
             }
             require_result(instruction, IrType::Bool)
@@ -565,6 +591,16 @@ fn verify_instruction(
             require_type(values, vector, IrType::I64Vec)?;
             require_type(values, index, IrType::I64)?;
             require_result(instruction, IrType::I64)
+        }
+        IrInstructionKind::JitPoll => require_no_result(instruction),
+        IrInstructionKind::NativeCall { ref arguments, .. } => {
+            for argument in arguments {
+                require_available(available, *argument)?;
+                require_value(values, *argument)?;
+            }
+            require_result(instruction, IrType::I64)
+                .or_else(|_| require_result(instruction, IrType::F64))
+                .or_else(|_| require_result(instruction, IrType::Bool))
         }
         IrInstructionKind::Safepoint { deopt } => {
             require_no_result(instruction)?;
