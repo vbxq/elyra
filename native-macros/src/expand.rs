@@ -9,6 +9,20 @@ use syn::{Item, ItemFn, ItemMod, spanned::Spanned};
 pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenStream2> {
     let module_name = &args.name;
     let module_version = args.version.as_deref().unwrap_or("0.0.0");
+    let module_prefix = module_name
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let descriptor_symbol = args
+        .symbol
+        .unwrap_or_else(|| format!("aelys_module_descriptor_{module_prefix}"));
+    let descriptor_ident = format_ident!("aelys_module_descriptor_{module_prefix}");
+    let module_name_ident = format_ident!("__AELYS_MODULE_NAME_{module_prefix}");
+    let module_version_ident = format_ident!("__AELYS_MODULE_VERSION_{module_prefix}");
+    let exports_ident = format_ident!("__AELYS_EXPORTS_{module_prefix}");
+    let init_ident = format_ident!("__aelys_module_init_{module_prefix}");
+    let hash_init_ident = format_ident!("AELYS_INIT_EXPORTS_HASH_{module_prefix}");
 
     let (brace, content) = input.content.take().ok_or_else(|| {
         syn::Error::new(
@@ -16,6 +30,7 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
             "#[aelys_module] requires an inline module (use `mod name { ... }`)",
         )
     })?;
+    let module_ident = input.ident.clone();
 
     let mut exports = Vec::new();
     let mut new_content = Vec::new();
@@ -25,7 +40,8 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
         if let Item::Fn(func) = &item
             && has_aelys_export_attr(func)
         {
-            let (wrapper, export_info) = generate_export_wrapper(func)?;
+            let (wrapper, export_info) =
+                generate_export_wrapper(func, &module_prefix, &module_ident)?;
             wrapper_functions.push(wrapper);
             exports.push(export_info);
 
@@ -53,8 +69,8 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
     let mut export_refs = Vec::new();
 
     for (i, export) in exports.iter().enumerate() {
-        let static_name = format_ident!("__AELYS_EXPORT_{}", i);
-        let name_static = format_ident!("__AELYS_EXPORT_NAME_{}", i);
+        let static_name = format_ident!("__AELYS_EXPORT_{module_prefix}_{i}");
+        let name_static = format_ident!("__AELYS_EXPORT_NAME_{module_prefix}_{i}");
         let export_name = &export.name;
         let export_name_bytes = format!("{}\0", export_name);
         let arity = export.arity;
@@ -85,33 +101,38 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
 
         #(#wrapper_functions)*
 
-        static __AELYS_MODULE_NAME: &[u8] = #module_name_bytes.as_bytes();
-        static __AELYS_MODULE_VERSION: &[u8] = #module_version_bytes.as_bytes();
+        static #module_name_ident: &[u8] = #module_name_bytes.as_bytes();
+        static #module_version_ident: &[u8] = #module_version_bytes.as_bytes();
 
         #(#export_statics)*
 
-        static __AELYS_EXPORTS: [::aelys_native::AelysExport; #export_count] = [
+        static #exports_ident: [::aelys_native::AelysExport; #export_count] = [
             #(#export_refs),*
         ];
 
-        #[unsafe(no_mangle)]
-        pub static mut aelys_module_descriptor: ::aelys_native::AelysModuleDescriptor = ::aelys_native::AelysModuleDescriptor {
-            abi_version: ::aelys_native::AELYS_ABI_VERSION,
-            descriptor_size: ::core::mem::size_of::<::aelys_native::AelysModuleDescriptor>() as u32,
-            module_name: __AELYS_MODULE_NAME.as_ptr() as *const ::core::ffi::c_char,
-            module_version: __AELYS_MODULE_VERSION.as_ptr() as *const ::core::ffi::c_char,
-            vm_version_min: ::core::ptr::null(),
-            vm_version_max: ::core::ptr::null(),
-            descriptor_hash: 0,
-            exports_hash: 0,
-            export_count: #export_count_u32,
-            exports: __AELYS_EXPORTS.as_ptr(),
-            required_module_count: 0,
-            required_modules: ::core::ptr::null(),
-            init: Some(__aelys_module_init),
+        // Both the Rust identifier and linker symbol are module-specific, so
+        // several generated modules can coexist in one binary. Dynamic
+        // loading accepts this symbol as a fallback to the legacy fixed name.
+        #[unsafe(export_name = #descriptor_symbol)]
+        pub static mut #descriptor_ident: ::aelys_native::AelysModuleDescriptor = unsafe {
+            ::aelys_native::AelysModuleDescriptor::from_raw_parts(
+                ::aelys_native::AELYS_ABI_VERSION,
+                ::core::mem::size_of::<::aelys_native::AelysModuleDescriptor>() as u32,
+                #module_name_ident.as_ptr() as *const ::core::ffi::c_char,
+                #module_version_ident.as_ptr() as *const ::core::ffi::c_char,
+                ::core::ptr::null(),
+                ::core::ptr::null(),
+                0,
+                0,
+                #export_count_u32,
+                #exports_ident.as_ptr(),
+                0,
+                ::core::ptr::null(),
+                Some(#init_ident),
+            )
         };
 
-        extern "C" fn __aelys_module_init(api: *const ::aelys_native::AelysVmApi) -> i32 {
+        extern "C" fn #init_ident(api: *const ::aelys_native::AelysVmApi) -> i32 {
             if api.is_null() {
                 return 1;
             }
@@ -120,7 +141,7 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
             0
         }
 
-        ::aelys_native::aelys_init_exports_hash!(aelys_module_descriptor);
+        ::aelys_native::aelys_init_exports_hash!(#descriptor_ident, #hash_init_ident);
     })
 }
 
