@@ -5,6 +5,8 @@ use super::{
 
 impl Value {
     #[inline(always)]
+    /// Construct an integer, panicking when it cannot be represented by the
+    /// 48-bit NaN-box payload. Use [`Self::int_checked`] for host input.
     pub fn int(n: i64) -> Self {
         Self::int_checked(n).unwrap_or_else(|_| {
             panic!(
@@ -16,6 +18,7 @@ impl Value {
     }
 
     #[inline(always)]
+    /// Construct an integer without panicking on out-of-range host data.
     pub fn int_checked(n: i64) -> Result<Self, IntegerOverflowError> {
         if (Self::INT_MIN..=Self::INT_MAX).contains(&n) {
             let bits = u64::from_ne_bytes(n.to_ne_bytes());
