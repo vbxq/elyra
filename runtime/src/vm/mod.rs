@@ -20,6 +20,7 @@ mod native_registry;
 mod random;
 mod repl;
 mod resources;
+mod roots;
 
 // Implementation modules (extend VM with impl blocks)
 mod arithmetic;
@@ -42,7 +43,8 @@ pub use aelys_bytecode::{
 pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
 pub use builtins::{builtin_type, register_builtins};
 pub use config::{VmConfig, VmConfigError};
-pub use control::{ExecutionControl, ExecutionStats, InterruptHandle};
+pub use control::{ExecutionControl, ExecutionStats, InterruptHandle, call_jit_global};
 pub use core::{MAX_FRAMES, MAX_REGISTERS, StepResult, VM};
 pub use frame::CallFrame;
 pub use native::{NativeFn, NativeFunctionImpl, build_native_vm_api};
+pub use roots::HostRoot;
