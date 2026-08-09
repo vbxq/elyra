@@ -12,8 +12,20 @@ impl VM {
             ))
         })?;
 
-        let func_ref = GcRef::new(func_ptr);
+        self.call_ref(GcRef::new(func_ptr), args)
+    }
 
+    /// Call a function through its full generational heap reference.
+    ///
+    /// Values deliberately store only a slot index in the NaN-box payload for
+    /// compactness. Host handles, however, retain the generation as well; the
+    /// cached-call path must use it or a handle resolved after a slot reuse
+    /// could either fail spuriously or invoke the wrong object.
+    pub(crate) fn call_ref(
+        &mut self,
+        func_ref: GcRef,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
         let func_kind = self.extract_func_kind(func_ref)?;
 
         match func_kind {
