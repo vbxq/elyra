@@ -34,37 +34,29 @@ pub fn get_function(vm: &VM, name: &str) -> Result<CallableFunction> {
 
     match &obj.kind {
         runtime::ObjectKind::Function(func) => {
-            let bc = &func.function.bytecode;
-            let consts = &func.constants;
+            let root = vm.pin_host_ref(func_ref);
             Ok(CallableFunction {
                 kind: CachedFuncKind::Function {
                     func_ref,
+                    _root: root,
                     arity: func.arity(),
-                    num_registers: func.num_registers(),
-                    bytecode_ptr: bc.as_ptr(),
-                    bytecode_len: bc.len(),
-                    constants_ptr: consts.as_ptr(),
-                    constants_len: consts.len(),
                 },
+                owner_id: vm.id(),
             })
         }
         runtime::ObjectKind::Native(native) => Ok(CallableFunction {
             kind: CachedFuncKind::Native {
                 native: native.clone(),
             },
+            owner_id: vm.id(),
         }),
         runtime::ObjectKind::Closure(closure) => Ok(CallableFunction {
             kind: CachedFuncKind::Closure {
-                func_ref: closure.function,
+                closure_ref: func_ref,
+                _root: vm.pin_host_ref(func_ref),
                 arity: closure.arity,
-                num_registers: closure.num_registers,
-                bytecode_ptr: closure.bytecode_ptr,
-                bytecode_len: closure.bytecode_len,
-                constants_ptr: closure.constants_ptr,
-                constants_len: closure.constants_len,
-                upvalues_ptr: closure.upvalues.as_ptr(),
-                upvalues_len: closure.upvalues.len(),
             },
+            owner_id: vm.id(),
         }),
         _ => Err(AelysError::Runtime(vm.runtime_error(
             RuntimeErrorKind::NotCallable("not callable".to_string()),
@@ -72,37 +64,31 @@ pub fn get_function(vm: &VM, name: &str) -> Result<CallableFunction> {
     }
 }
 
-// pre-extracted metadata for fast calls (no hashmap lookup per call)
+// pre-extracted metadata for fast calls (no hashmap lookup per call). The
+// object itself is deliberately retained by a host root and looked up by
+// handle at call time: raw pointers into a movable heap object are not a safe
+// cache key after another allocation or collection.
 #[derive(Clone, Debug)]
 enum CachedFuncKind {
     Function {
         func_ref: runtime::GcRef,
+        _root: runtime::HostRoot,
         arity: u16,
-        num_registers: u32,
-        bytecode_ptr: *const u32,
-        bytecode_len: usize,
-        constants_ptr: *const Value,
-        constants_len: usize,
     },
     Native {
         native: runtime::NativeFunction,
     },
     Closure {
-        func_ref: runtime::GcRef,
+        closure_ref: runtime::GcRef,
+        _root: runtime::HostRoot,
         arity: u16,
-        num_registers: u32,
-        bytecode_ptr: *const u32,
-        bytecode_len: usize,
-        constants_ptr: *const Value,
-        constants_len: usize,
-        upvalues_ptr: *const runtime::GcRef,
-        upvalues_len: usize,
     },
 }
 
 #[derive(Clone, Debug)]
 pub struct CallableFunction {
     kind: CachedFuncKind,
+    owner_id: u64,
 }
 
 impl CallableFunction {
@@ -123,48 +109,18 @@ impl CallableFunction {
     }
 
     pub fn call(&self, vm: &mut VM, args: &[Value]) -> Result<Value> {
+        if vm.id() != self.owner_id {
+            return Err(AelysError::Runtime(
+                vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle),
+            ));
+        }
+
         match &self.kind {
-            CachedFuncKind::Function {
-                func_ref,
-                arity,
-                num_registers,
-                bytecode_ptr,
-                bytecode_len,
-                constants_ptr,
-                constants_len,
-            } => vm.call_cached_function(
-                *func_ref,
-                *arity,
-                *num_registers,
-                *bytecode_ptr,
-                *bytecode_len,
-                *constants_ptr,
-                *constants_len,
-                args,
-            ),
+            CachedFuncKind::Function { func_ref, .. } => vm.call_cached_function(*func_ref, args),
             CachedFuncKind::Native { native } => vm.call_cached_native(native, args),
-            CachedFuncKind::Closure {
-                func_ref,
-                arity,
-                num_registers,
-                bytecode_ptr,
-                bytecode_len,
-                constants_ptr,
-                constants_len,
-                upvalues_ptr,
-                upvalues_len,
-            } => vm.call_cached_closure(
-                *func_ref,
-                *arity,
-                *num_registers,
-                *bytecode_ptr,
-                *bytecode_len,
-                *constants_ptr,
-                *constants_len,
-                *upvalues_ptr,
-                *upvalues_len,
-                args,
-            ),
+            CachedFuncKind::Closure { closure_ref, .. } => {
+                vm.call_cached_closure(*closure_ref, args)
+            }
         }
         .map_err(AelysError::Runtime)
     }
