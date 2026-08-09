@@ -13,8 +13,8 @@ use aelys_native::AelysModuleDescriptor;
 use aelys_opt::{OptimizationLevel, Optimizer};
 use aelys_runtime::stdlib::StdModuleExports;
 use aelys_runtime::{
-    ExecutionControl, JitArgument, JitCallResult, JitDeoptValue, JitExecutor, JitFunctionKey, VM,
-    Value, VmConfig, VmConfigError,
+    ExecutionControl, HostRoot, JitArgument, JitCallResult, JitDeoptValue, JitExecutor,
+    JitFunctionKey, VM, Value, VmConfig, VmConfigError,
 };
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
@@ -23,7 +23,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// A function resolved once and called many times. Re-exported here so an
@@ -127,6 +127,13 @@ impl IsolateConfig {
     }
 }
 
+/// Options applied to one [`Isolate::execute`], [`Isolate::execute_instance`]
+/// or [`Isolate::call_with_options`] run.
+///
+/// Controls are installed for the selected run and a later plain
+/// [`Isolate::call`] restores an unrestricted frame path. `report` is
+/// telemetry only: requesting it no longer disables the JIT, although a hard
+/// instruction/deadline/interrupt control still requires the interpreter.
 #[derive(Clone, Debug)]
 pub struct RunOptions {
     pub max_instructions: Option<u64>,
@@ -195,6 +202,11 @@ impl fmt::Display for StructuredCloneError {
 
 impl std::error::Error for StructuredCloneError {}
 
+/// Telemetry for one run.
+///
+/// `allocations` is a monotone count since the beginning of the run;
+/// `allocated_bytes` is the live heap size at the end and can decrease after
+/// garbage collection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionReport {
     pub instructions: u64,
@@ -220,6 +232,8 @@ pub struct CompiledModule {
 }
 
 impl CompiledModule {
+    /// Return portable AVBC bytes suitable for build-time or disk caching.
+    /// Recreate a module with [`Runtime::load_avbc`].
     pub fn avbc(&self) -> &[u8] {
         &self.avbc
     }
@@ -234,6 +248,8 @@ struct RuntimeInner {
     jit_mode: JitMode,
     jit: Option<Arc<JitProvider>>,
     native_modules: Mutex<Vec<Arc<NativeModuleRegistration>>>,
+    pending_native_aliases: Mutex<HashSet<String>>,
+    standard_symbols: OnceLock<Result<StandardSymbols, String>>,
 }
 
 /// Distinguishes compiled modules
@@ -279,6 +295,8 @@ impl Runtime {
                 jit_mode,
                 jit,
                 native_modules: Mutex::new(Vec::new()),
+                pending_native_aliases: Mutex::new(HashSet::new()),
+                standard_symbols: OnceLock::new(),
             }),
         })
     }
@@ -287,6 +305,8 @@ impl Runtime {
         self.inner.jit_mode
     }
 
+    /// Number of cached baseline/optimized functions. OSR entries are
+    /// included; this is not a root-entry-only metric.
     pub fn jit_cache_entries(&self) -> usize {
         self.inner
             .jit
@@ -311,6 +331,21 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    fn standard_module_symbols(&self) -> Result<StandardSymbols, AelysError> {
+        let cached = self
+            .inner
+            .standard_symbols
+            .get_or_init(|| build_standard_module_symbols().map_err(|error| error.to_string()));
+        match cached {
+            Ok(symbols) => Ok(symbols.clone()),
+            Err(message) => Err(AelysError::Runtime(RuntimeError::new(
+                RuntimeErrorKind::InvalidBytecode(message.clone()),
+                Vec::new(),
+                Source::new("<compile-context>", ""),
+            ))),
+        }
+    }
+
     /// Makes a statically linked native module visible to this runtime
     pub unsafe fn register_native_module(
         &self,
@@ -318,21 +353,35 @@ impl Runtime {
     ) -> Result<(), AelysError> {
         // SAFETY: forwarded to this function's own contract, which is the same one `validate` states.
         let validated = unsafe { NativeModuleRegistration::validate(module) }?;
-        if is_standard_module_alias(validated.alias())? {
+        if is_standard_module_alias(validated.alias()) {
             return Err(invalid_module_reason(
                 validated.alias(),
                 "alias is reserved by a standard module",
             ));
         }
-        self.reject_taken_alias(validated.alias())?;
+        let alias = validated.alias().to_string();
+        self.reserve_native_alias(&alias)?;
 
-        // two threads registering the same alias can both reach `init` before either pushes, only one of them registers, the check below runs again under the lock on the state that push will see.
-        let registration = Arc::new(validated.initialize()?);
+        // The init callback runs without the registry lock so it may call
+        // back into the runtime. The pending reservation prevents a second
+        // thread from initializing the same alias concurrently.
+        let registration = match validated.initialize() {
+            Ok(registration) => Arc::new(registration),
+            Err(error) => {
+                self.release_native_alias(&alias);
+                return Err(error);
+            }
+        };
         let mut modules = self
             .inner
             .native_modules
             .lock()
             .expect("native module registry poisoned");
+        self.inner
+            .pending_native_aliases
+            .lock()
+            .expect("native module reservations poisoned")
+            .remove(&alias);
         if modules
             .iter()
             .any(|existing| existing.alias == registration.alias)
@@ -343,7 +392,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn reject_taken_alias(&self, alias: &str) -> Result<(), AelysError> {
+    fn reserve_native_alias(&self, alias: &str) -> Result<(), AelysError> {
         let modules = self
             .inner
             .native_modules
@@ -352,7 +401,23 @@ impl Runtime {
         if modules.iter().any(|existing| existing.alias == alias) {
             return Err(duplicate_alias(alias));
         }
+        let mut pending = self
+            .inner
+            .pending_native_aliases
+            .lock()
+            .expect("native module reservations poisoned");
+        if !pending.insert(alias.to_string()) {
+            return Err(duplicate_alias(alias));
+        }
         Ok(())
+    }
+
+    fn release_native_alias(&self, alias: &str) {
+        self.inner
+            .pending_native_aliases
+            .lock()
+            .expect("native module reservations poisoned")
+            .remove(alias);
     }
 
     pub(crate) fn native_module_symbols(&self) -> (HashSet<String>, HashSet<String>) {
@@ -379,7 +444,7 @@ impl Runtime {
         let tokens = Lexer::with_source(source.clone()).scan()?;
         let statements = Parser::new(tokens, source.clone()).parse()?;
         let (mut module_aliases, mut known_globals, mut known_native_globals) =
-            standard_module_symbols()?;
+            self.standard_module_symbols()?;
         let (native_aliases, native_globals) = self.native_module_symbols();
         module_aliases.extend(native_aliases);
         known_globals.extend(native_globals.iter().cloned());
@@ -429,6 +494,34 @@ impl Runtime {
         })
     }
 
+    /// Reconstruct a compiled module from AVBC produced by [`CompiledModule::avbc`].
+    ///
+    /// AVBC does not contain the original source text, so `source_name` is
+    /// used for diagnostics and reports. The module receives a fresh,
+    /// process-wide id and is therefore safe to execute through any isolate
+    /// belonging to this runtime.
+    pub fn load_avbc(
+        &self,
+        avbc: &[u8],
+        source_name: impl Into<String>,
+    ) -> Result<CompiledModule, AelysError> {
+        let source = Source::new(source_name.into(), "");
+        let function = deserialize(avbc).map_err(|error| {
+            AelysError::Runtime(RuntimeError::new(
+                RuntimeErrorKind::InvalidBytecode(error.to_string()),
+                Vec::new(),
+                Arc::clone(&source),
+            ))
+        })?;
+        let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
+        Ok(CompiledModule {
+            avbc: Arc::from(avbc),
+            function: Arc::new(function),
+            module_id,
+            source,
+        })
+    }
+
     pub fn try_new_isolate(&self, config: IsolateConfig) -> Result<Isolate, AelysError> {
         let mut vm = VM::with_config_and_args(
             Source::new("<isolate>", ""),
@@ -445,12 +538,16 @@ impl Runtime {
         if let Some(seed) = config.random_seed {
             vm.set_random_seed(seed);
         }
+        let persistent_globals = vm.global_names().into_iter().collect();
         Ok(Isolate {
             id: NEXT_ISOLATE_ID.fetch_add(1, Ordering::Relaxed),
             vm,
             runtime: Arc::clone(&self.inner),
             jit_call_counts: SmallVec::new(),
             last_report: None,
+            persistent_globals,
+            module_globals: HashSet::new(),
+            active_module_root: None,
             _not_sync: Cell::new(()),
         })
     }
@@ -499,6 +596,7 @@ pub struct ModuleInstance {
     global_layout: Arc<aelys_bytecode::GlobalLayout>,
     jit_function: Arc<aelys_bytecode::Function>,
     source: Arc<Source>,
+    root: HostRoot,
 }
 
 static NEXT_ISOLATE_ID: AtomicU64 = AtomicU64::new(1);
@@ -509,6 +607,9 @@ pub struct Isolate {
     runtime: Arc<RuntimeInner>,
     jit_call_counts: SmallVec<[(u64, u64); 4]>,
     last_report: Option<ExecutionReport>,
+    persistent_globals: HashSet<String>,
+    module_globals: HashSet<String>,
+    active_module_root: Option<HostRoot>,
     _not_sync: Cell<()>,
 }
 
@@ -537,14 +638,17 @@ fn register_standard_modules(vm: &mut VM) -> Result<(), AelysError> {
     Ok(())
 }
 
-fn is_standard_module_alias(alias: &str) -> Result<bool, AelysError> {
-    let (aliases, _, _) = standard_module_symbols()?;
-    Ok(aliases.contains(alias))
+const STANDARD_MODULE_ALIASES: [&str; 9] = [
+    "string", "io", "math", "convert", "time", "sys", "fs", "net", "bytes",
+];
+
+fn is_standard_module_alias(alias: &str) -> bool {
+    STANDARD_MODULE_ALIASES.contains(&alias)
 }
 
 type StandardSymbols = (HashSet<String>, HashSet<String>, HashSet<String>);
 
-fn standard_module_symbols() -> Result<StandardSymbols, AelysError> {
+fn build_standard_module_symbols() -> Result<StandardSymbols, AelysError> {
     let mut vm = VM::new(Source::new("<compile-context>", "")).map_err(AelysError::Runtime)?;
     let mut aliases = vm.repl_module_aliases().clone();
     let mut globals = vm.repl_known_globals().clone();
@@ -561,24 +665,30 @@ fn standard_module_symbols() -> Result<StandardSymbols, AelysError> {
 }
 
 impl Isolate {
+    fn prepare_module_run(&mut self) {
+        self.active_module_root = None;
+        let old_globals = std::mem::take(&mut self.module_globals);
+        for name in old_globals {
+            if !self.persistent_globals.contains(&name) {
+                self.vm.remove_global(&name);
+            }
+        }
+        self.vm.invalidate_global_mapping();
+    }
+
     fn try_execute_jit(
         &mut self,
         module_id: u64,
         function: &aelys_bytecode::Function,
         options: &RunOptions,
-    ) -> RootJitResult {
+    ) -> Result<RootJitResult, AelysError> {
         if self.runtime.jit_mode == JitMode::Off {
-            return RootJitResult::Unsupported;
+            return Ok(RootJitResult::Unsupported);
         }
         let Some(provider) = self.runtime.jit.as_ref() else {
-            return RootJitResult::Unsupported;
+            return Ok(RootJitResult::Unsupported);
         };
-        if options.max_instructions.is_some()
-            || options.deadline.is_some()
-            || options.interrupt.is_some()
-        {
-            return RootJitResult::Unsupported;
-        }
+        self.vm.prepare_globals_for_layout(&function.global_layout);
         let calls = if let Some((_, calls)) = self
             .jit_call_counts
             .iter_mut()
@@ -592,11 +702,28 @@ impl Isolate {
         };
         let key = JitFunctionKey::root(module_id);
         if !provider.should_execute(&key, calls) {
-            return RootJitResult::Unsupported;
+            return Ok(RootJitResult::Unsupported);
         }
-        match provider.try_execute(&key, function, &[] as &[JitArgument<'_>], calls) {
-            JitCallResult::Unsupported => RootJitResult::Unsupported,
-            JitCallResult::Returned(value) => RootJitResult::Returned(value),
+        let context = Some(self.vm.jit_execution_context(
+            options.report
+                || options.max_instructions.is_some()
+                || options.deadline.is_some()
+                || options.interrupt.is_some(),
+        ));
+        match provider.try_execute_with_context(
+            &key,
+            function,
+            &[] as &[JitArgument<'_>],
+            calls,
+            context.as_ref(),
+        ) {
+            JitCallResult::Unsupported => Ok(RootJitResult::Unsupported),
+            JitCallResult::Returned(value) => Ok(RootJitResult::Returned(value)),
+            JitCallResult::Aborted => Err(AelysError::Runtime(
+                self.vm
+                    .take_jit_control_error()
+                    .unwrap_or_else(|| self.vm.runtime_error(RuntimeErrorKind::Interrupted)),
+            )),
             JitCallResult::Deoptimized {
                 bytecode_ip,
                 registers,
@@ -609,12 +736,12 @@ impl Isolate {
                     })
                     .collect::<Option<Vec<_>>>()
                 else {
-                    return RootJitResult::Unsupported;
+                    return Ok(RootJitResult::Unsupported);
                 };
-                RootJitResult::Deoptimized {
+                Ok(RootJitResult::Deoptimized {
                     bytecode_ip,
                     registers,
-                }
+                })
             }
         }
     }
@@ -624,8 +751,9 @@ impl Isolate {
         module: &CompiledModule,
         options: RunOptions,
     ) -> Result<ExecutionOutcome, AelysError> {
+        self.prepare_module_run();
         self.configure_run(&options);
-        let jit_result = self.try_execute_jit(module.module_id, &module.function, &options);
+        let jit_result = self.try_execute_jit(module.module_id, &module.function, &options)?;
         if let RootJitResult::Returned(value) = &jit_result {
             self.last_report = self.jit_report(&options, &module.function, &module.source);
             return Ok(ExecutionOutcome::Returned(*value));
@@ -647,9 +775,11 @@ impl Isolate {
             global_layout,
             jit_function: Arc::clone(&module.function),
             source: Arc::clone(&module.source),
+            root: self.vm.pin_host_ref(function_ref),
         })
     }
 
+    /// Execute an already-instantiated module without deserializing it again.
     pub fn execute_instance(
         &mut self,
         instance: &ModuleInstance,
@@ -658,8 +788,10 @@ impl Isolate {
         if instance.isolate_id != self.id {
             return Err(self.foreign_instance_error());
         }
+        self.prepare_module_run();
         self.configure_run(&options);
-        let jit_result = self.try_execute_jit(instance.module_id, &instance.jit_function, &options);
+        let jit_result =
+            self.try_execute_jit(instance.module_id, &instance.jit_function, &options)?;
         if let RootJitResult::Returned(value) = &jit_result {
             self.last_report = self.jit_report(&options, &instance.jit_function, &instance.source);
             return Ok(ExecutionOutcome::Returned(*value));
@@ -676,8 +808,17 @@ impl Isolate {
         if !options.report {
             return None;
         }
+        let stats = self.vm.execution_stats();
         Some(ExecutionReport {
+            instructions: stats.instructions,
+            allocations: stats.allocations,
             allocated_bytes: self.vm.heap().bytes_allocated(),
+            collections: stats.collections,
+            gc_pause_total_ns: stats.gc_pause_micros.saturating_mul(1_000),
+            gc_pause_max_ns: stats.gc_max_pause_micros.saturating_mul(1_000),
+            cache_hits: stats.cache_hits,
+            cache_misses: stats.cache_misses,
+            instruction_pointer: stats.last_instruction_pointer,
             function: Some(function.name.as_deref().unwrap_or("<main>").to_string()),
             source: source.name.clone(),
             random_seed: self.vm.random_seed(),
@@ -748,6 +889,13 @@ impl Isolate {
         if result.is_ok() {
             self.vm.sync_globals_to_hashmap(global_layout.names());
         }
+        self.module_globals = self
+            .vm
+            .global_names()
+            .into_iter()
+            .filter(|name| !self.persistent_globals.contains(name))
+            .collect();
+        self.active_module_root = Some(instance.root.clone());
         if options.report {
             let stats = self.vm.execution_stats();
             self.last_report = Some(ExecutionReport {
@@ -777,6 +925,11 @@ impl Isolate {
         }
     }
 
+    /// Resolve and pin a callable for repeated calls on this isolate.
+    ///
+    /// The returned handle is owned by the host and must only be used with
+    /// this isolate; it remains safe across collections and module
+    /// re-execution.
     pub fn get_function(&self, name: &str) -> Result<CallableFunction, AelysError> {
         aelys_driver::get_function(&self.vm, name)
     }
@@ -786,9 +939,42 @@ impl Isolate {
         function: &CallableFunction,
         args: &[Value],
     ) -> Result<Value, AelysError> {
-        function.call(&mut self.vm, args)
+        self.call_with_options(function, args, RunOptions::default())
     }
 
+    /// Call a previously resolved function with controls scoped to this call.
+    /// A plain [`Self::call`] deliberately installs default options so a
+    /// bounded or reporting module load cannot silently affect every later
+    /// frame.
+    pub fn call_with_options(
+        &mut self,
+        function: &CallableFunction,
+        args: &[Value],
+        options: RunOptions,
+    ) -> Result<Value, AelysError> {
+        self.configure_run(&options);
+        let result = function.call(&mut self.vm, args);
+        if options.report {
+            let stats = self.vm.execution_stats();
+            self.last_report = Some(ExecutionReport {
+                instructions: stats.instructions,
+                allocations: stats.allocations,
+                allocated_bytes: self.vm.heap().bytes_allocated(),
+                collections: stats.collections,
+                gc_pause_total_ns: stats.gc_pause_micros.saturating_mul(1_000),
+                gc_pause_max_ns: stats.gc_max_pause_micros.saturating_mul(1_000),
+                cache_hits: stats.cache_hits,
+                cache_misses: stats.cache_misses,
+                function: self.vm.last_execution_function_name(),
+                instruction_pointer: stats.last_instruction_pointer,
+                source: self.vm.source().name.clone(),
+                random_seed: self.vm.random_seed(),
+            });
+        }
+        result
+    }
+
+    /// Return the most recently requested report, if any.
     pub fn last_report(&self) -> Option<&ExecutionReport> {
         self.last_report.as_ref()
     }
