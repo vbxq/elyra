@@ -17,15 +17,31 @@ struct DecodedInstruction {
 }
 
 pub(crate) fn translate_integer_function(function: &Function) -> Option<FunctionIr> {
-    translate_function(function, false)
+    translate_function(function, false, false)
+}
+
+pub(crate) fn translate_controlled_integer_function(function: &Function) -> Option<FunctionIr> {
+    translate_function(function, false, true)
 }
 
 pub(crate) fn translate_optimized_integer_function(function: &Function) -> Option<FunctionIr> {
-    translate_function(function, true)
+    translate_function(function, true, false)
 }
 
 pub(crate) fn translate_integer_osr(function: &Function, bytecode_ip: u32) -> Option<FunctionIr> {
-    let mut ir = translate_function(function, false)?;
+    let ir = translate_function(function, false, false)?;
+    add_osr_entry(ir, bytecode_ip)
+}
+
+pub(crate) fn translate_controlled_integer_osr(
+    function: &Function,
+    bytecode_ip: u32,
+) -> Option<FunctionIr> {
+    let ir = translate_function(function, false, true)?;
+    add_osr_entry(ir, bytecode_ip)
+}
+
+fn add_osr_entry(mut ir: FunctionIr, bytecode_ip: u32) -> Option<FunctionIr> {
     let target = ir.blocks.iter().find(|block| {
         block
             .instructions
@@ -83,7 +99,11 @@ pub(crate) fn translate_integer_osr(function: &Function, bytecode_ip: u32) -> Op
     Some(ir)
 }
 
-fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<FunctionIr> {
+fn translate_function(
+    function: &Function,
+    inline_leaf_calls: bool,
+    controlled: bool,
+) -> Option<FunctionIr> {
     let register_count = usize::try_from(function.num_registers).ok()?;
     if register_count < usize::from(function.arity) || register_count > usize::from(u16::MAX) + 1 {
         return None;
@@ -154,6 +174,7 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
     }];
 
     let mut deopt_maps = Vec::new();
+    let mut return_type = None;
     for &leader in &reachable {
         let leader_index = leaders.binary_search(&leader).ok()?;
         let end = leaders
@@ -163,24 +184,36 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
         let input_types = block_types.get(&leader)?;
         let mut parameters = Vec::with_capacity(register_count);
         let mut registers = Vec::with_capacity(register_count);
+        let mut register_types = Vec::with_capacity(register_count);
         for &ty in input_types {
             let value = next_id(&mut next_value)?;
             let ty = ty.unwrap_or(IrType::Uninitialized);
             parameters.push((value, ty));
             registers.push(value);
+            register_types.push(ty);
         }
         let mut instructions = Vec::new();
         let mut nested_functions = vec![None; register_count];
+        let mut global_indices = vec![None; register_count];
         let mut terminator = None;
         let mut cursor = leader;
         while cursor < end {
             let instruction = *decoded.get(*instruction_by_ip.get(&cursor)?)?;
             let source = position(function, instruction.ip);
+            if controlled {
+                instructions.push(IrInstruction {
+                    result: None,
+                    kind: IrInstructionKind::JitPoll,
+                    source,
+                });
+            }
             if matches!(
                 instruction.opcode,
                 OpCode::LoadI
                     | OpCode::LoadBool
                     | OpCode::LoadK
+                    | OpCode::LoadKWide
+                    | OpCode::Neg
                     | OpCode::ArrayLen
                     | OpCode::VecLen
                     | OpCode::ArrayLoadI
@@ -193,6 +226,14 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                     | OpCode::AddII
                     | OpCode::SubII
                     | OpCode::MulII
+                    | OpCode::AddFF
+                    | OpCode::SubFF
+                    | OpCode::MulFF
+                    | OpCode::DivFF
+                    | OpCode::AddFFG
+                    | OpCode::SubFFG
+                    | OpCode::MulFFG
+                    | OpCode::DivFFG
                     | OpCode::Lt
                     | OpCode::Le
                     | OpCode::Gt
@@ -205,24 +246,56 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                     | OpCode::GeII
                     | OpCode::EqII
                     | OpCode::NeII
+                    | OpCode::LtFF
+                    | OpCode::LeFF
+                    | OpCode::GtFF
+                    | OpCode::GeFF
+                    | OpCode::EqFF
+                    | OpCode::NeFF
+                    | OpCode::LtFFG
+                    | OpCode::LeFFG
+                    | OpCode::GtFFG
+                    | OpCode::GeFFG
+                    | OpCode::EqFFG
+                    | OpCode::NeFFG
             ) {
                 *nested_functions.get_mut(instruction.a)? = None;
             }
             match instruction.opcode {
+                OpCode::GetGlobalIdx | OpCode::GetGlobalIdxWide => {
+                    let index = global_index(function, instruction)?;
+                    *global_indices.get_mut(instruction.a)? =
+                        is_native_global(function, index).then_some(index);
+                    *register_types.get_mut(instruction.a)? = IrType::Uninitialized;
+                    *nested_functions.get_mut(instruction.a)? = None;
+                }
                 OpCode::Move => {
                     let value = *registers.get(instruction.b)?;
                     *registers.get_mut(instruction.a)? = value;
                     *nested_functions.get_mut(instruction.a)? =
                         *nested_functions.get(instruction.b)?;
                 }
-                OpCode::LoadK if inline_leaf_calls => {
+                OpCode::LoadK | OpCode::LoadKWide if inline_leaf_calls => {
                     let index = constant_index(function, instruction)?;
-                    let Constant::NestedFunction(index) = function.constants.get(index)? else {
-                        return None;
-                    };
-                    let index = usize::try_from(*index).ok()?;
-                    function.nested_functions.get(index)?;
-                    *nested_functions.get_mut(instruction.a)? = Some(index);
+                    match function.constants.get(index)? {
+                        Constant::NestedFunction(index) => {
+                            let index = usize::try_from(*index).ok()?;
+                            function.nested_functions.get(index)?;
+                            *nested_functions.get_mut(instruction.a)? = Some(index);
+                        }
+                        constant => {
+                            let (ty, kind) = constant_ir(constant)?;
+                            emit_value(
+                                &mut registers,
+                                &mut instructions,
+                                &mut next_value,
+                                instruction.a,
+                                ty,
+                                kind,
+                                source,
+                            )?;
+                        }
+                    }
                 }
                 OpCode::LoadI => {
                     let word = function.bytecode.as_slice()[instruction.ip];
@@ -247,6 +320,21 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                         instruction.a,
                         IrType::Bool,
                         IrInstructionKind::Bconst(instruction.b != 0),
+                        source,
+                    )?;
+                }
+                OpCode::LoadK | OpCode::LoadKWide => {
+                    let constant = function
+                        .constants
+                        .get(constant_index(function, instruction)?)?;
+                    let (ty, kind) = constant_ir(constant)?;
+                    emit_value(
+                        &mut registers,
+                        &mut instructions,
+                        &mut next_value,
+                        instruction.a,
+                        ty,
+                        kind,
                         source,
                     )?;
                 }
@@ -344,6 +432,15 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                 | OpCode::MulII => {
                     let left = *registers.get(instruction.b)?;
                     let right = *registers.get(instruction.c)?;
+                    let result_type =
+                        if matches!(instruction.opcode, OpCode::Add | OpCode::Sub | OpCode::Mul)
+                            && (*register_types.get(instruction.b)? == IrType::F64
+                                || *register_types.get(instruction.c)? == IrType::F64)
+                        {
+                            IrType::F64
+                        } else {
+                            IrType::I64
+                        };
                     let kind = match instruction.opcode {
                         OpCode::Add | OpCode::AddII => IrInstructionKind::Iadd(left, right),
                         OpCode::Sub | OpCode::SubII => IrInstructionKind::Isub(left, right),
@@ -355,8 +452,47 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                         &mut instructions,
                         &mut next_value,
                         instruction.a,
-                        IrType::I64,
+                        result_type,
                         kind,
+                        source,
+                    )?;
+                }
+                OpCode::AddFF
+                | OpCode::SubFF
+                | OpCode::MulFF
+                | OpCode::DivFF
+                | OpCode::AddFFG
+                | OpCode::SubFFG
+                | OpCode::MulFFG
+                | OpCode::DivFFG => {
+                    let left = *registers.get(instruction.b)?;
+                    let right = *registers.get(instruction.c)?;
+                    let kind = match instruction.opcode {
+                        OpCode::AddFF | OpCode::AddFFG => IrInstructionKind::Iadd(left, right),
+                        OpCode::SubFF | OpCode::SubFFG => IrInstructionKind::Isub(left, right),
+                        OpCode::MulFF | OpCode::MulFFG => IrInstructionKind::Imul(left, right),
+                        OpCode::DivFF | OpCode::DivFFG => IrInstructionKind::Fdiv(left, right),
+                        _ => return None,
+                    };
+                    emit_value(
+                        &mut registers,
+                        &mut instructions,
+                        &mut next_value,
+                        instruction.a,
+                        IrType::F64,
+                        kind,
+                        source,
+                    )?;
+                }
+                OpCode::Neg => {
+                    let value = *registers.get(instruction.b)?;
+                    emit_value(
+                        &mut registers,
+                        &mut instructions,
+                        &mut next_value,
+                        instruction.a,
+                        IrType::F64,
+                        IrInstructionKind::Fneg(value),
                         source,
                     )?;
                 }
@@ -372,6 +508,35 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                 | OpCode::GeII
                 | OpCode::EqII
                 | OpCode::NeII => {
+                    let predicate = predicate(instruction.opcode)?;
+                    let left = *registers.get(instruction.b)?;
+                    let right = *registers.get(instruction.c)?;
+                    emit_value(
+                        &mut registers,
+                        &mut instructions,
+                        &mut next_value,
+                        instruction.a,
+                        IrType::Bool,
+                        IrInstructionKind::Icmp {
+                            predicate,
+                            left,
+                            right,
+                        },
+                        source,
+                    )?;
+                }
+                OpCode::LtFF
+                | OpCode::LeFF
+                | OpCode::GtFF
+                | OpCode::GeFF
+                | OpCode::EqFF
+                | OpCode::NeFF
+                | OpCode::LtFFG
+                | OpCode::LeFFG
+                | OpCode::GtFFG
+                | OpCode::GeFFG
+                | OpCode::EqFFG
+                | OpCode::NeFFG => {
                     let predicate = predicate(instruction.opcode)?;
                     let left = *registers.get(instruction.b)?;
                     let right = *registers.get(instruction.c)?;
@@ -430,29 +595,122 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
                     break;
                 }
                 OpCode::Return => {
+                    let ty = match *register_types.get(instruction.a)? {
+                        IrType::Uninitialized => IrType::I64,
+                        ty => ty,
+                    };
+                    if !matches!(ty, IrType::I64 | IrType::F64 | IrType::Bool) {
+                        return None;
+                    }
+                    if let Some(existing) = return_type {
+                        if existing != ty {
+                            return None;
+                        }
+                    } else {
+                        return_type = Some(ty);
+                    }
                     terminator = Some(IrTerminator::Return(*registers.get(instruction.a)?));
                     break;
                 }
-                OpCode::Call | OpCode::CallCached if inline_leaf_calls => {
-                    let nested = (*nested_functions.get(instruction.b)?)?;
-                    let callee = function.nested_functions.get(nested)?;
-                    if usize::from(callee.arity) != instruction.c {
+                OpCode::CallGlobal => {
+                    if instruction.c > 32 {
                         return None;
                     }
                     let argument_start = instruction.a.checked_add(1)?;
                     let argument_end = argument_start.checked_add(instruction.c)?;
-                    let arguments = registers.get(argument_start..argument_end)?;
-                    let result = inline_integer_leaf(
-                        callee,
-                        arguments,
+                    let arguments = registers.get(argument_start..argument_end)?.to_vec();
+                    let global_index = u32::try_from(instruction.b).ok()?;
+                    if !is_native_global(function, global_index) {
+                        return None;
+                    }
+                    // A global call is dynamically typed. Only lower it when
+                    // the bytecode immediately gives its result a numeric or
+                    // boolean consumer; a bare `return helper()` must remain
+                    // interpreted because the helper may return any Aelys
+                    // value.
+                    let result_type =
+                        infer_call_result_type(function, &decoded, instruction.ip, instruction.a)?;
+                    emit_value(
+                        &mut registers,
                         &mut instructions,
                         &mut next_value,
+                        instruction.a,
+                        result_type,
+                        IrInstructionKind::NativeCall {
+                            global_index,
+                            arguments,
+                        },
                         source,
                     )?;
-                    *registers.get_mut(instruction.a)? = result;
+                    *register_types.get_mut(instruction.a)? = result_type;
                     *nested_functions.get_mut(instruction.a)? = None;
                 }
+                OpCode::Call | OpCode::CallCached => {
+                    if let Some(global_index) = global_indices.get(instruction.b)?.as_ref().copied()
+                    {
+                        if instruction.c > 32 {
+                            return None;
+                        }
+                        let argument_start = call_argument_start(instruction)?;
+                        let argument_end = argument_start.checked_add(instruction.c)?;
+                        let arguments = registers.get(argument_start..argument_end)?.to_vec();
+                        let result_type = infer_call_result_type(
+                            function,
+                            &decoded,
+                            instruction.ip,
+                            instruction.a,
+                        )?;
+                        emit_value(
+                            &mut registers,
+                            &mut instructions,
+                            &mut next_value,
+                            instruction.a,
+                            result_type,
+                            IrInstructionKind::NativeCall {
+                                global_index,
+                                arguments,
+                            },
+                            source,
+                        )?;
+                        *register_types.get_mut(instruction.a)? = result_type;
+                        *global_indices.get_mut(instruction.a)? = None;
+                        *nested_functions.get_mut(instruction.a)? = None;
+                    } else if inline_leaf_calls {
+                        let nested = (*nested_functions.get(instruction.b)?)?;
+                        let callee = function.nested_functions.get(nested)?;
+                        if usize::from(callee.arity) != instruction.c {
+                            return None;
+                        }
+                        let argument_start = call_argument_start(instruction)?;
+                        let argument_end = argument_start.checked_add(instruction.c)?;
+                        let arguments = registers.get(argument_start..argument_end)?;
+                        let result = inline_integer_leaf(
+                            callee,
+                            arguments,
+                            &mut instructions,
+                            &mut next_value,
+                            source,
+                        )?;
+                        *registers.get_mut(instruction.a)? = result;
+                        *nested_functions.get_mut(instruction.a)? = None;
+                    } else {
+                        return None;
+                    }
+                }
                 _ => return None,
+            }
+            if instruction.opcode == OpCode::Move {
+                let ty = *register_types.get(instruction.b)?;
+                *register_types.get_mut(instruction.a)? = ty;
+                *global_indices.get_mut(instruction.a)? = *global_indices.get(instruction.b)?;
+            } else if let Some(ty) = output_type(function, instruction, &register_types) {
+                *register_types.get_mut(instruction.a)? = ty;
+            }
+            if !matches!(
+                instruction.opcode,
+                OpCode::GetGlobalIdx | OpCode::GetGlobalIdxWide | OpCode::Move
+            ) {
+                *global_indices.get_mut(instruction.a)? = None;
             }
             cursor = instruction.next;
         }
@@ -477,7 +735,7 @@ fn translate_function(function: &Function, inline_leaf_calls: bool) -> Option<Fu
             .unwrap_or_else(|| "anonymous".to_string()),
         entry,
         parameter_types,
-        return_type: IrType::I64,
+        return_type: return_type.unwrap_or(IrType::I64),
         blocks,
         deopt_maps,
     };
@@ -612,7 +870,340 @@ fn inline_integer_leaf(
 
 fn constant_index(function: &Function, instruction: DecodedInstruction) -> Option<usize> {
     let word = *function.bytecode.as_slice().get(instruction.ip)?;
-    usize::try_from(word & 0xffff).ok()
+    if instruction.opcode == OpCode::LoadKWide {
+        usize::try_from(*function.bytecode.as_slice().get(instruction.ip + 1)?).ok()
+    } else {
+        usize::try_from(word & 0xffff).ok()
+    }
+}
+
+fn constant_ir(constant: &Constant) -> Option<(IrType, IrInstructionKind)> {
+    match constant {
+        Constant::Bool(value) => Some((IrType::Bool, IrInstructionKind::Bconst(*value))),
+        Constant::Int(value) => Some((IrType::I64, IrInstructionKind::Iconst(*value))),
+        Constant::Float(bits) => Some((
+            IrType::F64,
+            IrInstructionKind::Iconst(i64::from_ne_bytes(bits.to_ne_bytes())),
+        )),
+        Constant::Null | Constant::String(_) | Constant::NestedFunction(_) => None,
+    }
+}
+
+fn output_type(
+    function: &Function,
+    instruction: DecodedInstruction,
+    register_types: &[IrType],
+) -> Option<IrType> {
+    Some(match instruction.opcode {
+        OpCode::GetGlobalIdx | OpCode::GetGlobalIdxWide => IrType::Uninitialized,
+        OpCode::LoadI => IrType::I64,
+        OpCode::LoadBool => IrType::Bool,
+        OpCode::LoadK | OpCode::LoadKWide => {
+            constant_ir(
+                function
+                    .constants
+                    .get(constant_index(function, instruction)?)?,
+            )?
+            .0
+        }
+        OpCode::ArrayLen
+        | OpCode::VecLen
+        | OpCode::ArrayLoadI
+        | OpCode::VecLoadI
+        | OpCode::AddI
+        | OpCode::SubI
+        | OpCode::AddII
+        | OpCode::SubII
+        | OpCode::MulII => IrType::I64,
+        OpCode::Add | OpCode::Sub | OpCode::Mul => {
+            if register_types.get(instruction.b) == Some(&IrType::F64)
+                || register_types.get(instruction.c) == Some(&IrType::F64)
+            {
+                IrType::F64
+            } else {
+                IrType::I64
+            }
+        }
+        OpCode::AddFF
+        | OpCode::SubFF
+        | OpCode::MulFF
+        | OpCode::DivFF
+        | OpCode::AddFFG
+        | OpCode::SubFFG
+        | OpCode::MulFFG
+        | OpCode::DivFFG
+        | OpCode::Neg => IrType::F64,
+        OpCode::Lt
+        | OpCode::Le
+        | OpCode::Gt
+        | OpCode::Ge
+        | OpCode::Eq
+        | OpCode::Ne
+        | OpCode::LtII
+        | OpCode::LeII
+        | OpCode::GtII
+        | OpCode::GeII
+        | OpCode::EqII
+        | OpCode::NeII
+        | OpCode::LtFF
+        | OpCode::LeFF
+        | OpCode::GtFF
+        | OpCode::GeFF
+        | OpCode::EqFF
+        | OpCode::NeFF
+        | OpCode::LtFFG
+        | OpCode::LeFFG
+        | OpCode::GtFFG
+        | OpCode::GeFFG
+        | OpCode::EqFFG
+        | OpCode::NeFFG => IrType::Bool,
+        OpCode::Call | OpCode::CallCached if register_types.get(instruction.a).is_some() => {
+            IrType::I64
+        }
+        OpCode::CallGlobal => match register_types.get(instruction.a)? {
+            IrType::F64 => IrType::F64,
+            IrType::Bool => IrType::Bool,
+            IrType::I64 => IrType::I64,
+            IrType::Uninitialized => return None,
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+/// Infer the representation required by a dynamically typed global call from
+/// its first use in the current straight-line region. A call whose result is
+/// returned or passed on without a numeric/boolean consumer is deliberately
+/// left to the interpreter: compiling it as an integer would change a valid
+/// dynamic result such as a string, array, or null into a runtime type error.
+fn infer_call_result_type(
+    function: &Function,
+    decoded: &[DecodedInstruction],
+    call_ip: usize,
+    destination: usize,
+) -> Option<IrType> {
+    let start = decoded
+        .iter()
+        .position(|instruction| instruction.ip == call_ip)?
+        .checked_add(1)?;
+    let mut tracked = destination;
+    let uses = |instruction: DecodedInstruction, register: usize| {
+        instruction.b == register || instruction.c == register
+    };
+
+    for (relative_index, instruction) in decoded.iter().skip(start).copied().enumerate() {
+        let instruction_index = start.checked_add(relative_index)?;
+        let required = match instruction.opcode {
+            OpCode::Move => {
+                if instruction.a == tracked {
+                    if instruction.b == tracked {
+                        continue;
+                    }
+                    return None;
+                }
+                if instruction.b == tracked {
+                    tracked = instruction.a;
+                }
+                continue;
+            }
+            OpCode::AddI | OpCode::SubI => (instruction.b == tracked).then_some(IrType::I64),
+            OpCode::Add
+            | OpCode::Sub
+            | OpCode::Mul
+            | OpCode::AddII
+            | OpCode::SubII
+            | OpCode::MulII
+            | OpCode::Lt
+            | OpCode::Le
+            | OpCode::Gt
+            | OpCode::Ge
+            | OpCode::Eq
+            | OpCode::Ne
+            | OpCode::LtII
+            | OpCode::LeII
+            | OpCode::GtII
+            | OpCode::GeII
+            | OpCode::EqII
+            | OpCode::NeII => {
+                if !uses(instruction, tracked) {
+                    None
+                } else {
+                    let other = if instruction.b == tracked {
+                        instruction.c
+                    } else {
+                        instruction.b
+                    };
+                    Some(
+                        (infer_register_type_before(
+                            function,
+                            decoded,
+                            start,
+                            instruction_index,
+                            other,
+                        ) == Some(IrType::F64))
+                        .then_some(IrType::F64)
+                        .unwrap_or(IrType::I64),
+                    )
+                }
+            }
+            OpCode::AddFF
+            | OpCode::SubFF
+            | OpCode::MulFF
+            | OpCode::DivFF
+            | OpCode::AddFFG
+            | OpCode::SubFFG
+            | OpCode::MulFFG
+            | OpCode::DivFFG
+            | OpCode::LtFF
+            | OpCode::LeFF
+            | OpCode::GtFF
+            | OpCode::GeFF
+            | OpCode::EqFF
+            | OpCode::NeFF
+            | OpCode::LtFFG
+            | OpCode::LeFFG
+            | OpCode::GtFFG
+            | OpCode::GeFFG
+            | OpCode::EqFFG
+            | OpCode::NeFFG => uses(instruction, tracked).then_some(IrType::F64),
+            OpCode::Neg => (instruction.b == tracked).then_some(IrType::F64),
+            OpCode::JumpIf | OpCode::JumpIfLong | OpCode::JumpIfNot | OpCode::JumpIfNotLong => {
+                (instruction.a == tracked).then_some(IrType::Bool)
+            }
+            OpCode::Return => return None,
+            OpCode::Call | OpCode::CallCached | OpCode::CallGlobal => {
+                let function_register = if instruction.opcode == OpCode::CallGlobal {
+                    instruction.a
+                } else if instruction.opcode == OpCode::CallCached {
+                    instruction.a
+                } else {
+                    instruction.b
+                };
+                let argument_start = function_register.checked_add(1)?;
+                let argument_end = argument_start.checked_add(instruction.c)?;
+                if (argument_start..argument_end).contains(&tracked) {
+                    return None;
+                }
+                if instruction.a == tracked {
+                    return None;
+                }
+                continue;
+            }
+            OpCode::Jump | OpCode::JumpLong => return None,
+            _ => {
+                if instruction.a == tracked {
+                    return None;
+                }
+                continue;
+            }
+        };
+        if required.is_some() {
+            return required;
+        }
+        if instruction.a == tracked {
+            return None;
+        }
+    }
+    None
+}
+
+fn call_argument_start(instruction: DecodedInstruction) -> Option<usize> {
+    // All call frames place their first argument immediately after the
+    // destination register. `Call`'s B operand names the callee register,
+    // but the interpreter still builds the callee frame at A + 1.
+    instruction.a.checked_add(1)
+}
+
+fn infer_register_type_before(
+    function: &Function,
+    decoded: &[DecodedInstruction],
+    start: usize,
+    end: usize,
+    target: usize,
+) -> Option<IrType> {
+    let register_count = decoded
+        .iter()
+        .take(end)
+        .flat_map(|instruction| [instruction.a, instruction.b, instruction.c])
+        .max()
+        .unwrap_or(target)
+        .max(target)
+        .checked_add(1)?;
+    let mut types = vec![None; register_count];
+    for instruction in decoded.get(start..end)?.iter().copied() {
+        let ty = match instruction.opcode {
+            OpCode::Move => types.get(instruction.b).copied().flatten(),
+            OpCode::LoadI => Some(IrType::I64),
+            OpCode::LoadBool => Some(IrType::Bool),
+            OpCode::LoadK | OpCode::LoadKWide => constant_ir(
+                function
+                    .constants
+                    .get(constant_index(function, instruction)?)?,
+            )
+            .map(|(ty, _)| ty),
+            OpCode::AddFF
+            | OpCode::SubFF
+            | OpCode::MulFF
+            | OpCode::DivFF
+            | OpCode::AddFFG
+            | OpCode::SubFFG
+            | OpCode::MulFFG
+            | OpCode::DivFFG
+            | OpCode::Neg => Some(IrType::F64),
+            OpCode::Lt
+            | OpCode::Le
+            | OpCode::Gt
+            | OpCode::Ge
+            | OpCode::Eq
+            | OpCode::Ne
+            | OpCode::LtII
+            | OpCode::LeII
+            | OpCode::GtII
+            | OpCode::GeII
+            | OpCode::EqII
+            | OpCode::NeII
+            | OpCode::LtFF
+            | OpCode::LeFF
+            | OpCode::GtFF
+            | OpCode::GeFF
+            | OpCode::EqFF
+            | OpCode::NeFF
+            | OpCode::LtFFG
+            | OpCode::LeFFG
+            | OpCode::GtFFG
+            | OpCode::GeFFG
+            | OpCode::EqFFG
+            | OpCode::NeFFG => Some(IrType::Bool),
+            OpCode::ArrayLen | OpCode::ArrayLoadI | OpCode::VecLen | OpCode::VecLoadI => {
+                Some(IrType::I64)
+            }
+            _ => None,
+        };
+        if instruction.a < types.len() {
+            types[instruction.a] = ty;
+        }
+    }
+    types.get(target).copied().flatten()
+}
+
+fn global_index(function: &Function, instruction: DecodedInstruction) -> Option<u32> {
+    let word = *function.bytecode.as_slice().get(instruction.ip)?;
+    match instruction.opcode {
+        OpCode::GetGlobalIdx => u32::try_from(word & 0xffff).ok(),
+        OpCode::GetGlobalIdxWide => function
+            .bytecode
+            .as_slice()
+            .get(instruction.ip.checked_add(1)?)
+            .copied(),
+        _ => None,
+    }
+}
+
+fn is_native_global(function: &Function, index: u32) -> bool {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| function.global_layout.names().get(index))
+        .is_some_and(|name| name.contains("::"))
 }
 
 fn decode(function: &Function) -> Option<Vec<DecodedInstruction>> {
@@ -739,6 +1330,8 @@ fn merge_types(existing: &mut [Option<IrType>], incoming: &[Option<IrType>]) -> 
     for (existing, incoming) in existing.iter_mut().zip(incoming) {
         let merged = match (*existing, *incoming) {
             (Some(left), Some(right)) if left == right => Some(left),
+            (Some(IrType::Uninitialized), Some(right)) => Some(right),
+            (Some(left), Some(IrType::Uninitialized)) => Some(left),
             (Some(_), Some(_)) => return None,
             _ => None,
         };
@@ -761,14 +1354,20 @@ fn transfer_types(
             let value = (*registers.get(instruction.b)?)?;
             *registers.get_mut(destination)? = Some(value);
         }
+        OpCode::GetGlobalIdx | OpCode::GetGlobalIdxWide => {
+            *registers.get_mut(destination)? = Some(IrType::Uninitialized);
+        }
         OpCode::LoadI => *registers.get_mut(destination)? = Some(IrType::I64),
         OpCode::LoadBool => *registers.get_mut(destination)? = Some(IrType::Bool),
-        OpCode::LoadK => {
+        OpCode::LoadK | OpCode::LoadKWide => {
             let index = constant_index(function, instruction)?;
-            if !matches!(function.constants.get(index)?, Constant::NestedFunction(_)) {
-                return None;
+            match function.constants.get(index)? {
+                Constant::NestedFunction(_) => *registers.get_mut(destination)? = None,
+                Constant::Bool(_) => *registers.get_mut(destination)? = Some(IrType::Bool),
+                Constant::Int(_) => *registers.get_mut(destination)? = Some(IrType::I64),
+                Constant::Float(_) => *registers.get_mut(destination)? = Some(IrType::F64),
+                Constant::Null | Constant::String(_) => return None,
             }
-            *registers.get_mut(destination)? = None;
         }
         OpCode::ArrayLen => {
             require_register_type(registers, instruction.b, IrType::I64Array)?;
@@ -776,7 +1375,7 @@ fn transfer_types(
         }
         OpCode::ArrayLoadI => {
             require_register_type(registers, instruction.b, IrType::I64Array)?;
-            require_register_type(registers, instruction.c, IrType::I64)?;
+            require_inferred_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
         }
         OpCode::VecLen => {
@@ -785,17 +1384,45 @@ fn transfer_types(
         }
         OpCode::VecLoadI => {
             require_register_type(registers, instruction.b, IrType::I64Vec)?;
-            require_register_type(registers, instruction.c, IrType::I64)?;
+            require_inferred_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
         }
         OpCode::AddI | OpCode::SubI => {
-            require_register_type(registers, instruction.b, IrType::I64)?;
+            require_inferred_register_type(registers, instruction.b, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
         }
-        OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::AddII | OpCode::SubII | OpCode::MulII => {
-            require_register_type(registers, instruction.b, IrType::I64)?;
-            require_register_type(registers, instruction.c, IrType::I64)?;
+        OpCode::Add | OpCode::Sub | OpCode::Mul => {
+            let ty = if *registers.get(instruction.b)? == Some(IrType::F64)
+                || *registers.get(instruction.c)? == Some(IrType::F64)
+            {
+                IrType::F64
+            } else {
+                IrType::I64
+            };
+            require_inferred_register_type(registers, instruction.b, ty)?;
+            require_inferred_register_type(registers, instruction.c, ty)?;
+            *registers.get_mut(destination)? = Some(ty);
+        }
+        OpCode::AddII | OpCode::SubII | OpCode::MulII => {
+            require_inferred_register_type(registers, instruction.b, IrType::I64)?;
+            require_inferred_register_type(registers, instruction.c, IrType::I64)?;
             *registers.get_mut(destination)? = Some(IrType::I64);
+        }
+        OpCode::AddFF
+        | OpCode::SubFF
+        | OpCode::MulFF
+        | OpCode::DivFF
+        | OpCode::AddFFG
+        | OpCode::SubFFG
+        | OpCode::MulFFG
+        | OpCode::DivFFG => {
+            require_inferred_register_type(registers, instruction.b, IrType::F64)?;
+            require_inferred_register_type(registers, instruction.c, IrType::F64)?;
+            *registers.get_mut(destination)? = Some(IrType::F64);
+        }
+        OpCode::Neg => {
+            require_inferred_register_type(registers, instruction.b, IrType::F64)?;
+            *registers.get_mut(destination)? = Some(IrType::F64);
         }
         OpCode::Lt
         | OpCode::Le
@@ -809,16 +1436,42 @@ fn transfer_types(
         | OpCode::GeII
         | OpCode::EqII
         | OpCode::NeII => {
-            require_register_type(registers, instruction.b, IrType::I64)?;
-            require_register_type(registers, instruction.c, IrType::I64)?;
+            require_inferred_register_type(registers, instruction.b, IrType::I64)?;
+            require_inferred_register_type(registers, instruction.c, IrType::I64)?;
+            *registers.get_mut(destination)? = Some(IrType::Bool);
+        }
+        OpCode::LtFF
+        | OpCode::LeFF
+        | OpCode::GtFF
+        | OpCode::GeFF
+        | OpCode::EqFF
+        | OpCode::NeFF
+        | OpCode::LtFFG
+        | OpCode::LeFFG
+        | OpCode::GtFFG
+        | OpCode::GeFFG
+        | OpCode::EqFFG
+        | OpCode::NeFFG => {
+            require_inferred_register_type(registers, instruction.b, IrType::F64)?;
+            require_inferred_register_type(registers, instruction.c, IrType::F64)?;
             *registers.get_mut(destination)? = Some(IrType::Bool);
         }
         OpCode::JumpIf | OpCode::JumpIfLong | OpCode::JumpIfNot | OpCode::JumpIfNotLong => {
-            require_register_type(registers, instruction.a, IrType::Bool)?;
+            require_inferred_register_type(registers, instruction.a, IrType::Bool)?;
         }
-        OpCode::Return => require_register_type(registers, instruction.a, IrType::I64)?,
+        OpCode::Return => {
+            if !matches!(
+                registers.get(instruction.a)?,
+                Some(IrType::I64 | IrType::F64 | IrType::Bool | IrType::Uninitialized)
+            ) {
+                return None;
+            }
+        }
+        OpCode::CallGlobal => {
+            *registers.get_mut(destination)? = Some(IrType::Uninitialized);
+        }
         OpCode::Call | OpCode::CallCached => {
-            *registers.get_mut(destination)? = Some(IrType::I64);
+            *registers.get_mut(destination)? = Some(IrType::Uninitialized);
         }
         OpCode::Jump | OpCode::JumpLong => {}
         _ => return None,
@@ -840,12 +1493,20 @@ fn successors(instruction: DecodedInstruction, block_end: usize) -> Option<Vec<u
 
 fn predicate(opcode: OpCode) -> Option<IntPredicate> {
     match opcode {
-        OpCode::Lt | OpCode::LtII => Some(IntPredicate::SignedLessThan),
-        OpCode::Le | OpCode::LeII => Some(IntPredicate::SignedLessThanOrEqual),
-        OpCode::Gt | OpCode::GtII => Some(IntPredicate::SignedGreaterThan),
-        OpCode::Ge | OpCode::GeII => Some(IntPredicate::SignedGreaterThanOrEqual),
-        OpCode::Eq | OpCode::EqII => Some(IntPredicate::Equal),
-        OpCode::Ne | OpCode::NeII => Some(IntPredicate::NotEqual),
+        OpCode::Lt | OpCode::LtII | OpCode::LtFF | OpCode::LtFFG => {
+            Some(IntPredicate::SignedLessThan)
+        }
+        OpCode::Le | OpCode::LeII | OpCode::LeFF | OpCode::LeFFG => {
+            Some(IntPredicate::SignedLessThanOrEqual)
+        }
+        OpCode::Gt | OpCode::GtII | OpCode::GtFF | OpCode::GtFFG => {
+            Some(IntPredicate::SignedGreaterThan)
+        }
+        OpCode::Ge | OpCode::GeII | OpCode::GeFF | OpCode::GeFFG => {
+            Some(IntPredicate::SignedGreaterThanOrEqual)
+        }
+        OpCode::Eq | OpCode::EqII | OpCode::EqFF | OpCode::EqFFG => Some(IntPredicate::Equal),
+        OpCode::Ne | OpCode::NeII | OpCode::NeFF | OpCode::NeFFG => Some(IntPredicate::NotEqual),
         _ => None,
     }
 }
@@ -929,6 +1590,30 @@ fn infer_parameter_types(
                 require(instruction.b, IrType::I64)?;
                 require(instruction.c, IrType::I64)?;
             }
+            OpCode::AddFF
+            | OpCode::SubFF
+            | OpCode::MulFF
+            | OpCode::DivFF
+            | OpCode::AddFFG
+            | OpCode::SubFFG
+            | OpCode::MulFFG
+            | OpCode::DivFFG
+            | OpCode::LtFF
+            | OpCode::LeFF
+            | OpCode::GtFF
+            | OpCode::GeFF
+            | OpCode::EqFF
+            | OpCode::NeFF
+            | OpCode::LtFFG
+            | OpCode::LeFFG
+            | OpCode::GtFFG
+            | OpCode::GeFFG
+            | OpCode::EqFFG
+            | OpCode::NeFFG => {
+                require(instruction.b, IrType::F64)?;
+                require(instruction.c, IrType::F64)?;
+            }
+            OpCode::Neg => require(instruction.b, IrType::F64)?,
             OpCode::ArrayLen => require(instruction.b, IrType::I64Array)?,
             OpCode::ArrayLoadI => {
                 require(instruction.b, IrType::I64Array)?;
@@ -942,7 +1627,14 @@ fn infer_parameter_types(
             OpCode::JumpIf | OpCode::JumpIfLong | OpCode::JumpIfNot | OpCode::JumpIfNotLong => {
                 require(instruction.a, IrType::Bool)?;
             }
-            OpCode::Return => require(instruction.a, IrType::I64)?,
+            OpCode::Return => {
+                if let Some(parameter) = *origins.get(instruction.a)? {
+                    match types[parameter] {
+                        Some(IrType::I64 | IrType::F64 | IrType::Bool) | None => {}
+                        Some(_) => return None,
+                    }
+                }
+            }
             _ => {}
         }
         if instruction.a < register_count {
@@ -960,6 +1652,15 @@ fn infer_parameter_types(
                     | OpCode::AddII
                     | OpCode::SubII
                     | OpCode::MulII
+                    | OpCode::AddFF
+                    | OpCode::SubFF
+                    | OpCode::MulFF
+                    | OpCode::DivFF
+                    | OpCode::AddFFG
+                    | OpCode::SubFFG
+                    | OpCode::MulFFG
+                    | OpCode::DivFFG
+                    | OpCode::Neg
                     | OpCode::Lt
                     | OpCode::Le
                     | OpCode::Gt
@@ -972,12 +1673,25 @@ fn infer_parameter_types(
                     | OpCode::GeII
                     | OpCode::EqII
                     | OpCode::NeII
+                    | OpCode::LtFF
+                    | OpCode::LeFF
+                    | OpCode::GtFF
+                    | OpCode::GeFF
+                    | OpCode::EqFF
+                    | OpCode::NeFF
+                    | OpCode::LtFFG
+                    | OpCode::LeFFG
+                    | OpCode::GtFFG
+                    | OpCode::GeFFG
+                    | OpCode::EqFFG
+                    | OpCode::NeFFG
                     | OpCode::ArrayLen
                     | OpCode::ArrayLoadI
                     | OpCode::VecLen
                     | OpCode::VecLoadI
                     | OpCode::Call
                     | OpCode::CallCached
+                    | OpCode::CallGlobal
             ) {
                 origins[instruction.a] = None;
             }
@@ -1017,6 +1731,21 @@ fn require_register_type(
     expected: IrType,
 ) -> Option<()> {
     (*registers.get(register)? == Some(expected)).then_some(())
+}
+
+fn require_inferred_register_type(
+    registers: &mut [Option<IrType>],
+    register: usize,
+    expected: IrType,
+) -> Option<()> {
+    let value = registers.get_mut(register)?;
+    match *value {
+        Some(existing) if existing != expected && existing != IrType::Uninitialized => None,
+        _ => {
+            *value = Some(expected);
+            Some(())
+        }
+    }
 }
 
 fn next_id(next: &mut u32) -> Option<ValueId> {
