@@ -6,6 +6,7 @@ use std::sync::Arc;
 pub(crate) enum JitRegisterCallResult {
     Unsupported,
     Returned(Value),
+    Aborted,
     Deoptimized {
         bytecode_ip: u32,
         registers: Vec<(u16, Value)>,
@@ -44,9 +45,6 @@ impl VM {
         function: GcRef,
         arguments: &[Value],
     ) -> JitCallResult {
-        if self.execution_control_enabled() {
-            return JitCallResult::Unsupported;
-        }
         let Some(executor) = self.jit_executor.as_ref().cloned() else {
             return JitCallResult::Unsupported;
         };
@@ -54,41 +52,82 @@ impl VM {
             return JitCallResult::Unsupported;
         };
         let calls = self.jit_call_counts.get(&key).copied().unwrap_or(0);
-        let mut jit_arguments = smallvec::SmallVec::<[JitArgument<'_>; 8]>::new();
-        for argument in arguments {
-            if let Some(value) = argument.as_int() {
-                jit_arguments.push(JitArgument::Integer(value));
-                continue;
-            }
-            let Some(reference) = argument.as_ptr().map(GcRef::new) else {
-                return JitCallResult::Unsupported;
-            };
-            let Some(object) = self.heap.get(reference) else {
-                return JitCallResult::Unsupported;
-            };
-            match &object.kind {
-                ObjectKind::Array(array) => {
-                    let Some(values) = array.data.as_ints() else {
-                        return JitCallResult::Unsupported;
-                    };
-                    jit_arguments.push(JitArgument::IntegerArray(values));
-                }
-                ObjectKind::Vec(vector) => {
-                    let Some(values) = vector.data.as_ints() else {
-                        return JitCallResult::Unsupported;
-                    };
-                    jit_arguments.push(JitArgument::IntegerVec(values));
-                }
-                _ => return JitCallResult::Unsupported,
-            };
+        // A root/host-resolved JIT call has no interpreter frame yet. Prepare
+        // the callee's indexed global view before machine code can cross a
+        // dynamic native-module boundary. Pure script helpers have no such
+        // boundary; leaving the caller's mapping installed is important
+        // because this fast path does not push a frame that could restore it.
+        let needs_native_globals = self.heap.get(function).is_some_and(|object| {
+            matches!(&object.kind, ObjectKind::Function(bytecode_function)
+                if bytecode_function
+                    .function
+                    .global_layout
+                    .names()
+                    .iter()
+                    .any(|name| name.contains("::")))
+        });
+        let previous_mapping = self.current_global_mapping_id;
+        let target_mapping = self.get_global_mapping_id(function);
+        let saved_globals = (needs_native_globals && target_mapping != previous_mapping)
+            .then(|| self.globals_by_index.clone());
+        if needs_native_globals {
+            self.prepare_globals_for_function(function);
         }
-        let Some(object) = self.heap.get(function) else {
-            return JitCallResult::Unsupported;
-        };
-        let ObjectKind::Function(function) = &object.kind else {
-            return JitCallResult::Unsupported;
-        };
-        executor.try_execute(&key, &function.function, &jit_arguments, calls)
+        let result = (|| {
+            let context = Some(self.jit_execution_context(
+                self.execution_control.report || self.execution_control_enabled(),
+            ));
+            let mut jit_arguments = smallvec::SmallVec::<[JitArgument<'_>; 8]>::new();
+            for argument in arguments {
+                if let Some(value) = argument.as_int() {
+                    jit_arguments.push(JitArgument::Integer(value));
+                    continue;
+                }
+                if let Some(value) = argument.as_float() {
+                    jit_arguments.push(JitArgument::Float(value));
+                    continue;
+                }
+                let Some(reference) = argument.as_ptr().map(GcRef::new) else {
+                    return JitCallResult::Unsupported;
+                };
+                let Some(object) = self.heap.get(reference) else {
+                    return JitCallResult::Unsupported;
+                };
+                match &object.kind {
+                    ObjectKind::Array(array) => {
+                        let Some(values) = array.data.as_ints() else {
+                            return JitCallResult::Unsupported;
+                        };
+                        jit_arguments.push(JitArgument::IntegerArray(values));
+                    }
+                    ObjectKind::Vec(vector) => {
+                        let Some(values) = vector.data.as_ints() else {
+                            return JitCallResult::Unsupported;
+                        };
+                        jit_arguments.push(JitArgument::IntegerVec(values));
+                    }
+                    _ => return JitCallResult::Unsupported,
+                };
+            }
+            let Some(object) = self.heap.get(function) else {
+                return JitCallResult::Unsupported;
+            };
+            let ObjectKind::Function(bytecode_function) = &object.kind else {
+                return JitCallResult::Unsupported;
+            };
+            executor.try_execute_with_context(
+                &key,
+                &bytecode_function.function,
+                &jit_arguments,
+                calls,
+                context.as_ref(),
+            )
+        })();
+        if let Some(globals) = saved_globals {
+            self.globals_by_index = globals;
+            self.current_global_mapping_id = previous_mapping;
+        }
+        result
     }
 
     pub(crate) fn prepare_jit_call(&mut self, function: GcRef) -> bool {
@@ -134,6 +173,7 @@ impl VM {
         Ok(match self.try_execute_jit_call(function, &arguments) {
             JitCallResult::Unsupported => JitRegisterCallResult::Unsupported,
             JitCallResult::Returned(value) => JitRegisterCallResult::Returned(value),
+            JitCallResult::Aborted => JitRegisterCallResult::Aborted,
             JitCallResult::Deoptimized {
                 bytecode_ip,
                 registers,
@@ -164,42 +204,59 @@ impl VM {
         &mut self,
         function: GcRef,
         bytecode_ip: usize,
-    ) -> Option<Value> {
+    ) -> Result<Option<Value>, RuntimeError> {
         let initialized = self
             .frames
             .last()
             .map(|frame| frame.jit_backedges_initialized)
             .unwrap_or(false);
         if !initialized {
-            let key = self.jit_function_keys.get(&function)?;
+            let Some(key) = self.jit_function_keys.get(&function) else {
+                return Ok(None);
+            };
             let base = self.jit_backedge_counts.get(key).copied().unwrap_or(0);
-            let frame = self.frames.last_mut()?;
+            let Some(frame) = self.frames.last_mut() else {
+                return Ok(None);
+            };
             frame.jit_backedge_base = base;
             frame.jit_backedges_initialized = true;
         }
-        let frame = self.frames.last_mut()?;
+        let Some(frame) = self.frames.last_mut() else {
+            return Ok(None);
+        };
         frame.jit_backedges = frame.jit_backedges.saturating_add(1);
         let backedges = frame.jit_backedge_base.saturating_add(frame.jit_backedges);
         if backedges != crate::JIT_TIER1_BACKEDGE_THRESHOLD {
-            return None;
+            return Ok(None);
         }
         frame.jit_backedge_compiled = true;
-        let key = self.jit_function_keys.get(&function).cloned()?;
+        let Some(key) = self.jit_function_keys.get(&function).cloned() else {
+            return Ok(None);
+        };
         if let Some(result) = self.execute_jit_osr(function, &key, bytecode_ip) {
-            return Some(result);
+            return match result {
+                JitCallResult::Returned(value) => Ok(Some(value)),
+                JitCallResult::Aborted => Err(self
+                    .take_jit_control_error()
+                    .unwrap_or_else(|| self.runtime_error(RuntimeErrorKind::Interrupted))),
+                JitCallResult::Unsupported | JitCallResult::Deoptimized { .. } => Ok(None),
+            };
         }
         self.compile_jit_backedge(function, &key, backedges);
-        None
+        Ok(None)
     }
 
     #[inline(never)]
     fn execute_jit_osr(
-        &self,
+        &mut self,
         function: GcRef,
         key: &JitFunctionKey,
         bytecode_ip: usize,
-    ) -> Option<Value> {
+    ) -> Option<JitCallResult> {
         let executor = self.jit_executor.as_ref()?.clone();
+        let context = Some(self.jit_execution_context(
+            self.execution_control.report || self.execution_control_enabled(),
+        ));
         let frame = self.frames.last()?;
         let end = frame
             .base
@@ -209,6 +266,8 @@ impl VM {
         for value in values {
             if let Some(value) = value.as_int() {
                 registers.push(JitArgument::Integer(value));
+            } else if let Some(value) = value.as_float() {
+                registers.push(JitArgument::Float(value));
             } else if let Some(value) = value.as_bool() {
                 registers.push(JitArgument::Boolean(value));
             } else if let Some(reference) = value.as_ptr().map(GcRef::new) {
@@ -230,10 +289,13 @@ impl VM {
             return None;
         };
         let bytecode_ip = u32::try_from(bytecode_ip).ok()?;
-        match executor.try_execute_osr(key, &function.function, bytecode_ip, &registers) {
-            JitCallResult::Returned(value) => Some(value),
-            JitCallResult::Unsupported | JitCallResult::Deoptimized { .. } => None,
-        }
+        Some(executor.try_execute_osr_with_context(
+            key,
+            &function.function,
+            bytecode_ip,
+            &registers,
+            context.as_ref(),
+        ))
     }
 
     pub(crate) fn finish_jit_osr(&mut self, result: Value) -> Result<Option<Value>, RuntimeError> {
