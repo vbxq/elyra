@@ -28,20 +28,22 @@ static EXPORTS: [AelysExport; 1] = [AelysExport {
 }];
 
 #[unsafe(no_mangle)]
-pub static mut aelys_module_descriptor: AelysModuleDescriptor = AelysModuleDescriptor {
-    abi_version: AELYS_ABI_VERSION,
-    descriptor_size: core::mem::size_of::<AelysModuleDescriptor>() as u32,
-    module_name: MODULE_NAME.as_ptr() as *const i8,
-    module_version: MODULE_VERSION.as_ptr() as *const i8,
-    vm_version_min: core::ptr::null(),
-    vm_version_max: core::ptr::null(),
-    descriptor_hash: 0,
-    exports_hash: 0,
-    export_count: EXPORTS.len() as u32,
-    exports: EXPORTS.as_ptr(),
-    required_module_count: 0,
-    required_modules: core::ptr::null(),
-    init: None,
+pub static mut aelys_module_descriptor: AelysModuleDescriptor = unsafe {
+    AelysModuleDescriptor::from_raw_parts(
+        AELYS_ABI_VERSION,
+        core::mem::size_of::<AelysModuleDescriptor>() as u32,
+        MODULE_NAME.as_ptr() as *const i8,
+        MODULE_VERSION.as_ptr() as *const i8,
+        core::ptr::null(),
+        core::ptr::null(),
+        0,
+        0,
+        EXPORTS.len() as u32,
+        EXPORTS.as_ptr(),
+        0,
+        core::ptr::null(),
+        None,
+    )
 };
 
 aelys_native::aelys_init_exports_hash!(aelys_module_descriptor);
