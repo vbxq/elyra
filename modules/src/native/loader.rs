@@ -159,11 +159,24 @@ impl NativeLoader {
         lib: Library,
         embedded: Option<EmbeddedHandle>,
     ) -> Result<NativeModule, NativeError> {
-        // SAFETY: lib.get looks up a symbol by name. The symbol exists because
-        // aelys_native proc macros generate it. We check for null below.
-        let symbol: libloading::Symbol<*const AelysModuleDescriptor> =
-            unsafe { lib.get(b"aelys_module_descriptor\0") }?;
-        let descriptor = *symbol;
+        // SAFETY: lib.get looks up a symbol by name. The legacy fixed symbol
+        // is retained for hand-written/older modules; generated modules use
+        // a module-specific symbol so multiple static modules can coexist.
+        let descriptor = unsafe {
+            match lib.get::<*const AelysModuleDescriptor>(b"aelys_module_descriptor\0") {
+                Ok(symbol) => *symbol,
+                Err(_) => {
+                    let mut descriptor = None;
+                    for symbol_name in generated_descriptor_symbols(name) {
+                        if let Ok(symbol) = lib.get::<*const AelysModuleDescriptor>(&symbol_name) {
+                            descriptor = Some(*symbol);
+                            break;
+                        }
+                    }
+                    descriptor.ok_or(NativeError::MissingDescriptor)?
+                }
+            }
+        };
         if descriptor.is_null() {
             return Err(NativeError::MissingDescriptor);
         }
@@ -187,6 +200,42 @@ impl NativeLoader {
     }
 }
 
+fn generated_descriptor_symbol(name: &str) -> Vec<u8> {
+    let mut symbol = String::from("aelys_module_descriptor_");
+    for byte in name.as_bytes() {
+        use std::fmt::Write;
+        write!(&mut symbol, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    symbol.push('\0');
+    symbol.into_bytes()
+}
+
+fn generated_descriptor_symbols(name: &str) -> Vec<Vec<u8>> {
+    let mut names = Vec::new();
+    let mut add = |candidate: &str| {
+        if !candidate.is_empty()
+            && !names
+                .iter()
+                .any(|name| name == &generated_descriptor_symbol(candidate))
+        {
+            names.push(generated_descriptor_symbol(candidate));
+        }
+    };
+    add(name);
+    let path = Path::new(name);
+    if let Some(file_name) = path.file_name().and_then(|value| value.to_str()) {
+        add(file_name);
+        if let Some(stem) = Path::new(file_name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+        {
+            add(stem);
+            add(stem.strip_prefix("lib").unwrap_or(stem));
+        }
+    }
+    names
+}
+
 /// The metadata and exports read out of a validated module descriptor.
 pub struct DescriptorContents {
     pub name: String,
@@ -201,21 +250,21 @@ pub unsafe fn validate_descriptor(
 ) -> Result<DescriptorContents, NativeError> {
     check_descriptor_layout(descriptor)?;
 
-    let name = if descriptor.module_name.is_null() {
+    let name = if descriptor.module_name().is_null() {
         fallback_name
             .ok_or(NativeError::InvalidDescriptor("module name is null"))?
             .to_string()
     } else {
-        cstr_to_string(descriptor.module_name)?
+        cstr_to_string(descriptor.module_name())?
     };
 
-    let version = if descriptor.module_version.is_null() {
+    let version = if descriptor.module_version().is_null() {
         None
     } else {
-        Some(cstr_to_string(descriptor.module_version)?)
+        Some(cstr_to_string(descriptor.module_version())?)
     };
 
-    if descriptor.exports_hash == 0 {
+    if descriptor.exports_hash() == 0 {
         return Err(NativeError::InvalidDescriptor("exports_hash is missing"));
     }
 
@@ -223,11 +272,12 @@ pub unsafe fn validate_descriptor(
     let exports = read_exports(descriptor)?;
     // SAFETY: `read_exports` has already bounded `export_count` and rejected a
     // null `exports` pointer for a non-zero count.
-    let computed_hash =
-        unsafe { aelys_native::compute_exports_hash(descriptor.exports, descriptor.export_count) };
-    if descriptor.exports_hash != computed_hash {
+    let computed_hash = unsafe {
+        aelys_native::compute_exports_hash(descriptor.exports(), descriptor.export_count())
+    };
+    if descriptor.exports_hash() != computed_hash {
         return Err(NativeError::InvalidExportsHash {
-            expected: descriptor.exports_hash,
+            expected: descriptor.exports_hash(),
             found: computed_hash,
         });
     }
@@ -241,16 +291,16 @@ pub unsafe fn validate_descriptor(
 }
 
 fn check_descriptor_layout(descriptor: &AelysModuleDescriptor) -> Result<(), NativeError> {
-    if descriptor.abi_version != AELYS_ABI_VERSION {
+    if descriptor.abi_version() != AELYS_ABI_VERSION {
         return Err(NativeError::InvalidAbi {
             expected: AELYS_ABI_VERSION,
-            found: descriptor.abi_version,
+            found: descriptor.abi_version(),
         });
     }
 
     let expected_size = u32::try_from(std::mem::size_of::<AelysModuleDescriptor>())
         .expect("native descriptor size fits u32");
-    if descriptor.descriptor_size < expected_size {
+    if descriptor.descriptor_size() < expected_size {
         return Err(NativeError::InvalidDescriptor("descriptor size too small"));
     }
 
@@ -259,10 +309,10 @@ fn check_descriptor_layout(descriptor: &AelysModuleDescriptor) -> Result<(), Nat
 
 pub unsafe fn descriptor_module_name(descriptor: &AelysModuleDescriptor) -> Option<String> {
     check_descriptor_layout(descriptor).ok()?;
-    if descriptor.module_name.is_null() {
+    if descriptor.module_name().is_null() {
         return None;
     }
-    cstr_to_string(descriptor.module_name).ok()
+    cstr_to_string(descriptor.module_name()).ok()
 }
 
 fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result<(), NativeError> {
@@ -318,21 +368,21 @@ fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result
 fn read_exports(
     descriptor: &AelysModuleDescriptor,
 ) -> Result<HashMap<String, NativeExport>, NativeError> {
-    if descriptor.export_count == 0 {
+    if descriptor.export_count() == 0 {
         return Ok(HashMap::new());
     }
-    if descriptor.exports.is_null() {
+    if descriptor.exports().is_null() {
         return Err(NativeError::InvalidDescriptor("exports pointer is null"));
     }
-    if descriptor.export_count > MAX_EXPORT_COUNT {
+    if descriptor.export_count() > MAX_EXPORT_COUNT {
         return Err(NativeError::InvalidDescriptor("export_count exceeds limit"));
     }
 
     // SAFETY: exports ptr validated non-null above, count validated <= MAX_EXPORT_COUNT.
     // The pointer comes from the module's static data, so it outlives this call.
-    let export_count = usize::try_from(descriptor.export_count)
+    let export_count = usize::try_from(descriptor.export_count())
         .expect("bounded native export count fits target usize");
-    let exports = unsafe { std::slice::from_raw_parts(descriptor.exports, export_count) };
+    let exports = unsafe { std::slice::from_raw_parts(descriptor.exports(), export_count) };
     let mut map = HashMap::with_capacity(exports.len());
     for export in exports {
         let name = export_name(export)?;
@@ -361,15 +411,15 @@ fn read_exports(
 fn read_required_modules(
     descriptor: &AelysModuleDescriptor,
 ) -> Result<Vec<RequiredModule>, NativeError> {
-    if descriptor.required_module_count == 0 {
+    if descriptor.required_module_count() == 0 {
         return Ok(Vec::new());
     }
-    if descriptor.required_modules.is_null() {
+    if descriptor.required_modules().is_null() {
         return Err(NativeError::InvalidDescriptor(
             "required_modules pointer is null",
         ));
     }
-    if descriptor.required_module_count > MAX_REQUIRED_MODULE_COUNT {
+    if descriptor.required_module_count() > MAX_REQUIRED_MODULE_COUNT {
         return Err(NativeError::InvalidDescriptor(
             "required_module_count exceeds limit",
         ));
@@ -378,8 +428,8 @@ fn read_required_modules(
     // SAFETY: same reasoning as read_exports - validated ptr and bounded count
     let entries = unsafe {
         std::slice::from_raw_parts(
-            descriptor.required_modules,
-            usize::try_from(descriptor.required_module_count)
+            descriptor.required_modules(),
+            usize::try_from(descriptor.required_module_count())
                 .expect("bounded required module count fits target usize"),
         )
     };
