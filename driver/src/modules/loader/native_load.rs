@@ -79,7 +79,7 @@ impl ModuleLoader {
         // call the module's init function if present passing the VM API
         if !native_module.descriptor.is_null() {
             let descriptor = unsafe { &*native_module.descriptor };
-            if let Some(init_fn) = descriptor.init {
+            if let Some(init_fn) = descriptor.init() {
                 let api = aelys_runtime::build_native_vm_api();
                 init_fn(&api);
             }
