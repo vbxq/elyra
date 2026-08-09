@@ -16,6 +16,14 @@ mod exports {
     }
 }
 
+#[aelys_module(name = "second_checked_values")]
+mod second_exports {
+    #[aelys_export]
+    pub fn answer() -> i64 {
+        42
+    }
+}
+
 #[test]
 fn native_integer_constructor_checks_nan_boxing_range() {
     let minimum = -(1i64 << 47);
@@ -36,24 +44,59 @@ fn generated_wrapper_validates_pointers_arity_and_types() {
     let mut output = value_null();
 
     assert_eq!(
-        unsafe { __aelys_wrapper_identity(std::ptr::null_mut(), &input, 1, std::ptr::null_mut()) },
+        unsafe {
+            __aelys_wrapper_636865636b65645f76616c756573_identity(
+                std::ptr::null_mut(),
+                &input,
+                1,
+                std::ptr::null_mut(),
+            )
+        },
         AELYS_NATIVE_INVALID_ARGUMENT
     );
     assert_eq!(
-        unsafe { __aelys_wrapper_identity(std::ptr::null_mut(), &input, 0, &mut output) },
+        unsafe {
+            __aelys_wrapper_636865636b65645f76616c756573_identity(
+                std::ptr::null_mut(),
+                &input,
+                0,
+                &mut output,
+            )
+        },
         AELYS_NATIVE_INVALID_ARGUMENT
     );
     assert_eq!(
-        unsafe { __aelys_wrapper_identity(std::ptr::null_mut(), std::ptr::null(), 1, &mut output) },
+        unsafe {
+            __aelys_wrapper_636865636b65645f76616c756573_identity(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                1,
+                &mut output,
+            )
+        },
         AELYS_NATIVE_INVALID_ARGUMENT
     );
     let wrong_type = value_bool(true);
     assert_eq!(
-        unsafe { __aelys_wrapper_identity(std::ptr::null_mut(), &wrong_type, 1, &mut output) },
+        unsafe {
+            __aelys_wrapper_636865636b65645f76616c756573_identity(
+                std::ptr::null_mut(),
+                &wrong_type,
+                1,
+                &mut output,
+            )
+        },
         AELYS_NATIVE_INVALID_ARGUMENT
     );
     assert_eq!(
-        unsafe { __aelys_wrapper_identity(std::ptr::null_mut(), &input, 1, &mut output) },
+        unsafe {
+            __aelys_wrapper_636865636b65645f76616c756573_identity(
+                std::ptr::null_mut(),
+                &input,
+                1,
+                &mut output,
+            )
+        },
         0
     );
     assert_eq!(value_as_int(output), 7);
@@ -64,7 +107,12 @@ fn generated_wrapper_reports_integer_overflow() {
     let mut output = value_null();
     assert_eq!(
         unsafe {
-            __aelys_wrapper_overflowing(std::ptr::null_mut(), std::ptr::null(), 0, &mut output)
+            __aelys_wrapper_636865636b65645f76616c756573_overflowing(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                0,
+                &mut output,
+            )
         },
         AELYS_NATIVE_INTEGER_OVERFLOW
     );
