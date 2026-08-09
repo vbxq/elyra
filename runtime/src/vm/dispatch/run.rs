@@ -15,7 +15,11 @@ impl VM {
             self.execution_control_enabled(),
             self.jit_executor.is_some(),
         ) {
-            (true, _, _) => self.run_fast_impl::<true, true, false>(),
+            (true, true, true) => self.run_fast_impl::<true, true, true>(),
+            (true, true, _) => self.run_fast_impl::<true, true, false>(),
+            (true, false, true) => self.run_fast_impl::<true, false, true>(),
+            (true, false, false) => self.run_fast_impl::<true, false, false>(),
+            (false, true, true) => self.run_fast_impl::<false, true, true>(),
             (false, true, _) => self.run_fast_impl::<false, true, false>(),
             (false, false, true) => self.run_fast_impl::<false, false, true>(),
             (false, false, false) => self.run_fast_impl::<false, false, false>(),
@@ -101,7 +105,7 @@ impl VM {
                 continue;
             }
 
-            if CONTROL {
+            if CONTROL || REPORT {
                 self.check_execution_control()?;
             }
 
@@ -275,7 +279,7 @@ impl VM {
                     );
                     if JIT
                         && ip < branch_origin
-                        && let Some(result) = self.record_jit_backedge(func_ref, ip)
+                        && let Some(result) = self.record_jit_backedge(func_ref, ip)?
                     {
                         if let Some(result) = self.finish_jit_osr(result)? {
                             return Ok(result);
@@ -467,6 +471,11 @@ impl VM {
                                                 crate::vm::jit::JitRegisterCallResult::Returned(result) => {
                                                     reg_set!(base + usize::from(dest), result);
                                                     continue;
+                                                }
+                                                crate::vm::jit::JitRegisterCallResult::Aborted => {
+                                                    return Err(self.take_jit_control_error().unwrap_or_else(|| {
+                                                        self.runtime_error(RuntimeErrorKind::Interrupted)
+                                                    }));
                                                 }
                                                 crate::vm::jit::JitRegisterCallResult::Deoptimized { bytecode_ip, registers } => {
                                                     jit_deopt = Some((bytecode_ip, registers));
@@ -934,6 +943,11 @@ impl VM {
                                                     reg_set!(base + usize::from(dest), result);
                                                     continue;
                                                 }
+                                                crate::vm::jit::JitRegisterCallResult::Aborted => {
+                                                    return Err(self.take_jit_control_error().unwrap_or_else(|| {
+                                                        self.runtime_error(RuntimeErrorKind::Interrupted)
+                                                    }));
+                                                }
                                                 crate::vm::jit::JitRegisterCallResult::Deoptimized { bytecode_ip, registers } => {
                                                     jit_deopt = Some((bytecode_ip, registers));
                                                 }
@@ -1287,7 +1301,7 @@ impl VM {
                     if JIT
                         && wide_opcode == 48
                         && ip < branch_origin
-                        && let Some(result) = self.record_jit_backedge(active_function, ip)
+                        && let Some(result) = self.record_jit_backedge(active_function, ip)?
                     {
                         if let Some(result) = self.finish_jit_osr(result)? {
                             return Ok(result);
