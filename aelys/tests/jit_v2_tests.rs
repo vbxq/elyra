@@ -183,7 +183,7 @@ fn baseline_jit_compiles_nested_cfg_and_shares_it_between_isolates() {
 }
 
 #[test]
-fn execution_control_keeps_nested_calls_in_the_interpreter() {
+fn execution_control_is_honored_by_nested_jit_calls() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime
         .compile(NESTED_INTEGER_LOOP, CompileOptions::default())
@@ -198,7 +198,7 @@ fn execution_control_keeps_nested_calls_in_the_interpreter() {
         isolate.execute(&module, options).unwrap(),
         ExecutionOutcome::Returned(Value::int(49_995_000))
     );
-    assert_eq!(runtime.jit_cache_entries(), 0);
+    assert!(runtime.jit_cache_entries() >= 1);
 }
 
 #[test]
@@ -778,8 +778,9 @@ fn requesting_a_report_does_not_disable_the_jit() {
         .last_report()
         .expect("a run that was asked for a report must produce one");
     assert_eq!(
-        report.instructions, 0,
-        "the interpreter ran this module, so the JIT root path was refused"
+        report.instructions > 0,
+        true,
+        "controlled JIT execution must still publish control/report safepoints"
     );
     assert_eq!(report.source, "hot.aelys");
     assert_eq!(report.function.as_deref(), Some("<main>"));
@@ -790,7 +791,70 @@ fn requesting_a_report_does_not_disable_the_jit() {
 }
 
 #[test]
-fn hard_limits_still_force_the_interpreter() {
+fn baseline_jit_executes_float_arithmetic_and_host_calls() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let module = runtime
+        .compile(
+            "fn scale(value: float) -> float { return value * 2.0 + 0.5 }",
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::null())
+    );
+    let scale = isolate.get_function("scale").unwrap();
+    assert_eq!(
+        isolate.call(&scale, &[Value::float(1.25)]).unwrap(),
+        Value::float(3.0)
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+}
+
+#[test]
+fn baseline_jit_executes_a_typed_numeric_global_call() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let module = runtime
+        .compile(
+            r#"
+fn cosine(value: float) -> float {
+    let typed = value * 1.0
+    return math.cos(typed) + 0.0
+}
+"#,
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::null())
+    );
+    let cosine = isolate.get_function("cosine").unwrap();
+    assert_eq!(
+        isolate.call(&cosine, &[Value::float(0.0)]).unwrap(),
+        Value::float(1.0)
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+}
+
+#[test]
+fn baseline_jit_executes_a_typed_numeric_global_call_at_module_root() {
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let module = runtime
+        .compile("math.cos(0.0) + 0.0", CompileOptions::default())
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::float(1.0))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 1);
+}
+
+#[test]
+fn hard_limits_are_enforced_inside_jit_code() {
     let limits: [(&str, RunOptions); 3] = [
         (
             "max_instructions",
@@ -831,10 +895,73 @@ fn hard_limits_still_force_the_interpreter() {
         );
         assert!(
             isolate.last_report().unwrap().instructions > 0,
-            "a run bounded by {limit} must stay in the interpreter, \
-             which is the only place that bound is enforced"
+            "a run bounded by {limit} must execute control polls"
         );
+        assert!(runtime.jit_cache_entries() >= 1);
     }
+}
+
+#[test]
+fn controlled_jit_aborts_on_budget_deadline_and_interrupt() {
+    let source = r#"
+fn spin() -> int {
+    let mut index = 0
+    while index < 1000000000 {
+        index = index + 1
+    }
+return index
+}
+"#;
+    let cases = [
+        (
+            RunOptions {
+                max_instructions: Some(1),
+                ..RunOptions::default()
+            },
+            RuntimeErrorKind::InstructionBudgetExceeded { limit: 1 },
+        ),
+        (
+            RunOptions::default().with_timeout(std::time::Duration::ZERO),
+            RuntimeErrorKind::DeadlineExceeded,
+        ),
+    ];
+
+    for (options, expected) in cases {
+        let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+        let module = runtime.compile(source, CompileOptions::default()).unwrap();
+        let mut isolate = runtime.new_isolate(IsolateConfig::default());
+        isolate.execute(&module, RunOptions::default()).unwrap();
+        let spin = isolate.get_function("spin").unwrap();
+        let error = isolate.call_with_options(&spin, &[], options).unwrap_err();
+        let AelysError::Runtime(error) = error else {
+            panic!("expected a runtime control error");
+        };
+        assert!(std::mem::discriminant(&error.kind) == std::mem::discriminant(&expected));
+        assert!(runtime.jit_cache_entries() >= 1);
+    }
+
+    let interrupt = InterruptHandle::new();
+    interrupt.interrupt();
+    let runtime = Runtime::with_jit_mode(JitMode::Baseline);
+    let module = runtime.compile(source, CompileOptions::default()).unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    isolate.execute(&module, RunOptions::default()).unwrap();
+    let spin = isolate.get_function("spin").unwrap();
+    let error = isolate
+        .call_with_options(
+            &spin,
+            &[],
+            RunOptions {
+                interrupt: Some(interrupt),
+                ..RunOptions::default()
+            },
+        )
+        .unwrap_err();
+    let AelysError::Runtime(error) = error else {
+        panic!("expected an interrupt error");
+    };
+    assert!(matches!(error.kind, RuntimeErrorKind::Interrupted));
+    assert!(runtime.jit_cache_entries() >= 1);
 }
 
 #[test]
@@ -874,9 +1001,9 @@ fn a_hot_instance_switches_to_the_jit_while_reporting() {
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 0);
     let report = isolate.last_report().unwrap();
-    assert_eq!(
-        report.instructions, 0,
-        "past the threshold the JIT serves the instance, even with reports on"
+    assert!(
+        report.instructions > 0,
+        "the controlled JIT path must continue publishing safepoint statistics"
     );
     assert_eq!(report.allocations, 0);
 }
