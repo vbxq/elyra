@@ -79,24 +79,121 @@ pub struct AelysRequiredModule {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct AelysModuleDescriptor {
-    pub abi_version: u32,
-    pub descriptor_size: u32,
-    pub module_name: *const c_char,
-    pub module_version: *const c_char,
-    pub vm_version_min: *const c_char,
-    pub vm_version_max: *const c_char,
-    pub descriptor_hash: u64,
-    pub exports_hash: u64,
-    pub export_count: u32,
-    pub exports: *const AelysExport,
-    pub required_module_count: u32,
-    pub required_modules: *const AelysRequiredModule,
-    pub init: Option<AelysInitFn>,
+    abi_version: u32,
+    descriptor_size: u32,
+    module_name: *const c_char,
+    module_version: *const c_char,
+    vm_version_min: *const c_char,
+    vm_version_max: *const c_char,
+    descriptor_hash: u64,
+    exports_hash: u64,
+    export_count: u32,
+    exports: *const AelysExport,
+    required_module_count: u32,
+    required_modules: *const AelysRequiredModule,
+    init: Option<AelysInitFn>,
 }
 
 impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
+
+    /// Construct a descriptor at an FFI boundary.
+    ///
+    /// # Safety
+    /// Every pointer must remain valid for the lifetime promised by the
+    /// descriptor, and the counts and function pointers must describe the
+    /// corresponding arrays and ABI exactly. Native module registration
+    /// validates the resulting descriptor before using it.
+    #[allow(clippy::too_many_arguments)]
+    pub const unsafe fn from_raw_parts(
+        abi_version: u32,
+        descriptor_size: u32,
+        module_name: *const c_char,
+        module_version: *const c_char,
+        vm_version_min: *const c_char,
+        vm_version_max: *const c_char,
+        descriptor_hash: u64,
+        exports_hash: u64,
+        export_count: u32,
+        exports: *const AelysExport,
+        required_module_count: u32,
+        required_modules: *const AelysRequiredModule,
+        init: Option<AelysInitFn>,
+    ) -> Self {
+        Self {
+            abi_version,
+            descriptor_size,
+            module_name,
+            module_version,
+            vm_version_min,
+            vm_version_max,
+            descriptor_hash,
+            exports_hash,
+            export_count,
+            exports,
+            required_module_count,
+            required_modules,
+            init,
+        }
+    }
+
+    pub const fn abi_version(&self) -> u32 {
+        self.abi_version
+    }
+
+    pub const fn descriptor_size(&self) -> u32 {
+        self.descriptor_size
+    }
+
+    pub const fn module_name(&self) -> *const c_char {
+        self.module_name
+    }
+
+    pub const fn module_version(&self) -> *const c_char {
+        self.module_version
+    }
+
+    pub const fn vm_version_min(&self) -> *const c_char {
+        self.vm_version_min
+    }
+
+    pub const fn vm_version_max(&self) -> *const c_char {
+        self.vm_version_max
+    }
+
+    pub const fn descriptor_hash(&self) -> u64 {
+        self.descriptor_hash
+    }
+
+    pub const fn exports_hash(&self) -> u64 {
+        self.exports_hash
+    }
+
+    pub const fn export_count(&self) -> u32 {
+        self.export_count
+    }
+
+    pub const fn exports(&self) -> *const AelysExport {
+        self.exports
+    }
+
+    pub const fn required_module_count(&self) -> u32 {
+        self.required_module_count
+    }
+
+    pub const fn required_modules(&self) -> *const AelysRequiredModule {
+        self.required_modules
+    }
+
+    pub const fn init(&self) -> Option<AelysInitFn> {
+        self.init
+    }
+
+    pub(crate) fn set_exports_hash(&mut self, hash: u64) {
+        self.exports_hash = hash;
+    }
 }
 
 impl NativeHandle {
