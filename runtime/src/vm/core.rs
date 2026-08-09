@@ -1,6 +1,7 @@
 use super::config::VmConfig;
 use super::control::{ExecutionControl, ExecutionStats};
 use super::frame::CallFrame;
+use super::roots::HostRootSet;
 use super::{GcRef, Heap, NativeFunctionImpl, Value};
 use crate::native::NativeModule;
 use crate::stdlib::Resource;
@@ -51,6 +52,9 @@ pub struct VM {
     pub(crate) random_seed: u64,
     pub(crate) execution_control: ExecutionControl,
     pub(crate) execution_stats: ExecutionStats,
+    pub(crate) jit_control_error: Option<aelys_common::error::RuntimeError>,
+    pub(crate) host_roots: Arc<HostRootSet>,
+    pub(crate) id: u64,
 
     pub(crate) current_global_mapping_id: usize,
     pub(crate) program_args: Vec<String>,
