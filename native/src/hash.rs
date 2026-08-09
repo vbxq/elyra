@@ -48,7 +48,8 @@ pub unsafe fn init_descriptor_exports_hash(descriptor: *mut AelysModuleDescripto
         return;
     }
     let desc = unsafe { &mut *descriptor };
-    desc.exports_hash = unsafe { compute_exports_hash(desc.exports, desc.export_count) };
+    let hash = unsafe { compute_exports_hash(desc.exports(), desc.export_count()) };
+    desc.set_exports_hash(hash);
 }
 
 fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
