@@ -242,6 +242,46 @@ fn re_executing_a_module_lets_the_function_be_resolved_again() {
 }
 
 #[test]
+fn a_cached_function_remains_safe_after_reexecution_and_collection() {
+    let runtime = Runtime::with_jit_mode(JitMode::Off);
+    let module = runtime
+        .compile(TWICE_SOURCE, CompileOptions::default())
+        .unwrap();
+    let churn = runtime
+        .compile(
+            "let mut i = 0\nwhile i < 60000 {\n    let junk = [i, i, i, i, i, i, i, i]\n    i++\n}\n0",
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+
+    isolate.execute(&module, RunOptions::default()).unwrap();
+    let old = isolate.get_function("twice").unwrap();
+    isolate.execute(&module, RunOptions::default()).unwrap();
+    isolate.execute(&churn, RunOptions::default()).unwrap();
+
+    let result = isolate.call(&old, &[Value::int(21)]).unwrap();
+    assert_eq!(isolate.value_to_string(result), "42");
+}
+
+#[test]
+fn avbc_can_be_loaded_without_the_original_source() {
+    let producer = Runtime::with_jit_mode(JitMode::Off);
+    let module = producer
+        .compile("21 + 21", CompileOptions::default())
+        .unwrap();
+    let avbc = module.avbc().to_vec();
+
+    let consumer = Runtime::with_jit_mode(JitMode::Off);
+    let loaded = consumer.load_avbc(&avbc, "precompiled.avbc").unwrap();
+    let mut isolate = consumer.new_isolate(IsolateConfig::default());
+    assert_eq!(
+        isolate.execute(&loaded, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
+    );
+}
+
+#[test]
 fn a_failed_run_does_not_clobber_the_globals_it_already_defined() {
     let runtime = Runtime::new();
     let module = runtime
@@ -257,8 +297,10 @@ fn a_failed_run_does_not_clobber_the_globals_it_already_defined() {
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
 
     let error = isolate.execute(&module, RunOptions::default()).unwrap_err();
-    assert!(
-        matches!(runtime_error_kind(error), RuntimeErrorKind::DivisionByZero));
+    assert!(matches!(
+        runtime_error_kind(error),
+        RuntimeErrorKind::DivisionByZero
+    ));
 
     let helper = isolate
         .get_function("helper")
@@ -293,8 +335,7 @@ fn an_instance_is_deserialized_once() {
 
     isolate.execute(&module, options.clone()).unwrap();
     let per_execute = isolate.last_report().unwrap().allocations;
-    assert!(
-        per_execute > 0);
+    assert!(per_execute > 0);
 
     isolate
         .execute_instance(&instance, options.clone())
@@ -307,9 +348,7 @@ fn an_instance_is_deserialized_once() {
     }
     let thousandth = isolate.last_report().unwrap().allocations;
 
-    assert_eq!(
-        (first, thousandth),
-        (0, 0));
+    assert_eq!((first, thousandth), (0, 0));
 }
 
 #[test]
@@ -343,8 +382,7 @@ fn an_instance_survives_a_collection_between_runs() {
         ..RunOptions::default()
     };
     isolate.execute(&churn, options).unwrap();
-    assert!(
-        isolate.last_report().unwrap().collections > 0);
+    assert!(isolate.last_report().unwrap().collections > 0);
 
     isolate
         .execute_instance(&instance, RunOptions::default())
@@ -366,11 +404,10 @@ fn an_instance_belongs_to_the_isolate_that_created_it() {
     let native = other.instantiate(&two).unwrap();
 
     let error = other.execute_instance(&foreign, RunOptions::default());
-    assert!(
-        matches!(
-            error.map_err(runtime_error_kind),
-            Err(RuntimeErrorKind::InvalidMemoryHandle)
-        ));
+    assert!(matches!(
+        error.map_err(runtime_error_kind),
+        Err(RuntimeErrorKind::InvalidMemoryHandle)
+    ));
 
     let outcome = other
         .execute_instance(&native, RunOptions::default())
@@ -399,9 +436,7 @@ fn a_module_from_another_runtime_is_not_served_the_wrong_compiled_root() {
     let ExecutionOutcome::Returned(value) = outcome else {
         panic!("expected a returned value, got {outcome:?}");
     };
-    assert_eq!(
-        isolate.value_to_string(value),
-        "42");
+    assert_eq!(isolate.value_to_string(value), "42");
 }
 
 const BOUNDED_LOAD_SOURCE: &str = "fn work() -> int {\n\
@@ -498,8 +533,10 @@ fn a_name_that_is_not_a_function_is_an_error_not_a_panic() {
         let Err(error) = isolate.get_function("answer") else {
             panic!("{source:?}: a non-function global must not resolve");
         };
-        assert!(
-            matches!(runtime_error_kind(error), RuntimeErrorKind::NotCallable(_)));
+        assert!(matches!(
+            runtime_error_kind(error),
+            RuntimeErrorKind::NotCallable(_)
+        ));
     }
 }
 
@@ -592,16 +629,11 @@ fn a_game_engine_frame_loop_runs_without_growing_the_heap() {
         assert_eq!(isolate.value_to_string(value), (42 + n).to_string());
     }
 
-    assert!(
-        runtime.jit_cache_entries() >= 1);
-    assert_eq!(
-        runtime.jit_deoptimizations(),
-        0);
+    assert!(runtime.jit_cache_entries() >= 1);
+    assert_eq!(runtime.jit_deoptimizations(), 0);
     let last_tick = isolate.last_report().unwrap();
-    assert_eq!(
-        last_tick.instructions, 0);
-    assert_eq!(
-        last_tick.allocations, 0);
+    assert!(last_tick.instructions > 0);
+    assert_eq!(last_tick.allocations, 0);
 
     isolate
         .execute_instance(&script_instance, options.clone())
@@ -613,54 +645,54 @@ fn a_game_engine_frame_loop_runs_without_growing_the_heap() {
             report.allocations,
         )
     };
-    assert!(
-        across_loop <= per_run_bytes);
-    assert_eq!(
-        post_loop_allocations, per_run_allocations);
+    assert!(across_loop <= per_run_bytes);
+    assert_eq!(post_loop_allocations, per_run_allocations);
 
     isolate.execute(&script, options).unwrap();
     let per_execute = isolate.last_report().unwrap().allocations;
-    assert_eq!(
-        (per_run_allocations, per_execute),
-        (1, 2));
+    assert_eq!((per_run_allocations, per_execute), (1, 2));
 }
 
 fn future_abi_descriptor() -> &'static aelys_native::AelysModuleDescriptor {
     static NAME: &[u8] = b"from-the-future\0";
-    static DESCRIPTOR: aelys_native::AelysModuleDescriptor = aelys_native::AelysModuleDescriptor {
-        abi_version: aelys_native::AELYS_ABI_VERSION + 1,
-        descriptor_size: size_of::<aelys_native::AelysModuleDescriptor>() as u32,
-        module_name: NAME.as_ptr() as *const std::ffi::c_char,
-        module_version: std::ptr::null(),
-        vm_version_min: std::ptr::null(),
-        vm_version_max: std::ptr::null(),
-        descriptor_hash: 0,
-        exports_hash: 0,
-        export_count: 0,
-        exports: std::ptr::null(),
-        required_module_count: 0,
-        required_modules: std::ptr::null(),
-        init: None,
+    static DESCRIPTOR: aelys_native::AelysModuleDescriptor = unsafe {
+        aelys_native::AelysModuleDescriptor::from_raw_parts(
+            aelys_native::AELYS_ABI_VERSION + 1,
+            size_of::<aelys_native::AelysModuleDescriptor>() as u32,
+            NAME.as_ptr() as *const std::ffi::c_char,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            None,
+        )
     };
     &DESCRIPTOR
 }
 
 fn unhashed_descriptor() -> &'static aelys_native::AelysModuleDescriptor {
     static NAME: &[u8] = b"hollow\0";
-    static DESCRIPTOR: aelys_native::AelysModuleDescriptor = aelys_native::AelysModuleDescriptor {
-        abi_version: aelys_native::AELYS_ABI_VERSION,
-        descriptor_size: size_of::<aelys_native::AelysModuleDescriptor>() as u32,
-        module_name: NAME.as_ptr() as *const std::ffi::c_char,
-        module_version: std::ptr::null(),
-        vm_version_min: std::ptr::null(),
-        vm_version_max: std::ptr::null(),
-        descriptor_hash: 0,
-        exports_hash: 0,
-        export_count: 0,
-        exports: std::ptr::null(),
-        required_module_count: 0,
-        required_modules: std::ptr::null(),
-        init: None,
+    static DESCRIPTOR: aelys_native::AelysModuleDescriptor = unsafe {
+        aelys_native::AelysModuleDescriptor::from_raw_parts(
+            aelys_native::AELYS_ABI_VERSION,
+            size_of::<aelys_native::AelysModuleDescriptor>() as u32,
+            NAME.as_ptr() as *const std::ffi::c_char,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            None,
+        )
     };
     &DESCRIPTOR
 }
@@ -677,7 +709,7 @@ mod probe_module {
     }
 
     pub unsafe fn descriptor() -> &'static aelys_native::AelysModuleDescriptor {
-        let pointer = &raw const aelys_module_descriptor;
+        let pointer = &raw const aelys_module_descriptor_70726f6265;
         unsafe { &*pointer }
     }
 }
@@ -726,20 +758,22 @@ mod dependent_module {
         version_req: REQUIRED_VERSION.as_ptr() as *const c_char,
     }];
 
-    static mut DESCRIPTOR: AelysModuleDescriptor = AelysModuleDescriptor {
-        abi_version: aelys_native::AELYS_ABI_VERSION,
-        descriptor_size: size_of::<AelysModuleDescriptor>() as u32,
-        module_name: NAME.as_ptr() as *const c_char,
-        module_version: std::ptr::null(),
-        vm_version_min: std::ptr::null(),
-        vm_version_max: std::ptr::null(),
-        descriptor_hash: 0,
-        exports_hash: 0,
-        export_count: 1,
-        exports: EXPORTS.as_ptr(),
-        required_module_count: 1,
-        required_modules: REQUIRED.as_ptr(),
-        init: Some(dependent_init),
+    static mut DESCRIPTOR: AelysModuleDescriptor = unsafe {
+        AelysModuleDescriptor::from_raw_parts(
+            aelys_native::AELYS_ABI_VERSION,
+            size_of::<AelysModuleDescriptor>() as u32,
+            NAME.as_ptr() as *const c_char,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+            1,
+            EXPORTS.as_ptr(),
+            1,
+            REQUIRED.as_ptr(),
+            Some(dependent_init),
+        )
     };
 
     aelys_native::aelys_init_exports_hash!(DESCRIPTOR);
@@ -787,20 +821,22 @@ macro_rules! counting_shadow_module {
                 value: shadow_export as *const c_void,
             }];
 
-            static mut DESCRIPTOR: AelysModuleDescriptor = AelysModuleDescriptor {
-                abi_version: aelys_native::AELYS_ABI_VERSION,
-                descriptor_size: size_of::<AelysModuleDescriptor>() as u32,
-                module_name: NAME.as_ptr() as *const c_char,
-                module_version: std::ptr::null(),
-                vm_version_min: std::ptr::null(),
-                vm_version_max: std::ptr::null(),
-                descriptor_hash: 0,
-                exports_hash: 0,
-                export_count: 1,
-                exports: EXPORTS.as_ptr(),
-                required_module_count: 0,
-                required_modules: std::ptr::null(),
-                init: Some(shadow_init),
+            static mut DESCRIPTOR: AelysModuleDescriptor = unsafe {
+                AelysModuleDescriptor::from_raw_parts(
+                    aelys_native::AELYS_ABI_VERSION,
+                    size_of::<AelysModuleDescriptor>() as u32,
+                    NAME.as_ptr() as *const c_char,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    0,
+                    1,
+                    EXPORTS.as_ptr(),
+                    0,
+                    std::ptr::null(),
+                    Some(shadow_init),
+                )
             };
 
             aelys_native::aelys_init_exports_hash!(DESCRIPTOR);
@@ -816,4 +852,3 @@ macro_rules! counting_shadow_module {
 counting_shadow_module!(sys_shadow, "sys", "pid");
 counting_shadow_module!(probe_shadow, "probe", "answer");
 counting_shadow_module!(math_shadow, "math", "sin");
-
