@@ -11,9 +11,14 @@ pub struct ExportInfo {
     pub wrapper_name: Ident,
 }
 
-pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, ExportInfo)> {
+pub fn generate_export_wrapper(
+    func: &ItemFn,
+    module_prefix: &str,
+    module_ident: &Ident,
+) -> syn::Result<(TokenStream2, ExportInfo)> {
     let fn_name = &func.sig.ident;
-    let wrapper_name = format_ident!("__aelys_wrapper_{}", fn_name);
+    let wrapper_name = format_ident!("__aelys_wrapper_{}_{}", module_prefix, fn_name);
+    let export_symbol = format!("aelys_native_{}_{}", module_prefix, fn_name);
 
     if func.sig.abi.is_some() {
         let arity = if func.sig.inputs.len() >= 4 {
@@ -25,8 +30,8 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
 
         let wrapper = quote! {
             #[doc(hidden)]
-            #[unsafe(no_mangle)]
-            pub use exports::#fn_name as #wrapper_name;
+            #[unsafe(export_name = #export_symbol)]
+            pub use #module_ident::#fn_name as #wrapper_name;
         };
 
         return Ok((
@@ -64,10 +69,9 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
         ReturnType::Type(_, ty) => generate_return_conversion(ty)?,
     };
 
-    let mod_name = format_ident!("exports");
     let wrapper = quote! {
         #[doc(hidden)]
-        #[unsafe(no_mangle)]
+        #[unsafe(export_name = #export_symbol)]
         pub unsafe extern "C" fn #wrapper_name(
             _context: *mut ::aelys_native::NativeContext,
             args: *const ::aelys_native::AelysValue,
@@ -82,7 +86,7 @@ pub fn generate_export_wrapper(func: &ItemFn) -> syn::Result<(TokenStream2, Expo
             }
             let result: Result<::aelys_native::AelysValue, i32> = (|| {
                 #(#param_extractions)*
-                let ret = #mod_name::#fn_name(#(#call_args),*);
+                let ret = #module_ident::#fn_name(#(#call_args),*);
                 #return_conversion
             })();
 
