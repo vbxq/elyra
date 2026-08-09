@@ -33,7 +33,7 @@ impl NativeModuleRegistration {
         Ok(ValidatedNativeModule {
             alias: contents.name,
             exports: contents.exports,
-            init: descriptor.init,
+            init: descriptor.init(),
         })
     }
 
@@ -76,7 +76,7 @@ impl ValidatedNativeModule {
             if export.kind != AelysExportKind::Function || export.value.is_null() {
                 continue;
             }
-            // SAFETY: `validate_descriptor` has checked that this export is a function whose pointer is non-null, aligned and inside the user-space address range, and `#[aelys_module]` 
+            // SAFETY: `validate_descriptor` has checked that this export is a function whose pointer is non-null, aligned and inside the user-space address range, and `#[aelys_module]`
             // only ever stores an `AelysNativeFn` in the value slot of a `Function` export, so the pointer already has that ABI. the contract accepted at validate keeps the code it addresses alive.
             let function =
                 unsafe { std::mem::transmute::<*const c_void, AelysNativeFn>(export.value) };
