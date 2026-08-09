@@ -12,11 +12,11 @@ After encoding type tags, there are 48 bits left for integer payloads. That's ro
 
 ### Is Aelys fast?
 
-The portable tier is a bytecode interpreter. On Linux x86_64, Aelys 0.22 additionally enables a tiered Cranelift JIT by default for supported typed integer and collection workloads.
+The portable tier is a bytecode interpreter. On Linux x86_64, Aelys 0.22 additionally enables a tiered Cranelift JIT by default for supported typed integer, floating-point, and collection workloads.
 
 Cold programs stay in the interpreter until a call or loop becomes hot. Hot loops can enter machine code through on-stack replacement, while unsupported operations safely continue in the interpreter.
 
-Performance depends heavily on type information and workload shape. Run the repository's Criterion suite on the deployment machine before using a native module solely for speed.
+Performance depends heavily on type information and workload shape. Typed numeric calls to qualified native-module globals can cross the JIT through a checked runtime callback; general dynamic calls, object-valued calls, and unsupported operations remain explicit interpreter boundaries. Run the repository's Criterion suite on the deployment machine before using a native module solely for speed.
 ### How does the GC work?
 
 The heap is non-moving and generational. Minor collections trace young objects from roots and the remembered set; the old generation uses incremental mark-and-sweep slices with write barriers on mutations.
@@ -31,7 +31,9 @@ Not yet but planned very soon. You can use `print` statements (sorry) or inspect
 
 ### Can I embed Aelys in my Rust application?
 
-Yes. The 0.22 API exposes a shared `Runtime`, immutable `CompiledModule`, and per-thread `Isolate`. Use `Runtime::compile`, `Runtime::new_isolate`, and `Isolate::execute`; configure fuel, deadlines, interruption, and reports through `RunOptions`.
+Yes. The 0.22 API exposes a shared `Runtime`, immutable `CompiledModule`, and per-thread `Isolate`. Use `Runtime::compile`, `Runtime::new_isolate`, and `Isolate::execute`; configure fuel, deadlines, interruption, and reports through `RunOptions`. `CompiledModule::avbc()` can be persisted and restored with `Runtime::load_avbc()`.
+
+Source-level `fn main(...)` is not an implicit entry point: defining it does not call it. Top-level code runs on `execute`; resolve a named function and call it for an explicit entry point. Module members use dot syntax in Aelys (`math.sqrt(...)`), while Rust symbol-table names use `::`.
 
 ### Are there tests?
 
