@@ -1,6 +1,9 @@
 use super::ir::{FunctionIr, IntPredicate, IrError, IrInstructionKind, IrTerminator, IrType};
-use aelys_runtime::JitArgument;
-use cranelift_codegen::ir::{AbiParam, BlockArg, InstBuilder, MemFlagsData, UserFuncName, types};
+use aelys_runtime::{JitArgument, JitExecutionContext};
+use cranelift_codegen::ir::{
+    AbiParam, BlockArg, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, UserFuncName,
+    immediates::Ieee64, types,
+};
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -10,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-pub(crate) const JIT_ABI_VERSION: u16 = 3;
+pub(crate) const JIT_ABI_VERSION: u16 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
@@ -27,6 +30,7 @@ pub(crate) struct JitKey {
     pub(crate) osr_ip: Option<u32>,
     pub(crate) abi: u16,
     pub(crate) cpu_features: u64,
+    pub(crate) controlled: bool,
 }
 
 impl JitKey {
@@ -36,6 +40,15 @@ impl JitKey {
     }
 
     pub(crate) fn for_path(module: u64, function_path: Arc<[u32]>, tier: JitTier) -> Self {
+        Self::for_path_with_control(module, function_path, tier, false)
+    }
+
+    pub(crate) fn for_path_with_control(
+        module: u64,
+        function_path: Arc<[u32]>,
+        tier: JitTier,
+        controlled: bool,
+    ) -> Self {
         Self {
             module,
             function_path,
@@ -43,11 +56,23 @@ impl JitKey {
             osr_ip: None,
             abi: JIT_ABI_VERSION,
             cpu_features: cpu_feature_key(),
+            controlled,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn for_osr(module: u64, function_path: Arc<[u32]>, bytecode_ip: u32) -> Self {
-        let mut key = Self::for_path(module, function_path, JitTier::Baseline);
+        Self::for_osr_with_control(module, function_path, bytecode_ip, false)
+    }
+
+    pub(crate) fn for_osr_with_control(
+        module: u64,
+        function_path: Arc<[u32]>,
+        bytecode_ip: u32,
+        controlled: bool,
+    ) -> Self {
+        let mut key =
+            Self::for_path_with_control(module, function_path, JitTier::Baseline, controlled);
         key.osr_ip = Some(bytecode_ip);
         key
     }
@@ -57,6 +82,7 @@ pub(crate) struct CompiledFunction {
     address: usize,
     arity: usize,
     parameter_types: Arc<[IrType]>,
+    return_type: IrType,
     deopt_register_count: usize,
     deopt_maps: HashMap<u32, Arc<[(u16, DeoptSource)]>>,
     _module: Mutex<JITModule>,
@@ -79,6 +105,7 @@ struct RawI64Collection {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum JitExecution {
     Returned(i64),
+    Aborted,
     Deoptimized {
         bytecode_ip: u32,
         registers: Vec<(u16, JitDeoptValue)>,
@@ -88,12 +115,14 @@ pub(crate) enum JitExecution {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JitDeoptValue {
     Integer(i64),
+    Float(u64),
+    Boolean(bool),
     Argument(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeoptSource {
-    Machine(u16),
+    Machine(u16, IrType),
     Argument(usize),
 }
 
@@ -113,16 +142,22 @@ impl CompiledFunction {
         self.arity
     }
 
+    pub(crate) fn return_type(&self) -> IrType {
+        self.return_type
+    }
+
     #[cfg(test)]
     pub(crate) fn execute_i64(&self, arguments: &[i64]) -> Result<i64, JitError> {
         match self.execute(arguments)? {
             JitExecution::Returned(value) => Ok(value),
+            JitExecution::Aborted => Err(JitError::Aborted),
             JitExecution::Deoptimized { bytecode_ip, .. } => {
                 Err(JitError::Deoptimized(bytecode_ip))
             }
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn execute(&self, arguments: &[i64]) -> Result<JitExecution, JitError> {
         if arguments.len() != self.arity {
             return Err(JitError::Arity {
@@ -133,12 +168,21 @@ impl CompiledFunction {
         if self.parameter_types.iter().any(|ty| *ty != IrType::I64) {
             return Err(JitError::ArgumentType(0));
         }
-        self.execute_raw(arguments.as_ptr(), std::ptr::null())
+        self.execute_raw(arguments.as_ptr(), std::ptr::null(), std::ptr::null_mut())
     }
 
+    #[cfg(test)]
     pub(crate) fn execute_arguments(
         &self,
         arguments: &[JitArgument<'_>],
+    ) -> Result<JitExecution, JitError> {
+        self.execute_arguments_with_context(arguments, None)
+    }
+
+    pub(crate) fn execute_arguments_with_context(
+        &self,
+        arguments: &[JitArgument<'_>],
+        context: Option<&JitExecutionContext>,
     ) -> Result<JitExecution, JitError> {
         if arguments.len() != self.arity {
             return Err(JitError::Arity {
@@ -163,6 +207,13 @@ impl CompiledFunction {
                 }
                 (JitArgument::Boolean(value), IrType::Bool) => {
                     integers.push(i64::from(*value));
+                    collections.push(RawI64Collection {
+                        data: std::ptr::null(),
+                        length: 0,
+                    });
+                }
+                (JitArgument::Float(value), IrType::F64) => {
+                    integers.push(i64::from_ne_bytes(value.to_bits().to_ne_bytes()));
                     collections.push(RawI64Collection {
                         data: std::ptr::null(),
                         length: 0,
@@ -194,19 +245,24 @@ impl CompiledFunction {
                 _ => return Err(JitError::ArgumentType(index)),
             }
         }
-        self.execute_raw(integers.as_ptr(), collections.as_ptr())
+        let context = context
+            .map(|context| (context as *const JitExecutionContext).cast_mut())
+            .unwrap_or(std::ptr::null_mut());
+        self.execute_raw(integers.as_ptr(), collections.as_ptr(), context)
     }
 
     fn execute_raw(
         &self,
         integers: *const i64,
         collections: *const RawI64Collection,
+        context: *mut JitExecutionContext,
     ) -> Result<JitExecution, JitError> {
         type Entry = unsafe extern "C" fn(
             *const i64,
             *mut RawJitExit,
             *mut i64,
             *const RawI64Collection,
+            *mut JitExecutionContext,
         ) -> i64;
         // SAFETY: addresses are obtained from finalized Cranelift functions with this exact ABI.
         let entry = unsafe { std::mem::transmute::<usize, Entry>(self.address) };
@@ -219,10 +275,14 @@ impl CompiledFunction {
                 &mut exit,
                 deopt_registers.as_mut_ptr(),
                 collections,
+                context,
             )
         };
         if exit.kind == 0 {
             return Ok(JitExecution::Returned(result));
+        }
+        if exit.kind == 2 || exit.kind == 3 {
+            return Ok(JitExecution::Aborted);
         }
         if exit.kind != 1 {
             return Err(JitError::InvalidExitKind(exit.kind));
@@ -237,9 +297,15 @@ impl CompiledFunction {
             .iter()
             .map(|(register, source)| {
                 let value = match source {
-                    DeoptSource::Machine(slot) => {
-                        JitDeoptValue::Integer(deopt_registers[usize::from(*slot)])
-                    }
+                    DeoptSource::Machine(slot, ty) => match ty {
+                        IrType::F64 => JitDeoptValue::Float(u64::from_ne_bytes(
+                            deopt_registers[usize::from(*slot)].to_ne_bytes(),
+                        )),
+                        IrType::Bool => {
+                            JitDeoptValue::Boolean(deopt_registers[usize::from(*slot)] != 0)
+                        }
+                        _ => JitDeoptValue::Integer(deopt_registers[usize::from(*slot)]),
+                    },
                     DeoptSource::Argument(index) => JitDeoptValue::Argument(*index),
                 };
                 (*register, value)
@@ -290,8 +356,8 @@ impl JitEngine {
         ir: &FunctionIr,
     ) -> Result<Arc<CompiledFunction>, JitError> {
         ir.verify().map_err(JitError::InvalidIr)?;
-        if ir.return_type != IrType::I64 {
-            return Err(JitError::UnsupportedIr("non-i64 return type"));
+        if !matches!(ir.return_type, IrType::I64 | IrType::F64 | IrType::Bool) {
+            return Err(JitError::UnsupportedIr("unsupported return type"));
         }
         let mut state = self.state.lock().map_err(|_| JitError::Poisoned)?;
         if let Some(entry) = state.entries.get(key).cloned() {
@@ -305,13 +371,22 @@ impl JitEngine {
             JitTier::Baseline => &self.baseline_isa,
             JitTier::Optimized => &self.optimized_isa,
         };
-        let mut module = JITModule::new(JITBuilder::with_isa(
-            Arc::clone(isa),
-            cranelift_module::default_libcall_names(),
-        ));
+        let mut jit_builder =
+            JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
+        jit_builder.symbol("aelys_jit_poll", jit_poll as *const u8);
+        jit_builder.symbol(
+            "aelys_jit_call_global",
+            aelys_runtime::call_jit_global as *const u8,
+        );
+        let mut module = JITModule::new(jit_builder);
         let pointer_type = module.target_config().pointer_type();
         let frontend_config = module.target_config();
         let mut context = module.make_context();
+        context
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
         context
             .func
             .signature
@@ -342,7 +417,46 @@ impl JitEngine {
         let function_id = module
             .declare_function(&symbol, Linkage::Local, &context.func.signature)
             .map_err(|error| JitError::Module(error.to_string()))?;
-        lower_function(ir, &mut context.func, frontend_config)?;
+        let poll_function = if key.controlled {
+            let mut signature = module.make_signature();
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.returns.push(AbiParam::new(types::I64));
+            let poll_id = module
+                .declare_function("aelys_jit_poll", Linkage::Import, &signature)
+                .map_err(|error| JitError::Module(error.to_string()))?;
+            Some(module.declare_func_in_func(poll_id, &mut context.func))
+        } else {
+            None
+        };
+        let native_call_function = if ir.blocks.iter().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction.kind, IrInstructionKind::NativeCall { .. }))
+        }) {
+            let mut signature = module.make_signature();
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.returns.push(AbiParam::new(types::I64));
+            let call_id = module
+                .declare_function("aelys_jit_call_global", Linkage::Import, &signature)
+                .map_err(|error| JitError::Module(error.to_string()))?;
+            Some(module.declare_func_in_func(call_id, &mut context.func))
+        } else {
+            None
+        };
+        lower_function(
+            ir,
+            &mut context.func,
+            frontend_config,
+            poll_function,
+            native_call_function,
+        )?;
         module
             .define_function(function_id, &mut context)
             .map_err(|error| JitError::Module(format!("{error:?}")))?;
@@ -405,7 +519,13 @@ impl JitEngine {
                         ),
                     )?)
                 } else {
-                    DeoptSource::Machine(register)
+                    DeoptSource::Machine(
+                        register,
+                        value_types
+                            .get(&value)
+                            .copied()
+                            .ok_or(JitError::InvalidIr(IrError::UnknownValue(value)))?,
+                    )
                 };
                 sources.push((register, source));
             }
@@ -415,6 +535,7 @@ impl JitEngine {
             address,
             arity: ir.parameter_types.len(),
             parameter_types: Arc::from(ir.parameter_types.clone()),
+            return_type: ir.return_type,
             deopt_register_count,
             deopt_maps,
             _module: Mutex::new(module),
@@ -463,10 +584,23 @@ fn native_isa(opt_level: &str) -> Result<OwnedTargetIsa, JitError> {
         .map_err(|error| JitError::Configuration(error.to_string()))
 }
 
+extern "C" fn jit_poll(context: *mut JitExecutionContext) -> i64 {
+    if context.is_null() {
+        return 0;
+    }
+    // SAFETY: controlled JIT calls pass a live context for the duration of
+    // the synchronous machine-code invocation.
+    let context = unsafe { &*context };
+    // SAFETY: the callback and its opaque data are created by the runtime.
+    unsafe { (context.poll)(context.data) }
+}
+
 fn lower_function(
     ir: &FunctionIr,
     function: &mut cranelift_codegen::ir::Function,
     frontend_config: cranelift_codegen::isa::TargetFrontendConfig,
+    poll_function: Option<cranelift_codegen::ir::FuncRef>,
+    native_call_function: Option<cranelift_codegen::ir::FuncRef>,
 ) -> Result<(), JitError> {
     let mut builder_context = FunctionBuilderContext::new();
     let mut builder = FunctionBuilder::new(function, &mut builder_context);
@@ -481,6 +615,19 @@ fn lower_function(
     let exit_state = builder.block_params(entry)[1];
     let deopt_registers = builder.block_params(entry)[2];
     let collections = builder.block_params(entry)[3];
+    let control = builder.block_params(entry)[4];
+    let value_types = ir
+        .blocks
+        .iter()
+        .flat_map(|block| {
+            block.parameters.iter().copied().chain(
+                block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| instruction.result),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mut values = HashMap::new();
     for block in &ir.blocks {
         let lowered = blocks[&block.id];
@@ -518,55 +665,92 @@ fn lower_function(
         }
         for instruction in &block.instructions {
             let result = match instruction.kind {
-                IrInstructionKind::Iconst(value) => Some(builder.ins().iconst(types::I64, value)),
+                IrInstructionKind::Iconst(value) => {
+                    let ty = instruction
+                        .result
+                        .map(|(_, ty)| ty)
+                        .ok_or(JitError::InvalidIr(IrError::UnexpectedResult))?;
+                    Some(match ty {
+                        IrType::F64 => builder
+                            .ins()
+                            .f64const(Ieee64::with_bits(u64::from_ne_bytes(value.to_ne_bytes()))),
+                        _ => builder.ins().iconst(types::I64, value),
+                    })
+                }
                 IrInstructionKind::Bconst(value) => {
                     Some(builder.ins().iconst(types::I8, i64::from(value)))
                 }
                 IrInstructionKind::Iadd(left, right) => {
-                    let result = builder.ins().iadd(values[&left], values[&right]);
-                    Some(check_integer_result(
-                        &mut builder,
-                        result,
-                        None,
-                        integer_overflow,
-                    ))
+                    if value_types.get(&left) == Some(&IrType::F64) {
+                        Some(builder.ins().fadd(values[&left], values[&right]))
+                    } else {
+                        let result = builder.ins().iadd(values[&left], values[&right]);
+                        Some(check_integer_result(
+                            &mut builder,
+                            result,
+                            None,
+                            integer_overflow,
+                        ))
+                    }
                 }
                 IrInstructionKind::Isub(left, right) => {
-                    let result = builder.ins().isub(values[&left], values[&right]);
-                    Some(check_integer_result(
-                        &mut builder,
-                        result,
-                        None,
-                        integer_overflow,
-                    ))
+                    if value_types.get(&left) == Some(&IrType::F64) {
+                        Some(builder.ins().fsub(values[&left], values[&right]))
+                    } else {
+                        let result = builder.ins().isub(values[&left], values[&right]);
+                        Some(check_integer_result(
+                            &mut builder,
+                            result,
+                            None,
+                            integer_overflow,
+                        ))
+                    }
                 }
                 IrInstructionKind::Imul(left, right) => {
-                    let left = values[&left];
-                    let right = values[&right];
-                    let result = builder.ins().imul(left, right);
-                    let high = builder.ins().smulhi(left, right);
-                    let sign = builder.ins().sshr_imm_u(result, 63);
-                    let overflow = builder.ins().icmp(
-                        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
-                        high,
-                        sign,
-                    );
-                    Some(check_integer_result(
-                        &mut builder,
-                        result,
-                        Some(overflow),
-                        integer_overflow,
-                    ))
+                    if value_types.get(&left) == Some(&IrType::F64) {
+                        Some(builder.ins().fmul(values[&left], values[&right]))
+                    } else {
+                        let left = values[&left];
+                        let right = values[&right];
+                        let result = builder.ins().imul(left, right);
+                        let high = builder.ins().smulhi(left, right);
+                        let sign = builder.ins().sshr_imm_u(result, 63);
+                        let overflow = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                            high,
+                            sign,
+                        );
+                        Some(check_integer_result(
+                            &mut builder,
+                            result,
+                            Some(overflow),
+                            integer_overflow,
+                        ))
+                    }
                 }
+                IrInstructionKind::Fdiv(left, right) => {
+                    Some(builder.ins().fdiv(values[&left], values[&right]))
+                }
+                IrInstructionKind::Fneg(value) => Some(builder.ins().fneg(values[&value])),
                 IrInstructionKind::Icmp {
                     predicate,
                     left,
                     right,
-                } => Some(builder.ins().icmp(
-                    lower_predicate(predicate),
-                    values[&left],
-                    values[&right],
-                )),
+                } => {
+                    if value_types.get(&left) == Some(&IrType::F64) {
+                        Some(builder.ins().fcmp(
+                            lower_float_predicate(predicate),
+                            values[&left],
+                            values[&right],
+                        ))
+                    } else {
+                        Some(builder.ins().icmp(
+                            lower_predicate(predicate),
+                            values[&left],
+                            values[&right],
+                        ))
+                    }
+                }
                 IrInstructionKind::Guard { condition, deopt } => {
                     let map = ir
                         .deopt_maps
@@ -687,6 +871,115 @@ fn lower_function(
                             .load(types::I64, MemFlagsData::trusted(), address, 0),
                     )
                 }
+                IrInstructionKind::NativeCall {
+                    global_index,
+                    ref arguments,
+                } => {
+                    let native_call_function = native_call_function.ok_or(
+                        JitError::UnsupportedIr("native-call IR is missing its runtime callback"),
+                    )?;
+                    let argument_bytes = arguments
+                        .len()
+                        .checked_mul(8)
+                        .and_then(|size| u32::try_from(size).ok())
+                        .ok_or(JitError::OffsetOverflow)?;
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        argument_bytes.max(1),
+                        3,
+                    ));
+                    let argument_pointer =
+                        builder
+                            .ins()
+                            .stack_addr(frontend_config.pointer_type(), slot, 0);
+                    let mut type_mask = 0u64;
+                    for (index, argument) in arguments.iter().copied().enumerate() {
+                        let ty = value_types
+                            .get(&argument)
+                            .copied()
+                            .ok_or(JitError::InvalidIr(IrError::UnknownValue(argument)))?;
+                        let (raw, tag) = match ty {
+                            IrType::I64 => (values[&argument], 0u64),
+                            IrType::F64 => (
+                                builder.ins().bitcast(
+                                    types::I64,
+                                    MemFlagsData::new(),
+                                    values[&argument],
+                                ),
+                                1,
+                            ),
+                            IrType::Bool => {
+                                (builder.ins().uextend(types::I64, values[&argument]), 2)
+                            }
+                            _ => {
+                                return Err(JitError::UnsupportedIr(
+                                    "native-call arguments must be numeric or boolean",
+                                ));
+                            }
+                        };
+                        let shift =
+                            u32::try_from(index.checked_mul(2).ok_or(JitError::OffsetOverflow)?)
+                                .map_err(|_| JitError::OffsetOverflow)?;
+                        type_mask |= tag << shift;
+                        let offset =
+                            i32::try_from(index.checked_mul(8).ok_or(JitError::OffsetOverflow)?)
+                                .map_err(|_| JitError::OffsetOverflow)?;
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), raw, argument_pointer, offset);
+                    }
+                    let result_type = match instruction.result.map(|(_, ty)| ty) {
+                        Some(IrType::I64) => 0i64,
+                        Some(IrType::F64) => 1,
+                        Some(IrType::Bool) => 2,
+                        _ => {
+                            return Err(JitError::UnsupportedIr(
+                                "native-call results must be numeric or boolean",
+                            ));
+                        }
+                    };
+                    let global_index = i64::from(global_index);
+                    let argument_count =
+                        i64::try_from(arguments.len()).map_err(|_| JitError::OffsetOverflow)?;
+                    let context_value = control;
+                    let exit_state_value = exit_state;
+                    let global_value = builder.ins().iconst(types::I64, global_index);
+                    let count_value = builder.ins().iconst(types::I64, argument_count);
+                    let mask_value = builder.ins().iconst(
+                        types::I64,
+                        i64::try_from(type_mask).map_err(|_| JitError::OffsetOverflow)?,
+                    );
+                    let result_type_value = builder.ins().iconst(types::I64, result_type);
+                    let call = builder.ins().call(
+                        native_call_function,
+                        &[
+                            context_value,
+                            exit_state_value,
+                            global_value,
+                            argument_pointer,
+                            count_value,
+                            mask_value,
+                            result_type_value,
+                        ],
+                    );
+                    lower_native_call_status(&mut builder, exit_state)?;
+                    let raw = builder.inst_results(call)[0];
+                    match instruction.result.map(|(_, ty)| ty) {
+                        Some(IrType::F64) => {
+                            Some(builder.ins().bitcast(types::F64, MemFlagsData::new(), raw))
+                        }
+                        Some(IrType::Bool) => Some(builder.ins().ireduce(types::I8, raw)),
+                        Some(IrType::I64) => Some(raw),
+                        _ => None,
+                    }
+                }
+                IrInstructionKind::JitPoll => {
+                    let poll_function = poll_function.ok_or(JitError::UnsupportedIr(
+                        "controlled IR is missing its poll callback",
+                    ))?;
+                    lower_poll(&mut builder, poll_function, control, exit_state)?;
+                    None
+                }
                 IrInstructionKind::Safepoint { .. } => None,
             };
             if let Some((result_id, _)) = instruction.result {
@@ -729,8 +1022,16 @@ fn lower_function(
             }
             IrTerminator::Return(value) => {
                 let mut value = values[value];
-                if ir.return_type == IrType::Bool {
-                    value = builder.ins().uextend(types::I64, value);
+                match ir.return_type {
+                    IrType::F64 => {
+                        value = builder
+                            .ins()
+                            .bitcast(types::I64, MemFlagsData::new(), value);
+                    }
+                    IrType::Bool => {
+                        value = builder.ins().uextend(types::I64, value);
+                    }
+                    _ => {}
                 }
                 builder.ins().return_(&[value]);
             }
@@ -741,6 +1042,56 @@ fn lower_function(
     builder.ins().return_(&[overflow_sentinel]);
     builder.seal_all_blocks();
     builder.finalize(frontend_config);
+    Ok(())
+}
+
+fn lower_poll(
+    builder: &mut FunctionBuilder<'_>,
+    poll_function: cranelift_codegen::ir::FuncRef,
+    context: cranelift_codegen::ir::Value,
+    exit_state: cranelift_codegen::ir::Value,
+) -> Result<(), JitError> {
+    let continuation = builder.create_block();
+    let aborted = builder.create_block();
+    let call = builder.ins().call(poll_function, &[context]);
+    let status = builder.inst_results(call)[0];
+    builder.ins().brif(status, aborted, &[], continuation, &[]);
+
+    builder.switch_to_block(aborted);
+    builder.seal_block(aborted);
+    let kind = builder.ins().iconst(types::I64, 2);
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), kind, exit_state, 0);
+    let sentinel = builder.ins().iconst(types::I64, i64::MIN);
+    builder.ins().return_(&[sentinel]);
+
+    builder.switch_to_block(continuation);
+    builder.seal_block(continuation);
+    Ok(())
+}
+
+fn lower_native_call_status(
+    builder: &mut FunctionBuilder<'_>,
+    exit_state: cranelift_codegen::ir::Value,
+) -> Result<(), JitError> {
+    use cranelift_codegen::ir::condcodes::IntCC;
+    let continuation = builder.create_block();
+    let aborted = builder.create_block();
+    let kind = builder
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), exit_state, 0);
+    let zero = builder.ins().iconst(types::I64, 0);
+    let ok = builder.ins().icmp(IntCC::Equal, kind, zero);
+    builder.ins().brif(ok, continuation, &[], aborted, &[]);
+
+    builder.switch_to_block(aborted);
+    builder.seal_block(aborted);
+    let sentinel = builder.ins().iconst(types::I64, i64::MIN);
+    builder.ins().return_(&[sentinel]);
+
+    builder.switch_to_block(continuation);
+    builder.seal_block(continuation);
     Ok(())
 }
 
@@ -820,6 +1171,7 @@ fn lower_type(ty: IrType) -> cranelift_codegen::ir::Type {
     match ty {
         IrType::Uninitialized => types::I64,
         IrType::I64 => types::I64,
+        IrType::F64 => types::F64,
         IrType::Bool => types::I8,
         IrType::I64Array => types::I64,
         IrType::I64Vec => types::I64,
@@ -839,6 +1191,18 @@ fn lower_predicate(predicate: IntPredicate) -> cranelift_codegen::ir::condcodes:
         IntPredicate::SignedLessThanOrEqual => IntCC::SignedLessThanOrEqual,
         IntPredicate::SignedGreaterThan => IntCC::SignedGreaterThan,
         IntPredicate::SignedGreaterThanOrEqual => IntCC::SignedGreaterThanOrEqual,
+    }
+}
+
+fn lower_float_predicate(predicate: IntPredicate) -> cranelift_codegen::ir::condcodes::FloatCC {
+    use cranelift_codegen::ir::condcodes::FloatCC;
+    match predicate {
+        IntPredicate::Equal => FloatCC::Equal,
+        IntPredicate::NotEqual => FloatCC::NotEqual,
+        IntPredicate::SignedLessThan => FloatCC::LessThan,
+        IntPredicate::SignedLessThanOrEqual => FloatCC::LessThanOrEqual,
+        IntPredicate::SignedGreaterThan => FloatCC::GreaterThan,
+        IntPredicate::SignedGreaterThanOrEqual => FloatCC::GreaterThanOrEqual,
     }
 }
 
@@ -875,6 +1239,8 @@ pub(crate) enum JitError {
     InvalidCacheLimit,
     Poisoned,
     OffsetOverflow,
+    #[cfg(test)]
+    Aborted,
     Arity {
         expected: usize,
         actual: usize,
@@ -901,6 +1267,8 @@ impl fmt::Display for JitError {
             Self::OffsetOverflow => {
                 formatter.write_str("JIT argument offset exceeds the target ABI")
             }
+            #[cfg(test)]
+            Self::Aborted => formatter.write_str("JIT execution was aborted by its control poll"),
             Self::Arity { expected, actual } => {
                 write!(
                     formatter,
