@@ -1,6 +1,6 @@
-needs std.io
-needs std.convert
-needs std.time
+needs std::io
+needs std::convert
+needs std::time
 
 fn create_matrix(n: int, val: int) {
     let matrix = Vec[]
@@ -34,14 +34,14 @@ fn matrix_mult(a, b, n: int) {
 }
 
 let n = 100
-io.print("Matrix multiplication " + convert.to_string(n) + "x" + convert.to_string(n))
+io::print("Matrix multiplication " + convert::to_string(n) + "x" + convert::to_string(n))
 
 let a = create_matrix(n, 2)
 let b = create_matrix(n, 3)
 
-let t = time.timer()
+let t = time::timer()
 let c = matrix_mult(a, b, n)
-let elapsed = time.elapsed_ms(t)
+let elapsed = time::elapsed_ms(t)
 
-io.print("Time: " + convert.to_string(elapsed) + "ms")
-io.print("c[0] = " + convert.to_string(c[0]))
+io::print("Time: " + convert::to_string(elapsed) + "ms")
+io::print("c[0] = " + convert::to_string(c[0]))

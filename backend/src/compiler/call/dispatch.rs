@@ -179,12 +179,42 @@ impl Compiler {
         dest.checked_add(1)
     }
 
-    pub(super) fn is_member_call(callee: &Expr) -> Option<(&str, &str)> {
-        if let ExprKind::Member { object, member } = &callee.kind
-            && let ExprKind::Identifier(module_name) = &object.kind
+    pub(super) fn is_member_call(
+        callee: &Expr,
+    ) -> Option<(String, String, aelys_syntax::MemberSeparator)> {
+        if let ExprKind::Member {
+            object,
+            member,
+            separator,
+        } = &callee.kind
+            && let Some(module_name) = Self::path_name(object)
         {
-            return Some((module_name, member));
+            return Some((module_name, member.clone(), *separator));
         }
         None
+    }
+
+    pub(super) fn path_name(expr: &Expr) -> Option<String> {
+        match &expr.kind {
+            ExprKind::Identifier(name) => Some(name.clone()),
+            ExprKind::Member {
+                object,
+                member,
+                separator: aelys_syntax::MemberSeparator::Path,
+            } => {
+                let mut path = Self::path_name(object)?;
+                path.push_str("::");
+                path.push_str(member);
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn has_module_alias(&self, path: &str) -> bool {
+        self.module_aliases.contains(path)
+            || path
+                .split_once("::")
+                .is_some_and(|(root, _)| self.module_aliases.contains(root))
     }
 }

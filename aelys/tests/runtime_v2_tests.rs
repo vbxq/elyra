@@ -45,7 +45,7 @@ fn one_compiled_module_runs_in_parallel_isolates() {
 #[test]
 fn optimization_levels_preserve_values_and_random_streams() {
     let runtime = Runtime::new();
-    let source = "[sys.random_int(0, 1000000), sys.random_int(0, 1000000), (40 + 2) * 3]";
+    let source = "[sys::random_int(0, 1000000), sys::random_int(0, 1000000), (40 + 2) * 3]";
     let mut expected = None;
 
     for optimization_level in [
@@ -93,13 +93,13 @@ fn task_step(id: int, tick: int) -> int {
 let mut sum = 0
 for tick in 0..500 {
     epoch = tick
-    let noise = sys.random_int(0, 31)
+    let noise = sys::random_int(0, 31)
     for id in 0..64 {
         let transient = Vec[id, tick, noise, epoch]
         sum = sum + task_step(transient[0], transient[1])
     }
 }
-[sum, sys.random_state()]
+[sum, sys::random_state()]
 "#,
             CompileOptions::default(),
         )
@@ -202,7 +202,7 @@ fn instruction_budget_and_interrupt_are_structured_errors() {
 fn sys_exit_is_an_execution_outcome() {
     let runtime = Runtime::new();
     let module = runtime
-        .compile("sys.exit(7)", CompileOptions::default())
+        .compile("sys::exit(7)", CompileOptions::default())
         .unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     assert!(matches!(
@@ -336,7 +336,7 @@ fn auto_registered_standard_modules_are_nameable_at_compile_time() {
     let runtime = Runtime::new();
     let module = runtime
         .compile(
-            "convert.to_int(math.floor(2.5)) + string.len(\"abc\")",
+            "convert::to_int(math::floor(2.5)) + string::len(\"abc\")",
             CompileOptions::default(),
         )
         .unwrap();

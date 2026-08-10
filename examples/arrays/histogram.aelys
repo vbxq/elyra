@@ -1,6 +1,6 @@
-needs std.io
-needs std.convert
-needs std.string
+needs std::io
+needs std::convert
+needs std::string
 
 fn count_frequency(data, num_bins: int) {
     let mm = min_max(data)
@@ -14,8 +14,8 @@ fn count_frequency(data, num_bins: int) {
     }
 
     for i in 0..data.len() {
-        let normalized = convert.to_float(data[i] - min_val) / convert.to_float(range)
-        let bin_idx = convert.to_int(normalized * convert.to_float(num_bins - 1))
+        let normalized = convert::to_float(data[i] - min_val) / convert::to_float(range)
+        let bin_idx = convert::to_int(normalized * convert::to_float(num_bins - 1))
         if bin_idx >= 0 and bin_idx < num_bins {
             bins[bin_idx] = bins[bin_idx] + 1
         }
@@ -45,9 +45,9 @@ fn max_in_vec(v) -> int {
 let scores = Array[45, 67, 89, 72, 91, 55, 78, 82, 68, 93,
                    58, 77, 85, 62, 95, 71, 80, 65, 88, 74]
 
-io.print("Test Scores Histogram")
-io.print("====================")
-io.print("")
+io::print("Test Scores Histogram")
+io::print("====================")
+io::print("")
 
 let bins = count_frequency(scores, 5)
 let max_count = max_in_vec(bins)
@@ -59,12 +59,12 @@ for i in 0..bins.len() {
     let label = labels[i]
 
     let bar_width = 40
-    let ratio = convert.to_float(count) / convert.to_float(max_count)
-    let num_stars = convert.to_int(ratio * convert.to_float(bar_width))
+    let ratio = convert::to_float(count) / convert::to_float(max_count)
+    let num_stars = convert::to_int(ratio * convert::to_float(bar_width))
 
-    let bar = string.repeat("█", num_stars)
-    let padded_label = string.pad_right(label, 8, " ")
-    let count_str = string.pad_left(convert.to_string(count), 3, " ")
+    let bar = string::repeat("█", num_stars)
+    let padded_label = string::pad_right(label, 8, " ")
+    let count_str = string::pad_left(convert::to_string(count), 3, " ")
 
-    io.print(padded_label + " " + count_str + " " + bar)
+    io::print(padded_label + " " + count_str + " " + bar)
 }

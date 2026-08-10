@@ -1,6 +1,6 @@
-needs std.io
-needs std.time
-needs std.convert
+needs std::io
+needs std::time
+needs std::convert
 
 fn gc_work() -> int {
     let s = "x"
@@ -38,21 +38,21 @@ fn pure_work() -> int {
 
 let n = 50000
 
-io.print("=== Overhead comparison ===")
+io::print("=== Overhead comparison ===")
 
-let t0 = time.timer()
+let t0 = time::timer()
 let mut i = 0
 while i < n { let r = pure_work(); i = i + 1 }
-io.print("Pure arithmetic: " + convert.to_string(time.elapsed_ms(t0)) + "ms")
+io::print("Pure arithmetic: " + convert::to_string(time::elapsed_ms(t0)) + "ms")
 
-let t1 = time.timer()
+let t1 = time::timer()
 i = 0
 while i < n { let r = gc_work(); i = i + 1 }
-io.print("GC (s + s):      " + convert.to_string(time.elapsed_ms(t1)) + "ms")
+io::print("GC (s + s):      " + convert::to_string(time::elapsed_ms(t1)) + "ms")
 
 let arr = alloc(100)
-let t2 = time.timer()
+let t2 = time::timer()
 i = 0
 while i < n { let r = manual_work(arr); i = i + 1 }
 free(arr)
-io.print("@no_gc (store):  " + convert.to_string(time.elapsed_ms(t2)) + "ms")
+io::print("@no_gc (store):  " + convert::to_string(time::elapsed_ms(t2)) + "ms")

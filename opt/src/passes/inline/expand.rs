@@ -164,9 +164,14 @@ impl InlineExpander {
                 value: Box::new(self.substitute_expr(value, params, span)),
             },
 
-            TypedExprKind::Member { object, member } => TypedExprKind::Member {
+            TypedExprKind::Member {
+                object,
+                member,
+                separator,
+            } => TypedExprKind::Member {
                 object: Box::new(self.substitute_expr(object, params, span)),
                 member: member.clone(),
+                separator: *separator,
             },
 
             TypedExprKind::ArrayLiteral {

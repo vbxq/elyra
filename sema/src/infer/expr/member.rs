@@ -2,13 +2,14 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason};
 use crate::typed_ast::{TypedExpr, TypedExprKind};
 use crate::types::InferType;
-use aelys_syntax::{Expr, Span, StructFieldInit};
+use aelys_syntax::{Expr, MemberSeparator, Span, StructFieldInit};
 
 impl TypeInference {
     pub(super) fn infer_member_expr(
         &mut self,
         object: &Expr,
         member: &str,
+        separator: MemberSeparator,
         _span: Span,
     ) -> (TypedExprKind, InferType) {
         let typed_object = self.infer_expr(object);
@@ -32,6 +33,7 @@ impl TypeInference {
             TypedExprKind::Member {
                 object: Box::new(typed_object),
                 member: member.to_string(),
+                separator,
             },
             ty,
         )

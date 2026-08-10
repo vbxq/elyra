@@ -244,6 +244,8 @@ pub struct DescriptorContents {
     pub exports: HashMap<String, NativeExport>,
 }
 
+#[doc = "# Safety"]
+#[doc = "the descriptor must point to a valid static abi descriptor."]
 pub unsafe fn validate_descriptor(
     descriptor: &AelysModuleDescriptor,
     fallback_name: Option<&str>,
@@ -307,6 +309,8 @@ fn check_descriptor_layout(descriptor: &AelysModuleDescriptor) -> Result<(), Nat
     Ok(())
 }
 
+#[doc = "# Safety"]
+#[doc = "the descriptor must point to a valid static abi descriptor."]
 pub unsafe fn descriptor_module_name(descriptor: &AelysModuleDescriptor) -> Option<String> {
     check_descriptor_layout(descriptor).ok()?;
     if descriptor.module_name().is_null() {

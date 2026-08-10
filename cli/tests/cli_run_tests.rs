@@ -64,7 +64,7 @@ fn run_translates_sys_exit_to_process_status() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("exit.aelys");
-    std::fs::write(&path, "needs std.sys\nsys.exit(7)\n").unwrap();
+    std::fs::write(&path, "needs std::sys\nsys::exit(7)\n").unwrap();
 
     let status = run_with_options(
         path.to_str().unwrap(),

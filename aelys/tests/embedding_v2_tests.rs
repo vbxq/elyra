@@ -4,8 +4,8 @@ use aelys::{
 };
 use aelys_common::error::{AelysError, CompileErrorKind, RuntimeErrorKind};
 
-const PROBE_SOURCE: &str = "fn main() { probe.answer() }";
-const PROBE_CALL: &str = "probe.answer()";
+const PROBE_SOURCE: &str = "fn main() { probe::answer() }";
+const PROBE_CALL: &str = "probe::answer()";
 
 fn register(runtime: &Runtime) -> Result<(), AelysError> {
     unsafe { runtime.register_native_module(probe_module::descriptor()) }
@@ -42,7 +42,7 @@ fn an_empty_runtime_compiles_exactly_as_before() {
             .is_err()
     );
     runtime
-        .compile("fn main() { sys.pid() }", CompileOptions::default())
+        .compile("fn main() { sys::pid() }", CompileOptions::default())
         .unwrap();
 }
 
@@ -105,7 +105,7 @@ fn the_reservation_covers_the_auto_registered_standard_modules() {
     assert_eq!(math_shadow::init_calls(), 0);
 
     let module = runtime
-        .compile("math.floor(2.5)", CompileOptions::default())
+        .compile("math::floor(2.5)", CompileOptions::default())
         .unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     assert_eq!(
@@ -123,7 +123,7 @@ fn an_alias_reserved_by_a_standard_module_is_rejected() {
         "sys: alias is reserved by a standard module"
     );
     runtime
-        .compile("fn main() { sys.pid() }", CompileOptions::default())
+        .compile("fn main() { sys::pid() }", CompileOptions::default())
         .unwrap();
 }
 
@@ -177,7 +177,7 @@ fn isolates_bind_only_the_modules_registered_before_them() {
 fn an_empty_runtime_builds_isolates_as_before() {
     let runtime = Runtime::new();
     let module = runtime
-        .compile("sys.pid()", CompileOptions::default())
+        .compile("sys::pid()", CompileOptions::default())
         .unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     assert!(isolate.execute(&module, RunOptions::default()).is_ok());
@@ -571,7 +571,7 @@ fn a_native_module_export_is_callable_by_name() {
     assert_eq!(isolate.value_to_string(result), "42");
 }
 
-const FRAME_HOOK_SOURCE: &str = "fn frame(n: int) -> int { probe.answer() + n }\n0";
+const FRAME_HOOK_SOURCE: &str = "fn frame(n: int) -> int { probe::answer() + n }\n0";
 
 const FRAME_TICK_SOURCE: &str = "let width = 384\nlet height = 448\n(width + height) * 2";
 const FRAME_TICK_RESULT: i64 = (384 + 448) * 2;

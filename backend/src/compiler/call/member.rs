@@ -1,19 +1,22 @@
 use super::super::Compiler;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
+use aelys_syntax::MemberSeparator;
 use aelys_syntax::Span;
-use aelys_syntax::ast::{Expr, ExprKind};
+use aelys_syntax::ast::Expr;
 
 impl Compiler {
     pub fn compile_member_access(
         &mut self,
         object: &Expr,
         member: &str,
+        separator: MemberSeparator,
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        if let ExprKind::Identifier(module_name) = &object.kind
-            && self.module_aliases.contains(module_name)
+        if separator == MemberSeparator::Path
+            && let Some(module_name) = Self::path_name(object)
+            && self.has_module_alias(&module_name)
         {
             let qualified_name = format!("{}::{}", module_name, member);
 
@@ -29,6 +32,21 @@ impl Compiler {
             self.accessed_globals.insert(qualified_name);
             self.emit_get_global_index(dest, idx, span);
             return Ok(());
+        }
+
+        if separator == MemberSeparator::Dot
+            && let Some(module_name) = Self::path_name(object)
+            && self.has_module_alias(&module_name)
+        {
+            return Err(CompileError::new(
+                CompileErrorKind::ModulePathSeparator {
+                    module: module_name.clone(),
+                    member: member.to_string(),
+                },
+                span,
+                self.source.clone(),
+            )
+            .into());
         }
 
         if Self::is_builtin(member) {

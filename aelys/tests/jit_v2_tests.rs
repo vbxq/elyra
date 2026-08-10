@@ -286,7 +286,7 @@ fn compute(limit: int) -> int {
     }
     return total
 }
-[sys.random_int(0, 1000000), compute(20000), sys.random_int(0, 1000000)]
+[sys::random_int(0, 1000000), compute(20000), sys::random_int(0, 1000000)]
 "#;
     let mut expected: Option<StructuredValue> = None;
 
@@ -777,9 +777,8 @@ fn requesting_a_report_does_not_disable_the_jit() {
     let report = isolate
         .last_report()
         .expect("a run that was asked for a report must produce one");
-    assert_eq!(
+    assert!(
         report.instructions > 0,
-        true,
         "controlled JIT execution must still publish control/report safepoints"
     );
     assert_eq!(report.source, "hot.aelys");
@@ -820,7 +819,7 @@ fn baseline_jit_executes_a_typed_numeric_global_call() {
             r#"
 fn cosine(value: float) -> float {
     let typed = value * 1.0
-    return math.cos(typed) + 0.0
+    return math::cos(typed) + 0.0
 }
 "#,
             CompileOptions::default(),
@@ -843,7 +842,7 @@ fn cosine(value: float) -> float {
 fn baseline_jit_executes_a_typed_numeric_global_call_at_module_root() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime
-        .compile("math.cos(0.0) + 0.0", CompileOptions::default())
+        .compile("math::cos(0.0) + 0.0", CompileOptions::default())
         .unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     assert_eq!(

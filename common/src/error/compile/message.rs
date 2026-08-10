@@ -112,6 +112,10 @@ impl CompileErrorKind {
                     modules.join(", ")
                 )
             }
+            Self::ModulePathSeparator { module, member } => format!(
+                "module members are reached with '::'; write '{}::{}'",
+                module, member
+            ),
         }
     }
 }

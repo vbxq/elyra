@@ -1,6 +1,6 @@
 use super::Parser;
 use aelys_common::Result;
-use aelys_syntax::{BinaryOp, Expr, ExprKind, TokenKind};
+use aelys_syntax::{BinaryOp, Expr, ExprKind, MemberSeparator, TokenKind};
 
 impl Parser {
     // calls and member access (highest precedence after atoms)
@@ -38,6 +38,34 @@ impl Parser {
                     ExprKind::Member {
                         object: Box::new(expr),
                         member,
+                        separator: MemberSeparator::Dot,
+                    },
+                    span,
+                );
+            } else if self.match_token(&TokenKind::ColonColon) {
+                let member = self.consume_identifier("path segment")?;
+                if !matches!(
+                    &expr.kind,
+                    ExprKind::Identifier(_)
+                        | ExprKind::Member {
+                            separator: MemberSeparator::Path,
+                            ..
+                        }
+                ) {
+                    return Err(self.error(
+                        aelys_common::error::CompileErrorKind::UnexpectedToken {
+                            expected: "identifier in module path".to_string(),
+                            found: member,
+                        },
+                    ));
+                }
+                let span = expr.span.merge(self.previous().span);
+
+                expr = Expr::new(
+                    ExprKind::Member {
+                        object: Box::new(expr),
+                        member,
+                        separator: MemberSeparator::Path,
                     },
                     span,
                 );

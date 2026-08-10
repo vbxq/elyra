@@ -84,6 +84,10 @@ pub enum CompileErrorKind {
         symbol: String,
         modules: Vec<String>,
     },
+    ModulePathSeparator {
+        module: String,
+        member: String,
+    },
 
     TypeInferenceError(String),
 }

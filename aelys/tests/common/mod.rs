@@ -7,7 +7,7 @@ use aelys_runtime::Value;
 
 /// Run Aelys source code and return the result value.
 /// Panics on compilation or runtime errors.
-/// Supports module imports (needs std.X).
+/// Supports module imports (needs std::X).
 pub fn run_aelys(source: &str) -> Value {
     let mut vm = new_vm().expect("Failed to create VM");
     run_with_vm_and_opt(&mut vm, source, "<test>", OptimizationLevel::Standard)
@@ -62,7 +62,7 @@ pub fn assert_aelys_null(source: &str) {
     assert!(result.is_null(), "Expected null but got {:?}", result);
 }
 
-/// Run Aelys source code and check if it returns the expected string.
+/// Run Aelys source code and check if it returns the expected string::
 pub fn assert_aelys_str(source: &str, expected: &str) {
     use aelys::new_vm;
     let mut vm = new_vm().expect("Failed to create VM");

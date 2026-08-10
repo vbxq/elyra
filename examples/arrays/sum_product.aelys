@@ -1,5 +1,5 @@
-needs std.io
-needs std.convert
+needs std::io
+needs std::convert
 
 fn array_sum(arr) -> int {
     let mut sum = 0
@@ -46,8 +46,8 @@ fn array_min(arr) -> int {
 }
 
 let numbers = [5, 2, 8, 1, 9, 3, 7, 4, 6]
-io.print("Array: [5, 2, 8, 1, 9, 3, 7, 4, 6]")
-io.print("Sum: " + convert.to_string(array_sum(numbers)))
-io.print("Product: " + convert.to_string(array_product(numbers)))
-io.print("Max: " + convert.to_string(array_max(numbers)))
-io.print("Min: " + convert.to_string(array_min(numbers)))
+io::print("Array: [5, 2, 8, 1, 9, 3, 7, 4, 6]")
+io::print("Sum: " + convert::to_string(array_sum(numbers)))
+io::print("Product: " + convert::to_string(array_product(numbers)))
+io::print("Max: " + convert::to_string(array_max(numbers)))
+io::print("Min: " + convert::to_string(array_min(numbers)))

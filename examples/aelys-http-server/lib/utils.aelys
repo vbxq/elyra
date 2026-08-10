@@ -1,13 +1,13 @@
-needs print from std.io
-needs to_string from std.convert
-needs std.string as str
-needs std.time
+needs print from std::io
+needs to_string from std::convert
+needs std::string as str
+needs std::time
 
 pub fn mime_type(extension: string) -> string {
-    let mut ext = str.to_lower(extension)
+    let mut ext = str::to_lower(extension)
 
-    if str.starts_with(ext, ".") {
-        ext = str.substr(ext, 1, str.len(ext) - 1)
+    if str::starts_with(ext, ".") {
+        ext = str::substr(ext, 1, str::len(ext) - 1)
     }
 
     if ext == "html" { return "text/html; charset=utf-8" }
@@ -73,13 +73,13 @@ pub fn log_success(message: string) {
 }
 
 pub fn is_safe_path(path: string) -> bool {
-    if str.contains(path, "..") {
+    if str::contains(path, "..") {
         return false
     }
-    if str.contains(path, "//") {
+    if str::contains(path, "//") {
         return false
     }
-    if str.contains(path, "\\") {
+    if str::contains(path, "\\") {
         return false
     }
     return true
@@ -88,8 +88,8 @@ pub fn is_safe_path(path: string) -> bool {
 pub fn normalize_path(path: string) -> string {
     let mut normalized = path
 
-    if str.len(normalized) > 1 and str.ends_with(normalized, "/") {
-        normalized = str.substr(normalized, 0, str.len(normalized) - 1)
+    if str::len(normalized) > 1 and str::ends_with(normalized, "/") {
+        normalized = str::substr(normalized, 0, str::len(normalized) - 1)
     }
 
     return normalized

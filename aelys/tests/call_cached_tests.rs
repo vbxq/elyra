@@ -17,7 +17,7 @@ double(21)
 #[test]
 fn call_cached_works_for_stdlib() {
     let code = r#"
-let math_abs = math.abs
+let math_abs = math::abs
 math_abs(-5)
 "#;
     assert_aelys_int(code, 5);

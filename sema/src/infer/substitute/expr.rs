@@ -96,9 +96,14 @@ impl TypeInference {
                     .map(|(name, ty)| (name.clone(), subst.apply(ty)))
                     .collect(),
             },
-            TypedExprKind::Member { object, member } => TypedExprKind::Member {
+            TypedExprKind::Member {
+                object,
+                member,
+                separator,
+            } => TypedExprKind::Member {
                 object: Box::new(self.apply_substitution_expr(object, subst)),
                 member: member.clone(),
+                separator: *separator,
             },
             TypedExprKind::ArrayLiteral {
                 element_type,

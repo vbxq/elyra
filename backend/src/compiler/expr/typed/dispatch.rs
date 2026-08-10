@@ -46,9 +46,11 @@ impl Compiler {
                 body,
                 captures,
             } => self.compile_typed_lambda_with_stmts(params, body, captures, dest, expr.span),
-            TypedExprKind::Member { object, member } => {
-                self.compile_typed_member_access(object, member, dest, expr.span)
-            }
+            TypedExprKind::Member {
+                object,
+                member,
+                separator,
+            } => self.compile_typed_member_access(object, member, *separator, dest, expr.span),
             TypedExprKind::ArrayLiteral { elements, .. } => {
                 self.compile_typed_array_literal(&expr.ty, elements, dest, expr.span)
             }

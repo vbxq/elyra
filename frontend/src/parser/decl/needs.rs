@@ -5,6 +5,22 @@ use aelys_common::Result;
 use aelys_syntax::{ImportKind, NeedsStmt, Stmt, StmtKind, TokenKind};
 
 impl Parser {
+    fn module_path(&mut self, mut path: Vec<String>) -> Result<Vec<String>> {
+        while self.match_token(&TokenKind::ColonColon) {
+            path.push(self.consume_identifier("module path segment")?);
+        }
+        if self.match_token(&TokenKind::Dot) {
+            let member = self.consume_identifier("module path segment")?;
+            return Err(
+                self.error(aelys_common::error::CompileErrorKind::ModulePathSeparator {
+                    module: path.join("::"),
+                    member,
+                }),
+            );
+        }
+        Ok(path)
+    }
+
     pub(super) fn needs_declaration(&mut self) -> Result<Stmt> {
         let start_span = self.peek().span;
         self.advance();
@@ -20,11 +36,8 @@ impl Parser {
             }
 
             self.consume(&TokenKind::From, "from")?;
-            let mut path = vec![self.consume_identifier("module name")?];
-
-            while self.match_token(&TokenKind::Dot) {
-                path.push(self.consume_identifier("module path segment")?);
-            }
+            let module_name = self.consume_identifier("module name")?;
+            let path = self.module_path(vec![module_name])?;
 
             self.consume_semicolon()?;
             let end_span = self.previous().span;
@@ -41,11 +54,8 @@ impl Parser {
 
         if self.match_token(&TokenKind::From) {
             let symbols = vec![first_ident];
-            let mut path = vec![self.consume_identifier("module name")?];
-
-            while self.match_token(&TokenKind::Dot) {
-                path.push(self.consume_identifier("module path segment")?);
-            }
+            let module_name = self.consume_identifier("module name")?;
+            let path = self.module_path(vec![module_name])?;
 
             self.consume_semicolon()?;
             let end_span = self.previous().span;
@@ -62,7 +72,7 @@ impl Parser {
 
         let mut path = vec![first_ident];
 
-        while self.match_token(&TokenKind::Dot) {
+        while self.match_token(&TokenKind::ColonColon) {
             if self.match_token(&TokenKind::Star) {
                 self.consume_semicolon()?;
                 let end_span = self.previous().span;
@@ -77,6 +87,16 @@ impl Parser {
             }
 
             path.push(self.consume_identifier("module path segment")?);
+        }
+
+        if self.match_token(&TokenKind::Dot) {
+            let member = self.consume_identifier("module path segment")?;
+            return Err(
+                self.error(aelys_common::error::CompileErrorKind::ModulePathSeparator {
+                    module: path.join("::"),
+                    member,
+                }),
+            );
         }
 
         let kind = if self.match_token(&TokenKind::As) {

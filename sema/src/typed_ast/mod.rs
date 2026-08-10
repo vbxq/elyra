@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use aelys_syntax::Source;
 use aelys_syntax::Span;
-use aelys_syntax::{BinaryOp, Decorator, NeedsStmt, UnaryOp};
+use aelys_syntax::{BinaryOp, Decorator, MemberSeparator, NeedsStmt, UnaryOp};
 
 use crate::types::InferType;
 use crate::types::TypeTable;
@@ -185,6 +185,7 @@ pub enum TypedExprKind {
     Member {
         object: Box<TypedExpr>,
         member: String,
+        separator: MemberSeparator,
     },
 
     ArrayLiteral {

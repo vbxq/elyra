@@ -174,6 +174,8 @@ unsafe extern "C" fn poll_jit_execution(data: *mut c_void) -> i64 {
 /// The arguments are unboxed machine values accompanied by two-bit type tags;
 /// the callback converts them to VM values, invokes the global, and converts
 /// the numeric result back for the compiled continuation.
+#[doc = "# Safety"]
+#[doc = "the jit supplies valid context, exit, and argument pointers for the call."]
 pub unsafe extern "C" fn call_jit_global(
     context: *mut JitExecutionContext,
     exit_state: *mut u64,

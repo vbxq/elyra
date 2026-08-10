@@ -1034,15 +1034,18 @@ fn infer_call_result_type(
                         instruction.b
                     };
                     Some(
-                        (infer_register_type_before(
+                        if infer_register_type_before(
                             function,
                             decoded,
                             start,
                             instruction_index,
                             other,
-                        ) == Some(IrType::F64))
-                        .then_some(IrType::F64)
-                        .unwrap_or(IrType::I64),
+                        ) == Some(IrType::F64)
+                        {
+                            IrType::F64
+                        } else {
+                            IrType::I64
+                        },
                     )
                 }
             }
@@ -1072,12 +1075,10 @@ fn infer_call_result_type(
             }
             OpCode::Return => return None,
             OpCode::Call | OpCode::CallCached | OpCode::CallGlobal => {
-                let function_register = if instruction.opcode == OpCode::CallGlobal {
-                    instruction.a
-                } else if instruction.opcode == OpCode::CallCached {
-                    instruction.a
-                } else {
-                    instruction.b
+                let function_register = match instruction.opcode {
+                    OpCode::CallGlobal | OpCode::CallCached => instruction.a,
+                    OpCode::Call => instruction.b,
+                    _ => unreachable!(),
                 };
                 let argument_start = function_register.checked_add(1)?;
                 let argument_end = argument_start.checked_add(instruction.c)?;
@@ -1189,7 +1190,7 @@ fn infer_register_type_before(
 fn global_index(function: &Function, instruction: DecodedInstruction) -> Option<u32> {
     let word = *function.bytecode.as_slice().get(instruction.ip)?;
     match instruction.opcode {
-        OpCode::GetGlobalIdx => u32::try_from(word & 0xffff).ok(),
+        OpCode::GetGlobalIdx => Some(word & 0xffff),
         OpCode::GetGlobalIdxWide => function
             .bytecode
             .as_slice()

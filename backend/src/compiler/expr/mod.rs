@@ -42,9 +42,11 @@ impl Compiler {
                 return_type: _,
                 body,
             } => self.compile_lambda(params, body, dest, expr.span),
-            ExprKind::Member { object, member } => {
-                self.compile_member_access(object, member, dest, expr.span)
-            }
+            ExprKind::Member {
+                object,
+                member,
+                separator,
+            } => self.compile_member_access(object, member, *separator, dest, expr.span),
             ExprKind::ArrayLiteral { elements, .. } => {
                 self.compile_array_literal(elements, dest, expr.span)
             }

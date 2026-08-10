@@ -243,8 +243,8 @@ fn lexer_rejects_deep_comment_nesting() {
 #[test]
 fn fs_join_rejects_absolute_path() {
     let src = r#"
-needs std.fs
-fs.join("/app", "/etc/passwd")
+needs std::fs
+fs::join("/app", "/etc/passwd")
 "#;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("path_traversal.aelys");
@@ -269,8 +269,8 @@ fs.join("/app", "/etc/passwd")
 #[test]
 fn fs_join_rejects_parent_escape() {
     let src = r#"
-needs std.fs
-fs.join("/app/data", "../../../etc/passwd")
+needs std::fs
+fs::join("/app/data", "../../../etc/passwd")
 "#;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("path_escape.aelys");
@@ -300,9 +300,9 @@ fn fs_read_bytes_rejects_huge_buffer() {
 
     let src = format!(
         r#"
-needs std.fs
-let f = fs.open("{}", "r")
-fs.read_bytes(f, 999999999999)
+needs std::fs
+let f = fs::open("{}", "r")
+fs::read_bytes(f, 999999999999)
 "#,
         test_file.display().to_string().replace('\\', "/")
     );

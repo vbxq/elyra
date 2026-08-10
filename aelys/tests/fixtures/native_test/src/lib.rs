@@ -4,6 +4,7 @@ use core::ffi::c_void;
 static MODULE_NAME: &[u8] = b"native_test\0";
 static MODULE_VERSION: &[u8] = b"0.1.0\0";
 static EXPORT_NAME: &[u8] = b"add\0";
+static NESTED_EXPORT_NAME: &[u8] = b"b::c\0";
 
 extern "C" fn test_add(
     _vm: *mut c_void,
@@ -17,13 +18,22 @@ extern "C" fn test_add(
     0
 }
 
-static EXPORTS: [AelysExport; 1] = [AelysExport {
-    name: EXPORT_NAME.as_ptr() as *const i8,
-    kind: AelysExportKind::Function,
-    arity: 2,
-    _padding: [0; 2],
-    value: test_add as *const c_void,
-}];
+static EXPORTS: [AelysExport; 2] = [
+    AelysExport {
+        name: EXPORT_NAME.as_ptr() as *const i8,
+        kind: AelysExportKind::Function,
+        arity: 2,
+        _padding: [0; 2],
+        value: test_add as *const c_void,
+    },
+    AelysExport {
+        name: NESTED_EXPORT_NAME.as_ptr() as *const i8,
+        kind: AelysExportKind::Function,
+        arity: 2,
+        _padding: [0; 2],
+        value: test_add as *const c_void,
+    },
+];
 
 #[unsafe(no_mangle)]
 pub static mut aelys_module_descriptor: AelysModuleDescriptor = unsafe {

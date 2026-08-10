@@ -1,6 +1,6 @@
-needs std.io
-needs std.convert
-needs std.time
+needs std::io
+needs std::convert
+needs std::time
 
 fn fill_descending(n: int) {
     let arr = Vec[]
@@ -30,14 +30,14 @@ fn bubble_sort(arr) {
 }
 
 let n = 5000
-io.print("Bubble sort benchmark (n=" + convert.to_string(n) + ")")
+io::print("Bubble sort benchmark (n=" + convert::to_string(n) + ")")
 
 let arr = fill_descending(n)
-io.print("Array filled (worst case: descending)")
+io::print("Array filled (worst case: descending)")
 
-let t = time.timer()
+let t = time::timer()
 bubble_sort(arr)
-let elapsed = time.elapsed_ms(t)
+let elapsed = time::elapsed_ms(t)
 
-io.print("Sort time: " + convert.to_string(elapsed) + "ms")
-io.print("First 5: " + convert.to_string(arr[0]) + " " + convert.to_string(arr[1]) + " " + convert.to_string(arr[2]) + " " + convert.to_string(arr[3]) + " " + convert.to_string(arr[4]))
+io::print("Sort time: " + convert::to_string(elapsed) + "ms")
+io::print("First 5: " + convert::to_string(arr[0]) + " " + convert::to_string(arr[1]) + " " + convert::to_string(arr[2]) + " " + convert::to_string(arr[3]) + " " + convert::to_string(arr[4]))

@@ -347,6 +347,8 @@ impl Runtime {
     }
 
     /// Makes a statically linked native module visible to this runtime
+    #[doc = "# Safety"]
+    #[doc = "the module must refer to a valid static abi descriptor."]
     pub unsafe fn register_native_module(
         &self,
         module: &'static AelysModuleDescriptor,
@@ -822,7 +824,6 @@ impl Isolate {
             function: Some(function.name.as_deref().unwrap_or("<main>").to_string()),
             source: source.name.clone(),
             random_seed: self.vm.random_seed(),
-            ..ExecutionReport::default()
         })
     }
 

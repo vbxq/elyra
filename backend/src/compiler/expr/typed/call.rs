@@ -35,7 +35,12 @@ impl Compiler {
         }
 
         // Check for Array/Vec method calls first
-        if let TypedExprKind::Member { object, member } = &callee.kind {
+        if let TypedExprKind::Member {
+            object,
+            member,
+            separator,
+        } = &callee.kind
+        {
             // Handle Array methods
             if let InferType::Array(_) = &object.ty
                 && member == "len"
@@ -81,8 +86,9 @@ impl Compiler {
 
             // Module alias calls must be checked before Dynamic dispatch,
             // otherwise methods like "join" get intercepted as string methods
-            if let TypedExprKind::Identifier(module_name) = &object.kind
-                && self.module_aliases.contains(module_name)
+            if *separator == aelys_syntax::MemberSeparator::Path
+                && let Some(module_name) = Self::typed_path_name(object)
+                && self.has_module_alias(&module_name)
             {
                 let qualified_name = format!("{}::{}", module_name, member);
                 let global_idx = self.get_or_create_global_index(&qualified_name);
@@ -141,6 +147,22 @@ impl Compiler {
 
                     return Ok(());
                 }
+            }
+
+            if *separator == aelys_syntax::MemberSeparator::Dot
+                && let Some(module_name) = Self::typed_path_name(object)
+                && self.has_module_alias(&module_name)
+            {
+                return Err(aelys_common::error::AelysError::Compile(
+                    aelys_common::error::CompileError::new(
+                        aelys_common::error::CompileErrorKind::ModulePathSeparator {
+                            module: module_name.clone(),
+                            member: member.clone(),
+                        },
+                        span,
+                        self.source.clone(),
+                    ),
+                ));
             }
 
             // Handle Vec/Array/String methods on Dynamic-typed objects (runtime dispatch)

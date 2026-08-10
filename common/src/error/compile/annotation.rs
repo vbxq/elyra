@@ -21,6 +21,7 @@ impl CompileErrorKind {
             Self::InvalidNativeModule { .. } => "invalid native module",
             Self::NativeChecksumMismatch { .. } => "checksum mismatch",
             Self::NativeVersionMismatch { .. } => "version constraint not satisfied",
+            Self::ModulePathSeparator { .. } => "use the module path separator",
             Self::TypeInferenceError(_) => "type inference failed",
             _ => "",
         }

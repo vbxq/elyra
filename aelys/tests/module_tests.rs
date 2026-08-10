@@ -41,9 +41,9 @@ pub let FACTOR = 10
         "main.aelys",
         r#"
 needs utils
-needs print from std.io
-print(utils.double(5))
-utils.FACTOR
+needs print from std::io
+print(utils::double(5))
+utils::FACTOR
 "#,
     );
 
@@ -69,7 +69,7 @@ pub let VALUE = 42
         "main.aelys",
         r#"
 needs utilities as u
-u.triple(7) + u.VALUE
+u::triple(7) + u::VALUE
 "#,
     );
 
@@ -85,8 +85,8 @@ fn test_std_module_import_with_alias() {
         &dir,
         "main.aelys",
         r#"
-needs std.math as m
-m.sin(0)
+needs std::math as m
+m::sin(0)
 "#,
     );
 
@@ -102,7 +102,7 @@ fn test_std_symbol_import_from() {
         &dir,
         "main.aelys",
         r#"
-needs cos from std.math
+needs cos from std::math
 cos(0)
 "#,
     );
@@ -128,7 +128,7 @@ pub let PI = 3
         &dir,
         "main.aelys",
         r#"
-needs math.*
+needs math::*
 square(5) + PI
 "#,
     );
@@ -154,7 +154,7 @@ pub fn sub(a, b) { a - b }
         &dir,
         "main.aelys",
         r#"
-needs funcs.add
+needs funcs::add
 add(10, 5)
 "#,
     );
@@ -181,13 +181,55 @@ pub fn cube(x) { x * x * x }
         &dir,
         "main.aelys",
         r#"
-needs helpers.math
-math.cube(3)
+needs helpers::math
+math::cube(3)
 "#,
     );
 
     let result = run_file(&main_path).expect("Nested module should succeed");
     assert_eq!(result.as_int(), Some(27));
+}
+
+#[test]
+fn test_module_path_uses_double_colon() {
+    let dir = create_module_env();
+
+    write_file(
+        &dir,
+        "helpers/math.aelys",
+        r#"
+pub fn cube(x) { x * x * x }
+"#,
+    );
+
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        r#"
+needs helpers::math
+math::cube(3)
+"#,
+    );
+
+    let result = run_file(&main_path).expect("double-colon module path should run");
+    assert_eq!(result.as_int(), Some(27));
+}
+
+#[test]
+fn test_dot_module_member_reports_the_path_fix() {
+    let dir = create_module_env();
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        r#"
+needs std::sys
+sys.arch()
+"#,
+    );
+
+    let error = run_file(&main_path).expect_err("dot module access must be rejected");
+    let message = error.to_string();
+    assert!(message.contains("module members are reached with '::'; write 'sys::arch'"));
 }
 
 #[test]
@@ -207,7 +249,7 @@ pub fn helper() { 100 }
         "main.aelys",
         r#"
 needs utils
-utils.helper()
+utils::helper()
 "#,
     );
 
@@ -235,7 +277,7 @@ pub fn public() { secret() }
         "main.aelys",
         r#"
 needs private_mod
-private_mod.public()
+private_mod::public()
 "#,
     );
 
@@ -262,7 +304,7 @@ pub fn public() { 1 }
         "main.aelys",
         r#"
 needs private_mod
-private_mod.secret
+private_mod::secret
 "#,
     );
 
@@ -289,7 +331,7 @@ pub let public = 200
         "main.aelys",
         r#"
 needs private_mod
-private_mod.public
+private_mod::public
 "#,
     );
 
@@ -326,7 +368,7 @@ pub fn b_func() { 2 }
         "main.aelys",
         r#"
 needs a
-a.a_func()
+a::a_func()
 "#,
     );
 
@@ -358,7 +400,7 @@ pub fn foo() { 1 }
         "main.aelys",
         r#"
 needs self_import
-self_import.foo()
+self_import::foo()
 "#,
     );
 
@@ -383,7 +425,7 @@ fn test_module_not_found() {
         "main.aelys",
         r#"
 needs nonexistent
-nonexistent.foo()
+nonexistent::foo()
 "#,
     );
 
@@ -413,7 +455,7 @@ pub fn existing() { 1 }
         &dir,
         "main.aelys",
         r#"
-needs utils.nonexistent
+needs utils::nonexistent
 nonexistent()
 "#,
     );
@@ -456,7 +498,7 @@ pub fn b() { 20 }
         r#"
 needs mod_a
 needs mod_b
-mod_a.a() + mod_b.b()
+mod_a::a() + mod_b::b()
 "#,
     );
 
@@ -481,7 +523,7 @@ pub fn base_func() { 5 }
         "derived.aelys",
         r#"
 needs base
-pub fn derived_func() { base.base_func() * 2 }
+pub fn derived_func() { base::base_func() * 2 }
 "#,
     );
 
@@ -490,7 +532,7 @@ pub fn derived_func() { base.base_func() * 2 }
         "main.aelys",
         r#"
 needs derived
-derived.derived_func()
+derived::derived_func()
 "#,
     );
 
@@ -542,7 +584,7 @@ pub let COUNTER = 1
         "mod_a.aelys",
         r#"
 needs utils
-pub fn get_counter() { utils.COUNTER }
+pub fn get_counter() { utils::COUNTER }
 "#,
     );
 
@@ -551,7 +593,7 @@ pub fn get_counter() { utils.COUNTER }
         "mod_b.aelys",
         r#"
 needs utils
-pub fn get_counter_too() { utils.COUNTER }
+pub fn get_counter_too() { utils::COUNTER }
 "#,
     );
 
@@ -561,7 +603,7 @@ pub fn get_counter_too() { utils.COUNTER }
         r#"
 needs mod_a
 needs mod_b
-mod_a.get_counter() + mod_b.get_counter_too()
+mod_a::get_counter() + mod_b::get_counter_too()
 "#,
     );
 
@@ -580,7 +622,7 @@ fn test_std_direct_import() {
         &dir,
         "main.aelys",
         r#"
-needs std.math
+needs std::math
 sin(0) + cos(0)
 "#,
     );
@@ -597,8 +639,8 @@ fn test_std_direct_and_qualified() {
         &dir,
         "main.aelys",
         r#"
-needs std.math
-sin(0) + math.cos(0)
+needs std::math
+sin(0) + math::cos(0)
 "#,
     );
 
@@ -617,7 +659,7 @@ fn test_alias_with_auto_registered_globals() {
         &dir,
         "main.aelys",
         r#"
-needs std.math as m
+needs std::math as m
 sin(0)
 "#,
     );
@@ -637,8 +679,8 @@ fn test_alias_qualified_works() {
         &dir,
         "main.aelys",
         r#"
-needs std.math as m
-m.sin(0) + m.cos(0)
+needs std::math as m
+m::sin(0) + m::cos(0)
 "#,
     );
 
@@ -689,7 +731,7 @@ pub fn double(x) { x * 2 }
         "main.aelys",
         r#"
 needs mymath as mm
-mm.double(5)
+mm::double(5)
 "#,
     );
 
@@ -788,7 +830,7 @@ pub fn shared() { 2 }
         r#"
 needs mod_a as a
 needs mod_b as b
-a.shared() + b.shared()
+a::shared() + b::shared()
 "#,
     );
 

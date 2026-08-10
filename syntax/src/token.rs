@@ -70,6 +70,7 @@ pub enum TokenKind {
     GtEq,
     Arrow,      // ->
     Colon,      // :
+    ColonColon, // ::
     PlusEq,     // +=
     MinusEq,    // -=
     StarEq,     // *=
@@ -189,6 +190,7 @@ impl std::fmt::Display for TokenKind {
             Self::GtEq => write!(f, ">="),
             Self::Arrow => write!(f, "->"),
             Self::Colon => write!(f, ":"),
+            Self::ColonColon => write!(f, "::"),
             Self::PlusEq => write!(f, "+="),
             Self::MinusEq => write!(f, "-="),
             Self::StarEq => write!(f, "*="),

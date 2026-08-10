@@ -70,10 +70,10 @@ fn script_imports_native_module() {
         "main.aelys",
         r#"
 needs native_test
-native_test.add(5, 5)
+native_test::add(5, 5) + native_test::b::c(5, 5)
 "#,
     );
 
     let result = run_file(&main_path).expect("native module import should succeed");
-    assert_eq!(result.as_int(), Some(10));
+    assert_eq!(result.as_int(), Some(20));
 }

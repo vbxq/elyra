@@ -1,65 +1,65 @@
-needs std.fs as fs
-needs std.string as str
+needs std::fs as fs
+needs std::string as str
 needs utils
 needs http
 
 pub fn serve_static(client: int, path: string, public_dir: string, index_file: string) -> bool {
-    if not utils.is_safe_path(path) {
-        utils.log_error("Directory traversal attempt: " + path)
-        http.send_error(client, 403, "Access forbidden: invalid path")
+    if not utils::is_safe_path(path) {
+        utils::log_error("Directory traversal attempt: " + path)
+        http::send_error(client, 403, "Access forbidden: invalid path")
         return false
     }
 
     let mut file_path = path
 
-    if str.len(file_path) == 0 or file_path == "/" {
+    if str::len(file_path) == 0 or file_path == "/" {
         file_path = index_file
-    } else if str.starts_with(file_path, "/") {
-        file_path = str.substr(file_path, 1, str.len(file_path) - 1)
+    } else if str::starts_with(file_path, "/") {
+        file_path = str::substr(file_path, 1, str::len(file_path) - 1)
     }
 
-    let mut full_path = fs.join(public_dir, file_path)
+    let mut full_path = fs::join(public_dir, file_path)
 
-    if fs.is_dir(full_path) {
-        full_path = fs.join(full_path, index_file)
+    if fs::is_dir(full_path) {
+        full_path = fs::join(full_path, index_file)
         file_path = file_path + "/" + index_file
     }
 
-    if not fs.exists(full_path) {
-        http.send_error(client, 404, "File not found: " + file_path)
+    if not fs::exists(full_path) {
+        http::send_error(client, 404, "File not found: " + file_path)
         return false
     }
 
-    if not fs.is_file(full_path) {
-        http.send_error(client, 403, "Cannot serve directory without index file")
+    if not fs::is_file(full_path) {
+        http::send_error(client, 403, "Cannot serve directory without index file")
         return false
     }
 
-    let content = fs.read_text(full_path)
+    let content = fs::read_text(full_path)
 
     let mut content_type = "application/octet-stream"
 
-    if str.ends_with(file_path, ".html") or str.ends_with(file_path, ".htm") {
+    if str::ends_with(file_path, ".html") or str::ends_with(file_path, ".htm") {
         content_type = "text/html; charset=utf-8"
-    } else if str.ends_with(file_path, ".css") {
+    } else if str::ends_with(file_path, ".css") {
         content_type = "text/css; charset=utf-8"
-    } else if str.ends_with(file_path, ".js") {
+    } else if str::ends_with(file_path, ".js") {
         content_type = "application/javascript; charset=utf-8"
-    } else if str.ends_with(file_path, ".json") {
+    } else if str::ends_with(file_path, ".json") {
         content_type = "application/json; charset=utf-8"
-    } else if str.ends_with(file_path, ".png") {
+    } else if str::ends_with(file_path, ".png") {
         content_type = "image/png"
-    } else if str.ends_with(file_path, ".jpg") or str.ends_with(file_path, ".jpeg") {
+    } else if str::ends_with(file_path, ".jpg") or str::ends_with(file_path, ".jpeg") {
         content_type = "image/jpeg"
-    } else if str.ends_with(file_path, ".gif") {
+    } else if str::ends_with(file_path, ".gif") {
         content_type = "image/gif"
-    } else if str.ends_with(file_path, ".svg") {
+    } else if str::ends_with(file_path, ".svg") {
         content_type = "image/svg+xml"
-    } else if str.ends_with(file_path, ".ico") {
+    } else if str::ends_with(file_path, ".ico") {
         content_type = "image/x-icon"
     }
 
-    http.send_response(client, 200, content_type, content)
+    http::send_response(client, 200, content_type, content)
 
     return true
 }
@@ -90,10 +90,10 @@ fn generate_directory_listing(path: string, public_dir: string) -> string {
 }
 
 fn is_servable_extension(extension: string) -> bool {
-    let mut ext = str.to_lower(extension)
+    let mut ext = str::to_lower(extension)
 
-    if str.starts_with(ext, ".") {
-        ext = str.substr(ext, 1, str.len(ext) - 1)
+    if str::starts_with(ext, ".") {
+        ext = str::substr(ext, 1, str::len(ext) - 1)
     }
 
     if ext == "html" { return true }

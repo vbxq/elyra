@@ -1,13 +1,13 @@
-needs std.fs as fs
-needs std.sys as sys
+needs std::fs as fs
+needs std::sys as sys
 
 fn get_public_dir() -> string {
-    let script_dir = sys.script_dir()
+    let script_dir = sys::script_dir()
     if script_dir == null {
         return "./public"
     }
 
-    return fs.join(script_dir, "public")
+    return fs::join(script_dir, "public")
 }
 
 pub let HOST = "127.0.0.1"

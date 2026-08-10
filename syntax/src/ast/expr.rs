@@ -156,6 +156,7 @@ pub enum ExprKind {
     Member {
         object: Box<Expr>,
         member: String,
+        separator: MemberSeparator,
     }, // module.symbol
 
     // Arrays and Vecs
@@ -199,6 +200,12 @@ pub enum ExprKind {
         expr: Box<Expr>,
         target: TypeAnnotation,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberSeparator {
+    Dot,
+    Path,
 }
 
 #[derive(Debug, Clone)]

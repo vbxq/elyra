@@ -36,7 +36,7 @@ fn run_bytecode_registers_stdlib_globals() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let src_path = dir.join("hello.aelys");
-    std::fs::write(&src_path, "needs std.io\nio.print(\"hi\")\n").unwrap();
+    std::fs::write(&src_path, "needs std::io\nio::print(\"hi\")\n").unwrap();
 
     let bytecode_path =
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::None)

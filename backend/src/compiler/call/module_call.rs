@@ -1,5 +1,7 @@
 use super::super::Compiler;
 use aelys_common::Result;
+use aelys_common::error::{CompileError, CompileErrorKind};
+use aelys_syntax::MemberSeparator;
 use aelys_syntax::Span;
 use aelys_syntax::ast::Expr;
 
@@ -11,9 +13,20 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<bool> {
-        if let Some((module_name, member)) = Self::is_member_call(callee)
-            && self.module_aliases.contains(module_name)
+        if let Some((module_name, member, separator)) = Self::is_member_call(callee)
+            && self.has_module_alias(&module_name)
         {
+            if separator == MemberSeparator::Dot {
+                return Err(CompileError::new(
+                    CompileErrorKind::ModulePathSeparator {
+                        module: module_name.to_string(),
+                        member: member.to_string(),
+                    },
+                    span,
+                    self.source.clone(),
+                )
+                .into());
+            }
             let qualified_name = format!("{}::{}", module_name, member);
             let global_idx = self.get_or_create_global_index(&qualified_name);
             self.accessed_globals.insert(qualified_name.clone());

@@ -1,21 +1,21 @@
-needs std.io
-needs std.bytes
-needs std.time
-needs std.math
-needs std.convert
+needs std::io
+needs std::bytes
+needs std::time
+needs std::math
+needs std::convert
 
 let W = 160
 let H = 90
 let ROWS = H / 2
 let MAX_ITER = 80
-let ESC = convert.chr(27)
-let HALF = convert.chr(9600)
+let ESC = convert::chr(27)
+let HALF = convert::chr(9600)
 
 fn run() {
-    let fb = bytes.alloc(W * H)
-    let pal_r = bytes.alloc(MAX_ITER + 1)
-    let pal_g = bytes.alloc(MAX_ITER + 1)
-    let pal_b = bytes.alloc(MAX_ITER + 1)
+    let fb = bytes::alloc(W * H)
+    let pal_r = bytes::alloc(MAX_ITER + 1)
+    let pal_g = bytes::alloc(MAX_ITER + 1)
+    let pal_b = bytes::alloc(MAX_ITER + 1)
 
     for i in 0..MAX_ITER {
         let t = (i * 255) / MAX_ITER
@@ -32,13 +32,13 @@ fn run() {
         if r > 255 { r = 255 }
         if g > 255 { g = 255 }
         if b > 255 { b = 255 }
-        bytes.write_u8(pal_r, i, r)
-        bytes.write_u8(pal_g, i, g)
-        bytes.write_u8(pal_b, i, b)
+        bytes::write_u8(pal_r, i, r)
+        bytes::write_u8(pal_g, i, g)
+        bytes::write_u8(pal_b, i, b)
     }
-    bytes.write_u8(pal_r, MAX_ITER, 0)
-    bytes.write_u8(pal_g, MAX_ITER, 0)
-    bytes.write_u8(pal_b, MAX_ITER, 0)
+    bytes::write_u8(pal_r, MAX_ITER, 0)
+    bytes::write_u8(pal_g, MAX_ITER, 0)
+    bytes::write_u8(pal_b, MAX_ITER, 0)
 
     print_inline(ESC + "[?25l")
     print_inline(ESC + "[2J")
@@ -65,7 +65,7 @@ fn run() {
                     x = xt
                     i = i + 1
                 }
-                bytes.write_u8(fb, py * W + px, i)
+                bytes::write_u8(fb, py * W + px, i)
             }
         }
 
@@ -74,32 +74,32 @@ fn run() {
             let y1 = row * 2
             let y2 = y1 + 1
             for px in 0..W {
-                let i1 = bytes.read_u8(fb, y1 * W + px)
-                let i2 = bytes.read_u8(fb, y2 * W + px)
-                let r1 = bytes.read_u8(pal_r, i1)
-                let g1 = bytes.read_u8(pal_g, i1)
-                let b1 = bytes.read_u8(pal_b, i1)
-                let r2 = bytes.read_u8(pal_r, i2)
-                let g2 = bytes.read_u8(pal_g, i2)
-                let b2 = bytes.read_u8(pal_b, i2)
-                print_inline(ESC + "[38;2;" + convert.to_string(r1) + ";" + convert.to_string(g1) + ";" + convert.to_string(b1) + ";48;2;" + convert.to_string(r2) + ";" + convert.to_string(g2) + ";" + convert.to_string(b2) + "m" + HALF)
+                let i1 = bytes::read_u8(fb, y1 * W + px)
+                let i2 = bytes::read_u8(fb, y2 * W + px)
+                let r1 = bytes::read_u8(pal_r, i1)
+                let g1 = bytes::read_u8(pal_g, i1)
+                let b1 = bytes::read_u8(pal_b, i1)
+                let r2 = bytes::read_u8(pal_r, i2)
+                let g2 = bytes::read_u8(pal_g, i2)
+                let b2 = bytes::read_u8(pal_b, i2)
+                print_inline(ESC + "[38;2;" + convert::to_string(r1) + ";" + convert::to_string(g1) + ";" + convert::to_string(b1) + ";48;2;" + convert::to_string(r2) + ";" + convert::to_string(g2) + ";" + convert::to_string(b2) + "m" + HALF)
             }
             print_inline(ESC + "[0m")
             println("")
         }
-        io.flush()
+        io::flush()
 
         zoom = zoom * 1.06
-        time.sleep(30)
+        time::sleep(30)
     }
 
     print_inline(ESC + "[?25h")
     print_inline(ESC + "[2J" + ESC + "[H")
 
-    bytes.free(fb)
-    bytes.free(pal_r)
-    bytes.free(pal_g)
-    bytes.free(pal_b)
+    bytes::free(fb)
+    bytes::free(pal_r)
+    bytes::free(pal_g)
+    bytes::free(pal_b)
 }
 
 run()

@@ -1,7 +1,7 @@
-needs std.math
-needs std.io
-needs std.convert
-needs std.time
+needs std::math
+needs std::io
+needs std::convert
+needs std::time
 
 let WIDTH: int = 80
 let HEIGHT: int = 24
@@ -53,17 +53,17 @@ fn render_frame(buf: int) {
 fn run_benchmark() {
     let buf = alloc(WIDTH * HEIGHT)
 
-    let t = time.timer()
+    let t = time::timer()
     for frame in 0..10 {
         render_frame(buf)
     }
-    let elapsed = time.elapsed_ms(t)
+    let elapsed = time::elapsed_ms(t)
 
     free(buf)
 
-    io.print("10 frames rendered (@no_gc)")
-    io.print("time: " + convert.to_string(elapsed) + "ms")
-    io.print("fps: " + convert.to_string(10000 / elapsed))
+    io::print("10 frames rendered (@no_gc)")
+    io::print("time: " + convert::to_string(elapsed) + "ms")
+    io::print("fps: " + convert::to_string(10000 / elapsed))
 }
 
 run_benchmark()

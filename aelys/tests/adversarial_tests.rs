@@ -81,10 +81,10 @@ fn bytecode_negative_jump() {
 #[test]
 fn path_traversal_url_encoded() {
     let code = r#"
-needs std.fs
-fs.join("/app", "..%2F..%2Fetc%2Fpasswd")
+needs std::fs
+fs::join("/app", "..%2F..%2Fetc%2Fpasswd")
 "#;
-    // URL encoding is not decoded by fs.join (it's a literal string)
+    // URL encoding is not decoded by fs::join (it's a literal string)
     let result = run_aelys_result(code);
     match result {
         Ok(_v) => {

@@ -95,9 +95,11 @@ impl TypeInference {
                 return_type,
                 body,
             } => self.infer_lambda_expr(params, return_type.as_ref(), body, expr.span),
-            ExprKind::Member { object, member } => {
-                self.infer_member_expr(object, member, expr.span)
-            }
+            ExprKind::Member {
+                object,
+                member,
+                separator,
+            } => self.infer_member_expr(object, member, *separator, expr.span),
             ExprKind::ArrayLiteral {
                 element_type,
                 elements,
