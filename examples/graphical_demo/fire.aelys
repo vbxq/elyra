@@ -42,7 +42,7 @@ fn run() {
 
     for frame in 0..200 {
         for x in 0..W {
-            let v = sys::random_int(180, 255)
+            let v = sys::random_int(180, 255).unwrap()
             bytes::write_u8(fire, (H - 1) * W + x, v)
         }
 
@@ -58,7 +58,7 @@ fn run() {
                 if y < H - 2 {
                     sum = sum + bytes::read_u8(fire, (y + 2) * W + x)
                 }
-                let mut avg = sum / 4 - sys::random_int(0, 2)
+                let mut avg = sum / 4 - sys::random_int(0, 2).unwrap()
                 if avg < 0 { avg = 0 }
                 bytes::write_u8(fire, y * W + x, avg)
             }
