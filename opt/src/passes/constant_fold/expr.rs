@@ -28,7 +28,9 @@ impl ConstantFolder {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null => None,
+            TypedExprKind::Try(_) | TypedExprKind::Match { .. } => None,
             _ => None,
         }
     }
@@ -117,10 +119,28 @@ impl ConstantFolder {
             TypedExprKind::Cast { expr, .. } => {
                 self.optimize_expr(expr);
             }
+            TypedExprKind::Try(inner) => self.optimize_expr(inner),
+            TypedExprKind::Match { scrutinee, arms } => {
+                self.optimize_expr(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        self.optimize_expr(guard);
+                    }
+                    match &mut arm.body {
+                        aelys_sema::TypedMatchArmBody::Expr(expr) => self.optimize_expr(expr),
+                        aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                            for stmt in stmts {
+                                self.optimize_stmt(stmt);
+                            }
+                        }
+                    }
+                }
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null
             | TypedExprKind::Identifier(_) => {}
         }
