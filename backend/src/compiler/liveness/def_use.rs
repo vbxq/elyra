@@ -196,10 +196,30 @@ fn collect_uses_expr(
         TypedExprKind::Cast { expr, .. } => {
             collect_uses_expr(analysis, expr, uses);
         }
+        TypedExprKind::Try(inner) => collect_uses_expr(analysis, inner, uses),
+        TypedExprKind::Match { scrutinee, arms } => {
+            collect_uses_expr(analysis, scrutinee, uses);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_uses_expr(analysis, guard, uses);
+                }
+                match &arm.body {
+                    aelys_sema::TypedMatchArmBody::Expr(expr) => {
+                        collect_uses_expr(analysis, expr, uses)
+                    }
+                    aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            collect_def_use_stmt(analysis, stmt, &mut HashSet::new(), uses);
+                        }
+                    }
+                }
+            }
+        }
         TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Unit
         | TypedExprKind::Null => {}
     }
 }
