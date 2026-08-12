@@ -16,6 +16,16 @@ pub enum CompileErrorKind {
     ExpectedExpression,
     ExpectedIdentifier,
     InvalidAssignmentTarget,
+    NullIsNotInSurface,
+    ExpectedPattern,
+    InvalidPattern {
+        reason: String,
+    },
+    UnknownVariant {
+        variant: String,
+        expected: String,
+    },
+    MatchArmValueRequired,
     RecursionDepthExceeded {
         max: usize,
     },
@@ -38,6 +48,9 @@ pub enum CompileErrorKind {
     BreakOutsideLoop,
     ContinueOutsideLoop,
     ReturnOutsideFunction,
+    MissingReturnValue {
+        expected: String,
+    },
     AssignToLoopVariable(String),
 
     // 48-bit signed range for NaN-boxed ints
@@ -89,5 +102,33 @@ pub enum CompileErrorKind {
         member: String,
     },
 
+    NonExhaustiveMatch {
+        missing: Vec<String>,
+    },
+    IgnoredResult,
+    IgnoredOption,
+    QuestionMarkOutsideResult,
+    QuestionMarkTypeMismatch {
+        source: String,
+        target: String,
+    },
+    UnresolvedSumType {
+        constructor: String,
+    },
+    UntypedSumValue {
+        name: String,
+    },
+    InvalidSumMethod {
+        method: String,
+        receiver: String,
+    },
+    DynamicSumMethod {
+        method: String,
+    },
+
     TypeInferenceError(String),
+    NamedTypeError {
+        code: u16,
+        message: String,
+    },
 }
