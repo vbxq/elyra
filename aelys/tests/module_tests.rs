@@ -287,7 +287,7 @@ private_mod::public()
 }
 
 #[test]
-fn test_private_function_returns_null() {
+fn test_private_function_access_is_rejected() {
     let dir = create_module_env();
 
     write_file(
@@ -308,9 +308,12 @@ private_mod::secret
 "#,
     );
 
-    // Private function access returns null (not exported)
-    let result = run_file(&main_path).expect("Should succeed but return null");
-    assert!(result.is_null());
+    let error = run_file(&main_path).expect_err("private module members must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("module member 'private_mod::secret' is not public")
+    );
 }
 
 #[test]
