@@ -41,7 +41,10 @@ pub fn run_with_config_and_opt(
     let typed_program = TypeInference::infer_program(stmts, src.clone()).map_err(|errors| {
         if let Some(err) = errors.first() {
             AelysError::Compile(CompileError::new(
-                CompileErrorKind::TypeInferenceError(format!("{}", err)),
+                CompileErrorKind::NamedTypeError {
+                    code: err.diagnostic_code(),
+                    message: format!("{}", err),
+                },
                 err.span,
                 src.clone(),
             ))
