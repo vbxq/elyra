@@ -163,7 +163,7 @@ fn test_call_function_returns_null() {
     run_with_vm(&mut vm, "fn nothing() { }", "def").unwrap();
 
     let result = call_function(&mut vm, "nothing", &[]).unwrap();
-    assert!(result.is_null());
+    assert!(result.is_unit());
 }
 
 #[test]
