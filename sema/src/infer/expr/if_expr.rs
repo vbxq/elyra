@@ -16,26 +16,52 @@ impl TypeInference {
         let typed_then = self.infer_expr(then_branch);
         let typed_else = self.infer_expr(else_branch);
 
-        self.constraints.push(Constraint::equal(
-            typed_cond.ty.clone(),
-            InferType::Bool,
+        if !self.reject_dynamic(
+            &typed_cond.ty,
+            &InferType::Bool,
             condition.span,
             ConstraintReason::IfCondition,
-        ));
+        ) && !self.reject_untyped_native(
+            &typed_cond.ty,
+            &InferType::Bool,
+            condition.span,
+            ConstraintReason::IfCondition,
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_cond.ty.clone(),
+                InferType::Bool,
+                condition.span,
+                ConstraintReason::IfCondition,
+            ));
+        }
 
         let result_type = self.type_gen.fresh();
-        self.constraints.push(Constraint::equal(
-            typed_then.ty.clone(),
-            result_type.clone(),
+        if !self.reject_dynamic(
+            &typed_then.ty,
+            &result_type,
             then_branch.span,
             ConstraintReason::IfBranches,
-        ));
-        self.constraints.push(Constraint::equal(
-            typed_else.ty.clone(),
-            result_type.clone(),
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_then.ty.clone(),
+                result_type.clone(),
+                then_branch.span,
+                ConstraintReason::IfBranches,
+            ));
+        }
+        if !self.reject_dynamic(
+            &typed_else.ty,
+            &result_type,
             else_branch.span,
             ConstraintReason::IfBranches,
-        ));
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_else.ty.clone(),
+                result_type.clone(),
+                else_branch.span,
+                ConstraintReason::IfBranches,
+            ));
+        }
 
         (
             TypedExprKind::If {
