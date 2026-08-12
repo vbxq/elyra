@@ -253,6 +253,14 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, _, _) = decode_a(instr);
                 format!("LoadNull  r{}", a)
             }
+            OpCode::LoadUnit => {
+                let (_, a, _, _) = decode_a(instr);
+                format!("LoadUnit   r{}", a)
+            }
+            OpCode::LoadNone => {
+                let (_, a, _, _) = decode_a(instr);
+                format!("LoadNone   r{}", a)
+            }
             OpCode::LoadBool => {
                 let (_, a, b, _) = decode_a(instr);
                 format!("LoadBool  r{}, {}", a, b != 0)
@@ -1076,6 +1084,42 @@ impl<'a> DisasmContext<'a> {
             OpCode::StringLoadChar => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("StringLoadChar r{}, r{}, r{}", a, b, c)
+            }
+            OpCode::RangeNew => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("RangeNew   r{}, r{}, r{}", a, b, c)
+            }
+            OpCode::RangeNewInclusive => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("RangeNewInclusive r{}, r{}, r{}", a, b, c)
+            }
+            OpCode::ArraySlice => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("ArraySlice r{}, r{}, r{}", a, b, c)
+            }
+            OpCode::VecSlice => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("VecSlice   r{}, r{}, r{}", a, b, c)
+            }
+            OpCode::MakeSum => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("MakeSum   r{}, r{}, {}", a, b, c)
+            }
+            OpCode::SumTest => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("SumTest   r{}, r{}, {}", a, b, c)
+            }
+            OpCode::SumPayload => {
+                let (_, a, b, _) = decode_a(instr);
+                format!("SumPayload r{}, r{}", a, b)
+            }
+            OpCode::MatchFail => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("MatchFail r{}, r{}, {}", a, b, c)
+            }
+            OpCode::Cast => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("Cast      r{}, r{}, {}", a, b, c)
             }
             OpCode::StringForLoop => {
                 let (_, a, imm) = decode_b(instr);
