@@ -1,5 +1,6 @@
 use super::Parser;
 use aelys_common::Result;
+use aelys_common::error::CompileErrorKind;
 use aelys_syntax::{Parameter, TokenKind, TypeAnnotation};
 
 impl Parser {
@@ -10,15 +11,22 @@ impl Parser {
             return self.parse_function_type_annotation(start_span);
         }
 
+        if self.match_token(&TokenKind::Null) {
+            return Err(self.error(CompileErrorKind::NullIsNotInSurface));
+        }
+
         let name = self.consume_identifier("type name")?;
 
         if self.match_token(&TokenKind::Lt) {
-            let type_param = self.parse_type_annotation()?;
+            let mut type_params = vec![self.parse_type_annotation()?];
+            while self.match_token(&TokenKind::Comma) {
+                type_params.push(self.parse_type_annotation()?);
+            }
             self.consume(&TokenKind::Gt, ">")?;
             let end_span = self.previous().span;
-            Ok(TypeAnnotation::with_param(
+            Ok(TypeAnnotation::with_params(
                 name,
-                type_param,
+                type_params,
                 start_span.merge(end_span),
             ))
         } else {
