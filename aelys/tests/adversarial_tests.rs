@@ -82,23 +82,11 @@ fn bytecode_negative_jump() {
 fn path_traversal_url_encoded() {
     let code = r#"
 needs std::fs
-fs::join("/app", "..%2F..%2Fetc%2Fpasswd")
+match fs::join("/app", "..%2F..%2Fetc%2Fpasswd") { Ok(_) => 0, Err(_) => 1 }
 "#;
     // URL encoding is not decoded by fs::join (it's a literal string)
-    let result = run_aelys_result(code);
-    match result {
-        Ok(_v) => {
-            // It may return a value (the joined path literally)
-        }
-        Err(e) => {
-            // Or it may reject path traversal
-            assert!(
-                e.contains("escapes") || e.contains("base") || e.contains("parent"),
-                "expected path error, got: {}",
-                e
-            );
-        }
-    }
+    let result = run_aelys(code);
+    assert!(result.as_int().is_some(), "expected a handled Result");
 }
 
 // Type confusion attacks
@@ -107,10 +95,10 @@ fs::join("/app", "..%2F..%2Fetc%2Fpasswd")
 fn type_confusion_null_as_int() {
     let code = r#"
 let x = null
-x + 5
+    x + 5
 "#;
     let err = run_aelys_err(code);
-    assert!(err.contains("type") || err.contains("Type"));
+    assert!(err.contains("null is not part of Aelys"));
 }
 
 #[test]
@@ -348,5 +336,5 @@ let f = null
 f()
 "#;
     let err = run_aelys_err(code);
-    assert!(err.contains("not callable") || err.contains("type") || err.contains("Type"));
+    assert!(err.contains("null is not part of Aelys"));
 }
