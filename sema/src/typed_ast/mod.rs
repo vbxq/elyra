@@ -129,6 +129,7 @@ pub enum TypedExprKind {
     Bool(bool),
     String(String),
     FmtString(Vec<TypedFmtStringPart>),
+    Unit,
     Null,
 
     Identifier(String),
@@ -170,6 +171,13 @@ pub enum TypedExprKind {
         condition: Box<TypedExpr>,
         then_branch: Box<TypedExpr>,
         else_branch: Box<TypedExpr>,
+    },
+
+    Try(Box<TypedExpr>),
+
+    Match {
+        scrutinee: Box<TypedExpr>,
+        arms: Vec<TypedMatchArm>,
     },
 
     Lambda(Box<TypedExpr>),
@@ -234,6 +242,41 @@ pub enum TypedExprKind {
         expr: Box<TypedExpr>,
         target: InferType,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedMatchArm {
+    pub pattern: TypedPattern,
+    pub guard: Option<TypedExpr>,
+    pub body: TypedMatchArmBody,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypedMatchArmBody {
+    Expr(TypedExpr),
+    Block(Vec<TypedStmt>),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedPattern {
+    pub kind: TypedPatternKind,
+    pub ty: InferType,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypedPatternKind {
+    Wildcard,
+    Binding(String),
+    Int(i64),
+    String(String),
+    Bool(bool),
+    Variant {
+        path: Vec<String>,
+        fields: Vec<TypedPattern>,
+    },
+    Or(Vec<TypedPattern>),
 }
 
 impl TypedExpr {
