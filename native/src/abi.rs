@@ -31,8 +31,14 @@ pub struct AelysVmApi {
     pub register_constant: Option<extern "C" fn(name: *const c_char, value: AelysValue) -> i32>,
     pub register_type:
         Option<extern "C" fn(name: *const c_char, type_desc: *const AelysTypeDescriptor) -> i32>,
-    pub alloc_string:
-        Option<extern "C" fn(bytes: *const u8, len: usize, out: *mut AelysValue) -> i32>,
+    pub alloc_string: Option<
+        extern "C" fn(
+            context: *mut NativeContext,
+            bytes: *const u8,
+            len: usize,
+            out: *mut AelysValue,
+        ) -> i32,
+    >,
     pub read_string: Option<
         extern "C" fn(
             context: *mut NativeContext,
@@ -60,6 +66,63 @@ pub enum AelysExportKind {
     Type = 3,
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AelysNativeType {
+    Int = 1,
+    Float = 2,
+    Bool = 3,
+    String = 4,
+    Unit = 5,
+    Dynamic = 6,
+    OptionInt = 7,
+    OptionFloat = 8,
+    OptionBool = 9,
+    OptionString = 10,
+    OptionUnit = 11,
+    ResultIntString = 12,
+    ResultFloatString = 13,
+    ResultBoolString = 14,
+    ResultStringString = 15,
+    ResultUnitString = 16,
+}
+
+impl TryFrom<u8> for AelysNativeType {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Int),
+            2 => Ok(Self::Float),
+            3 => Ok(Self::Bool),
+            4 => Ok(Self::String),
+            5 => Ok(Self::Unit),
+            6 => Ok(Self::Dynamic),
+            7 => Ok(Self::OptionInt),
+            8 => Ok(Self::OptionFloat),
+            9 => Ok(Self::OptionBool),
+            10 => Ok(Self::OptionString),
+            11 => Ok(Self::OptionUnit),
+            12 => Ok(Self::ResultIntString),
+            13 => Ok(Self::ResultFloatString),
+            14 => Ok(Self::ResultBoolString),
+            15 => Ok(Self::ResultStringString),
+            16 => Ok(Self::ResultUnitString),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AelysFunctionSignature {
+    pub arity: u16,
+    pub _padding: [u8; 2],
+    pub params: *const u8,
+    pub result: u8,
+    pub _reserved: [u8; 7],
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AelysExport {
@@ -68,6 +131,7 @@ pub struct AelysExport {
     pub arity: u16,
     pub _padding: [u8; 2],
     pub value: *const c_void,
+    pub signature: *const AelysFunctionSignature,
 }
 
 #[repr(C)]
@@ -210,5 +274,6 @@ impl NativeHandle {
 // mutate their public fields through exclusive access; dereferencing embedded raw
 // pointers remains confined to explicitly unsafe loader and hashing operations.
 unsafe impl Sync for AelysExport {}
+unsafe impl Sync for AelysFunctionSignature {}
 unsafe impl Sync for AelysRequiredModule {}
 unsafe impl Sync for AelysModuleDescriptor {}
