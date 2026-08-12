@@ -7,7 +7,9 @@ mod gc_object;
 mod gc_ref;
 mod kinds;
 mod native;
+mod range;
 mod string;
+mod sum;
 mod upvalue;
 mod vec;
 
@@ -18,6 +20,8 @@ pub use gc_object::GcObject;
 pub use gc_ref::GcRef;
 pub use kinds::ObjectKind;
 pub use native::NativeFunction;
+pub use range::AelysRange;
 pub use string::AelysString;
+pub use sum::{AelysSum, SumTag};
 pub use upvalue::{AelysUpvalue, UpvalueLocation};
 pub use vec::AelysVec;
