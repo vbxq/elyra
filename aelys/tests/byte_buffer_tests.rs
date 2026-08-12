@@ -1,7 +1,6 @@
 mod common;
 use common::{
-    assert_aelys_bool, assert_aelys_int, assert_aelys_null, assert_aelys_str, run_aelys_err,
-    run_aelys_ok,
+    assert_aelys_bool, assert_aelys_int, assert_aelys_str, run_aelys, run_aelys_err, run_aelys_ok,
 };
 
 #[test]
@@ -48,23 +47,27 @@ fn test_bytes_alloc_negative_fails() {
 
 #[test]
 fn test_bytes_free() {
-    assert_aelys_null(
-        r#"
+    assert!(
+        run_aelys(
+            r#"
         needs std::bytes
         let buf = bytes::alloc(100)
         bytes::free(buf)
-    "#,
+    "#
+        )
+        .is_unit()
     );
 }
 
 #[test]
-fn test_bytes_free_null_is_noop() {
-    assert_aelys_null(
+fn test_bytes_free_null_syntax_is_rejected() {
+    let error = run_aelys_err(
         r#"
         needs std::bytes
         bytes::free(null)
     "#,
     );
+    assert!(error.contains("null is not part of Aelys"));
 }
 
 #[test]
