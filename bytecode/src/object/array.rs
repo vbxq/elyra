@@ -163,6 +163,25 @@ impl AelysArray {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+
+    pub fn slice(&self, start: usize, end: usize) -> Self {
+        let data = match &self.data {
+            ArrayData::Ints(values) => {
+                ArrayData::Ints(values[start..end].to_vec().into_boxed_slice())
+            }
+            ArrayData::Floats(values) => {
+                ArrayData::Floats(values[start..end].to_vec().into_boxed_slice())
+            }
+            ArrayData::Bools(values) => {
+                ArrayData::Bools(values[start..end].to_vec().into_boxed_slice())
+            }
+            ArrayData::Objects(values) => {
+                ArrayData::Objects(values[start..end].to_vec().into_boxed_slice())
+            }
+        };
+        Self { data }
+    }
+
     pub fn type_tag(&self) -> TypeTag {
         self.data.type_tag()
     }
