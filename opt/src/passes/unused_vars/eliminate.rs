@@ -122,11 +122,28 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
             fields.iter().any(|(_, v)| has_side_effects(v))
         }
         TypedExprKind::Cast { expr, .. } => has_side_effects(expr),
+        TypedExprKind::Try(inner) => has_side_effects(inner),
+        TypedExprKind::Match { scrutinee, arms } => {
+            if has_side_effects(scrutinee) {
+                true
+            } else {
+                arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(has_side_effects)
+                        || match &arm.body {
+                            aelys_sema::TypedMatchArmBody::Expr(expr) => has_side_effects(expr),
+                            aelys_sema::TypedMatchArmBody::Block(stmts) => stmts.iter().any(|stmt| {
+                                matches!(stmt.kind, TypedStmtKind::Expression(ref expr) if has_side_effects(expr))
+                            }),
+                        }
+                })
+            }
+        }
         TypedExprKind::Identifier(_)
         | TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Unit
         | TypedExprKind::Null => false,
     }
 }
