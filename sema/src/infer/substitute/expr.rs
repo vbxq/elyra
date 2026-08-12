@@ -1,5 +1,8 @@
 use super::super::TypeInference;
-use crate::typed_ast::{TypedExpr, TypedExprKind, TypedFmtStringPart, TypedParam};
+use crate::typed_ast::{
+    TypedExpr, TypedExprKind, TypedFmtStringPart, TypedMatchArm, TypedMatchArmBody, TypedParam,
+    TypedPattern, TypedPatternKind,
+};
 use crate::unify::Substitution;
 
 impl TypeInference {
@@ -27,6 +30,7 @@ impl TypeInference {
                     .collect(),
             ),
             TypedExprKind::Null => TypedExprKind::Null,
+            TypedExprKind::Unit => TypedExprKind::Unit,
             TypedExprKind::Identifier(name) => TypedExprKind::Identifier(name.clone()),
             TypedExprKind::Binary { left, op, right } => TypedExprKind::Binary {
                 left: Box::new(self.apply_substitution_expr(left, subst)),
@@ -67,6 +71,34 @@ impl TypeInference {
                 condition: Box::new(self.apply_substitution_expr(condition, subst)),
                 then_branch: Box::new(self.apply_substitution_expr(then_branch, subst)),
                 else_branch: Box::new(self.apply_substitution_expr(else_branch, subst)),
+            },
+            TypedExprKind::Try(inner) => {
+                TypedExprKind::Try(Box::new(self.apply_substitution_expr(inner, subst)))
+            }
+            TypedExprKind::Match { scrutinee, arms } => TypedExprKind::Match {
+                scrutinee: Box::new(self.apply_substitution_expr(scrutinee, subst)),
+                arms: arms
+                    .iter()
+                    .map(|arm| TypedMatchArm {
+                        pattern: self.apply_substitution_pattern(&arm.pattern, subst),
+                        guard: arm
+                            .guard
+                            .as_ref()
+                            .map(|guard| self.apply_substitution_expr(guard, subst)),
+                        body: match &arm.body {
+                            TypedMatchArmBody::Expr(expr) => {
+                                TypedMatchArmBody::Expr(self.apply_substitution_expr(expr, subst))
+                            }
+                            TypedMatchArmBody::Block(stmts) => TypedMatchArmBody::Block(
+                                stmts
+                                    .iter()
+                                    .map(|stmt| self.apply_substitution_stmt(stmt, subst))
+                                    .collect(),
+                            ),
+                        },
+                        span: arm.span,
+                    })
+                    .collect(),
             },
             TypedExprKind::Lambda(inner) => {
                 TypedExprKind::Lambda(Box::new(self.apply_substitution_expr(inner, subst)))
@@ -176,6 +208,38 @@ impl TypeInference {
             kind,
             ty: subst.apply(&expr.ty),
             span: expr.span,
+        }
+    }
+
+    fn apply_substitution_pattern(
+        &self,
+        pattern: &TypedPattern,
+        subst: &Substitution,
+    ) -> TypedPattern {
+        let kind = match &pattern.kind {
+            TypedPatternKind::Wildcard => TypedPatternKind::Wildcard,
+            TypedPatternKind::Binding(name) => TypedPatternKind::Binding(name.clone()),
+            TypedPatternKind::Int(value) => TypedPatternKind::Int(*value),
+            TypedPatternKind::String(value) => TypedPatternKind::String(value.clone()),
+            TypedPatternKind::Bool(value) => TypedPatternKind::Bool(*value),
+            TypedPatternKind::Variant { path, fields } => TypedPatternKind::Variant {
+                path: path.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| self.apply_substitution_pattern(field, subst))
+                    .collect(),
+            },
+            TypedPatternKind::Or(alternatives) => TypedPatternKind::Or(
+                alternatives
+                    .iter()
+                    .map(|alternative| self.apply_substitution_pattern(alternative, subst))
+                    .collect(),
+            ),
+        };
+        TypedPattern {
+            kind,
+            ty: subst.apply(&pattern.ty),
+            span: pattern.span,
         }
     }
 }
