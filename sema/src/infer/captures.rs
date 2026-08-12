@@ -133,6 +133,27 @@ impl TypeInference {
                 self.collect_captures_inner(then_branch, params, captures, seen);
                 self.collect_captures_inner(else_branch, params, captures, seen);
             }
+            TypedExprKind::Try(inner) => {
+                self.collect_captures_inner(inner, params, captures, seen);
+            }
+            TypedExprKind::Match { scrutinee, arms } => {
+                self.collect_captures_inner(scrutinee, params, captures, seen);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.collect_captures_inner(guard, params, captures, seen);
+                    }
+                    match &arm.body {
+                        crate::typed_ast::TypedMatchArmBody::Expr(expr) => {
+                            self.collect_captures_inner(expr, params, captures, seen);
+                        }
+                        crate::typed_ast::TypedMatchArmBody::Block(stmts) => {
+                            for stmt in stmts {
+                                self.collect_captures_from_stmt(stmt, params, captures, seen);
+                            }
+                        }
+                    }
+                }
+            }
             TypedExprKind::Lambda(inner) => {
                 self.collect_captures_inner(inner, params, captures, seen);
             }
@@ -197,6 +218,7 @@ impl TypeInference {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null => {}
         }
     }
