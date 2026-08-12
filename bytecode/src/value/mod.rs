@@ -29,6 +29,8 @@ const TAG_BOOL: u64 = 0x0002_0000_0000_0000;
 const TAG_NULL: u64 = 0x0003_0000_0000_0000;
 const TAG_NAN: u64 = 0x0004_0000_0000_0000;
 const TAG_NESTED_FN: u64 = 0x0005_0000_0000_0000; // marker for nested functions in constants
+const TAG_UNIT: u64 = 0x0006_0000_0000_0000;
+const TAG_NONE: u64 = 0x0007_0000_0000_0000;
 const PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 const CANONICAL_NAN: u64 = QNAN | TAG_NAN | 1;
 
