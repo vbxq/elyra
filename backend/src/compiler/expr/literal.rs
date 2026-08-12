@@ -55,4 +55,14 @@ impl Compiler {
         self.emit_a(OpCode::LoadNull, dest, 0, 0, span);
         Ok(())
     }
+
+    pub fn compile_literal_unit(&mut self, dest: u16, span: Span) -> Result<()> {
+        self.emit_a(OpCode::LoadUnit, dest, 0, 0, span);
+        Ok(())
+    }
+
+    pub fn compile_literal_none(&mut self, dest: u16, span: Span) -> Result<()> {
+        self.emit_a(OpCode::LoadNone, dest, 0, 0, span);
+        Ok(())
+    }
 }
