@@ -1,26 +1,29 @@
 # Standard Library Reference
 
-All standard library modules live under `std.*`.
+All standard library modules live under `std::` paths.
 
 ### Auto-registered modules
 
-The safe modules : `std.io`, `std.math`, `std.string`, `std.convert`, and `std.time`, are auto-registered at VM startup. You can use their functions immediately without `needs`. For example, `println("hello")` and `math.sqrt(16.0)` work out of the box.
+The safe modules `std::io`, `std::math`, `std::string`, `std::convert`, and
+`std::time` are auto-registered at VM startup. You can use their functions
+immediately without `needs`. For example, `println("hello")` and
+`math::sqrt(16.0)` work out of the box.
 
 You can still use `needs` with an alias if you want a shorter name:
 
 ```rust
-needs std.math as m
+needs std::math as m
 ```
 
 
 ```rust
-needs std.fs
-needs std.net
+needs std::fs
+needs std::net
 ```
 
 ---
 
-## std.io
+## std::io
 
 Console input/output. Auto-registered -- no `needs` required.
 
@@ -46,9 +49,9 @@ println("")              // newline
 
 | Function | Description |
 |----------|-------------|
-| `readline()` | Read line from stdin (null on EOF) |
-| `read_char()` | Read single character |
-| `input(prompt)` | Print prompt, read line |
+| `readline()` | Read line from stdin as `Option<string>` |
+| `read_char()` | Read a single character as `Option<string>` |
+| `input(prompt)` | Print prompt and read an `Option<string>` |
 
 ```rust
 let name = input("What's your name? ")
@@ -75,7 +78,7 @@ println("Here!")
 
 ---
 
-## std.math
+## std::math
 
 Math functions and constants. Auto-registered -- no `needs` required.
 
@@ -103,14 +106,14 @@ Math functions and constants. Auto-registered -- no `needs` required.
 | `clamp(x, min, max)` | Clamp value to range |
 | `randint(debut, fin)` | Random integer in range [debut, fin] (inclusive) |
 
-`math.randint`, `sys.random`, and `sys.random_int` consume the same VM-local sequence.
+`math::randint`, `sys::random`, and `sys::random_int` consume the same VM-local sequence.
 
 ```rust
-math.abs(-5)        // 5
-math.sqrt(16.0)     // 4.0
-math.pow(2, 10)     // 1024
-math.clamp(15, 0, 10)  // 10
-math.randint(1, 6)  // random int from 1 to 6 (dice roll)
+math::abs(-5)        // 5
+math::sqrt(16.0)     // 4.0
+math::pow(2, 10)     // 1024
+math::clamp(15, 0, 10)  // 10
+math::randint(1, 6)  // random int from 1 to 6 (dice roll)
 ```
 
 ### Trigonometry
@@ -167,11 +170,11 @@ All functions work in radians.
 
 ---
 
-## std.string
+## std::string
 
 String manipulation. Strings are UTF-8. Auto-registered -- no `needs` required.
 
-String functions can be called as methods on string values. The qualified `string.func(s, ...)` syntax also still works.
+String functions can be called as methods on string values. The qualified `string::func(s, ...)` syntax also still works.
 
 ```rust
 // Method syntax (preferred)
@@ -179,8 +182,8 @@ let n = "hello".len()
 let up = "hello".to_upper()
 
 // Qualified syntax (also valid)
-let n = string.len("hello")
-let up = string.to_upper("hello")
+let n = string::len("hello")
+let up = string::to_upper("hello")
 ```
 
 ### Length
@@ -262,7 +265,7 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 | Method | Description |
 |--------|-------------|
 | `s.split(sep)` | Split by separator |
-| `string.join(parts, sep)` | Join parts with separator |
+| `string::join(parts, sep)` | Join parts with separator |
 | `s.lines()` | Split into lines |
 | `s.line_count()` | Count lines |
 
@@ -270,7 +273,7 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 
 ```rust
 let parts = "a,b,c".split(",")       // "a\nb\nc"
-string.join(parts, "-")              // "a-b-c"
+string::join(parts, "-")              // "a-b-c"
 ```
 
 ### Predicates
@@ -285,7 +288,7 @@ string.join(parts, "-")              // "a-b-c"
 
 ---
 
-## std.convert
+## std::convert
 
 Type conversions and introspection. Auto-registered -- no `needs` required.
 
@@ -293,18 +296,18 @@ Type conversions and introspection. Auto-registered -- no `needs` required.
 
 | Function | Description |
 |----------|-------------|
-| `parse_int(s)` | Parse string to int (null on failure) |
-| `parse_int_radix(s, radix)` | Parse with base 2-36 |
-| `parse_float(s)` | Parse string to float |
-| `parse_bool(s)` | Parse boolean ("true"/"false"/"1"/"0"/"yes"/"no") |
+| `parse_int(s)` | Parse string to `Option<int>` |
+| `parse_int_radix(s, radix)` | Parse with base 2-36 as `Option<int>` |
+| `parse_float(s)` | Parse string to `Option<float>` |
+| `parse_bool(s)` | Parse boolean to `Option<bool>` |
 
 `parse_int` automatically handles `0x`, `0o`, `0b` prefixes:
 
 ```rust
-convert.parse_int("42")      // 42
-convert.parse_int("0xFF")    // 255
-convert.parse_int("0b1010")  // 10
-convert.parse_int("nope")    // null
+match convert::parse_int("42") {
+    Some(value) => value,
+    None => 0,
+}
 ```
 
 ### Type Conversion
@@ -334,9 +337,9 @@ true.to_string()      // "true"
 | `to_radix(n, radix)` | Int to string in given radix |
 
 ```rust
-convert.to_hex(255)      // "ff"
-convert.to_binary(10)    // "1010"
-convert.to_radix(100, 7) // "202"
+convert::to_hex(255)      // "ff"
+convert::to_binary(10)    // "1010"
+convert::to_radix(100, 7) // "202"
 ```
 
 ### Character Conversion
@@ -347,9 +350,9 @@ convert.to_radix(100, 7) // "202"
 | `chr(code)` | Code point to character |
 
 ```rust
-convert.ord("A")    // 65
-convert.chr(65)     // "A"
-convert.chr(0x1F600)  // "😀"
+convert::ord("A")    // 65
+convert::chr(65)     // "A"
+convert::chr(0x1F600)  // "😀"
 ```
 
 ### Type Checking
@@ -361,18 +364,17 @@ convert.chr(0x1F600)  // "😀"
 | `is_float(x)` | Check if float |
 | `is_string(x)` | Check if string |
 | `is_bool(x)` | Check if bool |
-| `is_null(x)` | Check if null |
 | `is_function(x)` | Check if function |
 
 ```rust
-convert.type_of(42)        // "int"
-convert.type_of("hello")   // "string"
-convert.is_int(42)         // true
+convert::type_of(42)        // "int"
+convert::type_of("hello")   // "string"
+convert::is_int(42)         // true
 ```
 
 ---
 
-## std.time
+## std::time
 
 Time operations and measurement. Auto-registered -- no `needs` required.
 
@@ -398,9 +400,9 @@ For measuring elapsed time accurately:
 | `reset(h)` | Reset timer to now |
 
 ```rust
-let t = time.timer()
+let t = time::timer()
 // ... do work ...
-let ms = time.elapsed_ms(t)
+let ms = time::elapsed_ms(t)
 println("Took {ms}ms")
 ```
 
@@ -448,45 +450,52 @@ Format specifiers:
 - `%%` - literal %
 
 ```rust
-time.format("%Y-%m-%d %H:%M:%S")  // "2024-01-15 14:30:45"
-time.iso()                        // "2024-01-15T14:30:45Z"
+time::format("%Y-%m-%d %H:%M:%S")  // "2024-01-15 14:30:45"
+time::iso()                        // "2024-01-15T14:30:45Z"
 ```
 
 ---
 
-## std.fs
+## std::fs
 
 File system operations.
 
 ```rust
-needs std.fs
+needs std::fs
 ```
 
 ### Reading Files
 
 | Function | Description |
 |----------|-------------|
-| `read_text(path)` | Read entire file as string |
-| `open(path, mode)` | Open file, returns handle |
-| `read(handle)` | Read entire file from handle |
-| `read_line(handle)` | Read one line (null on EOF) |
-| `read_bytes(handle, n)` | Read up to n bytes |
-| `close(handle)` | Close file handle |
+| `read_text(path)` | Read entire file as `Result<string, string>` |
+| `open(path, mode)` | Open file as `Result<int, string>` |
+| `read(handle)` | Read as `Result<string, string>` |
+| `read_line(handle)` | Read as `Result<Option<string>, string>` |
+| `read_bytes(handle, n)` | Read as `Result<int, string>` |
+| `close(handle)` | Close as `Result<unit, string>` |
 
 Modes: `"r"` (read), `"w"` (write), `"a"` (append), `"rw"` (read+write).
 
 ```rust
-// Simple way
-let content = fs.read_text("config.txt")
+let content = match fs::read_text("config.txt") {
+    Ok(value) => value,
+    Err(error) => return error,
+}
 
 // Handle-based way
-let f = fs.open("data.txt", "r")
-while true {
-    let line = fs.read_line(f)
-    if line == null { break }
-    println(line)
+let f = match fs::open("data.txt", "r") {
+    Ok(handle) => handle,
+    Err(error) => return error,
 }
-fs.close(f)
+while true {
+    match fs::read_line(f) {
+        Ok(Some(line)) => println(line),
+        Ok(None) => break,
+        Err(error) => return error,
+    }
+}
+let _ = fs::close(f)
 ```
 
 ### Writing Files
@@ -499,8 +508,8 @@ fs.close(f)
 | `write_line(handle, line)` | Write with newline |
 
 ```rust
-fs.write_text("output.txt", "Hello, file!")
-fs.append_text("log.txt", "New entry\n")
+let _ = fs::write_text("output.txt", "Hello, file!")
+let _ = fs::append_text("log.txt", "New entry\n")
 ```
 
 ### File Information
@@ -542,17 +551,17 @@ fs.append_text("log.txt", "New entry\n")
 `join` is secure against path traversal - it won't let `..` escape the base directory.
 
 ```rust
-fs.join("/home/user", "../../etc/passwd")  // stays within /home/user
+fs::join("/home/user", "../../etc/passwd")  // stays within /home/user
 ```
 
 ---
 
-## std.net
+## std::net
 
 Network operations.
 
 ```rust
-needs std.net
+needs std::net
 ```
 
 ### TCP Client
@@ -568,11 +577,10 @@ needs std.net
 | `close(handle)` | Close connection |
 
 ```rust
-let sock = net.connect("example.com", 80)
-net.send(sock, "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
-let response = net.recv(sock)
+let sock = net::connect("example.com", 80)
+let response = net::recv(sock)
 println(response)
-net.close(sock)
+let _ = net::close(sock)
 ```
 
 ### TCP Server
@@ -583,14 +591,14 @@ net.close(sock)
 | `accept(handle)` | Accept connection, returns new handle |
 
 ```rust
-let server = net.listen("0.0.0.0", 8080)
+let server = net::listen("0.0.0.0", 8080)
 println("Listening on port 8080")
 
 while true {
-    let client = net.accept(server)
-    let request = net.recv_line(client)
-    net.send(client, "HTTP/1.0 200 OK\r\n\r\nHello!")
-    net.close(client)
+    let client = net::accept(server)
+    let request = net::recv_line(client)
+    let _ = net::send(client, "HTTP/1.0 200 OK\r\n\r\nHello!")
+    let _ = net::close(client)
 }
 ```
 
@@ -608,17 +616,17 @@ while true {
 
 ```rust
 // Connectionless (send_to / recv_from)
-let sock = net.udp_bind("0.0.0.0", 0)
-net.udp_send_to(sock, "hello", "127.0.0.1:9000")
-let data = net.udp_recv_from(sock, 1024)
-net.close(sock)
+let sock = net::udp_bind("0.0.0.0", 0)
+let _ = net::udp_send_to(sock, "hello", "127.0.0.1:9000")
+let data = net::udp_recv_from(sock, 1024)
+let _ = net::close(sock)
 
 // Connected mode
-let sock = net.udp_bind("0.0.0.0", 0)
-net.udp_connect(sock, "127.0.0.1", 9000)
-net.udp_send(sock, "hello")
-let data = net.udp_recv(sock, 1024)
-net.close(sock)
+let sock = net::udp_bind("0.0.0.0", 0)
+let _ = net::udp_connect(sock, "127.0.0.1", 9000)
+let _ = net::udp_send(sock, "hello")
+let data = net::udp_recv(sock, 1024)
+let _ = net::close(sock)
 ```
 
 `close`, `set_timeout`, and `local_addr` also work with UDP handles.
@@ -635,37 +643,47 @@ net.close(sock)
 
 ---
 
-## std.sys
+## std::sys
 
 System information.
 
 ```rust
-needs std.sys
+needs std::sys
 ```
 
 | Function | Description |
 |----------|-------------|
 | `platform()` | OS name ("linux", "macos", "windows") |
 | `arch()` | CPU architecture ("x86_64", "aarch64", etc.) |
+| `cwd()` | Current directory as `Result<string, string>` |
+| `set_cwd(path)` | Change directory, returning `Result<unit, string>` |
+| `exec(command)` | Run a shell command, returning `Result<int, string>` |
+| `exec_output(command)` | Capture stdout as `Result<string, string>` |
+| `exec_args(program, args)` | Run without a shell as `Result<int, string>` |
+| `exec_args_output(program, args)` | Capture stdout without a shell as `Result<string, string>` |
 | `random()` | Random float in [0, 1) |
-| `random_int(min, max)` | Random integer in [min, max] |
+| `random_int(min, max)` | Random integer in [min, max] as `Result<int, string>` |
 | `random_seed(seed)` | Restart the VM-local random sequence from a seed |
 | `random_state()` | Return the current random state |
 | `random_set_state(state)` | Restore a previously returned random state |
 
+The command and directory functions return `Err(message)` when the operating
+system operation cannot be started or completed. A nonzero child exit status is
+an `Ok(status)` value, not a runtime exception.
+
 ```rust
-println("Running on {sys.platform()} {sys.arch()}")
+println("Running on {sys::platform()} {sys::arch()}")
 // "Running on linux x86_64"
 ```
 
 ---
 
-## std.bytes
+## std::bytes
 
 Byte-level memory operations for binary data manipulation.
 
 ```rust
-needs std.bytes
+needs std::bytes
 ```
 
 ### Allocation & Buffer Management
@@ -673,7 +691,7 @@ needs std.bytes
 | Function | Description |
 |----------|-------------|
 | `alloc(size)` | Allocate `size` bytes, initialized to zero. Returns handle. |
-| `free(handle)` | Free buffer. `free(null)` is a no-op. |
+| `free(handle)` | Free a buffer handle. |
 | `size(handle)` | Return buffer size in bytes. |
 | `resize(handle, new_size)` | Resize buffer (preserves existing data). |
 | `clone(handle)` | Create a copy of the buffer. |
@@ -750,24 +768,24 @@ All `_be` variants for network byte order:
 ### Example
 
 ```rust
-needs std.bytes
+needs std::bytes
 
 fn parse_network_packet() {
-    let buf = bytes.alloc(16)
+    let buf = bytes::alloc(16)
 
     // Write big-endian header (network byte order)
-    bytes.write_u32_be(buf, 0, 0xDEADBEEF)  // magic
-    bytes.write_u16_be(buf, 4, 1024)         // length
-    bytes.write_i16_be(buf, 6, -100)         // signed field
+    let _ = bytes::write_u32_be(buf, 0, 0xDEADBEEF)  // magic
+    let _ = bytes::write_u16_be(buf, 4, 1024)         // length
+    let _ = bytes::write_i16_be(buf, 6, -100)         // signed field
 
     // String data
-    bytes.write_string(buf, 8, "Meow")
+    let _ = bytes::write_string(buf, 8, "Meow")
 
     // Read back
-    let magic = bytes.read_u32_be(buf, 0)
-    let msg = bytes.decode(buf, 8, 4)
+    let magic = bytes::read_u32_be(buf, 0)
+    let msg = bytes::decode(buf, 8, 4)
 
-    bytes.free(buf)
+    let _ = bytes::free(buf)
 }
 ```
 
