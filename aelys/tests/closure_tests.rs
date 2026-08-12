@@ -261,7 +261,7 @@ fn test_closure_captures_after_block_exit() {
     let result = run_ok(
         r#"
         fn test() {
-            let mut f = null
+            let mut f = fn() { return 0 }
             {
                 let x = 42
                 f = fn() { return x }
@@ -417,7 +417,7 @@ fn test_closure_captures_null() {
     let result = run_ok(
         r#"
         fn test() {
-            let mut val = null
+            let mut val = 0
             let setter = fn(v) { val = v }
             let getter = fn() { return val }
             setter(42)
