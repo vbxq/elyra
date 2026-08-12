@@ -10,7 +10,11 @@ This is the complete reference for Aelys syntax and semantics. If you're new to 
 // single line comment
 ```
 
-Block comments aren't implemented for now, it's planned.
+Block comments may span lines:
+
+```rust
+/* an invariant that spans one line or more */
+```
 
 ### Identifiers
 
@@ -28,8 +32,8 @@ Thing2
 ### Reserved Words
 
 ```
-let mut fn if else while for in step return break continue
-and or not pub needs as from true false null
+let mut fn if else while for in step return break continue match struct
+and or not pub needs as from true false
 ```
 
 ### Literals
@@ -116,12 +120,9 @@ true
 false
 ```
 
-**Null**
-```rust
-null
-```
-
-Represents absence of value. Functions without explicit return give `null`.
+There is no null value in the Aelys surface language. Use `Option<T>` for absence
+and `Result<T, E>` for recoverable failure. The old `null` spelling is rejected
+with a diagnostic that names these replacements.
 
 ## Types
 
@@ -131,7 +132,10 @@ Represents absence of value. Functions without explicit return give `null`.
 | `float` | Floating point | 64-bit |
 | `string` | UTF-8 text | heap allocated |
 | `bool` | Boolean | 1 bit (packed) |
-| `null` | Null value | - |
+| `unit` | No meaningful value | immediate |
+| `Option<T>` | A value or absence | heap allocated when needed |
+| `Result<T, E>` | Success or failure | heap allocated when needed |
+| `Error` | Structured error value | heap allocated when needed |
 | `function` | Function/closure | heap allocated |
 | `Array<T>` | Fixed-size array | heap allocated |
 | `Vec<T>` | Growable vector | heap allocated |
@@ -169,7 +173,10 @@ let y = x + 10
 
 The compiler knows `x` is `int` (from the literal) and `y` is `int` (from the `+` operation).
 
-Gradual typing means missing type information doesn't cause errors. If the compiler can't determine a type, it treats the value as dynamic and inserts runtime checks. This gives you flexibility but less safety.
+Inference supplies types for ordinary expressions. Values that cross an untyped
+native or host boundary may remain `dynamic`, but `dynamic` is not a substitute for
+a concrete annotation: it is rejected wherever an operation requires a known type.
+Write `dynamic` explicitly only at a deliberate host boundary.
 
 ## Variables
 
@@ -289,7 +296,8 @@ fn foo() -> int {
 }
 ```
 
-Functions without a return type annotation return `null` if no value is returned.
+Functions without a returned value have type `unit`. A function with a concrete
+return type must return that type on every reachable path.
 
 ### Lambdas (Anonymous Functions)
 
@@ -435,7 +443,7 @@ Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same f
 9. `+`, `-`
 10. `*`, `/`, `%`
 11. Unary `-`, `~`, `not`
-12. Call `()`, member access `.`
+12. Call `()`, value member access `.`, module and associated paths `::`
 
 When in doubt, use parentheses
 
@@ -556,31 +564,31 @@ Work in `while` loops too.
 The `needs` keyword imports modules:
 
 ```rust
-needs std.fs                     // whole module
-needs std.math as m              // aliased
-needs sqrt, pow from std.math    // multiple functions
+needs std::fs                     // whole module
+needs std::math as m              // aliased
+needs sqrt, pow from std::math    // multiple functions
 ```
 
 Safe stdlib modules (io, math, string, convert, time) are auto-registered, so you can call their functions directly without `needs`. You can still use `needs` with them for aliasing or selective imports if you want:
 
 ```rust
-needs std.math as m              // now use m.sqrt() instead of math.sqrt()
-needs sqrt, pow from std.math    // import specific functions
+needs std::math as m              // now use m::sqrt() instead of math::sqrt()
+needs sqrt, pow from std::math    // import specific functions
 ```
 
-With an alias (`needs std.math as m`), only the aliased form works: `m.sqrt()`.
+With an alias (`needs std::math as m`), only the aliased form works: `m::sqrt()`.
 
-After `needs sqrt from std.math`, you call `sqrt()` directly without the module prefix.
+After `needs sqrt from std::math`, you call `sqrt()` directly without the module prefix.
 
 ### Standard Library Modules
 
 The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement:
 
-- `std.io` - console I/O
-- `std.math` - math functions and constants
-- `std.string` - string manipulation
-- `std.convert` - type conversions
-- `std.time` - time and timers
+- `std::io` - console I/O
+- `std::math` - math functions and constants
+- `std::string` - string manipulation
+- `std::convert` - type conversions
+- `std::time` - time and timers
 
 
 See [Standard Library](standard-library.md) for full documentation.
@@ -600,7 +608,7 @@ project/
 From `main.aelys`:
 ```rust
 needs utils              // imports utils.aelys
-needs lib.helper         // imports lib/helper.aelys
+needs lib::helper        // imports lib/helper.aelys
 ```
 
 Top-level definitions in a file become the module's exports.
@@ -777,11 +785,10 @@ Instead of writing `Array[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]`, you can just specify t
 ```rust
 let zeros = Array<Int>(10)      // 10 zeros
 let floats = Array<Float>(5)    // 5 zeros (0.0)
-let nulls = Array(8)            // 8 nulls (untyped)
 let also = [; 10]               // shorthand for Array(10)
 ```
 
-Typed arrays are initialized with the type's default value (0 for int, 0.0 for float, false for bool). Untyped arrays are filled with `null`.
+Typed arrays are initialized with the type's default value (0 for int, 0.0 for float, false for bool). An element type is required when an empty array has no inference source.
 
 **Basic operations:**
 
@@ -934,7 +941,8 @@ for c in "hello" {
 }
 ```
 
-Iterator methods like `arr.iter()`, `arr.map()`, `arr.filter()` are coming later.
+Iterator methods and slicing are specified with the collection overhaul; code using
+them must target the delivered compiler version.
 
 ## Compiler Warnings
 
@@ -994,23 +1002,37 @@ The `-Werror` flag is useful in CI to catch issues early
 
 ## Error Handling
 
-Currently there's no try/catch mechanism. Functions that can fail return `null` on failure:
+Errors are values. A fallible function returns `Result<T, E>` and an optional value
+returns `Option<T>`:
 
 ```rust
-let result = convert.parse_int("not a number")
-if result == null {
-    println("parsing failed")
+fn parse() -> Result<int, Error> {
+    let value = convert::parse_int("not a number")?
+    Ok(value)
+}
+
+match parse() {
+    Ok(value) => value,
+    Err(error) => 0,
 }
 ```
 
-Standard library functions follow this pattern. A proper error handling system is planned, don't worry !
+`match` on `Option` and `Result` is exhaustive. Omitting a variant is a compile
+error. A named `Option` or `Result` cannot be silently discarded: use it, return it,
+match it, call a consuming method, or write `let _ = expression` explicitly.
+
+The `?` operator propagates `Err` or `None` from a compatible enclosing return type.
+The available consuming methods include `unwrap`, `expect`, `unwrap_or`,
+`unwrap_or_else`, `ok`, `err`, `map`, `map_err`, `and_then`, and `or_else`.
+There is no null literal or null-inspection builtin in the surface language.
+The closed built-in `Error` family has one data-carrying constructor,
+`Error::Message(string)`, used by the string-to-`Error` `?` conversion.
 
 ## Future Plans
 
 Things I'm considering but haven't implemented yet:
 
-- `match` expressions
-- `struct` types
+- `struct` methods and associated functions
 - `enum` types
+- iterator methods on arrays and vectors
 - Async/await
-- Iterator methods on arrays
