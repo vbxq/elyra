@@ -6,7 +6,7 @@ use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::Optimizer;
 use aelys_runtime::VM;
-use aelys_sema::TypeInference;
+use aelys_sema::{InferType, TypeInference};
 use aelys_syntax::{Source, StmtKind};
 use std::path::Path;
 use std::sync::Arc;
@@ -43,6 +43,36 @@ impl ModuleLoader {
             .last()
             .cloned()
             .expect("needs.path validated as non-empty");
+        let mut export_signatures = std::collections::HashMap::new();
+        for stmt in &stmts {
+            let StmtKind::Function(func) = &stmt.kind else {
+                continue;
+            };
+            if !func.is_pub {
+                continue;
+            }
+            let signature = InferType::Function {
+                params: func
+                    .params
+                    .iter()
+                    .map(|param| {
+                        param
+                            .type_annotation
+                            .as_ref()
+                            .map(InferType::from_annotation)
+                            .unwrap_or(InferType::Dynamic)
+                    })
+                    .collect(),
+                ret: Box::new(
+                    func.return_type
+                        .as_ref()
+                        .map(InferType::from_annotation)
+                        .unwrap_or(InferType::Dynamic),
+                ),
+            };
+            export_signatures.insert(func.name.clone(), signature.clone());
+            export_signatures.insert(format!("{}::{}", module_name, func.name), signature);
+        }
         let module_info = ModuleInfo {
             name: module_name,
             path: module_path_str.to_string(),
@@ -50,6 +80,7 @@ impl ModuleLoader {
             version: None,
             exports: exports.clone(),
             native_functions: Vec::new(),
+            native_signatures: export_signatures,
         };
         self.loaded_modules
             .insert(module_path_str.to_string(), module_info);
@@ -68,6 +99,7 @@ impl ModuleLoader {
         let mut module_aliases = std::collections::HashSet::new();
         let mut known_globals = std::collections::HashSet::new();
         let mut known_native_globals = std::collections::HashSet::new();
+        let mut native_signatures = std::collections::HashMap::new();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -87,12 +119,21 @@ impl ModuleLoader {
                     for native_name in &module_info.native_functions {
                         known_native_globals.insert(native_name.clone());
                     }
+                    native_signatures.extend(module_info.native_signatures.clone());
 
                     match &nested_needs.kind {
                         aelys_syntax::ImportKind::Module { alias: None }
                         | aelys_syntax::ImportKind::Wildcard => {
                             for name in module_info.exports.keys() {
+                                let module_alias = self.get_module_alias(nested_needs);
+                                known_globals.insert(format!("{}::{}", module_alias, name));
                                 known_globals.insert(name.clone());
+                                if let Some(signature) = module_info
+                                    .native_signatures
+                                    .get(&format!("{}::{}", module_info.name, name))
+                                {
+                                    native_signatures.insert(name.clone(), signature.clone());
+                                }
                             }
                         }
                         aelys_syntax::ImportKind::Module { alias: Some(_) } => {
@@ -100,6 +141,7 @@ impl ModuleLoader {
                             for name in module_info.exports.keys() {
                                 let alias_qualified = format!("{}::{}", module_alias, name);
                                 let internal_qualified = format!("{}::{}", module_info.name, name);
+                                known_globals.insert(alias_qualified.clone());
                                 if module_info.native_functions.contains(&alias_qualified)
                                     || module_info.native_functions.contains(&internal_qualified)
                                 {
@@ -121,22 +163,33 @@ impl ModuleLoader {
             .filter(|s| !matches!(s.kind, StmtKind::Needs(_)))
             .collect();
 
-        let typed_program = TypeInference::infer_program(main_stmts, module_source.clone())
-            .map_err(|errors| {
-                if let Some(err) = errors.first() {
-                    AelysError::Compile(CompileError::new(
-                        CompileErrorKind::TypeInferenceError(format!("{}", err)),
-                        err.span,
-                        module_source.clone(),
-                    ))
-                } else {
-                    AelysError::Compile(CompileError::new(
-                        CompileErrorKind::TypeInferenceError("Unknown type error".to_string()),
-                        aelys_syntax::Span::dummy(),
-                        module_source.clone(),
-                    ))
-                }
-            })?;
+        let typed_program = TypeInference::infer_program_full_with_native_signatures(
+            main_stmts,
+            module_source.clone(),
+            module_aliases.clone(),
+            known_globals.clone(),
+            known_native_globals.clone(),
+            native_signatures,
+        )
+        .map_err(|errors| {
+            if let Some(err) = errors.first() {
+                AelysError::Compile(CompileError::new(
+                    CompileErrorKind::NamedTypeError {
+                        code: err.diagnostic_code(),
+                        message: format!("{}", err),
+                    },
+                    err.span,
+                    module_source.clone(),
+                ))
+            } else {
+                AelysError::Compile(CompileError::new(
+                    CompileErrorKind::TypeInferenceError("Unknown type error".to_string()),
+                    aelys_syntax::Span::dummy(),
+                    module_source.clone(),
+                ))
+            }
+        })?
+        .program;
 
         let mut optimizer = Optimizer::new(aelys_opt::OptimizationLevel::Standard);
         let typed_program = optimizer.optimize(typed_program);
