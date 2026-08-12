@@ -15,7 +15,7 @@ if count >= 0 { 1 } else { 0 }
 fn sys_arg_negative_index() {
     let code = r#"
 needs std::sys
-let a = sys::arg(-1)
+let _ = sys::arg(-1)
 42
 "#;
     assert_aelys_int(code, 42);
@@ -25,7 +25,7 @@ let a = sys::arg(-1)
 fn sys_arg_out_of_bounds() {
     let code = r#"
 needs std::sys
-let a = sys::arg(9999)
+let _ = sys::arg(9999)
 42
 "#;
     assert_aelys_int(code, 42);
@@ -45,7 +45,7 @@ let args = sys::args()
 fn sys_env_nonexistent() {
     let code = r#"
 needs std::sys
-let val = sys::env("NONEXISTENT_VAR_12345")
+let _ = sys::env("NONEXISTENT_VAR_12345")
 42
 "#;
     assert_aelys_int(code, 42);
@@ -56,7 +56,7 @@ fn sys_set_and_get_env() {
     let code = r#"
 needs std::sys
 sys::set_env("AELYS_TEST_VAR", "test_value")
-let val = sys::env("AELYS_TEST_VAR")
+let _ = sys::env("AELYS_TEST_VAR")
 sys::unset_env("AELYS_TEST_VAR")
 42
 "#;
@@ -97,26 +97,41 @@ if p > 0 { 1 } else { 0 }
 fn sys_cwd_returns_path() {
     let code = r#"
 needs std::sys
-let cwd = sys::cwd()
+let _ = sys::cwd()
 42
 "#;
     assert_aelys_int(code, 42);
 }
 
 #[test]
-fn sys_set_cwd_invalid() {
+fn sys_set_cwd_failure_is_a_result() {
     let code = r#"
 needs std::sys
-sys::set_cwd("/nonexistent/path/nowhere")
+match sys::set_cwd("/nonexistent/path/nowhere") {
+    Ok(_) => 0,
+    Err(_) => 1,
+}
 "#;
-    assert_aelys_error_contains(code, "cannot");
+    assert_aelys_int(code, 1);
+}
+
+#[test]
+fn sys_exec_args_failure_is_a_result() {
+    let code = r#"
+needs std::sys
+match sys::exec_args("/definitely/missing/aelys-command", "") {
+    Ok(_) => 0,
+    Err(_) => 1,
+}
+"#;
+    assert_aelys_int(code, 1);
 }
 
 #[test]
 fn sys_home_returns_path() {
     let code = r#"
 needs std::sys
-let h = sys::home()
+let _ = sys::home()
 42
 "#;
     assert_aelys_int(code, 42);
@@ -187,7 +202,7 @@ if r >= 0.0 and r < 1.0 { 1 } else { 0 }
 fn sys_random_int_basic() {
     let code = r#"
 needs std::sys
-let r = sys::random_int(1, 10)
+let r = sys::random_int(1, 10).unwrap()
 if r >= 1 and r <= 10 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
@@ -197,17 +212,19 @@ if r >= 1 and r <= 10 { 1 } else { 0 }
 fn sys_random_int_min_greater_than_max() {
     let code = r#"
 needs std::sys
-sys::random_int(10, 5)
+match sys::random_int(10, 5) {
+    Ok(_) => 0,
+    Err(_) => 1,
+}
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("min") || err.contains("max"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
 fn sys_random_int_same_bounds() {
     let code = r#"
 needs std::sys
-let r = sys::random_int(5, 5)
+let r = sys::random_int(5, 5).unwrap()
 if r == 5 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
@@ -221,11 +238,11 @@ sys::random_seed(123456)
 sys::random()
 randint(-1000000, 1000000)
 let state = sys::random_state()
-let first = sys::random_int(-1000000, 1000000)
+let first = sys::random_int(-1000000, 1000000).unwrap()
 let second = randint(-1000000, 1000000)
 let third = sys::random()
 sys::random_set_state(state)
-let replay_first = sys::random_int(-1000000, 1000000)
+let replay_first = sys::random_int(-1000000, 1000000).unwrap()
 let replay_second = randint(-1000000, 1000000)
 let replay_third = sys::random()
 if first == replay_first and second == replay_second and third == replay_third { 1 } else { 0 }
@@ -238,10 +255,10 @@ fn random_seed_restarts_sequence() {
     let code = r#"
 needs std::sys
 sys::random_seed(-42)
-let first = sys::random_int(-1000, 1000)
+let first = sys::random_int(-1000, 1000).unwrap()
 let second = randint(-1000, 1000)
 sys::random_seed(-42)
-if first == sys::random_int(-1000, 1000) and second == randint(-1000, 1000) { 1 } else { 0 }
+if first == sys::random_int(-1000, 1000).unwrap() and second == randint(-1000, 1000) { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -250,7 +267,7 @@ if first == sys::random_int(-1000, 1000) and second == randint(-1000, 1000) { 1 
 fn sys_script_path_returns_value() {
     let code = r#"
 needs std::sys
-let p = sys::script_path()
+let _ = sys::script_path()
 42
 "#;
     assert_aelys_int(code, 42);
@@ -260,7 +277,7 @@ let p = sys::script_path()
 fn sys_script_dir_returns_value() {
     let code = r#"
 needs std::sys
-let d = sys::script_dir()
+let _ = sys::script_dir()
 42
 "#;
     assert_aelys_int(code, 42);
@@ -272,8 +289,8 @@ fn sys_multiple_env_operations() {
 needs std::sys
 sys::set_env("TEST1", "val1")
 sys::set_env("TEST2", "val2")
-let v1 = sys::env("TEST1")
-let v2 = sys::env("TEST2")
+let _ = sys::env("TEST1")
+let _ = sys::env("TEST2")
 sys::unset_env("TEST1")
 sys::unset_env("TEST2")
 42
