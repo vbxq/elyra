@@ -264,17 +264,9 @@ fn test_booleans() {
 }
 
 #[test]
-fn test_null() {
-    let source = "null";
-    let result_direct = run_source(source);
-
-    let func = compile_source(source);
-    let bytes = serialize(&func).unwrap();
-    let loaded_func = deserialize(&bytes).expect("Deserialize failed");
-    let result_roundtrip = run_function(loaded_func);
-
-    assert!(result_direct.is_null());
-    assert!(result_roundtrip.is_null());
+fn test_null_literal_is_rejected() {
+    let error = aelys::run("null", "<test>").expect_err("null is not surface syntax");
+    assert!(error.to_string().contains("null is not part of Aelys"));
 }
 
 #[test]
