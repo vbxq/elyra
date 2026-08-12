@@ -20,6 +20,10 @@ impl Compiler {
             return self.compile_typed_call_fallback(callee, args, dest, span);
         }
 
+        if self.compile_typed_sum_constructor(callee, args, dest, span)? {
+            return Ok(());
+        }
+
         // Handle format string with placeholders: func("x={}", x) -> func("x=" + __tostring(x))
         if let Some((fmt_parts, placeholder_count)) = Self::get_typed_fmt_placeholders(args)
             && placeholder_count > 0
@@ -41,12 +45,21 @@ impl Compiler {
             separator,
         } = &callee.kind
         {
+            if self.compile_typed_sum_method_call(object, member, args, dest, span)? {
+                return Ok(());
+            }
+
             // Handle Array methods
-            if let InferType::Array(_) = &object.ty
-                && member == "len"
-                && args.is_empty()
-            {
-                return self.compile_array_len(object, dest, span);
+            if let InferType::Array(_) = &object.ty {
+                match member.as_str() {
+                    "len" if args.is_empty() => {
+                        return self.compile_array_len(object, dest, span);
+                    }
+                    "get" if args.len() == 1 => {
+                        return self.compile_typed_collection_get(object, &args[0], dest, span);
+                    }
+                    _ => {}
+                }
             }
 
             // Handle Vec methods
@@ -60,6 +73,9 @@ impl Compiler {
                     }
                     "pop" if args.is_empty() => {
                         return self.compile_vec_pop(object, inner, dest, span);
+                    }
+                    "get" if args.len() == 1 => {
+                        return self.compile_typed_collection_get(object, &args[0], dest, span);
                     }
                     "capacity" if args.is_empty() => {
                         return self.compile_vec_capacity(object, dest, span);
