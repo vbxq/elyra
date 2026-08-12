@@ -1,4 +1,6 @@
-use crate::stdlib::helpers::{get_handle, get_int, get_string, make_string};
+use crate::stdlib::helpers::{
+    get_handle, get_int, get_string, make_string, option_some, result_err, result_ok,
+};
 use crate::stdlib::{
     Resource, StdModuleExports, TcpStreamResource, UdpSocketResource, register_native,
 };
@@ -39,7 +41,7 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("shutdown", 2, native_shutdown);
     reg_fn!("udp_bind", 2, native_udp_bind);
     reg_fn!("udp_send_to", 3, native_udp_send_to);
-    reg_fn!("udp_recv_from", 3, native_udp_recv_from);
+    reg_fn!("udp_recv_from", 2, native_udp_recv_from);
     reg_fn!("udp_connect", 3, native_udp_connect);
     reg_fn!("udp_send", 2, native_udp_send);
     reg_fn!("udp_recv", 2, native_udp_recv);
@@ -58,6 +60,14 @@ fn net_error(vm: &VM, op: &'static str, msg: String) -> RuntimeError {
         expected: "valid network operation",
         got: msg,
     })
+}
+
+fn net_fail(vm: &mut VM, op: &str, msg: impl AsRef<str>) -> Result<Value, RuntimeError> {
+    result_err(vm, &format!("{op}: {}", msg.as_ref()))
+}
+
+fn net_ok(vm: &mut VM) -> Result<Value, RuntimeError> {
+    result_ok(vm, Value::unit())
 }
 
 /// connect(host, port) - Connect to a TCP server.
@@ -79,17 +89,17 @@ fn native_connect(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     // Resolve address
     let addrs: Vec<_> = match addr.to_socket_addrs() {
         Ok(iter) => iter.collect(),
-        Err(_) => return Ok(Value::null()),
+        Err(_) => return Ok(Value::none()),
     };
 
     if addrs.is_empty() {
-        return Ok(Value::null());
+        return Ok(Value::none());
     }
 
     // Try to connect with timeout
     let stream = match TcpStream::connect_timeout(&addrs[0], Duration::from_secs(30)) {
         Ok(s) => s,
-        Err(_) => return Ok(Value::null()),
+        Err(_) => return Ok(Value::none()),
     };
 
     let resource = TcpStreamResource {
@@ -98,7 +108,7 @@ fn native_connect(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     };
 
     let handle = vm.store_resource(Resource::TcpStream(resource));
-    Ok(Value::int(handle as i64))
+    option_some(vm, Value::int(handle as i64))
 }
 
 /// udp_bind(host,port) Bind an UDP socket
@@ -118,14 +128,14 @@ fn native_udp_bind(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
     let socket = match UdpSocket::bind(&addr) {
         Ok(s) => s,
-        Err(_) => return Ok(Value::null()),
+        Err(_) => return Ok(Value::none()),
     };
 
     let handle = vm.store_resource(Resource::UdpSocket(UdpSocketResource {
         socket,
         timeout_ms: None,
     }));
-    Ok(Value::int(handle as i64))
+    option_some(vm, Value::int(handle as i64))
 }
 
 /// udp_send_to(handle, data, addr) - send a data to host:port
@@ -136,13 +146,17 @@ fn native_udp_send_to(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     let data = get_string(vm, args[1], "net.udp_send_to")?.to_string();
     let addr = get_string(vm, args[2], "net.udp_send_to")?.to_string();
 
-    if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
+    let sent = if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
         match res.socket.send_to(data.as_bytes(), &addr) {
-            Ok(n) => Ok(Value::int(n as i64)),
-            Err(_) => Ok(Value::null()),
+            Ok(n) => Some(n as i64),
+            Err(_) => None,
         }
     } else {
-        Ok(Value::null())
+        None
+    };
+    match sent {
+        Some(value) => option_some(vm, Value::int(value)),
+        None => Ok(Value::none()),
     }
 }
 
@@ -171,18 +185,24 @@ fn native_udp_recv_from(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
         ));
     }
 
-    if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
+    let received = if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
         let mut buffer = vec![0u8; max as usize];
         match res.socket.recv_from(&mut buffer) {
             Ok((n, _addr)) => {
                 buffer.truncate(n);
-                let s = String::from_utf8_lossy(&buffer);
-                Ok(make_string(vm, &s)?)
+                Some(String::from_utf8_lossy(&buffer).into_owned())
             }
-            Err(_) => Ok(Value::null()),
+            Err(_) => None,
         }
     } else {
-        Ok(Value::null())
+        None
+    };
+    match received {
+        Some(value) => {
+            let value = make_string(vm, &value)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -193,22 +213,23 @@ fn native_udp_connect(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     let port = get_int(vm, args[2], "net.udp_connect")?;
 
     if !(0..=65535).contains(&port) {
-        return Err(net_error(
+        return net_fail(
             vm,
             "net.udp_connect",
             format!("invalid port number: {}", port),
-        ));
+        );
     }
 
     let addr = format!("{}:{}", host, port);
 
-    if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
-        match res.socket.connect(&addr) {
-            Ok(_) => Ok(Value::null()),
-            Err(_) => Ok(Value::null()),
-        }
-    } else {
-        Ok(Value::null())
+    let result = match vm.get_resource(handle) {
+        Some(Resource::UdpSocket(res)) => res.socket.connect(&addr).map_err(|e| e.to_string()),
+        _ => Err("invalid UDP socket handle".to_string()),
+    };
+
+    match result {
+        Ok(()) => net_ok(vm),
+        Err(error) => net_fail(vm, "net.udp_connect", error),
     }
 }
 
@@ -219,13 +240,17 @@ fn native_udp_send(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "net.udp_send")?;
     let data = get_string(vm, args[1], "net.udp_send")?.to_string();
 
-    if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
+    let sent = if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
         match res.socket.send(data.as_bytes()) {
-            Ok(n) => Ok(Value::int(n as i64)),
-            Err(_) => Ok(Value::null()),
+            Ok(n) => Some(n as i64),
+            Err(_) => None,
         }
     } else {
-        Ok(Value::null())
+        None
+    };
+    match sent {
+        Some(value) => option_some(vm, Value::int(value)),
+        None => Ok(Value::none()),
     }
 }
 
@@ -254,18 +279,24 @@ fn native_udp_recv(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     }
 
-    if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
+    let received = if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
         let mut buffer = vec![0u8; max as usize];
         match res.socket.recv(&mut buffer) {
             Ok(n) => {
                 buffer.truncate(n);
-                let s = String::from_utf8_lossy(&buffer);
-                Ok(make_string(vm, &s)?)
+                Some(String::from_utf8_lossy(&buffer).into_owned())
             }
-            Err(_) => Ok(Value::null()),
+            Err(_) => None,
         }
     } else {
-        Ok(Value::null())
+        None
+    };
+    match received {
+        Some(value) => {
+            let value = make_string(vm, &value)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -274,11 +305,16 @@ fn native_udp_set_broadcast(vm: &mut VM, args: &[Value]) -> Result<Value, Runtim
     let handle = get_handle(vm, args[0], "net.udp_set_broadcast")?;
     let enabled = args[1].is_truthy();
 
-    if let Some(Resource::UdpSocket(res)) = vm.get_resource(handle) {
-        let _ = res.socket.set_broadcast(enabled);
-        Ok(Value::null())
-    } else {
-        Ok(Value::null())
+    let result = match vm.get_resource(handle) {
+        Some(Resource::UdpSocket(res)) => {
+            res.socket.set_broadcast(enabled).map_err(|e| e.to_string())
+        }
+        _ => Err("invalid UDP socket handle".to_string()),
+    };
+
+    match result {
+        Ok(()) => net_ok(vm),
+        Err(error) => net_fail(vm, "net.udp_set_broadcast", error),
     }
 }
 // connect_timeout(host, port, ms) - Connect to a TCP server with a custom timeout in milliseconds.
@@ -308,17 +344,17 @@ fn native_connect_timeout(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
 
     let addrs: Vec<_> = match addr.to_socket_addrs() {
         Ok(iter) => iter.collect(),
-        Err(_) => return Ok(Value::null()),
+        Err(_) => return Ok(Value::none()),
     };
 
     if addrs.is_empty() {
-        return Ok(Value::null());
+        return Ok(Value::none());
     }
 
     let stream =
         match TcpStream::connect_timeout(&addrs[0], Duration::from_millis(timeout_ms as u64)) {
             Ok(s) => s,
-            Err(_) => return Ok(Value::null()),
+            Err(_) => return Ok(Value::none()),
         };
 
     let resource = TcpStreamResource {
@@ -327,7 +363,7 @@ fn native_connect_timeout(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
     };
 
     let handle = vm.store_resource(Resource::TcpStream(resource));
-    Ok(Value::int(handle as i64))
+    option_some(vm, Value::int(handle as i64))
 }
 
 /// send(handle, data) - Send data over connection.
@@ -336,16 +372,20 @@ fn native_send(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "net.send")?;
     let data = get_string(vm, args[1], "net.send")?.to_string();
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
+    let sent = if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
         match res.stream.write_all(data.as_bytes()) {
             Ok(_) => {
                 let _ = res.stream.flush();
-                Ok(Value::int(data.len() as i64))
+                Some(data.len() as i64)
             }
-            Err(_) => Ok(Value::null()),
+            Err(_) => None,
         }
     } else {
-        Ok(Value::null())
+        None
+    };
+    match sent {
+        Some(value) => option_some(vm, Value::int(value)),
+        None => Ok(Value::none()),
     }
 }
 
@@ -354,7 +394,7 @@ fn native_send(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_recv(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "net.recv")?;
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
+    let received = if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
         let mut buffer = vec![0u8; 65536];
 
         if res.timeout_ms.is_none() {
@@ -386,10 +426,16 @@ fn native_recv(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             let _ = res.stream.set_read_timeout(None);
         }
 
-        let s = String::from_utf8_lossy(&all_data);
-        Ok(make_string(vm, &s)?)
+        Some(String::from_utf8_lossy(&all_data).into_owned())
     } else {
-        Ok(Value::null())
+        None
+    };
+    match received {
+        Some(value) => {
+            let value = make_string(vm, &value)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -417,18 +463,24 @@ fn native_recv_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         ));
     }
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
+    let received = if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
         let mut buffer = vec![0u8; max as usize];
         match res.stream.read(&mut buffer) {
             Ok(n) => {
                 buffer.truncate(n);
-                let s = String::from_utf8_lossy(&buffer);
-                Ok(make_string(vm, &s)?)
+                Some(String::from_utf8_lossy(&buffer).into_owned())
             }
-            Err(_) => Ok(Value::null()),
+            Err(_) => None,
         }
     } else {
-        Ok(Value::null())
+        None
+    };
+    match received {
+        Some(value) => {
+            let value = make_string(vm, &value)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -436,7 +488,7 @@ fn native_recv_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
 fn native_recv_line(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "net.recv_line")?;
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
+    let received = if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
 
@@ -457,10 +509,16 @@ fn native_recv_line(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
             line.pop();
         }
 
-        let s = String::from_utf8_lossy(&line);
-        Ok(make_string(vm, &s)?)
+        Some(String::from_utf8_lossy(&line).into_owned())
     } else {
-        Ok(Value::null())
+        None
+    };
+    match received {
+        Some(value) => {
+            let value = make_string(vm, &value)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -469,15 +527,12 @@ fn native_close(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "net.close")?;
 
     match vm.take_resource(handle) {
-        Some(Resource::TcpStream(res)) => {
-            let _ = res.stream.shutdown(Shutdown::Both);
-            Ok(Value::null())
-        }
-        Some(Resource::TcpListener(_)) => {
-            // Listener is closed when dropped
-            Ok(Value::null())
-        }
-        _ => Ok(Value::null()),
+        Some(Resource::TcpStream(res)) => match res.stream.shutdown(Shutdown::Both) {
+            Ok(()) => net_ok(vm),
+            Err(error) => net_fail(vm, "net.close", error.to_string()),
+        },
+        Some(Resource::TcpListener(_)) | Some(Resource::UdpSocket(_)) => net_ok(vm),
+        _ => net_fail(vm, "net.close", "invalid network handle"),
     }
 }
 
@@ -498,11 +553,11 @@ fn native_listen(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let addr = format!("{}:{}", host, port);
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
-        Err(_) => return Ok(Value::null()),
+        Err(_) => return Ok(Value::none()),
     };
 
     let handle = vm.store_resource(Resource::TcpListener(listener));
-    Ok(Value::int(handle as i64))
+    option_some(vm, Value::int(handle as i64))
 }
 
 /// accept(handle) - Accept an incoming connection.
@@ -514,10 +569,10 @@ fn native_accept(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let stream = if let Some(Resource::TcpListener(listener)) = vm.get_resource(handle) {
         match listener.accept() {
             Ok(s) => s,
-            Err(_) => return Ok(Value::null()),
+            Err(_) => return Ok(Value::none()),
         }
     } else {
-        return Ok(Value::null());
+        return Ok(Value::none());
     };
 
     let resource = TcpStreamResource {
@@ -526,7 +581,7 @@ fn native_accept(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     };
 
     let new_handle = vm.store_resource(Resource::TcpStream(resource));
-    Ok(Value::int(new_handle as i64))
+    option_some(vm, Value::int(new_handle as i64))
 }
 
 /// set_timeout(handle, ms) - Set read/write timeout in milliseconds.
@@ -543,24 +598,37 @@ fn native_set_timeout(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
         ));
     }
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
-        let timeout = if ms == 0 {
-            None
-        } else {
-            Some(Duration::from_millis(ms as u64))
-        };
-
-        if res.stream.set_read_timeout(timeout).is_err() {
-            return Ok(Value::null());
-        }
-        if res.stream.set_write_timeout(timeout).is_err() {
-            return Ok(Value::null());
-        }
-        res.timeout_ms = if ms == 0 { None } else { Some(ms as u64) };
-
-        Ok(Value::null())
+    let timeout = if ms == 0 {
+        None
     } else {
-        Ok(Value::null())
+        Some(Duration::from_millis(ms as u64))
+    };
+    let result = match vm.get_resource_mut(handle) {
+        Some(Resource::TcpStream(res)) => {
+            let result = res
+                .stream
+                .set_read_timeout(timeout)
+                .and_then(|()| res.stream.set_write_timeout(timeout));
+            if result.is_ok() {
+                res.timeout_ms = if ms == 0 { None } else { Some(ms as u64) };
+            }
+            result.map_err(|error| error.to_string())
+        }
+        Some(Resource::UdpSocket(res)) => {
+            let result = res
+                .socket
+                .set_read_timeout(timeout)
+                .and_then(|()| res.socket.set_write_timeout(timeout));
+            if result.is_ok() {
+                res.timeout_ms = if ms == 0 { None } else { Some(ms as u64) };
+            }
+            result.map_err(|error| error.to_string())
+        }
+        _ => Err("invalid network handle".to_string()),
+    };
+    match result {
+        Ok(()) => net_ok(vm),
+        Err(error) => net_fail(vm, "net.set_timeout", error),
     }
 }
 
@@ -569,11 +637,16 @@ fn native_set_nodelay(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     let handle = get_handle(vm, args[0], "net.set_nodelay")?;
     let enabled = args[1].is_truthy();
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource_mut(handle) {
-        let _ = res.stream.set_nodelay(enabled);
-        Ok(Value::null())
-    } else {
-        Ok(Value::null())
+    let result = match vm.get_resource_mut(handle) {
+        Some(Resource::TcpStream(res)) => res.stream.set_nodelay(enabled),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "invalid network handle",
+        )),
+    };
+    match result {
+        Ok(()) => net_ok(vm),
+        Err(error) => net_fail(vm, "net.set_nodelay", error.to_string()),
     }
 }
 
@@ -585,12 +658,15 @@ fn native_local_addr(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         Some(Resource::TcpStream(res)) => res.stream.local_addr(),
         Some(Resource::TcpListener(listener)) => listener.local_addr(),
         Some(Resource::UdpSocket(res)) => res.socket.local_addr(),
-        _ => return Ok(Value::null()),
+        _ => return Ok(Value::none()),
     };
 
     match addr {
-        Ok(a) => Ok(make_string(vm, &a.to_string())?),
-        Err(_) => Ok(Value::null()),
+        Ok(a) => {
+            let value = make_string(vm, &a.to_string())?;
+            option_some(vm, value)
+        }
+        Err(_) => Ok(Value::none()),
     }
 }
 
@@ -598,13 +674,17 @@ fn native_local_addr(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
 fn native_peer_addr(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "net.peer_addr")?;
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource(handle) {
-        match res.stream.peer_addr() {
-            Ok(a) => Ok(make_string(vm, &a.to_string())?),
-            Err(_) => Ok(Value::null()),
+    let addr = match vm.get_resource(handle) {
+        Some(Resource::TcpStream(res)) => res.stream.peer_addr(),
+        _ => return Ok(Value::none()),
+    };
+
+    match addr {
+        Ok(a) => {
+            let value = make_string(vm, &a.to_string())?;
+            option_some(vm, value)
         }
-    } else {
-        Ok(Value::null())
+        Err(_) => Ok(Value::none()),
     }
 }
 
@@ -619,21 +699,26 @@ fn native_shutdown(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         "write" => Shutdown::Write,
         "both" => Shutdown::Both,
         _ => {
-            return Err(net_error(
+            return net_fail(
                 vm,
                 "net.shutdown",
                 format!(
                     "invalid shutdown mode '{}', use 'read', 'write', or 'both'",
                     how_str
                 ),
-            ));
+            );
         }
     };
 
-    if let Some(Resource::TcpStream(res)) = vm.get_resource(handle) {
-        let _ = res.stream.shutdown(how);
-        Ok(Value::null())
-    } else {
-        Ok(Value::null())
+    let result = match vm.get_resource(handle) {
+        Some(Resource::TcpStream(res)) => res.stream.shutdown(how),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "invalid network handle",
+        )),
+    };
+    match result {
+        Ok(()) => net_ok(vm),
+        Err(error) => net_fail(vm, "net.shutdown", error.to_string()),
     }
 }
