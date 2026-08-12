@@ -10,7 +10,7 @@ impl Compiler {
             StmtKind::Block(stmts) => {
                 self.begin_scope();
                 if stmts.is_empty() {
-                    self.emit_a(OpCode::LoadNull, dest, 0, 0, branch.span);
+                    self.emit_a(OpCode::LoadUnit, dest, 0, 0, branch.span);
                 } else {
                     for stmt in &stmts[..stmts.len() - 1] {
                         self.compile_stmt(stmt)?;
@@ -42,7 +42,7 @@ impl Compiler {
                         }
                         _ => {
                             self.compile_stmt(last)?;
-                            self.emit_a(OpCode::LoadNull, dest, 0, 0, branch.span);
+                            self.emit_a(OpCode::LoadUnit, dest, 0, 0, branch.span);
                         }
                     }
                 }
@@ -53,7 +53,7 @@ impl Compiler {
             }
             _ => {
                 self.compile_stmt(branch)?;
-                self.emit_a(OpCode::LoadNull, dest, 0, 0, branch.span);
+                self.emit_a(OpCode::LoadUnit, dest, 0, 0, branch.span);
             }
         }
         Ok(())
@@ -70,7 +70,7 @@ impl Compiler {
             TypedStmtKind::Block(stmts) => {
                 self.begin_scope();
                 if stmts.is_empty() {
-                    self.emit_a(OpCode::LoadNull, dest, 0, 0, branch.span);
+                    self.emit_a(OpCode::LoadUnit, dest, 0, 0, branch.span);
                 } else {
                     for stmt in &stmts[..stmts.len() - 1] {
                         self.compile_typed_stmt(stmt)?;
@@ -102,7 +102,7 @@ impl Compiler {
                         }
                         _ => {
                             self.compile_typed_stmt(last)?;
-                            self.emit_a(OpCode::LoadNull, dest, 0, 0, branch.span);
+                            self.emit_a(OpCode::LoadUnit, dest, 0, 0, branch.span);
                         }
                     }
                 }
@@ -113,7 +113,7 @@ impl Compiler {
             }
             _ => {
                 self.compile_typed_stmt(branch)?;
-                self.emit_a(OpCode::LoadNull, dest, 0, 0, branch.span);
+                self.emit_a(OpCode::LoadUnit, dest, 0, 0, branch.span);
             }
         }
         Ok(())
