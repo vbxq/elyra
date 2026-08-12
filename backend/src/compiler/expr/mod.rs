@@ -21,6 +21,7 @@ impl Compiler {
             ExprKind::String(s) => self.compile_literal_string(s, dest, expr.span),
             ExprKind::FmtString(parts) => self.compile_fmt_string(parts, &[], dest, expr.span),
             ExprKind::Bool(b) => self.compile_literal_bool(*b, dest, expr.span),
+            ExprKind::Unit => self.compile_literal_unit(dest, expr.span),
             ExprKind::Null => self.compile_literal_null(dest, expr.span),
             ExprKind::Identifier(name) => self.compile_identifier(name, dest, expr.span),
             ExprKind::Binary { left, op, right } => {
@@ -81,6 +82,15 @@ impl Compiler {
             )),
             // cast: sized types collapse in VM backend
             ExprKind::Cast { expr: inner, .. } => self.compile_expr(inner, dest),
+            ExprKind::Try(_) | ExprKind::Match { .. } => Err(
+                aelys_common::error::AelysError::Compile(aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TypeInferenceError(
+                        "typed sum expressions are required for the VM backend".to_string(),
+                    ),
+                    expr.span,
+                    self.source.clone(),
+                )),
+            ),
         }
     }
 }
