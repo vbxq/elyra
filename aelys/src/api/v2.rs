@@ -16,7 +16,7 @@ use aelys_runtime::{
     ExecutionControl, HostRoot, JitArgument, JitCallResult, JitDeoptValue, JitExecutor,
     JitFunctionKey, VM, Value, VmConfig, VmConfigError,
 };
-use aelys_sema::TypeInference;
+use aelys_sema::{InferType, TypeInference};
 use aelys_syntax::{Source, Span};
 use smallvec::SmallVec;
 use std::cell::Cell;
@@ -422,7 +422,9 @@ impl Runtime {
             .remove(alias);
     }
 
-    pub(crate) fn native_module_symbols(&self) -> (HashSet<String>, HashSet<String>) {
+    pub(crate) fn native_module_symbols(
+        &self,
+    ) -> (HashSet<String>, HashSet<String>, HashMap<String, InferType>) {
         let modules = self
             .inner
             .native_modules
@@ -430,11 +432,13 @@ impl Runtime {
             .expect("native module registry poisoned");
         let mut aliases = HashSet::new();
         let mut natives = HashSet::new();
+        let mut signatures = HashMap::new();
         for registration in modules.iter() {
             aliases.insert(registration.alias.clone());
             natives.extend(registration.qualified_names());
+            signatures.extend(registration.signatures.clone());
         }
-        (aliases, natives)
+        (aliases, natives, signatures)
     }
 
     pub fn compile(
@@ -447,15 +451,17 @@ impl Runtime {
         let statements = Parser::new(tokens, source.clone()).parse()?;
         let (mut module_aliases, mut known_globals, mut known_native_globals) =
             self.standard_module_symbols()?;
-        let (native_aliases, native_globals) = self.native_module_symbols();
+        let (native_aliases, native_globals, native_signatures) = self.native_module_symbols();
         module_aliases.extend(native_aliases);
         known_globals.extend(native_globals.iter().cloned());
         known_native_globals.extend(native_globals);
-        let typed = TypeInference::infer_program_with_imports(
+        let typed = TypeInference::infer_program_full_with_native_signatures(
             statements,
             source.clone(),
             module_aliases.clone(),
             known_globals.clone(),
+            known_native_globals.clone(),
+            native_signatures,
         )
         .map_err(|errors| {
             let (message, span) = errors
@@ -463,13 +469,19 @@ impl Runtime {
                 .map(|error| (error.to_string(), error.span))
                 .unwrap_or_else(|| ("unknown type error".to_string(), Span::dummy()));
             AelysError::Compile(CompileError::new(
-                CompileErrorKind::TypeInferenceError(message),
+                CompileErrorKind::NamedTypeError {
+                    code: errors
+                        .first()
+                        .map(aelys_sema::TypeError::diagnostic_code)
+                        .unwrap_or(301),
+                    message,
+                },
                 span,
                 source.clone(),
             ))
         })?;
         let mut optimizer = Optimizer::new(options.optimization_level);
-        let typed = optimizer.optimize(typed);
+        let typed = optimizer.optimize(typed.program);
         let (function, _) = Compiler::with_modules(
             None,
             source.clone(),
@@ -566,9 +578,9 @@ impl Runtime {
             .lock()
             .expect("native module registry poisoned");
         for registration in modules.iter() {
-            for (qualified_name, arity, function) in &registration.functions {
+            for (qualified_name, arity, function, result_type) in &registration.functions {
                 let reference = vm
-                    .alloc_foreign(qualified_name, *arity, *function)
+                    .alloc_foreign_with_result(qualified_name, *arity, *function, *result_type)
                     .map_err(AelysError::Runtime)?;
                 vm.set_global(qualified_name.clone(), Value::ptr(reference.index()));
             }
@@ -1050,6 +1062,8 @@ impl Isolate {
                 ObjectKind::Closure(_) => Err(StructuredCloneError::Unsupported("closure")),
                 ObjectKind::Native(_) => Err(StructuredCloneError::Unsupported("native function")),
                 ObjectKind::Upvalue(_) => Err(StructuredCloneError::Unsupported("upvalue")),
+                ObjectKind::Range(_) => Err(StructuredCloneError::Unsupported("range")),
+                ObjectKind::Sum(_) => Err(StructuredCloneError::Unsupported("sum")),
             },
             None => Err(StructuredCloneError::InvalidHandle),
         };
