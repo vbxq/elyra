@@ -145,7 +145,7 @@ fn native_reset(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
     if let Some(Resource::Timer(instant)) = vm.get_resource_mut(handle) {
         *instant = Instant::now();
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(time_error(
             vm,
@@ -161,7 +161,7 @@ fn native_sleep(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if ms > 0 {
         std::thread::sleep(Duration::from_millis(ms as u64));
     }
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 /// sleep_us(us) - Sleep for given microseconds.
@@ -170,7 +170,7 @@ fn native_sleep_us(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if us > 0 {
         std::thread::sleep(Duration::from_micros(us as u64));
     }
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 /// Get the current local time broken down into components.
