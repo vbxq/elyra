@@ -6,3 +6,12 @@ Cargo.lock
 .idea/
 AELYS_TECHNICAL_REFERENCE.md
 fuzz/corpus/smoke/**
+docs/runs/**
+# logs / run journals (never version these)
+*.log
+logs/
+runs/
+*.runlog
+run-report*
+*.trace
+*.journal
