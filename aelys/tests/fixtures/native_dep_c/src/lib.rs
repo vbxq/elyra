@@ -29,6 +29,7 @@ static EXPORTS: [AelysExport; 1] = [AelysExport {
     arity: 0,
     _padding: [0; 2],
     value: dep_c_fn as *const c_void,
+    signature: core::ptr::null(),
 }];
 
 static REQUIRED: [AelysRequiredModule; 1] = [AelysRequiredModule {
