@@ -119,7 +119,7 @@ impl Heap {
                     children.push(GcRef::new(pointer));
                 }
             }
-            ObjectKind::String(_) | ObjectKind::Native(_) => {}
+            ObjectKind::String(_) | ObjectKind::Native(_) | ObjectKind::Range(_) => {}
             ObjectKind::Array(array) => {
                 if let Some(objects) = array.data.as_objects() {
                     children.extend(
@@ -136,6 +136,11 @@ impl Heap {
                             .iter()
                             .filter_map(|value| value.as_ptr().map(GcRef::new)),
                     );
+                }
+            }
+            ObjectKind::Sum(sum) => {
+                if let Some(pointer) = sum.payload.as_ptr() {
+                    children.push(GcRef::new(pointer));
                 }
             }
         }
@@ -259,6 +264,8 @@ impl Heap {
             ObjectKind::Closure(c) => std::mem::size_of::<AelysClosure>() + c.upvalues.len() * 8,
             ObjectKind::Array(a) => a.size_bytes(),
             ObjectKind::Vec(v) => v.size_bytes(),
+            ObjectKind::Range(_) => std::mem::size_of::<crate::object::AelysRange>(),
+            ObjectKind::Sum(_) => std::mem::size_of::<crate::object::AelysSum>(),
         }
     }
 
