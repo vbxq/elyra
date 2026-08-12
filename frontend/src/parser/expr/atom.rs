@@ -3,7 +3,8 @@ use crate::lexer::Lexer;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::{
-    Expr, ExprKind, FmtPart, FmtStringPart, Source, Stmt, StmtKind, StructFieldInit, TokenKind,
+    Expr, ExprKind, FmtPart, FmtStringPart, MatchArm, MatchArmBody, Pattern, PatternKind, Source,
+    Stmt, StmtKind, StructFieldInit, TokenKind,
 };
 use std::sync::Arc;
 
@@ -70,6 +71,148 @@ impl Parser {
         ))
     }
 
+    pub(super) fn match_expression(&mut self, start_span: aelys_syntax::Span) -> Result<Expr> {
+        let scrutinee = self.expression()?;
+        self.consume(&TokenKind::LBrace, "{")?;
+        let mut arms = Vec::new();
+
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            if self.match_token(&TokenKind::Semicolon) || self.match_token(&TokenKind::Comma) {
+                continue;
+            }
+
+            let pattern = self.parse_pattern()?;
+            let guard = if self.match_token(&TokenKind::If) {
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            self.consume(&TokenKind::FatArrow, "=>")?;
+
+            let body = if self.match_token(&TokenKind::LBrace) {
+                MatchArmBody::Block(self.block_statements()?)
+            } else {
+                MatchArmBody::Expr(self.expression()?)
+            };
+            let end_span = self.previous().span;
+            let span = pattern.span.merge(end_span);
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+                span,
+            });
+
+            if self.match_token(&TokenKind::Comma) || self.match_token(&TokenKind::Semicolon) {
+                continue;
+            }
+            if !self.check(&TokenKind::RBrace) {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "comma, semicolon, or '}'".to_string(),
+                    found: self.peek().kind.to_string(),
+                }));
+            }
+        }
+
+        self.consume(&TokenKind::RBrace, "}")?;
+        Ok(Expr::new(
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            },
+            start_span.merge(self.previous().span),
+        ))
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        let first = self.parse_pattern_atom()?;
+        if !self.check(&TokenKind::Pipe) {
+            return Ok(first);
+        }
+
+        let mut alternatives = vec![first];
+        while self.match_token(&TokenKind::Pipe) {
+            alternatives.push(self.parse_pattern_atom()?);
+        }
+        let span = alternatives
+            .first()
+            .map(|pattern| pattern.span)
+            .unwrap_or_else(|| self.peek().span)
+            .merge(
+                alternatives
+                    .last()
+                    .map(|pattern| pattern.span)
+                    .unwrap_or_else(|| self.peek().span),
+            );
+        Ok(Pattern {
+            kind: PatternKind::Or(alternatives),
+            span,
+        })
+    }
+
+    fn parse_pattern_atom(&mut self) -> Result<Pattern> {
+        let token = self.advance().clone();
+        let start_span = token.span;
+        let kind = match token.kind {
+            TokenKind::Identifier(name) if name == "_" => PatternKind::Wildcard,
+            TokenKind::Identifier(name) => {
+                let mut path = vec![name];
+                while self.match_token(&TokenKind::ColonColon) {
+                    path.push(self.consume_identifier("variant name")?);
+                }
+
+                let fields = if self.match_token(&TokenKind::LParen) {
+                    let mut fields = Vec::new();
+                    if !self.check(&TokenKind::RParen) {
+                        loop {
+                            fields.push(self.parse_pattern()?);
+                            if !self.match_token(&TokenKind::Comma) {
+                                break;
+                            }
+                            if self.check(&TokenKind::RParen) {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(&TokenKind::RParen, ")")?;
+                    fields
+                } else {
+                    Vec::new()
+                };
+
+                let is_variant_name = matches!(
+                    path.last().map(String::as_str),
+                    Some("Ok" | "Err" | "Some" | "None")
+                );
+                if path.len() == 1 && fields.is_empty() && !is_variant_name {
+                    PatternKind::Binding(path.remove(0))
+                } else {
+                    PatternKind::Variant { path, fields }
+                }
+            }
+            TokenKind::Int(value) => PatternKind::Int(value),
+            TokenKind::Minus => {
+                let value = match self.advance().kind {
+                    TokenKind::Int(value) => -value,
+                    _ => {
+                        return Err(self.error(CompileErrorKind::ExpectedPattern));
+                    }
+                };
+                PatternKind::Int(value)
+            }
+            TokenKind::String(value) => PatternKind::String(value),
+            TokenKind::True => PatternKind::Bool(true),
+            TokenKind::False => PatternKind::Bool(false),
+            TokenKind::Null => return Err(self.error(CompileErrorKind::NullIsNotInSurface)),
+            _ => return Err(self.error(CompileErrorKind::ExpectedPattern)),
+        };
+
+        Ok(Pattern {
+            kind,
+            span: start_span.merge(self.previous().span),
+        })
+    }
+
     // block expr: last expr is the value (like Rust)
     pub(super) fn block_expression(&mut self) -> Result<Expr> {
         let mut stmts = Vec::new();
@@ -97,7 +240,7 @@ impl Parser {
 
         self.consume(&TokenKind::RBrace, "}")?;
 
-        Ok(Expr::new(ExprKind::Null, self.previous().span))
+        Ok(Expr::new(ExprKind::Unit, self.previous().span))
     }
 
     pub(super) fn is_expression_start(&self) -> bool {
@@ -110,6 +253,7 @@ impl Parser {
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::Null
+                | TokenKind::Match
                 | TokenKind::Identifier(_)
                 | TokenKind::LParen
                 | TokenKind::LBracket
@@ -137,7 +281,8 @@ impl Parser {
             }
             TokenKind::True => ExprKind::Bool(true),
             TokenKind::False => ExprKind::Bool(false),
-            TokenKind::Null => ExprKind::Null,
+            TokenKind::Null => return Err(self.error(CompileErrorKind::NullIsNotInSurface)),
+            TokenKind::Match => return self.match_expression(span),
             TokenKind::Identifier(ref name)
                 if name.eq_ignore_ascii_case("array") || name.eq_ignore_ascii_case("vec") =>
             {
@@ -160,6 +305,10 @@ impl Parser {
             }
 
             TokenKind::LParen => {
+                if self.check(&TokenKind::RParen) {
+                    let end_span = self.advance().span;
+                    return Ok(Expr::new(ExprKind::Unit, span.merge(end_span)));
+                }
                 let inner = self.expression()?;
                 self.consume(&TokenKind::RParen, ")")?;
                 let end_span = self.previous().span;
