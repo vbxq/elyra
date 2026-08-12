@@ -76,6 +76,14 @@ impl TypeInference {
             None => self.type_gen.fresh(),
         };
 
+        if func
+            .return_type
+            .as_ref()
+            .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
+        {
+            self.explicit_dynamic_functions.insert(full_name.clone());
+        }
+
         self.type_params_in_scope = saved_type_params;
 
         let fn_type = Rc::new(InferType::Function {
@@ -83,6 +91,9 @@ impl TypeInference {
             ret: Box::new(ret_type),
         });
 
-        self.env.define_function(full_name, fn_type);
+        self.env.define_function(full_name, Rc::clone(&fn_type));
+        if !prefix.is_empty() {
+            self.env.define_function(func.name.clone(), fn_type);
+        }
     }
 }
