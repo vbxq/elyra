@@ -3,10 +3,12 @@
 
 pub use aelys_native_macros::{aelys_export, aelys_module};
 
-pub const AELYS_ABI_VERSION: u32 = 3;
-pub const AELYS_API_VERSION: u32 = 3;
+pub const AELYS_ABI_VERSION: u32 = 5;
+pub const AELYS_API_VERSION: u32 = 4;
 pub const AELYS_NATIVE_INVALID_ARGUMENT: i32 = 1;
 pub const AELYS_NATIVE_INTEGER_OVERFLOW: i32 = 2;
+pub const AELYS_NATIVE_RESULT_ERROR: i32 = 3;
+pub const AELYS_NATIVE_OPTION_NONE: i32 = 4;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -28,14 +30,15 @@ mod macros;
 mod value;
 
 pub use abi::{
-    AelysExport, AelysExportKind, AelysInitFn, AelysModuleDescriptor, AelysNativeFn,
-    AelysRequiredModule, AelysTypeDescriptor, AelysVmApi, NativeContext, NativeHandle,
+    AelysExport, AelysExportKind, AelysFunctionSignature, AelysInitFn, AelysModuleDescriptor,
+    AelysNativeFn, AelysNativeType, AelysRequiredModule, AelysTypeDescriptor, AelysVmApi,
+    NativeContext, NativeHandle,
 };
 pub use hash::{compute_exports_hash, init_descriptor_exports_hash};
 pub use value::{
     value_as_bool, value_as_float, value_as_handle, value_as_int, value_bool, value_float,
     value_from_handle, value_int, value_is_bool, value_is_float, value_is_int, value_is_null,
-    value_is_ptr, value_null,
+    value_is_ptr, value_is_unit, value_null, value_unit,
 };
 
 use std::sync::OnceLock;
@@ -46,6 +49,18 @@ static VM_API: OnceLock<AelysVmApi> = OnceLock::new();
 /// This is called from the generated init function in #[aelys_module]
 pub fn store_vm_api(api: &AelysVmApi) {
     let _ = VM_API.set(*api);
+}
+
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn alloc_string_from_context(
+    context: *mut NativeContext,
+    value: &str,
+) -> Result<AelysValue, i32> {
+    let api = VM_API.get().ok_or(AELYS_NATIVE_INVALID_ARGUMENT)?;
+    let alloc = api.alloc_string.ok_or(AELYS_NATIVE_INVALID_ARGUMENT)?;
+    let mut output = value_null();
+    let status = alloc(context, value.as_ptr(), value.len(), &mut output);
+    if status == 0 { Ok(output) } else { Err(status) }
 }
 
 /// Read a string value from the VM using the stored API.
