@@ -5,17 +5,30 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub enum ConstraintReason {
     /// Binary operation requires compatible types
-    BinaryOp { op: String },
+    BinaryOp {
+        op: String,
+    },
     /// Bitwise operation requires integer types (FATAL error)
-    BitwiseOp { op: String },
+    BitwiseOp {
+        op: String,
+    },
     /// Function call argument type
-    Argument { func_name: String, arg_index: usize },
+    Argument {
+        func_name: String,
+        arg_index: usize,
+    },
     /// Function return type
-    Return { func_name: String },
+    Return {
+        func_name: String,
+    },
     /// Variable assignment (reassignment)
-    Assignment { var_name: String },
+    Assignment {
+        var_name: String,
+    },
     /// Explicit type annotation on variable declaration (FATAL error)
-    TypeAnnotation { var_name: String },
+    TypeAnnotation {
+        var_name: String,
+    },
     /// If condition must be bool
     IfCondition,
     /// If branches must have same type
@@ -32,12 +45,20 @@ pub enum ConstraintReason {
     ArrayIndex,
     /// Range bounds must be int
     RangeBound,
+    CollectionMethodReceiver {
+        method: String,
+    },
     /// Invalid cast (fatal error)
     InvalidCast,
     /// Unknown type in annotation (fatal error)
-    UnknownType { name: String },
+    UnknownType {
+        name: String,
+    },
     /// Integer literal does not fit in target type (fatal error)
-    IntLiteralOverflow { value: i64, target: InferType },
+    IntLiteralOverflow {
+        value: i64,
+        target: InferType,
+    },
     /// Generic constraint
     Other(String),
 }
@@ -72,6 +93,9 @@ impl fmt::Display for ConstraintReason {
             ConstraintReason::ArrayElement => write!(f, "array element"),
             ConstraintReason::ArrayIndex => write!(f, "array index"),
             ConstraintReason::RangeBound => write!(f, "range bound"),
+            ConstraintReason::CollectionMethodReceiver { method } => {
+                write!(f, "collection method '{}' receiver", method)
+            }
             ConstraintReason::InvalidCast => write!(f, "invalid cast"),
             ConstraintReason::UnknownType { name } => write!(f, "unknown type '{}'", name),
             ConstraintReason::IntLiteralOverflow { value, target } => {
