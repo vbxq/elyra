@@ -104,16 +104,25 @@ pub fn run_file_full_with_control(
     let mut all_module_aliases = imports.module_aliases.clone();
     all_module_aliases.extend(vm.repl_module_aliases().iter().cloned());
 
-    let inference_result = TypeInference::infer_program_full(
+    let mut all_known_native_globals = imports.known_native_globals.clone();
+    all_known_native_globals.extend(vm.repl_known_native_globals().iter().cloned());
+    let all_native_signatures = imports.native_signatures.clone();
+
+    let inference_result = TypeInference::infer_program_full_with_native_signatures(
         main_stmts,
         src.clone(),
         all_module_aliases,
         all_known_globals,
+        all_known_native_globals,
+        all_native_signatures,
     )
     .map_err(|errors| {
         if let Some(err) = errors.first() {
             AelysError::Compile(CompileError::new(
-                CompileErrorKind::TypeInferenceError(format!("{}", err)),
+                CompileErrorKind::NamedTypeError {
+                    code: err.diagnostic_code(),
+                    message: format!("{}", err),
+                },
                 err.span,
                 src.clone(),
             ))
