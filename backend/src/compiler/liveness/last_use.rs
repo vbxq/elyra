@@ -178,10 +178,30 @@ fn collect_all_uses_in_expr(expr: &TypedExpr, uses: &mut HashSet<String>) {
         TypedExprKind::Cast { expr, .. } => {
             collect_all_uses_in_expr(expr, uses);
         }
+        TypedExprKind::Try(inner) => collect_all_uses_in_expr(inner, uses),
+        TypedExprKind::Match { scrutinee, arms } => {
+            collect_all_uses_in_expr(scrutinee, uses);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_all_uses_in_expr(guard, uses);
+                }
+                match &arm.body {
+                    aelys_sema::TypedMatchArmBody::Expr(expr) => {
+                        collect_all_uses_in_expr(expr, uses)
+                    }
+                    aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            collect_all_uses_in_stmt(stmt, uses);
+                        }
+                    }
+                }
+            }
+        }
         TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Unit
         | TypedExprKind::Null => {}
     }
 }
