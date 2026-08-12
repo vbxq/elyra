@@ -1,4 +1,4 @@
-use crate::vm::{Function, InstructionFormat, OpCode, WideRegisterOperands};
+use crate::vm::{CastTarget, Function, InstructionFormat, OpCode, WideRegisterOperands};
 
 mod arithmetic;
 mod arrays;
@@ -83,6 +83,28 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                     verify_reg(wide_c, num_regs, "wide ternary")?;
                 }
                 None => unreachable!("wide support was checked above"),
+            }
+            let invalid_make_tag = inner == OpCode::MakeSum
+                && wide_c > usize::from(aelys_bytecode::object::SumTag::ErrorMessage as u8);
+            let invalid_test_tag = inner == OpCode::SumTest
+                && wide_c > usize::from(aelys_bytecode::object::SumTag::ErrorMessage as u8)
+                && wide_c != 4;
+            if invalid_make_tag || invalid_test_tag {
+                return Err(format!("invalid wide sum tag {wide_c}"));
+            }
+            if inner == OpCode::Cast
+                && CastTarget::from_u8(
+                    u8::try_from(wide_c).map_err(|_| "wide cast target exceeds u8")?,
+                )
+                .is_none()
+            {
+                return Err(format!("invalid wide cast target {wide_c}"));
+            }
+            if inner == OpCode::MatchFail && wide_a > 2 {
+                return Err(format!("invalid wide match failure family {wide_a}"));
+            }
+            if inner == OpCode::MatchFail && wide_c > 1 {
+                return Err(format!("invalid wide match failure flag {wide_c}"));
             }
             if inner == OpCode::LoadK {
                 let index = (wide_b << 16) | wide_c;
