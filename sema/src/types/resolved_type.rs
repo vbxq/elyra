@@ -17,7 +17,14 @@ pub enum ResolvedType {
     F64,
     Bool,
     String,
+    Unit,
     Null,
+
+    Option(Box<ResolvedType>),
+    Result(Box<ResolvedType>, Box<ResolvedType>),
+    Error,
+    Never,
+    UntypedNative(String),
 
     Function {
         params: Vec<ResolvedType>,
@@ -104,7 +111,19 @@ impl ResolvedType {
             InferType::F64 => ResolvedType::F64,
             InferType::Bool => ResolvedType::Bool,
             InferType::String => ResolvedType::String,
+            InferType::Unit => ResolvedType::Unit,
             InferType::Null => ResolvedType::Null,
+            InferType::Option(inner) => {
+                ResolvedType::Option(Box::new(ResolvedType::from_infer_type(inner)))
+            }
+            InferType::Result(ok, err) => ResolvedType::Result(
+                Box::new(ResolvedType::from_infer_type(ok)),
+                Box::new(ResolvedType::from_infer_type(err)),
+            ),
+            InferType::Error => ResolvedType::Error,
+            InferType::Never => ResolvedType::Never,
+            InferType::Numeric => ResolvedType::Dynamic,
+            InferType::UntypedNative(name) => ResolvedType::UntypedNative(name.clone()),
             InferType::Function { params, ret } => ResolvedType::Function {
                 params: params.iter().map(ResolvedType::from_infer_type).collect(),
                 ret: Box::new(ResolvedType::from_infer_type(ret)),
@@ -141,7 +160,13 @@ impl fmt::Display for ResolvedType {
             ResolvedType::F64 => write!(f, "f64"),
             ResolvedType::Bool => write!(f, "bool"),
             ResolvedType::String => write!(f, "string"),
+            ResolvedType::Unit => write!(f, "unit"),
             ResolvedType::Null => write!(f, "null"),
+            ResolvedType::Option(inner) => write!(f, "Option<{}>", inner),
+            ResolvedType::Result(ok, err) => write!(f, "Result<{}, {}>", ok, err),
+            ResolvedType::Error => write!(f, "Error"),
+            ResolvedType::Never => write!(f, "never"),
+            ResolvedType::UntypedNative(name) => write!(f, "untyped native '{}'", name),
             ResolvedType::Function { params, ret } => {
                 write!(f, "(")?;
                 for (i, p) in params.iter().enumerate() {
