@@ -702,7 +702,7 @@ fn test_execute_return0() {
     func.finalize_bytecode();
     let func_ref = vm.alloc_function(func).unwrap();
     let result = vm.execute(func_ref).unwrap();
-    assert!(result.is_null());
+    assert!(result.is_unit());
 }
 
 #[test]
