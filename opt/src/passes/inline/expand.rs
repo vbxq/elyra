@@ -72,6 +72,7 @@ impl InlineExpander {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null => true,
 
             TypedExprKind::Identifier(name) => params.contains_key(name),
@@ -297,7 +298,15 @@ impl InlineExpander {
             TypedExprKind::Float(f) => TypedExprKind::Float(*f),
             TypedExprKind::Bool(b) => TypedExprKind::Bool(*b),
             TypedExprKind::String(s) => TypedExprKind::String(s.clone()),
+            TypedExprKind::Unit => TypedExprKind::Unit,
             TypedExprKind::Null => TypedExprKind::Null,
+            TypedExprKind::Try(inner) => {
+                TypedExprKind::Try(Box::new(self.substitute_expr(inner, params, span)))
+            }
+            TypedExprKind::Match { scrutinee, arms } => TypedExprKind::Match {
+                scrutinee: Box::new(self.substitute_expr(scrutinee, params, span)),
+                arms: arms.clone(),
+            },
         };
 
         TypedExpr::new(kind, expr.ty.clone(), span)
