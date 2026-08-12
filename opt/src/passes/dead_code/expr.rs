@@ -92,10 +92,26 @@ impl DeadCodeEliminator {
             TypedExprKind::Cast { expr, .. } => {
                 self.eliminate_in_expr(expr);
             }
+            TypedExprKind::Try(inner) => self.eliminate_in_expr(inner),
+            TypedExprKind::Match { scrutinee, arms } => {
+                self.eliminate_in_expr(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        self.eliminate_in_expr(guard);
+                    }
+                    match &mut arm.body {
+                        aelys_sema::TypedMatchArmBody::Expr(expr) => self.eliminate_in_expr(expr),
+                        aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                            self.eliminate_in_block(stmts);
+                        }
+                    }
+                }
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null
             | TypedExprKind::Identifier(_) => {}
         }
