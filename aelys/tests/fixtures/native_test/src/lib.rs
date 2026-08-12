@@ -1,4 +1,7 @@
-use aelys_native::{AelysExport, AelysExportKind, AelysModuleDescriptor, AelysValue, AELYS_ABI_VERSION, value_int};
+use aelys_native::{
+    AelysExport, AelysExportKind, AelysFunctionSignature, AelysModuleDescriptor,
+    AelysNativeType, AelysValue, AELYS_ABI_VERSION, value_int,
+};
 use core::ffi::c_void;
 
 static MODULE_NAME: &[u8] = b"native_test\0";
@@ -18,6 +21,15 @@ extern "C" fn test_add(
     0
 }
 
+static ADD_PARAMS: [u8; 2] = [AelysNativeType::Int as u8; 2];
+static ADD_SIGNATURE: AelysFunctionSignature = AelysFunctionSignature {
+    arity: 2,
+    _padding: [0; 2],
+    params: ADD_PARAMS.as_ptr(),
+    result: AelysNativeType::Int as u8,
+    _reserved: [0; 7],
+};
+
 static EXPORTS: [AelysExport; 2] = [
     AelysExport {
         name: EXPORT_NAME.as_ptr() as *const i8,
@@ -25,6 +37,7 @@ static EXPORTS: [AelysExport; 2] = [
         arity: 2,
         _padding: [0; 2],
         value: test_add as *const c_void,
+        signature: &ADD_SIGNATURE,
     },
     AelysExport {
         name: NESTED_EXPORT_NAME.as_ptr() as *const i8,
@@ -32,6 +45,7 @@ static EXPORTS: [AelysExport; 2] = [
         arity: 2,
         _padding: [0; 2],
         value: test_add as *const c_void,
+        signature: &ADD_SIGNATURE,
     },
 ];
 
