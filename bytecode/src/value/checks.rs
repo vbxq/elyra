@@ -1,4 +1,6 @@
-use super::{QNAN, TAG_BOOL, TAG_INT, TAG_MASK, TAG_NESTED_FN, TAG_NULL, TAG_PTR, Value};
+use super::{
+    QNAN, TAG_BOOL, TAG_INT, TAG_MASK, TAG_NESTED_FN, TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
+};
 
 impl Value {
     // floats are the only values that don't have QNAN set (except actual NaN which we canonicalize)
@@ -12,6 +14,8 @@ impl Value {
             && tag != TAG_INT
             && tag != TAG_BOOL
             && tag != TAG_NULL
+            && tag != TAG_UNIT
+            && tag != TAG_NONE
             && tag != TAG_NESTED_FN
     }
 
