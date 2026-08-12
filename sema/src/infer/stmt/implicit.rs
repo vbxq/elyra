@@ -15,9 +15,11 @@ impl TypeInference {
             aelys_syntax::StmtKind::Expression(expr) => {
                 let typed_expr = self.infer_expr(expr);
 
-                self.constraints.push(Constraint::equal(
-                    typed_expr.ty.clone(),
-                    return_type.clone(),
+                if matches!(return_type, InferType::Unit) {
+                    self.record_must_use_value(&typed_expr);
+                } else if !self.reject_dynamic(
+                    &typed_expr.ty,
+                    return_type,
                     expr.span,
                     ConstraintReason::Return {
                         func_name: self
@@ -26,7 +28,20 @@ impl TypeInference {
                             .cloned()
                             .unwrap_or_else(|| "<anonymous>".to_string()),
                     },
-                ));
+                ) {
+                    self.constraints.push(Constraint::equal(
+                        typed_expr.ty.clone(),
+                        return_type.clone(),
+                        expr.span,
+                        ConstraintReason::Return {
+                            func_name: self
+                                .env
+                                .current_function()
+                                .cloned()
+                                .unwrap_or_else(|| "<anonymous>".to_string()),
+                        },
+                    ));
+                }
 
                 TypedStmt {
                     kind: TypedStmtKind::Expression(typed_expr),
@@ -41,12 +56,25 @@ impl TypeInference {
             } => {
                 let typed_cond = self.infer_expr(condition);
 
-                self.constraints.push(Constraint::equal(
-                    typed_cond.ty.clone(),
-                    InferType::Bool,
+                let invalid_condition = self.reject_dynamic(
+                    &typed_cond.ty,
+                    &InferType::Bool,
                     condition.span,
                     ConstraintReason::IfCondition,
-                ));
+                ) || self.reject_untyped_native(
+                    &typed_cond.ty,
+                    &InferType::Bool,
+                    condition.span,
+                    ConstraintReason::IfCondition,
+                );
+                if !invalid_condition {
+                    self.constraints.push(Constraint::equal(
+                        typed_cond.ty.clone(),
+                        InferType::Bool,
+                        condition.span,
+                        ConstraintReason::IfCondition,
+                    ));
+                }
 
                 let typed_then = self.infer_stmt_with_implicit_return(then_branch, return_type);
                 let typed_else = self.infer_stmt_with_implicit_return(else_branch, return_type);
