@@ -14,14 +14,17 @@ impl TypeInference {
         let typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {
-            self.constraints.push(Constraint::equal(
-                typed_value.ty.clone(),
-                var_type.clone(),
-                span,
-                ConstraintReason::Assignment {
-                    var_name: name.to_string(),
-                },
-            ));
+            let reason = ConstraintReason::Assignment {
+                var_name: name.to_string(),
+            };
+            if !self.reject_dynamic(&typed_value.ty, &var_type, span, reason.clone()) {
+                self.constraints.push(Constraint::equal(
+                    typed_value.ty.clone(),
+                    var_type.clone(),
+                    span,
+                    reason,
+                ));
+            }
 
             (
                 TypedExprKind::Assign {
