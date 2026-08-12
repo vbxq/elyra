@@ -1,4 +1,5 @@
 use super::TypeInference;
+use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind, TypedParam};
 use crate::types::InferType;
 use aelys_syntax::{Parameter, Span, Stmt, TypeAnnotation};
@@ -30,13 +31,23 @@ impl TypeInference {
 
         let return_type = match return_type_ann {
             Some(ann) => self.type_from_annotation(ann),
+            None if body.is_empty() => InferType::Unit,
             None => self.type_gen.fresh(),
         };
 
         let saved_env = std::mem::replace(&mut self.env, closure_env);
 
-        for param in &typed_params {
-            self.env.define_local(param.name.clone(), param.ty.clone());
+        for (param, syntax_param) in typed_params.iter().zip(params) {
+            if syntax_param
+                .type_annotation
+                .as_ref()
+                .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
+            {
+                self.env
+                    .define_explicit_dynamic_local(param.name.clone(), param.ty.clone());
+            } else {
+                self.env.define_local(param.name.clone(), param.ty.clone());
+            }
         }
 
         self.push_return_type(return_type.clone());
@@ -55,6 +66,21 @@ impl TypeInference {
 
             stmts
         };
+
+        if return_type_ann.is_some()
+            && !matches!(return_type, InferType::Unit)
+            && !super::functions::body_always_returns(body, true)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MissingReturnValue {
+                    expected: return_type.clone(),
+                },
+                span,
+                reason: ConstraintReason::Return {
+                    func_name: "<lambda>".to_string(),
+                },
+            });
+        }
 
         let captures = self.collect_captures_from_stmts(&typed_stmts, &typed_params);
 
