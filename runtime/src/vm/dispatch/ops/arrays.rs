@@ -293,22 +293,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let arr_ref = GcRef::new(arr_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(arr_ref) {
-                        if let ObjectKind::Array(arr) = &obj.kind {
-                            let val = arr.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.array_get_option(arr_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             140 => {
@@ -316,22 +302,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let arr_ref = GcRef::new(arr_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(arr_ref) {
-                        if let ObjectKind::Array(arr) = &obj.kind {
-                            let val = arr.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.array_get_option(arr_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             141 => {
@@ -339,22 +311,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let arr_ref = GcRef::new(arr_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(arr_ref) {
-                        if let ObjectKind::Array(arr) = &obj.kind {
-                            let val = arr.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.array_get_option(arr_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             142 => {
@@ -362,22 +320,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let arr_ref = GcRef::new(arr_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(arr_ref) {
-                        if let ObjectKind::Array(arr) = &obj.kind {
-                            let val = arr.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.array_get_option(arr_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             143 => {
@@ -857,23 +801,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
 
-                let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        let val = vec.pop().unwrap_or(Value::null());
-                        $reg_set!(dest, val);
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec pop",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                }
+                let val = $vm.pop_vec_option(vec_val)?;
+                $reg_set!(dest, val);
             }
 
             158 => {
@@ -881,23 +810,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
 
-                let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        let val = vec.pop().unwrap_or(Value::null());
-                        $reg_set!(dest, val);
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec pop",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                }
+                let val = $vm.pop_vec_option(vec_val)?;
+                $reg_set!(dest, val);
             }
 
             159 => {
@@ -905,23 +819,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
 
-                let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        let val = vec.pop().unwrap_or(Value::null());
-                        $reg_set!(dest, val);
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec pop",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                }
+                let val = $vm.pop_vec_option(vec_val)?;
+                $reg_set!(dest, val);
             }
 
             160 => {
@@ -929,23 +828,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
 
-                let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        let val = vec.pop().unwrap_or(Value::null());
-                        $reg_set!(dest, val);
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec pop",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                }
+                let val = $vm.pop_vec_option(vec_val)?;
+                $reg_set!(dest, val);
             }
 
             161 => {
@@ -1220,22 +1104,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(vec_ref) {
-                        if let ObjectKind::Vec(vec) = &obj.kind {
-                            let val = vec.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.vec_get_option(vec_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             169 => {
@@ -1243,22 +1113,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(vec_ref) {
-                        if let ObjectKind::Vec(vec) = &obj.kind {
-                            let val = vec.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.vec_get_option(vec_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             170 => {
@@ -1266,22 +1122,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(vec_ref) {
-                        if let ObjectKind::Vec(vec) = &obj.kind {
-                            let val = vec.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.vec_get_option(vec_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             171 => {
@@ -1289,22 +1131,8 @@ macro_rules! execute_arrays {
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
-
-                if idx < 0 {
-                    $reg_set!(dest, Value::null());
-                } else {
-                    let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                    if let Some(obj) = $vm.heap.get(vec_ref) {
-                        if let ObjectKind::Vec(vec) = &obj.kind {
-                            let val = vec.get(idx as usize).unwrap_or(Value::null());
-                            $reg_set!(dest, val);
-                        } else {
-                            $reg_set!(dest, Value::null());
-                        }
-                    } else {
-                        $reg_set!(dest, Value::null());
-                    }
-                }
+                let value = $vm.vec_get_option(vec_val, idx)?;
+                $reg_set!(dest, value);
             }
 
             172 => {
@@ -1576,9 +1404,262 @@ macro_rules! execute_arrays {
                 }
             }
 
+            192 | 193 => {
+                let (a, b, c) = decode_abc($instr);
+                let start = $reg_get!($base + b as usize);
+                let end = $reg_get!($base + c as usize);
+                $vm.frames[$current_frame_idx].ip = $ip;
+                let range = $vm.alloc_range(start, end, $opcode_byte == 193)?;
+                $reg_set!($base + a as usize, Value::ptr(range.index()));
+            }
+
+            194 => {
+                let (a, b, c) = decode_abc($instr);
+                let array = $reg_get!($base + b as usize);
+                let range = $reg_get!($base + c as usize);
+                $vm.frames[$current_frame_idx].ip = $ip;
+                let sliced = $vm.slice_array(array, range)?;
+                $reg_set!($base + a as usize, sliced);
+            }
+
+            195 => {
+                let (a, b, c) = decode_abc($instr);
+                let vector = $reg_get!($base + b as usize);
+                let range = $reg_get!($base + c as usize);
+                $vm.frames[$current_frame_idx].ip = $ip;
+                let sliced = $vm.slice_vec(vector, range)?;
+                $reg_set!($base + a as usize, sliced);
+            }
+
             _ => unreachable!(),
         }
     }};
 }
 
 pub(crate) use execute_arrays;
+
+use crate::vm::{ObjectKind, VM, Value};
+use aelys_bytecode::object::{AelysRange, SumTag};
+use aelys_common::error::{RuntimeError, RuntimeErrorKind};
+
+impl VM {
+    pub(in crate::vm::dispatch) fn alloc_range(
+        &mut self,
+        start: Value,
+        end: Value,
+        inclusive: bool,
+    ) -> Result<crate::vm::GcRef, RuntimeError> {
+        let start = self.range_bound(start, "start")?;
+        let end = self.range_bound(end, "end")?;
+        self.alloc_object(crate::vm::GcObject::new(ObjectKind::Range(
+            AelysRange::new(start, end, inclusive),
+        )))
+    }
+
+    fn range_bound(&self, value: Value, bound: &'static str) -> Result<Option<i64>, RuntimeError> {
+        if value.is_none() {
+            return Ok(None);
+        }
+        value.as_int().map(Some).ok_or_else(|| {
+            self.runtime_error(RuntimeErrorKind::TypeError {
+                operation: "range construction",
+                expected: "integer or Option::None",
+                got: format!("{bound} is {}", value.type_name()),
+            })
+        })
+    }
+
+    fn slice_bounds(
+        &self,
+        range_value: Value,
+        length: usize,
+    ) -> Result<(usize, usize), RuntimeError> {
+        let pointer = range_value.as_ptr().ok_or_else(|| {
+            self.runtime_error(RuntimeErrorKind::TypeError {
+                operation: "collection slice",
+                expected: "range",
+                got: range_value.type_name().to_string(),
+            })
+        })?;
+        let range = match self.heap.get(crate::vm::GcRef::new(pointer)) {
+            Some(object) => match &object.kind {
+                ObjectKind::Range(range) => *range,
+                _ => {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "collection slice",
+                        expected: "range",
+                        got: range_value.type_name().to_string(),
+                    }));
+                }
+            },
+            None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        let start = range.start.unwrap_or(0);
+        let end = match range.end {
+            Some(value) if range.inclusive => value.checked_add(1).ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
+                    index: value,
+                    length: i64::try_from(length).unwrap_or(i64::MAX),
+                })
+            })?,
+            Some(value) => value,
+            None => i64::try_from(length).unwrap_or(i64::MAX),
+        };
+        let length_i64 = i64::try_from(length).unwrap_or(i64::MAX);
+        if start < 0 || end < 0 || start > end || end > length_i64 {
+            return Err(self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
+                index: if start < 0 || start > length_i64 {
+                    start
+                } else {
+                    end
+                },
+                length: length_i64,
+            }));
+        }
+        Ok((
+            usize::try_from(start).expect("validated slice start is non-negative"),
+            usize::try_from(end).expect("validated slice end is non-negative"),
+        ))
+    }
+
+    pub(in crate::vm::dispatch) fn slice_array(
+        &mut self,
+        array_value: Value,
+        range_value: Value,
+    ) -> Result<Value, RuntimeError> {
+        let pointer = array_value.as_ptr().ok_or_else(|| {
+            self.runtime_error(RuntimeErrorKind::TypeError {
+                operation: "array slice",
+                expected: "array",
+                got: array_value.type_name().to_string(),
+            })
+        })?;
+        let array = match self.heap.get(crate::vm::GcRef::new(pointer)) {
+            Some(object) => match &object.kind {
+                ObjectKind::Array(array) => array.clone(),
+                _ => {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array slice",
+                        expected: "array",
+                        got: array_value.type_name().to_string(),
+                    }));
+                }
+            },
+            None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        let (start, end) = self.slice_bounds(range_value, array.len())?;
+        let result = self.alloc_array(array.slice(start, end))?;
+        Ok(Value::ptr(result.index()))
+    }
+
+    pub(in crate::vm::dispatch) fn slice_vec(
+        &mut self,
+        vector_value: Value,
+        range_value: Value,
+    ) -> Result<Value, RuntimeError> {
+        let pointer = vector_value.as_ptr().ok_or_else(|| {
+            self.runtime_error(RuntimeErrorKind::TypeError {
+                operation: "vec slice",
+                expected: "vec",
+                got: vector_value.type_name().to_string(),
+            })
+        })?;
+        let vector = match self.heap.get(crate::vm::GcRef::new(pointer)) {
+            Some(object) => match &object.kind {
+                ObjectKind::Vec(vector) => vector.clone(),
+                _ => {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec slice",
+                        expected: "vec",
+                        got: vector_value.type_name().to_string(),
+                    }));
+                }
+            },
+            None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        let (start, end) = self.slice_bounds(range_value, vector.len())?;
+        let result = self.alloc_vec(vector.slice(start, end))?;
+        Ok(Value::ptr(result.index()))
+    }
+
+    fn option_value(&mut self, payload: Option<Value>) -> Result<Value, RuntimeError> {
+        match payload {
+            Some(payload) => {
+                let sum = self.alloc_sum(SumTag::OptionSome, payload)?;
+                Ok(Value::ptr(sum.index()))
+            }
+            None => Ok(Value::none()),
+        }
+    }
+
+    pub(in crate::vm::dispatch) fn pop_vec_option(
+        &mut self,
+        vector_value: Value,
+    ) -> Result<Value, RuntimeError> {
+        let vector_ref = crate::vm::GcRef::new(vector_value.as_ptr().unwrap_or(0));
+        let payload = match self.heap.get_mut(vector_ref) {
+            Some(object) => match &mut object.kind {
+                ObjectKind::Vec(vector) => vector.pop(),
+                _ => {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec pop",
+                        expected: "vec",
+                        got: "non-vec object".to_string(),
+                    }));
+                }
+            },
+            None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        self.option_value(payload)
+    }
+
+    pub(in crate::vm::dispatch) fn array_get_option(
+        &mut self,
+        array_value: Value,
+        index: i64,
+    ) -> Result<Value, RuntimeError> {
+        if index < 0 {
+            return Ok(Value::none());
+        }
+        let array_ref = crate::vm::GcRef::new(array_value.as_ptr().unwrap_or(0));
+        let payload = match self.heap.get(array_ref) {
+            Some(object) => match &object.kind {
+                ObjectKind::Array(array) => array.get(index as usize),
+                _ => {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array get",
+                        expected: "array",
+                        got: "non-array object".to_string(),
+                    }));
+                }
+            },
+            None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        self.option_value(payload)
+    }
+
+    pub(in crate::vm::dispatch) fn vec_get_option(
+        &mut self,
+        vector_value: Value,
+        index: i64,
+    ) -> Result<Value, RuntimeError> {
+        if index < 0 {
+            return Ok(Value::none());
+        }
+        let vector_ref = crate::vm::GcRef::new(vector_value.as_ptr().unwrap_or(0));
+        let payload = match self.heap.get(vector_ref) {
+            Some(object) => match &object.kind {
+                ObjectKind::Vec(vector) => vector.get(index as usize),
+                _ => {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec get",
+                        expected: "vec",
+                        got: "non-vec object".to_string(),
+                    }));
+                }
+            },
+            None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        self.option_value(payload)
+    }
+}
