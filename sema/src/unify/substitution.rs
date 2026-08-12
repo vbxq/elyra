@@ -42,6 +42,10 @@ impl Substitution {
             },
             InferType::Array(inner) => InferType::Array(Box::new(self.apply(inner))),
             InferType::Vec(inner) => InferType::Vec(Box::new(self.apply(inner))),
+            InferType::Option(inner) => InferType::Option(Box::new(self.apply(inner))),
+            InferType::Result(ok, err) => {
+                InferType::Result(Box::new(self.apply(ok)), Box::new(self.apply(err)))
+            }
             InferType::Tuple(elems) => {
                 InferType::Tuple(elems.iter().map(|e| self.apply(e)).collect())
             }
@@ -57,7 +61,12 @@ impl Substitution {
             | InferType::F64
             | InferType::Bool
             | InferType::String
+            | InferType::Unit
             | InferType::Null
+            | InferType::Error
+            | InferType::Never
+            | InferType::Numeric
+            | InferType::UntypedNative(_)
             | InferType::Range
             | InferType::Struct(_)
             | InferType::Dynamic => ty.clone(),
