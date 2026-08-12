@@ -353,7 +353,12 @@ fn register_native_module(
                     )
                 };
                 let func_ref = vm
-                    .alloc_foreign(&qualified_name, export.arity, func)
+                    .alloc_foreign_with_result(
+                        &qualified_name,
+                        export.arity,
+                        func,
+                        export.signature.as_ref().map(|signature| signature.result),
+                    )
                     .map_err(|err| err.to_string())?;
                 vm.set_global(qualified_name, aelys_runtime::Value::ptr(func_ref.index()));
             }
@@ -367,9 +372,7 @@ fn register_native_module(
                     .map_err(|err| err.to_string())?;
                 vm.set_global(qualified_name, value);
             }
-            AelysExportKind::Type => {
-                vm.set_global(qualified_name, aelys_runtime::Value::null());
-            }
+            AelysExportKind::Type => {}
         }
     }
     Ok(())
