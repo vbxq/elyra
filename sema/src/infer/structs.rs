@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::types::{InferType, StructDef, StructField};
+use crate::types::{StructDef, StructField};
 use aelys_common::{Warning, WarningKind};
 use aelys_syntax::{Stmt, StmtKind};
 
@@ -28,16 +28,16 @@ impl TypeInference {
                     self.env.define_local(type_param.clone(), fresh_var);
                 }
 
+                let saved_type_params =
+                    std::mem::replace(&mut self.type_params_in_scope, type_params.clone());
                 let struct_fields: Vec<StructField> = fields
                     .iter()
-                    .map(|f| {
-                        let ty = InferType::from_annotation(&f.type_annotation);
-                        StructField {
-                            name: f.name.clone(),
-                            ty,
-                        }
+                    .map(|f| StructField {
+                        name: f.name.clone(),
+                        ty: self.type_from_annotation(&f.type_annotation),
                     })
                     .collect();
+                self.type_params_in_scope = saved_type_params;
 
                 self.type_table.register_struct(StructDef {
                     name: name.clone(),
