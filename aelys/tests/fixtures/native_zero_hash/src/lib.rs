@@ -25,6 +25,7 @@ static EXPORTS: [AelysExport; 1] = [AelysExport {
     arity: 0,
     _padding: [0; 2],
     value: zero_hash_fn as *const c_void,
+    signature: core::ptr::null(),
 }];
 
 #[unsafe(no_mangle)]
