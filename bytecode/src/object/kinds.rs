@@ -1,5 +1,6 @@
 use super::{
-    AelysArray, AelysClosure, AelysFunction, AelysString, AelysUpvalue, AelysVec, NativeFunction,
+    AelysArray, AelysClosure, AelysFunction, AelysRange, AelysString, AelysSum, AelysUpvalue,
+    AelysVec, NativeFunction,
 };
 
 /// The different types of GC-managed objects.
@@ -12,4 +13,6 @@ pub enum ObjectKind {
     Closure(AelysClosure),
     Array(AelysArray),
     Vec(AelysVec),
+    Range(AelysRange),
+    Sum(AelysSum),
 }
