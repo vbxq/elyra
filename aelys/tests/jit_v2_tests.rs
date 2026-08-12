@@ -286,7 +286,7 @@ fn compute(limit: int) -> int {
     }
     return total
 }
-[sys::random_int(0, 1000000), compute(20000), sys::random_int(0, 1000000)]
+[sys::random_int(0, 1000000).unwrap(), compute(20000), sys::random_int(0, 1000000).unwrap()]
 "#;
     let mut expected: Option<StructuredValue> = None;
 
@@ -801,7 +801,7 @@ fn baseline_jit_executes_float_arithmetic_and_host_calls() {
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     assert_eq!(
         isolate.execute(&module, RunOptions::default()).unwrap(),
-        ExecutionOutcome::Returned(Value::null())
+        ExecutionOutcome::Returned(Value::unit())
     );
     let scale = isolate.get_function("scale").unwrap();
     assert_eq!(
@@ -828,7 +828,7 @@ fn cosine(value: float) -> float {
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     assert_eq!(
         isolate.execute(&module, RunOptions::default()).unwrap(),
-        ExecutionOutcome::Returned(Value::null())
+        ExecutionOutcome::Returned(Value::unit())
     );
     let cosine = isolate.get_function("cosine").unwrap();
     assert_eq!(
