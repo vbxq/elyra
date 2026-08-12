@@ -1,8 +1,7 @@
 use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason};
-use crate::typed_ast::TypedExpr;
+use crate::typed_ast::{TypedExpr, TypedExprKind};
 use crate::types::InferType;
-use aelys_common::{Warning, WarningKind};
 use aelys_syntax::{BinaryOp, Span, UnaryOp};
 
 impl TypeInference {
@@ -15,6 +14,15 @@ impl TypeInference {
     ) -> InferType {
         match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                let left_invalid = self.reject_dynamic_arithmetic(left, span, op);
+                let right_invalid = self.reject_dynamic_arithmetic(right, span, op);
+                if left_invalid || right_invalid {
+                    return InferType::Dynamic;
+                }
+                if mixed_numeric(&left.ty, &right.ty) {
+                    return InferType::F64;
+                }
+
                 let result_type = self.type_gen.fresh();
 
                 self.constraints.push(Constraint::equal(
@@ -53,6 +61,15 @@ impl TypeInference {
             }
 
             BinaryOp::Mod => {
+                let left_invalid = self.reject_dynamic_arithmetic(left, span, op);
+                let right_invalid = self.reject_dynamic_arithmetic(right, span, op);
+                if left_invalid || right_invalid {
+                    return InferType::Dynamic;
+                }
+                if mixed_numeric(&left.ty, &right.ty) {
+                    return InferType::F64;
+                }
+
                 let result_type = self.type_gen.fresh();
 
                 self.constraints.push(Constraint::equal(
@@ -80,12 +97,39 @@ impl TypeInference {
             }
 
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                self.constraints.push(Constraint::equal(
-                    left.ty.clone(),
-                    right.ty.clone(),
+                let left_invalid = self.reject_dynamic(
+                    &left.ty,
+                    &InferType::Numeric,
                     span,
                     ConstraintReason::Comparison,
-                ));
+                ) || self.reject_untyped_native(
+                    &left.ty,
+                    &InferType::Numeric,
+                    span,
+                    ConstraintReason::Comparison,
+                );
+                let right_invalid = self.reject_dynamic(
+                    &right.ty,
+                    &InferType::Numeric,
+                    span,
+                    ConstraintReason::Comparison,
+                ) || self.reject_untyped_native(
+                    &right.ty,
+                    &InferType::Numeric,
+                    span,
+                    ConstraintReason::Comparison,
+                );
+                if left_invalid || right_invalid {
+                    return InferType::Bool;
+                }
+                if !mixed_numeric(&left.ty, &right.ty) {
+                    self.constraints.push(Constraint::equal(
+                        left.ty.clone(),
+                        right.ty.clone(),
+                        span,
+                        ConstraintReason::Comparison,
+                    ));
+                }
 
                 self.constraints.push(Constraint::one_of(
                     left.ty.clone(),
@@ -98,16 +142,24 @@ impl TypeInference {
             }
 
             BinaryOp::Eq | BinaryOp::Ne => {
-                if left.ty.is_concrete() && right.ty.is_concrete() && left.ty != right.ty {
-                    self.warnings.push(Warning::new(
-                        WarningKind::IncompatibleComparison {
-                            left: left.ty.to_string(),
-                            right: right.ty.to_string(),
-                            op: op.to_string(),
-                        },
+                let left_invalid = self.reject_dynamic_value_operand(left, &right.ty, span)
+                    || self.reject_untyped_native(
+                        &left.ty,
+                        &right.ty,
                         span,
-                    ));
-                } else {
+                        ConstraintReason::Comparison,
+                    );
+                let right_invalid = self.reject_dynamic_value_operand(right, &left.ty, span)
+                    || self.reject_untyped_native(
+                        &right.ty,
+                        &left.ty,
+                        span,
+                        ConstraintReason::Comparison,
+                    );
+                if left_invalid || right_invalid {
+                    return InferType::Bool;
+                }
+                if !mixed_numeric(&left.ty, &right.ty) {
                     self.constraints.push(Constraint::equal(
                         left.ty.clone(),
                         right.ty.clone(),
@@ -124,6 +176,31 @@ impl TypeInference {
             | BinaryOp::BitAnd
             | BinaryOp::BitOr
             | BinaryOp::BitXor => {
+                let left_invalid = self.reject_dynamic(
+                    &left.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                ) || self.reject_untyped_native(
+                    &left.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                );
+                let right_invalid = self.reject_dynamic(
+                    &right.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                ) || self.reject_untyped_native(
+                    &right.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                );
+                if left_invalid || right_invalid {
+                    return InferType::Dynamic;
+                }
                 self.constraints.push(Constraint::equal(
                     left.ty.clone(),
                     right.ty.clone(),
@@ -151,6 +228,91 @@ impl TypeInference {
         }
     }
 
+    fn reject_dynamic_arithmetic(&mut self, expr: &TypedExpr, span: Span, op: BinaryOp) -> bool {
+        if matches!(expr.ty, InferType::Dynamic) && !self.is_explicit_dynamic_expr(expr) {
+            return false;
+        }
+        let reason = ConstraintReason::BinaryOp { op: op.to_string() };
+        self.reject_dynamic(&expr.ty, &InferType::Numeric, span, reason.clone())
+            || self.reject_untyped_native(&expr.ty, &InferType::Numeric, span, reason)
+    }
+
+    pub(crate) fn is_explicit_dynamic_expr(&self, expr: &TypedExpr) -> bool {
+        match &expr.kind {
+            TypedExprKind::Identifier(name) => self.env.is_explicit_dynamic(name),
+            TypedExprKind::Grouping(inner)
+            | TypedExprKind::Unary { operand: inner, .. }
+            | TypedExprKind::Try(inner)
+            | TypedExprKind::Cast { expr: inner, .. }
+            | TypedExprKind::Lambda(inner) => self.is_explicit_dynamic_expr(inner),
+            TypedExprKind::Binary { left, right, .. }
+            | TypedExprKind::And { left, right }
+            | TypedExprKind::Or { left, right } => {
+                self.is_explicit_dynamic_expr(left) || self.is_explicit_dynamic_expr(right)
+            }
+            TypedExprKind::Call { callee, args } => {
+                let explicit_function = match &callee.kind {
+                    TypedExprKind::Identifier(name) => {
+                        self.explicit_dynamic_functions.contains(name)
+                    }
+                    _ => false,
+                };
+                explicit_function
+                    || self.is_explicit_dynamic_expr(callee)
+                    || args.iter().any(|arg| self.is_explicit_dynamic_expr(arg))
+            }
+            TypedExprKind::Assign { value, .. }
+            | TypedExprKind::Member { object: value, .. }
+            | TypedExprKind::Index { object: value, .. }
+            | TypedExprKind::Slice { object: value, .. } => self.is_explicit_dynamic_expr(value),
+            TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.is_explicit_dynamic_expr(condition)
+                    || self.is_explicit_dynamic_expr(then_branch)
+                    || self.is_explicit_dynamic_expr(else_branch)
+            }
+            TypedExprKind::IndexAssign {
+                object,
+                index,
+                value,
+            } => {
+                self.is_explicit_dynamic_expr(object)
+                    || self.is_explicit_dynamic_expr(index)
+                    || self.is_explicit_dynamic_expr(value)
+            }
+            TypedExprKind::ArrayLiteral { elements, .. }
+            | TypedExprKind::VecLiteral { elements, .. } => elements
+                .iter()
+                .any(|element| self.is_explicit_dynamic_expr(element)),
+            TypedExprKind::ArraySized { size, .. } => self.is_explicit_dynamic_expr(size),
+            TypedExprKind::Range { start, end, .. } => {
+                start
+                    .as_deref()
+                    .is_some_and(|value| self.is_explicit_dynamic_expr(value))
+                    || end
+                        .as_deref()
+                        .is_some_and(|value| self.is_explicit_dynamic_expr(value))
+            }
+            TypedExprKind::StructLiteral { fields, .. } => fields
+                .iter()
+                .any(|(_, value)| self.is_explicit_dynamic_expr(value)),
+            TypedExprKind::LambdaInner { return_type, .. } => {
+                matches!(return_type, InferType::Dynamic)
+            }
+            TypedExprKind::Match { scrutinee, .. } => self.is_explicit_dynamic_expr(scrutinee),
+            TypedExprKind::Int(_)
+            | TypedExprKind::Float(_)
+            | TypedExprKind::Bool(_)
+            | TypedExprKind::String(_)
+            | TypedExprKind::FmtString(_)
+            | TypedExprKind::Unit
+            | TypedExprKind::Null => false,
+        }
+    }
+
     pub(super) fn infer_unary_op(
         &mut self,
         op: UnaryOp,
@@ -159,6 +321,17 @@ impl TypeInference {
     ) -> InferType {
         match op {
             UnaryOp::Neg => {
+                let invalid = self.reject_dynamic_unary_operand(
+                    operand,
+                    &InferType::Numeric,
+                    span,
+                    ConstraintReason::BinaryOp {
+                        op: "-".to_string(),
+                    },
+                );
+                if invalid {
+                    return InferType::Dynamic;
+                }
                 self.constraints.push(Constraint::one_of(
                     operand.ty.clone(),
                     InferType::all_numeric_types(),
@@ -169,8 +342,40 @@ impl TypeInference {
                 ));
                 operand.ty.clone()
             }
-            UnaryOp::Not => InferType::Bool,
+            UnaryOp::Not => {
+                let invalid = self.reject_dynamic(
+                    &operand.ty,
+                    &InferType::Bool,
+                    span,
+                    ConstraintReason::IfCondition,
+                ) || self.reject_untyped_native(
+                    &operand.ty,
+                    &InferType::Bool,
+                    span,
+                    ConstraintReason::IfCondition,
+                );
+                if !invalid {
+                    self.constraints.push(Constraint::equal(
+                        operand.ty.clone(),
+                        InferType::Bool,
+                        span,
+                        ConstraintReason::IfCondition,
+                    ));
+                }
+                InferType::Bool
+            }
             UnaryOp::BitNot => {
+                let invalid = self.reject_dynamic_unary_operand(
+                    operand,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp {
+                        op: "~".to_string(),
+                    },
+                );
+                if invalid {
+                    return InferType::Dynamic;
+                }
                 self.constraints.push(Constraint::one_of(
                     operand.ty.clone(),
                     InferType::all_integer_types(),
@@ -183,4 +388,34 @@ impl TypeInference {
             }
         }
     }
+
+    fn reject_dynamic_unary_operand(
+        &mut self,
+        expr: &TypedExpr,
+        expected: &InferType,
+        span: Span,
+        reason: ConstraintReason,
+    ) -> bool {
+        if matches!(expr.ty, InferType::Dynamic) && !self.is_explicit_dynamic_expr(expr) {
+            return false;
+        }
+        self.reject_dynamic(&expr.ty, expected, span, reason.clone())
+            || self.reject_untyped_native(&expr.ty, expected, span, reason)
+    }
+
+    fn reject_dynamic_value_operand(
+        &mut self,
+        expr: &TypedExpr,
+        expected: &InferType,
+        span: Span,
+    ) -> bool {
+        if matches!(expr.ty, InferType::Dynamic) && !self.is_explicit_dynamic_expr(expr) {
+            return false;
+        }
+        self.reject_dynamic(&expr.ty, expected, span, ConstraintReason::Comparison)
+    }
+}
+
+fn mixed_numeric(left: &InferType, right: &InferType) -> bool {
+    (left.is_integer() && right.is_float()) || (left.is_float() && right.is_integer())
 }
