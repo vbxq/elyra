@@ -51,6 +51,14 @@ impl<'a> AasmParser<'a> {
                 let a = self.parse_register()?;
                 encode_a(OpCode::LoadNull, a, 0, 0)
             }
+            "LoadUnit" => {
+                let a = self.parse_register()?;
+                encode_a(OpCode::LoadUnit, a, 0, 0)
+            }
+            "LoadNone" => {
+                let a = self.parse_register()?;
+                encode_a(OpCode::LoadNone, a, 0, 0)
+            }
             "LoadBool" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -78,6 +86,38 @@ impl<'a> AasmParser<'a> {
             "Mul" => self.parse_ternary_reg(OpCode::Mul)?,
             "Div" => self.parse_ternary_reg(OpCode::Div)?,
             "Mod" => self.parse_ternary_reg(OpCode::Mod)?,
+            "MakeSum" => self.parse_tagged_ternary(OpCode::MakeSum)?,
+            "SumTest" => self.parse_tagged_ternary(OpCode::SumTest)?,
+            "SumPayload" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let b = self.parse_register()?;
+                encode_a(OpCode::SumPayload, a, b, 0)
+            }
+            "MatchFail" => {
+                if matches!(self.current, Token::Newline | Token::Eof) {
+                    encode_a(OpCode::MatchFail, 0, 0, 0)
+                } else {
+                    let a = self.parse_register()?;
+                    self.skip_comma()?;
+                    let b = self.parse_register()?;
+                    self.skip_comma()?;
+                    let c = self.parse_u8()?;
+                    encode_a(OpCode::MatchFail, a, b, c)
+                }
+            }
+            "Cast" => {
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let b = self.parse_register()?;
+                self.skip_comma()?;
+                let c = self.parse_u8()?;
+                encode_a(OpCode::Cast, a, b, c)
+            }
+            "RangeNew" => self.parse_ternary_reg(OpCode::RangeNew)?,
+            "RangeNewInclusive" => self.parse_ternary_reg(OpCode::RangeNewInclusive)?,
+            "ArraySlice" => self.parse_ternary_reg(OpCode::ArraySlice)?,
+            "VecSlice" => self.parse_ternary_reg(OpCode::VecSlice)?,
             "Neg" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -863,6 +903,15 @@ impl<'a> AasmParser<'a> {
         self.skip_comma()?;
         let c = self.parse_register()?;
         Ok(encode_a(op, a, b, c))
+    }
+
+    fn parse_tagged_ternary(&mut self, op: OpCode) -> Result<u32> {
+        let a = self.parse_register()?;
+        self.skip_comma()?;
+        let b = self.parse_register()?;
+        self.skip_comma()?;
+        let tag = self.parse_u8()?;
+        Ok(encode_a(op, a, b, tag))
     }
 
     fn parse_jump_target(&mut self) -> Result<(i16, Option<String>)> {
