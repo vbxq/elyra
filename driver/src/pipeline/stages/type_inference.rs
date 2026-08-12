@@ -6,6 +6,7 @@ use std::collections::HashSet;
 pub struct TypeInferenceStage {
     module_aliases: HashSet<String>,
     known_globals: HashSet<String>,
+    known_native_globals: HashSet<String>,
 }
 
 impl TypeInferenceStage {
@@ -13,12 +14,18 @@ impl TypeInferenceStage {
         Self {
             module_aliases: HashSet::new(),
             known_globals: HashSet::new(),
+            known_native_globals: HashSet::new(),
         }
     }
-    pub fn with_imports(module_aliases: HashSet<String>, known_globals: HashSet<String>) -> Self {
+    pub fn with_imports(
+        module_aliases: HashSet<String>,
+        known_globals: HashSet<String>,
+        known_native_globals: HashSet<String>,
+    ) -> Self {
         Self {
             module_aliases,
             known_globals,
+            known_native_globals,
         }
     }
 }
@@ -45,14 +52,18 @@ impl Stage for TypeInferenceStage {
             }
         };
 
-        let typed_program = if self.module_aliases.is_empty() && self.known_globals.is_empty() {
+        let typed_program = if self.module_aliases.is_empty()
+            && self.known_globals.is_empty()
+            && self.known_native_globals.is_empty()
+        {
             TypeInference::infer_program(stmts, source.clone())
         } else {
-            TypeInference::infer_program_with_imports(
+            TypeInference::infer_program_with_imports_and_natives(
                 stmts,
                 source.clone(),
                 self.module_aliases.clone(),
                 self.known_globals.clone(),
+                self.known_native_globals.clone(),
             )
         }
         .map_err(|errors| {
