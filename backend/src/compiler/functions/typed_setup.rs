@@ -53,6 +53,7 @@ pub(super) fn setup_typed_function(
         parent.known_native_globals.clone(),
         parent.symbol_origins.clone(),
     );
+    nested_compiler.current_return_type = Some(func.return_type.clone());
     nested_compiler.current.arity = u16::try_from(func.params.len()).map_err(|_| {
         aelys_common::error::CompileError::new(
             aelys_common::error::CompileErrorKind::TooManyArguments,
