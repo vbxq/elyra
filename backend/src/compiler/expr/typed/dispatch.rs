@@ -13,8 +13,9 @@ impl Compiler {
                 self.compile_typed_fmt_string(parts, &[], dest, expr.span)
             }
             TypedExprKind::Bool(b) => self.compile_literal_bool(*b, dest, expr.span),
+            TypedExprKind::Unit => self.compile_literal_unit(dest, expr.span),
             TypedExprKind::Null => self.compile_literal_null(dest, expr.span),
-            TypedExprKind::Identifier(name) => self.compile_identifier(name, dest, expr.span),
+            TypedExprKind::Identifier(name) => self.compile_typed_identifier(name, dest, expr.span),
             TypedExprKind::Binary { left, op, right } => {
                 self.compile_typed_binary(left, *op, right, dest, expr.span)
             }
@@ -85,10 +86,13 @@ impl Compiler {
                     self.source.clone(),
                 ),
             )),
-            TypedExprKind::Cast { expr: inner, .. } => {
-                // stub.
-                // cast: sized types collapse in VM backend
-                self.compile_typed_expr(inner, dest)
+            TypedExprKind::Cast {
+                expr: inner,
+                target,
+            } => self.compile_typed_cast(inner, target, dest, expr.span),
+            TypedExprKind::Try(inner) => self.compile_typed_try(inner, dest, expr.span),
+            TypedExprKind::Match { scrutinee, arms } => {
+                self.compile_typed_match(scrutinee, arms, dest, expr.span)
             }
         }
     }
@@ -154,6 +158,9 @@ impl Compiler {
                 .iter()
                 .any(|(_, v)| Self::typed_expr_may_have_side_effects(v)),
             TypedExprKind::Cast { expr, .. } => Self::typed_expr_may_have_side_effects(expr),
+            TypedExprKind::Unit => false,
+            TypedExprKind::Try(inner) => Self::typed_expr_may_have_side_effects(inner),
+            TypedExprKind::Match { .. } => true,
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
