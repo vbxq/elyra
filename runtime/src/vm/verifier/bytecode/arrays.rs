@@ -80,6 +80,11 @@ pub(super) fn verify(
             verify_reg(b, num_regs, "StringLoadChar")?;
             verify_reg(c, num_regs, "StringLoadChar")?;
         }
+        OpCode::RangeNew | OpCode::RangeNewInclusive | OpCode::ArraySlice | OpCode::VecSlice => {
+            verify_reg(a, num_regs, "range or slice")?;
+            verify_reg(b, num_regs, "range or slice")?;
+            verify_reg(c, num_regs, "range or slice")?;
+        }
 
         _ => return Ok(false),
     }
