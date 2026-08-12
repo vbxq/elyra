@@ -1,5 +1,7 @@
 use super::super::checksum::compute_file_checksum;
-use super::super::types::{ExportInfo, LoadedNativeInfo, ModuleInfo, ModuleLoader};
+use super::super::types::{
+    ExportInfo, LoadedNativeInfo, ModuleInfo, ModuleLoader, native_type_to_infer_type,
+};
 use aelys_common::Result;
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_native::AelysExportKind;
@@ -91,22 +93,39 @@ impl ModuleLoader {
         let mut exports = std::collections::HashMap::new();
         let mut mutability = std::collections::HashMap::new();
         let mut native_functions = Vec::new();
+        let mut native_signatures = std::collections::HashMap::new();
         let module_alias = self.get_module_alias(needs);
 
         for (name, export) in native_exports {
-            let is_function = matches!(export.kind, AelysExportKind::Function);
-            exports.insert(
-                name.clone(),
-                ExportInfo {
-                    is_function,
-                    is_mutable: false,
-                },
-            );
-            mutability.insert(name.clone(), false);
+            if !matches!(export.kind, AelysExportKind::Type) {
+                let is_function = matches!(export.kind, AelysExportKind::Function);
+                exports.insert(
+                    name.clone(),
+                    ExportInfo {
+                        is_function,
+                        is_mutable: false,
+                    },
+                );
+                mutability.insert(name.clone(), false);
+            }
 
             match export.kind {
                 AelysExportKind::Function => {
                     native_functions.push(format!("{}::{}", module_alias, name));
+                    if let Some(signature) = &export.signature {
+                        native_signatures.insert(
+                            format!("{}::{}", module_alias, name),
+                            aelys_sema::InferType::Function {
+                                params: signature
+                                    .params
+                                    .iter()
+                                    .copied()
+                                    .map(native_type_to_infer_type)
+                                    .collect(),
+                                ret: Box::new(native_type_to_infer_type(signature.result)),
+                            },
+                        );
+                    }
 
                     if export.value.is_null() {
                         return Err(self.native_error(
@@ -126,7 +145,12 @@ impl ModuleLoader {
 
                     let display_name = format!("{}::{}", module_alias, name);
                     let func_ref = vm
-                        .alloc_foreign(&display_name, export.arity, func)
+                        .alloc_foreign_with_result(
+                            &display_name,
+                            export.arity,
+                            func,
+                            export.signature.as_ref().map(|signature| signature.result),
+                        )
                         .map_err(AelysError::Runtime)?;
                     vm.set_global(name, Value::ptr(func_ref.index()));
                 }
@@ -147,9 +171,7 @@ impl ModuleLoader {
                         .map_err(AelysError::Runtime)?;
                     vm.set_global(name, value);
                 }
-                AelysExportKind::Type => {
-                    vm.set_global(name, Value::null());
-                }
+                AelysExportKind::Type => {}
             }
         }
 
@@ -169,6 +191,7 @@ impl ModuleLoader {
             version: native_module.version.clone(),
             exports,
             native_functions,
+            native_signatures,
         };
 
         self.loaded_modules
