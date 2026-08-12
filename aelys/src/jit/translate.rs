@@ -108,6 +108,9 @@ fn translate_function(
     if register_count < usize::from(function.arity) || register_count > usize::from(u16::MAX) + 1 {
         return None;
     }
+    if contains_sum_opcode(function) {
+        return None;
+    }
     let decoded = decode(function)?;
     let parameter_types =
         infer_parameter_types(usize::from(function.arity), register_count, &decoded)?;
@@ -741,6 +744,28 @@ fn translate_function(
     };
     ir.verify().ok()?;
     Some(ir)
+}
+
+fn contains_sum_opcode(function: &Function) -> bool {
+    function.bytecode.iter().any(|word| {
+        let opcode = OpCode::from_u8((word >> 24) as u8);
+        let inner = if opcode == Some(OpCode::Wide) {
+            OpCode::from_u8(((word >> 16) & 0xff) as u8)
+        } else {
+            opcode
+        };
+        matches!(
+            inner,
+            Some(
+                OpCode::LoadUnit
+                    | OpCode::LoadNone
+                    | OpCode::MakeSum
+                    | OpCode::SumTest
+                    | OpCode::SumPayload
+                    | OpCode::MatchFail
+            )
+        )
+    })
 }
 
 fn inline_integer_leaf(
@@ -1773,5 +1798,49 @@ fn position(function: &Function, ip: usize) -> SourcePosition {
             .find(|(offset, _)| usize::from(*offset) <= ip)
             .map(|(_, line)| *line)
             .unwrap_or(0),
+    }
+}
+
+#[cfg(test)]
+mod sum_opcode_tests {
+    use super::contains_sum_opcode;
+    use aelys_bytecode::{Function, OpCode, Register};
+
+    #[test]
+    fn every_sum_opcode_blocks_translation_in_compact_and_wide_forms() {
+        let opcodes = [
+            OpCode::LoadUnit,
+            OpCode::LoadNone,
+            OpCode::MakeSum,
+            OpCode::SumTest,
+            OpCode::SumPayload,
+            OpCode::MatchFail,
+        ];
+
+        let mut compact = Function::new(Some("sum-compact".to_string()), 0);
+        for opcode in opcodes {
+            compact.emit_a(opcode, 0, 0, 0, 1);
+        }
+        compact.finalize_bytecode();
+        assert!(contains_sum_opcode(&compact));
+
+        let mut wide = Function::new(Some("sum-wide".to_string()), 0);
+        for opcode in [
+            OpCode::LoadUnit,
+            OpCode::LoadNone,
+            OpCode::MakeSum,
+            OpCode::SumTest,
+            OpCode::SumPayload,
+        ] {
+            wide.emit_wide_abc(
+                opcode,
+                Register::new(256),
+                Register::new(257),
+                Register::new(258),
+                1,
+            );
+        }
+        wide.finalize_bytecode();
+        assert!(contains_sum_opcode(&wide));
     }
 }
