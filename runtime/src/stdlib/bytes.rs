@@ -77,7 +77,7 @@ macro_rules! impl_write_int {
             }
             if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
                 buf.data[off..off + $size].copy_from_slice(&(val as $ty).$conv());
-                Ok(Value::null())
+                Ok(Value::unit())
             } else {
                 Err(err(vm, $op, "invalid handle".into()))
             }
@@ -107,7 +107,7 @@ macro_rules! impl_write_float {
             }
             if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
                 buf.data[off..off + $size].copy_from_slice(&val.$conv());
-                Ok(Value::null())
+                Ok(Value::unit())
             } else {
                 Err(err(vm, $op, "invalid handle".into()))
             }
@@ -215,11 +215,11 @@ fn native_alloc(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn native_free(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if args[0].is_null() {
-        return Ok(Value::null());
+        return Ok(Value::unit());
     }
     let h = get_handle(vm, args[0], "free")?;
     match vm.take_resource(h) {
-        Some(Resource::ByteBuffer(_)) => Ok(Value::null()),
+        Some(Resource::ByteBuffer(_)) => Ok(Value::unit()),
         Some(_) => Err(err(vm, "free", "not a byte buffer".into())),
         None => Err(err(vm, "free", "invalid handle".into())),
     }
@@ -249,7 +249,7 @@ fn native_resize(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
         buf.data.resize(new_size as usize, 0);
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "resize", "invalid handle".into()))
     }
@@ -322,7 +322,7 @@ fn native_write_u8(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
         buf.data[off] = u8::try_from(val).expect("byte value was range checked");
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "write_u8", "invalid handle".into()))
     }
@@ -370,7 +370,7 @@ fn native_write_i8(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
         let value = i8::try_from(val).expect("signed byte value was range checked");
         buf.data[off] = value.to_ne_bytes()[0];
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "write_i8", "invalid handle".into()))
     }
@@ -637,7 +637,7 @@ fn native_copy(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     let len = len as usize;
     if len == 0 {
-        return Ok(Value::null());
+        return Ok(Value::unit());
     }
 
     if src_h == dst_h {
@@ -650,7 +650,7 @@ fn native_copy(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         }
         if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(src_h) {
             buf.data.copy_within(src_off..src_off + len, dst_off);
-            return Ok(Value::null());
+            return Ok(Value::unit());
         } else {
             return Err(err(vm, "copy", "invalid handle".into()));
         }
@@ -671,7 +671,7 @@ fn native_copy(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(dst_h) {
         buf.data[dst_off..dst_off + len].copy_from_slice(&src_data);
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "copy", "invalid dest handle".into()))
     }
@@ -695,7 +695,7 @@ fn native_fill(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     let len = len as usize;
     if len == 0 {
-        return Ok(Value::null());
+        return Ok(Value::unit());
     }
     let buf_len = get_buf_len(vm, h, "fill")?;
     if let Some(e) = bounds_err(len, off, buf_len) {
@@ -703,7 +703,7 @@ fn native_fill(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
         buf.data[off..off + len].fill(u8::try_from(val).expect("fill byte was range checked"));
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "fill", "invalid handle".into()))
     }
@@ -813,7 +813,7 @@ fn native_reverse(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     let len = len as usize;
     if len == 0 {
-        return Ok(Value::null());
+        return Ok(Value::unit());
     }
     let buf_len = get_buf_len(vm, h, "reverse")?;
     if let Some(e) = bounds_err(len, off, buf_len) {
@@ -821,7 +821,7 @@ fn native_reverse(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
         buf.data[off..off + len].reverse();
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "reverse", "invalid handle".into()))
     }
@@ -840,7 +840,7 @@ fn native_swap(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             return Err(err(vm, "swap", format!("index {} >= size {}", j, len)));
         }
         buf.data.swap(i, j);
-        Ok(Value::null())
+        Ok(Value::unit())
     } else {
         Err(err(vm, "swap", "invalid handle".into()))
     }
