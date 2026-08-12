@@ -1,4 +1,4 @@
-use crate::stdlib::helpers::make_string;
+use crate::stdlib::helpers::{make_string, option_some};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::RuntimeError;
@@ -44,30 +44,30 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
 fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     print!("{}", vm.value_to_string(args[0]));
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_println(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     println!("{}", vm.value_to_string(args[0]));
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_eprint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     eprint!("{}", vm.value_to_string(args[0]));
     let _ = io::stderr().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_eprintln(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     eprintln!("{}", vm.value_to_string(args[0]));
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 // returns null on EOF or error (don't crash on stdin issues)
 fn native_readline(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let mut buf = String::new();
     match io::stdin().lock().read_line(&mut buf) {
-        Ok(0) => Ok(Value::null()),
+        Ok(0) => Ok(Value::none()),
         Ok(_) => {
             // strip trailing newline (handles both \n and \r\n)
             if buf.ends_with('\n') {
@@ -76,11 +76,12 @@ fn native_readline(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> 
             if buf.ends_with('\r') {
                 buf.pop();
             }
-            make_string(vm, &buf)
+            let value = make_string(vm, &buf)?;
+            option_some(vm, value)
         }
         Err(e) => {
             eprintln!("io.readline error: {}", e);
-            Ok(Value::null())
+            Ok(Value::none())
         }
     }
 }
@@ -94,9 +95,9 @@ fn native_read_char(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError>
         Some(Ok(b)) => b,
         Some(Err(e)) => {
             eprintln!("io.read_char error: {}", e);
-            return Ok(Value::null());
+            return Ok(Value::none());
         }
-        None => return Ok(Value::null()),
+        None => return Ok(Value::none()),
     };
     buf[0] = b;
 
@@ -122,25 +123,31 @@ fn native_read_char(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError>
     }
 
     match std::str::from_utf8(&buf[..len]) {
-        Ok(s) => make_string(vm, s),
-        Err(_) => make_string(vm, "\u{FFFD}"), // replacement char for invalid utf-8
+        Ok(s) => {
+            let value = make_string(vm, s)?;
+            option_some(vm, value)
+        }
+        Err(_) => {
+            let value = make_string(vm, "\u{FFFD}")?; // replacement char for invalid utf-8
+            option_some(vm, value)
+        }
     }
 }
 
 fn native_flush(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_eflush(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let _ = io::stderr().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_print_inline(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     print!("{}", vm.value_to_string(args[0]));
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 // prompt + readline combo, python-style
@@ -150,7 +157,7 @@ fn native_input(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
     let mut line = String::new();
     match io::stdin().lock().read_line(&mut line) {
-        Ok(0) => Ok(Value::null()),
+        Ok(0) => Ok(Value::none()),
         Ok(_) => {
             if line.ends_with('\n') {
                 line.pop();
@@ -158,9 +165,10 @@ fn native_input(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             if line.ends_with('\r') {
                 line.pop();
             }
-            make_string(vm, &line)
+            let value = make_string(vm, &line)?;
+            option_some(vm, value)
         }
-        Err(_) => Ok(Value::null()),
+        Err(_) => Ok(Value::none()),
     }
 }
 
@@ -168,25 +176,25 @@ fn native_input(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_clear_screen(_: &mut VM, _: &[Value]) -> Result<Value, RuntimeError> {
     print!("\x1b[2J\x1b[H"); // clear + home
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_cursor_home(_: &mut VM, _: &[Value]) -> Result<Value, RuntimeError> {
     print!("\x1b[H");
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_hide_cursor(_: &mut VM, _: &[Value]) -> Result<Value, RuntimeError> {
     print!("\x1b[?25l");
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_show_cursor(_: &mut VM, _: &[Value]) -> Result<Value, RuntimeError> {
     print!("\x1b[?25h");
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_move_cursor(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -206,5 +214,5 @@ fn native_move_cursor(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     })?;
     print!("\x1b[{};{}H", y, x); // row;col format
     let _ = io::stdout().flush();
-    Ok(Value::null())
+    Ok(Value::unit())
 }
