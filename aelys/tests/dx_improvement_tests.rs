@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_aelys_bool, assert_aelys_int, assert_aelys_str, run_aelys};
+use common::{assert_aelys_bool, assert_aelys_int, assert_aelys_str, run_aelys, run_aelys_err};
 
 #[test]
 fn test_print_no_newline() {
@@ -359,6 +359,7 @@ fn test_to_string_bool() {
 }
 
 #[test]
-fn test_to_string_null() {
-    assert_aelys_str("let x = null; x.to_string()", "null");
+fn test_to_string_null_syntax_is_rejected() {
+    let error = run_aelys_err("let x = null; x.to_string()");
+    assert!(error.contains("null is not part of Aelys"));
 }
