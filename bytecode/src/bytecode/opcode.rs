@@ -186,6 +186,36 @@ pub enum OpCode {
     GetGlobalIdxWide,
     SetGlobalIdxWide,
     Wide,
+    LoadUnit,
+    LoadNone,
+    MakeSum,
+    SumTest,
+    SumPayload,
+    MatchFail,
+    Cast,
+    RangeNew,
+    RangeNewInclusive,
+    ArraySlice,
+    VecSlice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CastTarget {
+    Int = 0,
+    Float = 1,
+    Bool = 2,
+}
+
+impl CastTarget {
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Int),
+            1 => Some(Self::Float),
+            2 => Some(Self::Bool),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +251,7 @@ impl OpCode {
         if byte <= 77
             || (79..=103).contains(&byte)
             || (105..=127).contains(&byte)
-            || (130..=184).contains(&byte)
+            || (130..=195).contains(&byte)
         {
             Some(unsafe { std::mem::transmute::<u8, OpCode>(byte) })
         } else {
@@ -287,6 +317,8 @@ impl OpCode {
             | Self::LoadK
             | Self::LoadNull
             | Self::LoadBool
+            | Self::LoadUnit
+            | Self::LoadNone
             | Self::GetGlobalIdx
             | Self::SetGlobalIdx
             | Self::Return
@@ -418,7 +450,14 @@ impl OpCode {
             | Self::VecStoreF
             | Self::VecStoreB
             | Self::VecStoreP
-            | Self::StringLoadChar => Some(WideRegisterOperands::Abc),
+            | Self::StringLoadChar
+            | Self::RangeNew
+            | Self::RangeNewInclusive
+            | Self::ArraySlice
+            | Self::VecSlice => Some(WideRegisterOperands::Abc),
+            Self::MakeSum | Self::SumTest | Self::SumPayload | Self::Cast | Self::MatchFail => {
+                Some(WideRegisterOperands::Ab)
+            }
             _ => None,
         }
     }
