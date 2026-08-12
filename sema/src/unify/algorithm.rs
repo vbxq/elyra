@@ -20,7 +20,23 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         | (InferType::F64, InferType::F64)
         | (InferType::Bool, InferType::Bool)
         | (InferType::String, InferType::String)
+        | (InferType::Unit, InferType::Unit)
         | (InferType::Null, InferType::Null) => Ok(()),
+
+        (InferType::Error, InferType::Error) => Ok(()),
+        (InferType::Never, _) | (_, InferType::Never) => Ok(()),
+
+        (InferType::Numeric, InferType::Numeric) => Ok(()),
+        (InferType::Numeric, ty) | (ty, InferType::Numeric) if ty.is_numeric() => Ok(()),
+
+        (InferType::UntypedNative(a), InferType::UntypedNative(b)) if a == b => Ok(()),
+
+        (InferType::UntypedNative(_), InferType::Dynamic)
+        | (InferType::Dynamic, InferType::UntypedNative(_)) => Ok(()),
+
+        (InferType::UntypedNative(a), InferType::UntypedNative(b)) if a != b => {
+            Err(UnifyError::Mismatch(t1.clone(), t2.clone()))
+        }
 
         (InferType::Struct(a), InferType::Struct(b)) if a == b => Ok(()),
 
@@ -68,6 +84,13 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         (InferType::Array(inner1), InferType::Array(inner2)) => unify(inner1, inner2, subst),
 
         (InferType::Vec(inner1), InferType::Vec(inner2)) => unify(inner1, inner2, subst),
+
+        (InferType::Option(inner1), InferType::Option(inner2)) => unify(inner1, inner2, subst),
+
+        (InferType::Result(ok1, err1), InferType::Result(ok2, err2)) => {
+            unify(ok1, ok2, subst)?;
+            unify(err1, err2, subst)
+        }
 
         (InferType::Range, InferType::Range) => Ok(()),
 
