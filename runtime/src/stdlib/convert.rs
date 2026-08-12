@@ -1,6 +1,6 @@
 //! std.convert - Type conversion functions
 
-use crate::stdlib::helpers::{get_int, get_string, make_int_checked, make_string};
+use crate::stdlib::helpers::{get_int, get_string, make_int_checked, make_string, option_some};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
@@ -36,7 +36,6 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("is_float", 1, native_is_float);
     reg_fn!("is_string", 1, native_is_string);
     reg_fn!("is_bool", 1, native_is_bool);
-    reg_fn!("is_null", 1, native_is_null);
     reg_fn!("is_function", 1, native_is_function);
 
     Ok(StdModuleExports {
@@ -62,8 +61,8 @@ fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         .or_else(|| trimmed.strip_prefix("0X"))
     {
         match i64::from_str_radix(hex, 16) {
-            Ok(n) => return Ok(Value::int(n)),
-            Err(_) => return Ok(Value::null()),
+            Ok(n) => return option_some(vm, Value::int(n)),
+            Err(_) => return Ok(Value::none()),
         }
     }
     if let Some(oct) = trimmed
@@ -71,8 +70,8 @@ fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         .or_else(|| trimmed.strip_prefix("0O"))
     {
         match i64::from_str_radix(oct, 8) {
-            Ok(n) => return Ok(Value::int(n)),
-            Err(_) => return Ok(Value::null()),
+            Ok(n) => return option_some(vm, Value::int(n)),
+            Err(_) => return Ok(Value::none()),
         }
     }
     if let Some(bin) = trimmed
@@ -80,18 +79,21 @@ fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         .or_else(|| trimmed.strip_prefix("0B"))
     {
         match i64::from_str_radix(bin, 2) {
-            Ok(n) => return Ok(Value::int(n)),
-            Err(_) => return Ok(Value::null()),
+            Ok(n) => return option_some(vm, Value::int(n)),
+            Err(_) => return Ok(Value::none()),
         }
     }
 
     match trimmed.parse::<i64>() {
-        Ok(n) => Ok(Value::int(n)),
+        Ok(n) => option_some(vm, Value::int(n)),
         Err(_) => {
             // Try parsing as float and truncating (with range check)
             match trimmed.parse::<f64>() {
-                Ok(f) => make_int_checked(vm, f as i64, "convert.parse_int"),
-                Err(_) => Ok(Value::null()),
+                Ok(f) => match make_int_checked(vm, f as i64, "convert.parse_int") {
+                    Ok(value) => option_some(vm, value),
+                    Err(_) => Ok(Value::none()),
+                },
+                Err(_) => Ok(Value::none()),
             }
         }
     }
@@ -111,26 +113,26 @@ fn native_parse_int_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
 
     let radix = u32::try_from(radix).expect("radix was range checked");
     match i64::from_str_radix(s.trim(), radix) {
-        Ok(n) => Ok(Value::int(n)),
-        Err(_) => Ok(Value::null()),
+        Ok(n) => option_some(vm, Value::int(n)),
+        Err(_) => Ok(Value::none()),
     }
 }
 
 fn native_parse_float(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "convert.parse_float")?;
-    Ok(s.trim()
-        .parse::<f64>()
-        .map(Value::float)
-        .unwrap_or(Value::null()))
+    match s.trim().parse::<f64>() {
+        Ok(value) => option_some(vm, Value::float(value)),
+        Err(_) => Ok(Value::none()),
+    }
 }
 
 // Lenient boolean parsing: true/false, 1/0, yes/no, on/off all work
 fn native_parse_bool(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "convert.parse_bool")?;
     match s.trim().to_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(Value::bool(true)),
-        "false" | "0" | "no" | "off" => Ok(Value::bool(false)),
-        _ => Ok(Value::null()),
+        "true" | "1" | "yes" | "on" => option_some(vm, Value::bool(true)),
+        "false" | "0" | "no" | "off" => option_some(vm, Value::bool(false)),
+        _ => Ok(Value::none()),
     }
 }
 
@@ -339,11 +341,6 @@ fn native_is_string(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 /// is_bool(value) - Check if value is a boolean.
 fn native_is_bool(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::bool(args[0].is_bool()))
-}
-
-/// is_null(value) - Check if value is null.
-fn native_is_null(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    Ok(Value::bool(args[0].is_null()))
 }
 
 /// is_function(value) - Check if value is a function.
