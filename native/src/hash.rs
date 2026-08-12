@@ -33,6 +33,10 @@ pub unsafe fn compute_exports_hash(exports: *const AelysExport, export_count: u3
             &mut hash,
             u64::try_from(export.value.addr()).expect("pointer address fits u64"),
         );
+        hash_u64(
+            &mut hash,
+            u64::try_from(export.signature.addr()).expect("pointer address fits u64"),
+        );
     }
 
     hash
