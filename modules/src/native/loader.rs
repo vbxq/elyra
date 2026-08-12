@@ -2,7 +2,8 @@
 // FIXME: consider dlopen flags for lazy vs eager binding
 
 use aelys_native::{
-    AELYS_ABI_VERSION, AelysExport, AelysExportKind, AelysModuleDescriptor, AelysRequiredModule,
+    AELYS_ABI_VERSION, AelysExport, AelysExportKind, AelysModuleDescriptor, AelysNativeType,
+    AelysRequiredModule,
 };
 use libloading::Library;
 use std::collections::HashMap;
@@ -100,11 +101,18 @@ impl From<libloading::Error> for NativeError {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct NativeExport {
     pub kind: AelysExportKind,
     pub arity: u16,
     pub value: *const std::ffi::c_void,
+    pub signature: Option<NativeFunctionSignature>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeFunctionSignature {
+    pub params: Vec<AelysNativeType>,
+    pub result: AelysNativeType,
 }
 
 pub struct NativeModule {
@@ -399,12 +407,62 @@ fn read_exports(
             validate_function_pointer(&name, export.value)?;
         }
 
+        let signature = if export.signature.is_null() {
+            None
+        } else {
+            let signature = unsafe { &*export.signature };
+            if signature.arity != export.arity {
+                return Err(NativeError::InvalidDescriptor(
+                    "function signature arity does not match export",
+                ));
+            }
+            if signature.arity != 0 && signature.params.is_null() {
+                return Err(NativeError::InvalidDescriptor(
+                    "function signature parameters are null",
+                ));
+            }
+            let count = usize::from(signature.arity);
+            let raw_params = if count == 0 {
+                &[][..]
+            } else {
+                unsafe { std::slice::from_raw_parts(signature.params, count) }
+            };
+            let mut params = Vec::with_capacity(count);
+            for raw in raw_params {
+                let param = AelysNativeType::try_from(*raw).map_err(|_| {
+                    NativeError::InvalidDescriptor("unknown function parameter type")
+                })?;
+                if matches!(
+                    param,
+                    AelysNativeType::OptionInt
+                        | AelysNativeType::OptionFloat
+                        | AelysNativeType::OptionBool
+                        | AelysNativeType::OptionString
+                        | AelysNativeType::OptionUnit
+                        | AelysNativeType::ResultIntString
+                        | AelysNativeType::ResultFloatString
+                        | AelysNativeType::ResultBoolString
+                        | AelysNativeType::ResultStringString
+                        | AelysNativeType::ResultUnitString
+                ) {
+                    return Err(NativeError::InvalidDescriptor(
+                        "sum types are valid only as function results",
+                    ));
+                }
+                params.push(param);
+            }
+            let result = AelysNativeType::try_from(signature.result)
+                .map_err(|_| NativeError::InvalidDescriptor("unknown function result type"))?;
+            Some(NativeFunctionSignature { params, result })
+        };
+
         map.insert(
             name,
             NativeExport {
                 kind: export.kind,
                 arity: export.arity,
                 value: export.value,
+                signature,
             },
         );
     }
