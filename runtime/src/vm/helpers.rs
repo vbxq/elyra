@@ -136,6 +136,12 @@ impl VM {
         if value.is_bool() {
             return "bool";
         }
+        if value.is_none() {
+            return "Option::None";
+        }
+        if value.is_unit() {
+            return "()";
+        }
         if value.is_null() {
             return "null";
         }
@@ -158,6 +164,8 @@ fn object_type_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Closure(_) => "closure",
         ObjectKind::Array(_) => "array",
         ObjectKind::Vec(_) => "vec",
+        ObjectKind::Range(_) => "range",
+        ObjectKind::Sum(_) => "sum",
     }
 }
 
@@ -196,6 +204,25 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
                 .filter_map(|i| vec.get(i).map(|v| vm.value_to_string(v)))
                 .collect();
             format!("Vec[{}]", elements.join(", "))
+        }
+        ObjectKind::Range(range) => {
+            let start = range
+                .start
+                .map_or_else(|| "..".to_string(), |value| value.to_string());
+            let end = range
+                .end
+                .map_or_else(String::new, |value| value.to_string());
+            let separator = if range.inclusive { "..=" } else { ".." };
+            format!("{start}{separator}{end}")
+        }
+        ObjectKind::Sum(sum) => {
+            let name = match sum.tag {
+                aelys_bytecode::object::SumTag::OptionSome => "Some",
+                aelys_bytecode::object::SumTag::ResultOk => "Ok",
+                aelys_bytecode::object::SumTag::ResultErr => "Err",
+                aelys_bytecode::object::SumTag::ErrorMessage => "Error",
+            };
+            format!("{name}({})", vm.value_to_string(sum.payload))
         }
     }
 }
