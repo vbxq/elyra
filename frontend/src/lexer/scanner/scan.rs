@@ -110,10 +110,14 @@ impl Lexer {
             '=' => {
                 if self.match_char('=') {
                     self.add_token(TokenKind::EqEq);
+                } else if self.match_char('>') {
+                    self.add_token(TokenKind::FatArrow);
                 } else {
                     self.add_token(TokenKind::Eq);
                 }
             }
+
+            '?' => self.add_token(TokenKind::Question),
 
             '!' => {
                 if self.match_char('=') {
