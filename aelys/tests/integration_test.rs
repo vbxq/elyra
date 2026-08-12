@@ -411,7 +411,7 @@ fn test_error_arity_mismatch() {
 #[test]
 fn test_empty_program() {
     let result = run_ok("");
-    assert!(result.is_null());
+    assert!(result.is_unit());
 }
 
 #[test]
@@ -431,8 +431,8 @@ fn test_boolean_literals() {
 
 #[test]
 fn test_null_literal() {
-    let result = run_ok("null;");
-    assert!(result.is_null());
+    let error = run_err("null;");
+    assert!(error.contains("null is not part of Aelys"));
 }
 
 #[test]
@@ -532,5 +532,5 @@ fn test_function_no_explicit_return() {
         implicit_return();
     "#,
     );
-    assert!(result.is_null());
+    assert!(result.is_unit());
 }
