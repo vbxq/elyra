@@ -3,6 +3,7 @@ use aelys_common::Result;
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_runtime::VM;
 use aelys_runtime::stdlib;
+use aelys_sema::native::function_signature;
 use aelys_syntax::{ImportKind, NeedsStmt};
 use std::path::PathBuf;
 
@@ -44,7 +45,14 @@ impl ModuleLoader {
             file_path: PathBuf::from(format!("<std/{}>", module_name)),
             version: None,
             exports: exports_map,
-            native_functions: std_exports.native_functions,
+            native_functions: std_exports.native_functions.clone(),
+            native_signatures: std_exports
+                .native_functions
+                .iter()
+                .filter_map(|name| {
+                    function_signature(name).map(|signature| (name.clone(), signature))
+                })
+                .collect(),
         };
         self.loaded_modules
             .insert(module_path_str.clone(), module_info);
