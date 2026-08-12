@@ -361,21 +361,28 @@ fn wide_array_and_vec_accesses_roundtrip_and_execute() {
             1,
         );
         function.emit_register_abc(
-            OpCode::Add,
+            OpCode::SumPayload,
             Register::new(261),
-            Register::new(259),
             Register::new(260),
+            Register::new(0),
+            1,
+        );
+        function.emit_register_abc(
+            OpCode::Add,
+            Register::new(262),
+            Register::new(259),
+            Register::new(261),
             1,
         );
         function.emit_register_abc(
             OpCode::Return,
-            Register::new(261),
+            Register::new(262),
             Register::new(0),
             Register::new(0),
             1,
         );
         function.finalize_bytecode();
-        assert_eq!(function.num_registers, 262);
+        assert_eq!(function.num_registers, 263);
 
         let assembly = aelys_bytecode::asm::disassemble(&function);
         assert!(assembly.contains(&format!("Wide {}, r259, r256, r257", load as u8)));
@@ -483,6 +490,13 @@ fn wide_collection_management_operations_roundtrip_and_execute() {
         1,
     );
     vec_function.emit_register_abc(
+        OpCode::SumPayload,
+        Register::new(263),
+        Register::new(260),
+        Register::new(0),
+        1,
+    );
+    vec_function.emit_register_abc(
         OpCode::VecLen,
         Register::new(261),
         Register::new(256),
@@ -492,7 +506,7 @@ fn wide_collection_management_operations_roundtrip_and_execute() {
     vec_function.emit_register_abc(
         OpCode::Add,
         Register::new(262),
-        Register::new(260),
+        Register::new(263),
         Register::new(261),
         1,
     );
@@ -504,7 +518,7 @@ fn wide_collection_management_operations_roundtrip_and_execute() {
         1,
     );
     vec_function.finalize_bytecode();
-    assert_eq!(vec_function.num_registers, 263);
+    assert_eq!(vec_function.num_registers, 264);
 
     let assembly = aelys_bytecode::asm::disassemble(&vec_function);
     let assembled = aelys_bytecode::asm::assemble(&assembly).unwrap();
@@ -1168,7 +1182,7 @@ fn jump_over_i16_range_uses_a_verified_i32_extension() {
 
     let mut vm = VM::new(Source::new("long-jump.aelys", "")).unwrap();
     let function_ref = vm.alloc_function(function).unwrap();
-    assert_eq!(vm.execute(function_ref).unwrap(), Value::null());
+    assert_eq!(vm.execute(function_ref).unwrap(), Value::unit());
 }
 
 #[test]
@@ -1193,7 +1207,7 @@ fn long_continue_patch_preserves_the_extension_word() {
     );
     let mut vm = VM::new(Source::new("long-continue.aelys", "")).unwrap();
     let function_ref = vm.alloc_function(function).unwrap();
-    assert_eq!(vm.execute(function_ref).unwrap(), Value::null());
+    assert_eq!(vm.execute(function_ref).unwrap(), Value::unit());
 }
 
 #[test]
