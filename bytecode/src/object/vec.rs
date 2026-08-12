@@ -166,6 +166,17 @@ impl AelysVec {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+
+    pub fn slice(&self, start: usize, end: usize) -> Self {
+        let data = match &self.data {
+            VecData::Ints(values) => VecData::Ints(values[start..end].to_vec()),
+            VecData::Floats(values) => VecData::Floats(values[start..end].to_vec()),
+            VecData::Bools(values) => VecData::Bools(values[start..end].to_vec()),
+            VecData::Objects(values) => VecData::Objects(values[start..end].to_vec()),
+        };
+        Self { data }
+    }
+
     pub fn capacity(&self) -> usize {
         self.data.capacity()
     }
