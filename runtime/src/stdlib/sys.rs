@@ -1,4 +1,6 @@
-use crate::stdlib::helpers::{get_int, get_string, make_string};
+use crate::stdlib::helpers::{
+    get_int, get_string, make_string, option_some, result_err, result_ok,
+};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
@@ -76,14 +78,17 @@ fn native_arg(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let index = get_int(vm, args[0], "sys.arg")?;
 
     if index < 0 {
-        return Ok(Value::null());
+        return Ok(Value::none());
     }
 
     let arg = vm.program_args().get(index as usize).cloned();
 
     match arg {
-        Some(arg) => make_string(vm, &arg),
-        None => Ok(Value::null()),
+        Some(arg) => {
+            let value = make_string(vm, &arg)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -96,8 +101,11 @@ fn native_arg_count(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError>
 /// Returns null if not available.
 fn native_script_path(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     match vm.script_path().map(|s| s.to_string()) {
-        Some(path) => make_string(vm, &path),
-        None => Ok(Value::null()),
+        Some(path) => {
+            let value = make_string(vm, &path)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -109,11 +117,14 @@ fn native_script_dir(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError
         Some(path) => {
             let path = Path::new(&path);
             match path.parent() {
-                Some(dir) => make_string(vm, &dir.to_string_lossy()),
-                None => Ok(Value::null()),
+                Some(dir) => {
+                    let value = make_string(vm, &dir.to_string_lossy())?;
+                    option_some(vm, value)
+                }
+                None => Ok(Value::none()),
             }
         }
-        None => Ok(Value::null()),
+        None => Ok(Value::none()),
     }
 }
 
@@ -122,8 +133,11 @@ fn native_script_dir(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError
 fn native_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let name = get_string(vm, args[0], "sys.env")?;
     match env::var(name) {
-        Ok(value) => make_string(vm, &value),
-        Err(_) => Ok(Value::null()),
+        Ok(value) => {
+            let value = make_string(vm, &value)?;
+            option_some(vm, value)
+        }
+        Err(_) => Ok(Value::none()),
     }
 }
 
@@ -134,7 +148,7 @@ fn native_set_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     // SAFETY: We're setting environment variables with valid UTF-8 strings.
     // This is safe as long as no other threads are reading env vars concurrently.
     unsafe { env::set_var(&name, &value) };
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 /// unset_env(name) - Unset environment variable.
@@ -143,7 +157,7 @@ fn native_unset_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     // SAFETY: We're removing environment variables.
     // This is safe as long as no other threads are reading env vars concurrently.
     unsafe { env::remove_var(&name) };
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 /// env_vars() - Get all environment variables as NAME=VALUE lines.
@@ -168,8 +182,11 @@ fn native_pid(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
 /// cwd() - Get current working directory.
 fn native_cwd(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     match env::current_dir() {
-        Ok(path) => make_string(vm, &path.to_string_lossy()),
-        Err(e) => Err(sys_error(vm, "sys.cwd", format!("cannot get cwd: {}", e))),
+        Ok(path) => {
+            let value = make_string(vm, &path.to_string_lossy())?;
+            result_ok(vm, value)
+        }
+        Err(e) => result_err(vm, &format!("sys.cwd: cannot get cwd: {e}")),
     }
 }
 
@@ -177,20 +194,22 @@ fn native_cwd(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_set_cwd(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let path = get_string(vm, args[0], "sys.set_cwd")?;
     match env::set_current_dir(path) {
-        Ok(_) => Ok(Value::null()),
-        Err(e) => Err(sys_error(
+        Ok(_) => result_ok(vm, Value::unit()),
+        Err(e) => result_err(
             vm,
-            "sys.set_cwd",
-            format!("cannot change to '{}': {}", path, e),
-        )),
+            &format!("sys.set_cwd: cannot change to '{}': {e}", path),
+        ),
     }
 }
 
 /// home() - Get home directory.
 fn native_home(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     match home_dir() {
-        Some(path) => make_string(vm, &path),
-        None => Ok(Value::null()),
+        Some(path) => {
+            let value = make_string(vm, &path)?;
+            option_some(vm, value)
+        }
+        None => Ok(Value::none()),
     }
 }
 
@@ -330,12 +349,8 @@ fn native_exec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let status = Command::new("cmd").arg("/C").arg(command).status();
 
     match status {
-        Ok(status) => Ok(Value::int(status.code().unwrap_or(-1) as i64)),
-        Err(e) => Err(sys_error(
-            vm,
-            "sys.exec",
-            format!("failed to execute '{}': {}", command, e),
-        )),
+        Ok(status) => result_ok(vm, Value::int(status.code().unwrap_or(-1) as i64)),
+        Err(e) => result_err(vm, &format!("sys.exec: failed to execute '{command}': {e}")),
     }
 }
 
@@ -353,13 +368,13 @@ fn native_exec_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     match output {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            make_string(vm, &stdout)
+            let value = make_string(vm, &stdout)?;
+            result_ok(vm, value)
         }
-        Err(e) => Err(sys_error(
+        Err(e) => result_err(
             vm,
-            "sys.exec_output",
-            format!("failed to execute '{}': {}", command, e),
-        )),
+            &format!("sys.exec_output: failed to execute '{command}': {e}"),
+        ),
     }
 }
 
@@ -377,12 +392,11 @@ fn native_exec_args(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     let status = Command::new(program).args(&cmd_args).status();
 
     match status {
-        Ok(status) => Ok(Value::int(status.code().unwrap_or(-1) as i64)),
-        Err(e) => Err(sys_error(
+        Ok(status) => result_ok(vm, Value::int(status.code().unwrap_or(-1) as i64)),
+        Err(e) => result_err(
             vm,
-            "sys.exec_args",
-            format!("failed to execute '{}': {}", program, e),
-        )),
+            &format!("sys.exec_args: failed to execute '{program}': {e}"),
+        ),
     }
 }
 
@@ -402,13 +416,13 @@ fn native_exec_args_output(vm: &mut VM, args: &[Value]) -> Result<Value, Runtime
     match output {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            make_string(vm, &stdout)
+            let value = make_string(vm, &stdout)?;
+            result_ok(vm, value)
         }
-        Err(e) => Err(sys_error(
+        Err(e) => result_err(
             vm,
-            "sys.exec_args_output",
-            format!("failed to execute '{}': {}", program, e),
-        )),
+            &format!("sys.exec_args_output: failed to execute '{program}': {e}"),
+        ),
     }
 }
 
@@ -424,20 +438,17 @@ fn native_random_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     let max = get_int(vm, args[1], "sys.random_int")?;
 
     if min > max {
-        return Err(sys_error(
-            vm,
-            "sys.random_int",
-            format!("min ({}) > max ({})", min, max),
-        ));
+        return result_err(vm, &format!("sys.random_int: min ({min}) > max ({max})"));
     }
 
-    Ok(Value::int(vm.random_i64_inclusive(min, max)))
+    let value = Value::int(vm.random_i64_inclusive(min, max));
+    result_ok(vm, value)
 }
 
 fn native_random_seed(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let seed = get_int(vm, args[0], "sys.random_seed")?;
     vm.set_random_seed(seed as u64);
-    Ok(Value::null())
+    Ok(Value::unit())
 }
 
 fn native_random_state(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
@@ -447,5 +458,5 @@ fn native_random_state(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeErr
 fn native_random_set_state(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let state = get_int(vm, args[0], "sys.random_set_state")?;
     vm.set_random_state(state as u64);
-    Ok(Value::null())
+    Ok(Value::unit())
 }
