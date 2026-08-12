@@ -538,9 +538,8 @@ fn test_comparison_chain() {
 
 #[test]
 fn test_equality_types() {
-    // Different types should not be equal
-    let result = run_aelys("42 == true");
-    assert_eq!(result.as_bool(), Some(false));
+    let err = run_aelys_err("42 == true");
+    assert!(err.contains("type mismatch"), "{err}");
 }
 
 // ==@no_gc tests =====
@@ -681,7 +680,7 @@ fn empty() { }
 empty()
 "#,
     );
-    assert!(result.is_null());
+    assert!(result.is_unit());
 }
 
 #[test]
