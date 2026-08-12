@@ -52,6 +52,7 @@ pub fn compilation_pipeline_with_modules(
     pipeline.add_stage(Box::new(TypeInferenceStage::with_imports(
         module_aliases.clone(),
         known_globals.clone(),
+        known_native_globals.clone(),
     )));
     pipeline.add_stage(Box::new(OptimizationStage::new(opt_level)));
     pipeline.add_stage(Box::new(CompilerStage::with_modules(
