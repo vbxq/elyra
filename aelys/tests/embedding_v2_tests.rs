@@ -34,6 +34,18 @@ fn a_registered_native_module_compiles() {
 }
 
 #[test]
+fn a_registered_native_signature_rejects_a_wrong_argument() {
+    let runtime = Runtime::new();
+    register(&runtime).unwrap();
+
+    let error = match runtime.compile("probe::typed(true)", CompileOptions::default()) {
+        Ok(_) => panic!("the native signature must reject a bool argument"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("type mismatch"), "{error}");
+}
+
+#[test]
 fn an_empty_runtime_compiles_exactly_as_before() {
     let runtime = Runtime::new();
     assert!(
@@ -706,6 +718,11 @@ mod probe_module {
         pub fn answer() -> i64 {
             42
         }
+
+        #[aelys_export]
+        pub fn typed(value: i64) -> i64 {
+            value
+        }
     }
 
     pub unsafe fn descriptor() -> &'static aelys_native::AelysModuleDescriptor {
@@ -751,6 +768,7 @@ mod dependent_module {
         arity: 0,
         _padding: [0; 2],
         value: dependent_export as *const c_void,
+        signature: std::ptr::null(),
     }];
 
     static REQUIRED: [AelysRequiredModule; 1] = [AelysRequiredModule {
@@ -819,6 +837,7 @@ macro_rules! counting_shadow_module {
                 arity: 0,
                 _padding: [0; 2],
                 value: shadow_export as *const c_void,
+                signature: std::ptr::null(),
             }];
 
             static mut DESCRIPTOR: AelysModuleDescriptor = unsafe {
