@@ -40,6 +40,27 @@ impl TypeInference {
                         },
                     });
                 }
+            } else if self.reject_dynamic(
+                &typed_init.ty,
+                decl,
+                typed_init.span,
+                ConstraintReason::TypeAnnotation {
+                    var_name: name.to_string(),
+                },
+            ) {
+            } else if let InferType::UntypedNative(native) = &typed_init.ty
+                && !matches!(decl, InferType::Dynamic)
+            {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::UntypedNativeTypeMismatch {
+                        name: native.clone(),
+                        expected: decl.clone(),
+                    },
+                    span: typed_init.span,
+                    reason: ConstraintReason::TypeAnnotation {
+                        var_name: name.to_string(),
+                    },
+                });
             } else {
                 self.constraints.push(Constraint::equal(
                     typed_init.ty.clone(),
@@ -55,7 +76,18 @@ impl TypeInference {
             typed_init.ty.clone()
         };
 
-        self.env.define_local(name.to_string(), var_type.clone());
+        if name != "_" {
+            if type_annotation
+                .as_ref()
+                .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
+                || self.is_explicit_dynamic_expr(&typed_init)
+            {
+                self.env
+                    .define_explicit_dynamic_local(name.to_string(), var_type.clone());
+            } else {
+                self.env.define_local(name.to_string(), var_type.clone());
+            }
+        }
 
         TypedStmtKind::Let {
             name: name.to_string(),
