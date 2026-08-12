@@ -388,7 +388,7 @@ fn test_e2e_vec_pop() {
     assert_aelys_int(
         r#"
         let v = Vec[1, 2, 3];
-        v.pop()
+        v.pop().unwrap()
         "#,
         3,
     );
@@ -402,8 +402,8 @@ fn test_e2e_vec_push_pop_sequence() {
         v.push(10);
         v.push(20);
         v.push(30);
-        let a = v.pop();
-        let b = v.pop();
+        let a = v.pop().unwrap();
+        let b = v.pop().unwrap();
         a + b
         "#,
         50, // 30 + 20
@@ -595,9 +595,9 @@ fn test_e2e_vec_pop_all() {
     assert_aelys_int(
         r#"
         let v = Vec[10, 20, 30];
-        let a = v.pop();
-        let b = v.pop();
-        let c = v.pop();
+        let a = v.pop().unwrap();
+        let b = v.pop().unwrap();
+        let c = v.pop().unwrap();
         a + b + c
         "#,
         60,
@@ -673,10 +673,10 @@ fn test_e2e_vec_stack_operations() {
         stack.push(1);
         stack.push(2);
         stack.push(3);
-        let a = stack.pop();
+        let a = stack.pop().unwrap();
         stack.push(4);
-        let b = stack.pop();
-        let c = stack.pop();
+        let b = stack.pop().unwrap();
+        let c = stack.pop().unwrap();
         a * 100 + b * 10 + c
         "#,
         342, // 3*100 + 4*10 + 2
@@ -706,7 +706,7 @@ fn test_e2e_float_vec_push_pop() {
         r#"
         let v = Vec[1.0, 2.0];
         v.push(3.5);
-        v.pop()
+        v.pop().unwrap()
         "#,
     );
     assert_eq!(result.as_float(), Some(3.5));
@@ -752,7 +752,7 @@ fn test_e2e_bool_vec_push_pop() {
         r#"
         let v = Vec[false, false];
         v.push(true);
-        v.pop()
+        v.pop().unwrap()
         "#,
         true,
     );
@@ -785,7 +785,7 @@ fn test_e2e_vec_pop_returns_correct_type() {
     assert_aelys_int(
         r#"
         let v = Vec[1, 2, 3];
-        let x = v.pop();
+        let x = v.pop().unwrap();
         x * 10
         "#,
         30,
