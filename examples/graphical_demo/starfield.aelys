@@ -23,9 +23,9 @@ fn run() {
     let star_z = bytes::alloc(NUM_STARS * 4)
 
     for i in 0..NUM_STARS {
-        let x = sys::random_int(-500, 500)
-        let y = sys::random_int(-500, 500)
-        let z = sys::random_int(1, 1000)
+        let x = sys::random_int(-500, 500).unwrap()
+        let y = sys::random_int(-500, 500).unwrap()
+        let z = sys::random_int(1, 1000).unwrap()
         bytes::write_i32(star_x, i * 4, x)
         bytes::write_i32(star_y, i * 4, y)
         bytes::write_i32(star_z, i * 4, z)
@@ -47,8 +47,8 @@ fn run() {
             let mut z = bytes::read_i32(star_z, i * 4)
             z = z - speed
             if z <= 0 {
-                bytes::write_i32(star_x, i * 4, sys::random_int(-500, 500))
-                bytes::write_i32(star_y, i * 4, sys::random_int(-500, 500))
+                bytes::write_i32(star_x, i * 4, sys::random_int(-500, 500).unwrap())
+                bytes::write_i32(star_y, i * 4, sys::random_int(-500, 500).unwrap())
                 z = 1000
             }
             bytes::write_i32(star_z, i * 4, z)
