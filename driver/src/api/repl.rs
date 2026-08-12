@@ -35,6 +35,7 @@ pub fn run_with_vm_and_opt(
     let mut module_aliases = vm.repl_module_aliases().clone();
     let mut known_globals = vm.repl_known_globals().clone();
     let mut known_native_globals = vm.repl_known_native_globals().clone();
+    let mut native_signatures = std::collections::HashMap::new();
     let mut symbol_origins = vm.repl_symbol_origins().clone();
 
     for builtin in BUILTIN_NAMES {
@@ -55,6 +56,7 @@ pub fn run_with_vm_and_opt(
 
         known_native_globals.extend(imports.known_native_globals.iter().cloned());
         vm.add_repl_known_native_globals(&imports.known_native_globals);
+        native_signatures.extend(imports.native_signatures.clone());
 
         symbol_origins.extend(
             imports
@@ -72,16 +74,21 @@ pub fn run_with_vm_and_opt(
         stmts
     };
 
-    let typed_program = TypeInference::infer_program_with_imports(
+    let typed_program = TypeInference::infer_program_with_imports_and_native_signatures(
         main_stmts,
         src.clone(),
         module_aliases.clone(),
         known_globals.clone(),
+        known_native_globals.clone(),
+        native_signatures,
     )
     .map_err(|errors| {
         if let Some(err) = errors.first() {
             AelysError::Compile(CompileError::new(
-                CompileErrorKind::TypeInferenceError(format!("{}", err)),
+                CompileErrorKind::NamedTypeError {
+                    code: err.diagnostic_code(),
+                    message: format!("{}", err),
+                },
                 err.span,
                 src.clone(),
             ))
