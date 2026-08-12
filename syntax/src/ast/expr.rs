@@ -3,7 +3,7 @@ use crate::Span;
 #[derive(Debug, Clone)]
 pub struct TypeAnnotation {
     pub name: String,
-    pub type_param: Option<Box<TypeAnnotation>>,
+    pub type_params: Vec<TypeAnnotation>,
     pub fn_params: Option<Vec<TypeAnnotation>>,
     pub fn_ret: Option<Box<TypeAnnotation>>,
     pub span: Span,
@@ -13,7 +13,17 @@ impl TypeAnnotation {
     pub fn new(name: String, span: Span) -> Self {
         Self {
             name,
-            type_param: None,
+            type_params: Vec::new(),
+            fn_params: None,
+            fn_ret: None,
+            span,
+        }
+    }
+
+    pub fn with_params(name: String, type_params: Vec<TypeAnnotation>, span: Span) -> Self {
+        Self {
+            name,
+            type_params,
             fn_params: None,
             fn_ret: None,
             span,
@@ -21,19 +31,13 @@ impl TypeAnnotation {
     }
 
     pub fn with_param(name: String, type_param: TypeAnnotation, span: Span) -> Self {
-        Self {
-            name,
-            type_param: Some(Box::new(type_param)),
-            fn_params: None,
-            fn_ret: None,
-            span,
-        }
+        Self::with_params(name, vec![type_param], span)
     }
 
     pub fn function_type(params: Vec<TypeAnnotation>, ret: TypeAnnotation, span: Span) -> Self {
         Self {
             name: "fn".to_string(),
-            type_param: None,
+            type_params: Vec::new(),
             fn_params: Some(params),
             fn_ret: Some(Box::new(ret)),
             span,
@@ -106,6 +110,7 @@ pub enum ExprKind {
     String(String),
     Bool(bool),
     Null,
+    Unit,
     FmtString(Vec<FmtStringPart>),
 
     Identifier(String),
@@ -145,6 +150,13 @@ pub enum ExprKind {
         condition: Box<Expr>,
         then_branch: Box<Expr>,
         else_branch: Box<Expr>,
+    },
+
+    Try(Box<Expr>),
+
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
     },
 
     Lambda {
@@ -206,6 +218,40 @@ pub enum ExprKind {
 pub enum MemberSeparator {
     Dot,
     Path,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: MatchArmBody,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum MatchArmBody {
+    Expr(Expr),
+    Block(Vec<crate::ast::Stmt>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    pub kind: PatternKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternKind {
+    Wildcard,
+    Binding(String),
+    Int(i64),
+    String(String),
+    Bool(bool),
+    Variant {
+        path: Vec<String>,
+        fields: Vec<Pattern>,
+    },
+    Or(Vec<Pattern>),
 }
 
 #[derive(Debug, Clone)]
