@@ -32,6 +32,7 @@ impl TypeInference {
             ExprKind::Float(f) => (TypedExprKind::Float(*f), InferType::F64),
             ExprKind::Bool(b) => (TypedExprKind::Bool(*b), InferType::Bool),
             ExprKind::String(s) => (TypedExprKind::String(s.clone()), InferType::String),
+            ExprKind::Unit => (TypedExprKind::Unit, InferType::Unit),
             ExprKind::FmtString(parts) => {
                 let typed_parts = parts
                     .iter()
@@ -48,6 +49,10 @@ impl TypeInference {
                 (TypedExprKind::FmtString(typed_parts), InferType::String)
             }
             ExprKind::Null => (TypedExprKind::Null, InferType::Null),
+            ExprKind::Try(inner) => self.infer_try_expr(inner, expr.span),
+            ExprKind::Match { scrutinee, arms } => {
+                self.infer_match_expr(scrutinee, arms, expr.span)
+            }
             ExprKind::Identifier(name) => self.infer_identifier_expr(name, expr.span),
             ExprKind::Binary { left, op, right } => {
                 let mut typed_left = self.infer_expr(left);
@@ -131,14 +136,15 @@ impl TypeInference {
                 target,
             } => {
                 let typed_inner = self.infer_expr(inner);
-                let target_ty = InferType::from_annotation(target);
+                let target_ty = self.type_from_annotation(target);
                 let src = &typed_inner.ty;
                 let src_is_type_param = matches!(src, InferType::Var(_))
                     || matches!(src, InferType::Struct(name) if self.type_params_in_scope.contains(name));
                 let allowed = src_is_type_param
                     || ((src.is_numeric()
                         || *src == InferType::Bool
-                        || *src == InferType::Dynamic)
+                        || *src == InferType::Dynamic
+                        || matches!(src, InferType::UntypedNative(_)))
                         && (target_ty.is_numeric() || target_ty == InferType::Bool));
                 if !allowed {
                     self.errors.push(TypeError {
@@ -195,22 +201,45 @@ impl TypeInference {
         let typed_left = self.infer_expr(left);
         let typed_right = self.infer_expr(right);
 
-        self.constraints.push(Constraint::equal(
-            typed_left.ty.clone(),
-            InferType::Bool,
+        let reason = |op_label: &str| ConstraintReason::BinaryOp {
+            op: op_label.to_string(),
+        };
+        if !self.reject_dynamic(
+            &typed_left.ty,
+            &InferType::Bool,
             left.span,
-            ConstraintReason::BinaryOp {
-                op: op_label.to_string(),
-            },
-        ));
-        self.constraints.push(Constraint::equal(
-            typed_right.ty.clone(),
-            InferType::Bool,
+            reason(op_label),
+        ) && !self.reject_untyped_native(
+            &typed_left.ty,
+            &InferType::Bool,
+            left.span,
+            reason(op_label),
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_left.ty.clone(),
+                InferType::Bool,
+                left.span,
+                reason(op_label),
+            ));
+        }
+        if !self.reject_dynamic(
+            &typed_right.ty,
+            &InferType::Bool,
             right.span,
-            ConstraintReason::BinaryOp {
-                op: op_label.to_string(),
-            },
-        ));
+            reason(op_label),
+        ) && !self.reject_untyped_native(
+            &typed_right.ty,
+            &InferType::Bool,
+            right.span,
+            reason(op_label),
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_right.ty.clone(),
+                InferType::Bool,
+                right.span,
+                reason(op_label),
+            ));
+        }
 
         (
             if op_label == "and" {
