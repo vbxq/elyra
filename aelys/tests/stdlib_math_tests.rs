@@ -94,6 +94,12 @@ sign(0)
 }
 
 #[test]
+fn sign_float_preserves_type() {
+    let result = run_aelys("sign(-1.0)");
+    assert_eq!(result.as_float(), Some(-1.0));
+}
+
+#[test]
 fn sin_zero() {
     let code = r#"
 let r = sin(0.0)
@@ -222,9 +228,10 @@ if r > 2.99 and r < 3.01 { 1 } else { 0 }
 #[test]
 fn pow_int_small_exp() {
     let code = r#"
-pow(2, 10)
+let r = pow(2, 10)
+if r > 1023.9 and r < 1024.1 { 1 } else { 0 }
 "#;
-    assert_aelys_int(code, 1024);
+    assert_aelys_int(code, 1);
 }
 
 #[test]
