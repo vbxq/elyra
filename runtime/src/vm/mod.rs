@@ -37,8 +37,9 @@ pub use aelys_bytecode::{
     ObjectKind, UpvalueLocation,
 };
 pub use aelys_bytecode::{
-    BytecodeBuffer, Function, GlobalLayout, Heap, InstructionFormat, IntegerOverflowError, OpCode,
-    UpvalueDescriptor, Value, WideRegisterOperands, decode_a, decode_b, decode_c,
+    BytecodeBuffer, CastTarget, Function, GlobalLayout, Heap, InstructionFormat,
+    IntegerOverflowError, OpCode, UpvalueDescriptor, Value, WideRegisterOperands, decode_a,
+    decode_b, decode_c,
 };
 pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
 pub use builtins::{builtin_type, register_builtins};
@@ -46,5 +47,7 @@ pub use config::{VmConfig, VmConfigError};
 pub use control::{ExecutionControl, ExecutionStats, InterruptHandle, call_jit_global};
 pub use core::{MAX_FRAMES, MAX_REGISTERS, StepResult, VM};
 pub use frame::CallFrame;
-pub use native::{NativeFn, NativeFunctionImpl, build_native_vm_api};
+pub use native::{
+    ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,
+};
 pub use roots::HostRoot;
