@@ -392,10 +392,28 @@ impl LocalConstantPropagator {
             TypedExprKind::Cast { expr, .. } => {
                 self.propagate_expr(expr);
             }
+            TypedExprKind::Try(inner) => self.propagate_expr(inner),
+            TypedExprKind::Match { scrutinee, arms } => {
+                self.propagate_expr(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        self.propagate_expr(guard);
+                    }
+                    match &mut arm.body {
+                        aelys_sema::TypedMatchArmBody::Expr(expr) => self.propagate_expr(expr),
+                        aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                            for stmt in stmts {
+                                self.propagate_stmt(stmt);
+                            }
+                        }
+                    }
+                }
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null => {}
         }
     }
