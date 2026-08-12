@@ -131,6 +131,9 @@ impl Parser {
                     },
                     span,
                 );
+            } else if self.match_token(&TokenKind::Question) {
+                let span = expr.span.merge(self.previous().span);
+                expr = Expr::new(ExprKind::Try(Box::new(expr)), span);
             } else {
                 break;
             }
