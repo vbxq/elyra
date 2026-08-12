@@ -17,6 +17,14 @@ impl Value {
         self.is_bool().then_some((self.0 & 1) != 0)
     }
 
+    pub fn is_unit(&self) -> bool {
+        (self.0 & (QNAN | TAG_MASK)) == (QNAN | super::TAG_UNIT)
+    }
+
+    pub fn is_none(&self) -> bool {
+        (self.0 & (QNAN | TAG_MASK)) == (QNAN | super::TAG_NONE)
+    }
+
     pub fn as_ptr(&self) -> Option<usize> {
         self.is_ptr().then(|| {
             usize::try_from(self.0 & PAYLOAD_MASK).expect("pointer payload fits target usize")
