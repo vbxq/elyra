@@ -296,7 +296,7 @@ fn test_empty_function() {
         empty()
     "#;
     let result = run_with_opt(code, OptimizationLevel::Standard);
-    assert!(result.is_null());
+    assert!(result.is_unit());
 }
 
 #[test]
