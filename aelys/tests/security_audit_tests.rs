@@ -51,6 +51,84 @@ fn verify_rejects_constant_oob() {
 }
 
 #[test]
+fn verifier_rejects_invalid_sum_tag() {
+    let mut vm = make_vm();
+    let mut func = Function::new(Some("bad_sum_tag".to_string()), 0);
+    func.num_registers = 2;
+    func.emit_a(OpCode::MakeSum, 0, 1, 255, 1);
+    func.emit_a(OpCode::Return0, 0, 0, 0, 1);
+
+    func.finalize_bytecode();
+    let func_ref = vm.alloc_function(func).unwrap();
+    let err = vm.execute(func_ref).unwrap_err();
+    match err.kind {
+        RuntimeErrorKind::InvalidBytecode(msg) => assert!(msg.contains("sum tag")),
+        _ => panic!("expected InvalidBytecode for an invalid sum tag"),
+    }
+}
+
+#[test]
+fn verifier_rejects_invalid_wide_sum_tag_before_dispatch() {
+    let mut vm = make_vm();
+    let mut func = Function::new(Some("bad_wide_sum_tag".to_string()), 0);
+    func.emit_a(OpCode::Wide, u8::from(OpCode::MakeSum), 0, 0, 1);
+    func.push_raw((300u32 << 16) | 301);
+    func.push_raw(255u32 << 16);
+    func.emit_a(OpCode::Return0, 0, 0, 0, 1);
+    func.finalize_bytecode();
+    func.num_registers = 302;
+
+    let func_ref = vm.alloc_function(func).unwrap();
+    let err = vm.execute(func_ref).unwrap_err();
+
+    match err.kind {
+        RuntimeErrorKind::InvalidBytecode(msg) => assert!(msg.contains("wide sum tag"), "{msg}"),
+        _ => panic!("expected InvalidBytecode for a wide invalid sum tag"),
+    }
+    assert_eq!(vm.execution_stats().instructions, 0);
+}
+
+#[test]
+fn verifier_rejects_invalid_compact_match_failure_encoding() {
+    for (family, message_flag) in [(1, 2), (3, 0)] {
+        let mut vm = make_vm();
+        let mut func = Function::new(Some("bad_match_fail".to_string()), 0);
+        func.num_registers = 1;
+        func.emit_a(OpCode::MatchFail, family, 0, message_flag, 1);
+        func.finalize_bytecode();
+        let func_ref = vm.alloc_function(func).unwrap();
+        let err = vm.execute(func_ref).unwrap_err();
+        match err.kind {
+            RuntimeErrorKind::InvalidBytecode(msg) => {
+                assert!(msg.contains("match failure"), "{msg}");
+            }
+            other => panic!("expected InvalidBytecode, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn verifier_rejects_invalid_wide_match_failure_encoding() {
+    for (family, message_flag) in [(3, 0), (1, 2)] {
+        let mut vm = make_vm();
+        let mut func = Function::new(Some("bad_wide_match_fail".to_string()), 0);
+        func.emit_a(OpCode::Wide, u8::from(OpCode::MatchFail), 0, 0, 1);
+        func.push_raw(family << 16);
+        func.push_raw(message_flag << 16);
+        func.emit_a(OpCode::Return0, 0, 0, 0, 1);
+        func.finalize_bytecode();
+        let func_ref = vm.alloc_function(func).unwrap();
+        let err = vm.execute(func_ref).unwrap_err();
+        match err.kind {
+            RuntimeErrorKind::InvalidBytecode(msg) => {
+                assert!(msg.contains("wide match failure"), "{msg}");
+            }
+            other => panic!("expected InvalidBytecode, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn verifier_blocks_gc_untracked_registers() {
     let mut vm = make_vm();
     let mut func = Function::new(Some("gc_oob".to_string()), 0);
@@ -244,7 +322,7 @@ fn lexer_rejects_deep_comment_nesting() {
 fn fs_join_rejects_absolute_path() {
     let src = r#"
 needs std::fs
-fs::join("/app", "/etc/passwd")
+match fs::join("/app", "/etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 "#;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("path_traversal.aelys");
@@ -252,25 +330,15 @@ fs::join("/app", "/etc/passwd")
 
     let config = aelys_runtime::VmConfig::default();
 
-    let err = aelys_driver::run_file_with_config(&path, config, Vec::new()).unwrap_err();
-    match err {
-        AelysError::Runtime(runtime) => {
-            let msg = format!("{:?}", runtime.kind);
-            assert!(
-                msg.contains("absolute") || msg.contains("path"),
-                "expected path traversal error, got: {}",
-                msg
-            );
-        }
-        _ => panic!("expected runtime error for path traversal"),
-    }
+    let value = aelys_driver::run_file_with_config(&path, config, Vec::new()).unwrap();
+    assert_eq!(value.as_int(), Some(1));
 }
 
 #[test]
 fn fs_join_rejects_parent_escape() {
     let src = r#"
 needs std::fs
-fs::join("/app/data", "../../../etc/passwd")
+match fs::join("/app/data", "../../../etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 "#;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("path_escape.aelys");
@@ -278,18 +346,8 @@ fs::join("/app/data", "../../../etc/passwd")
 
     let config = aelys_runtime::VmConfig::default();
 
-    let err = aelys_driver::run_file_with_config(&path, config, Vec::new()).unwrap_err();
-    match err {
-        AelysError::Runtime(runtime) => {
-            let msg = format!("{:?}", runtime.kind);
-            assert!(
-                msg.contains("escapes") || msg.contains("base"),
-                "expected path escape error, got: {}",
-                msg
-            );
-        }
-        _ => panic!("expected runtime error for path escape"),
-    }
+    let value = aelys_driver::run_file_with_config(&path, config, Vec::new()).unwrap();
+    assert_eq!(value.as_int(), Some(1));
 }
 
 #[test]
@@ -301,8 +359,10 @@ fn fs_read_bytes_rejects_huge_buffer() {
     let src = format!(
         r#"
 needs std::fs
-let f = fs::open("{}", "r")
-fs::read_bytes(f, 999999999999)
+let f = fs::open("{}", "r").unwrap()
+let result = match fs::read_bytes(f, 999999999999) {{ Ok(_) => 0, Err(_) => 1 }}
+let _ = fs::close(f)
+result
 "#,
         test_file.display().to_string().replace('\\', "/")
     );
@@ -313,21 +373,8 @@ fs::read_bytes(f, 999999999999)
     let config = aelys_runtime::VmConfig::default();
 
     let result = aelys_driver::run_file_with_config(&path, config, Vec::new());
-    match result {
-        Err(AelysError::Runtime(runtime)) => {
-            let msg = format!("{:?}", runtime.kind);
-            assert!(
-                msg.contains("buffer")
-                    || msg.contains("maximum")
-                    || msg.contains("size")
-                    || msg.contains("max"),
-                "expected buffer size error, got: {}",
-                msg
-            );
-        }
-        Err(e) => panic!("expected runtime error for huge buffer, got: {:?}", e),
-        Ok(_) => panic!("expected error for huge buffer allocation"),
-    }
+    let value = result.unwrap();
+    assert_eq!(value.as_int(), Some(1));
 }
 
 /*
@@ -763,7 +810,7 @@ fn variable_shadowing() {
 }
 
 #[test]
-fn globals_sync_includes_null_values() {
+fn globals_sync_includes_option_none() {
     /* verifies that setting a global to null via one module is visible in another
     previously, null values were skipped during sync causing inconsistencies. */
     let dir = tempfile::tempdir().unwrap();
@@ -772,13 +819,13 @@ fn globals_sync_includes_null_values() {
     std::fs::write(
         &helper,
         r#"
-pub let mut shared = 42
+pub let mut shared: Option<int> = Some(42)
 
-pub fn set_to_null() {
-    shared = null
+pub fn set_to_none() {
+    shared = None
 }
 
-pub fn get_shared() {
+pub fn get_shared() -> Option<int> {
     return shared
 }
 "#,
@@ -789,13 +836,20 @@ pub fn get_shared() {
     std::fs::write(
         &main,
         r#"
-needs shared, set_to_null, get_shared from helper
+needs shared, set_to_none, get_shared from helper
 
-let before = get_shared()
-set_to_null()
-let after = get_shared()
+let before: Option<int> = get_shared()
+set_to_none()
+let after: Option<int> = get_shared()
 
-if before == 42 and after == null { 1 } else { 0 }
+match before {
+    Some(42) => match after {
+        None => 1,
+        Some(_) => 0,
+    },
+    None => 0,
+    Some(_) => 0,
+}
 "#,
     )
     .unwrap();
