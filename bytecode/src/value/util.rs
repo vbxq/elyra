@@ -3,7 +3,7 @@ use super::Value;
 impl Value {
     /// Check if value is truthy.
     pub fn is_truthy(&self) -> bool {
-        if self.is_null() {
+        if self.is_null() || self.is_none() || self.is_unit() {
             false
         } else if let Some(b) = self.as_bool() {
             b
@@ -20,6 +20,10 @@ impl Value {
     pub fn type_name(&self) -> &'static str {
         if self.is_null() {
             "Null"
+        } else if self.is_none() {
+            "None"
+        } else if self.is_unit() {
+            "Unit"
         } else if self.is_bool() {
             "Bool"
         } else if self.is_int() {
