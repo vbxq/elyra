@@ -97,10 +97,30 @@ impl GlobalConstantPropagator {
             TypedExprKind::Cast { expr, .. } => {
                 self.substitute_constants(expr);
             }
+            TypedExprKind::Try(inner) => self.substitute_constants(inner),
+            TypedExprKind::Match { scrutinee, arms } => {
+                self.substitute_constants(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        self.substitute_constants(guard);
+                    }
+                    match &mut arm.body {
+                        aelys_sema::TypedMatchArmBody::Expr(expr) => {
+                            self.substitute_constants(expr)
+                        }
+                        aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                            for stmt in stmts {
+                                self.substitute_in_stmt(stmt);
+                            }
+                        }
+                    }
+                }
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Unit
             | TypedExprKind::Null => {}
         }
     }
