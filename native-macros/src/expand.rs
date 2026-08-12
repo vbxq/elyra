@@ -70,14 +70,38 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
 
     for (i, export) in exports.iter().enumerate() {
         let static_name = format_ident!("__AELYS_EXPORT_{module_prefix}_{i}");
+        let signature_name = format_ident!("__AELYS_SIGNATURE_{module_prefix}_{i}");
+        let params_name = format_ident!("__AELYS_SIGNATURE_PARAMS_{module_prefix}_{i}");
         let name_static = format_ident!("__AELYS_EXPORT_NAME_{module_prefix}_{i}");
         let export_name = &export.name;
         let export_name_bytes = format!("{}\0", export_name);
         let arity = export.arity;
         let wrapper_name = &export.wrapper_name;
+        let (signature_decl, signature_ptr) = if let Some((params, result)) = &export.signature {
+            let param_values = params.iter().map(|param| param.ffi_value());
+            let result_value = result.ffi_value();
+            (
+                quote! {
+                    static #params_name: &[u8] = &[#(#param_values),*];
+                    static #signature_name: ::aelys_native::AelysFunctionSignature =
+                        ::aelys_native::AelysFunctionSignature {
+                            arity: #arity,
+                            _padding: [0; 2],
+                            params: #params_name.as_ptr(),
+                            result: #result_value,
+                            _reserved: [0; 7],
+                        };
+                },
+                quote! { &#signature_name as *const ::aelys_native::AelysFunctionSignature },
+            )
+        } else {
+            (quote! {}, quote! { ::core::ptr::null() })
+        };
 
         export_statics.push(quote! {
             static #name_static: &[u8] = #export_name_bytes.as_bytes();
+
+            #signature_decl
 
             static #static_name: ::aelys_native::AelysExport = ::aelys_native::AelysExport {
                 name: #name_static.as_ptr() as *const ::core::ffi::c_char,
@@ -85,6 +109,7 @@ pub fn expand_module(args: ModuleArgs, mut input: ItemMod) -> syn::Result<TokenS
                 arity: #arity,
                 _padding: [0; 2],
                 value: #wrapper_name as *const ::core::ffi::c_void,
+                signature: #signature_ptr,
             };
         });
 
