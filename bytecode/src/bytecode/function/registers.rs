@@ -22,6 +22,8 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
             OpCode::LoadI
             | OpCode::LoadNull
             | OpCode::LoadBool
+            | OpCode::LoadUnit
+            | OpCode::LoadNone
             | OpCode::LoadK
             | OpCode::LoadKWide
             | OpCode::GetGlobalIdxWide
@@ -108,7 +110,7 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
             | OpCode::XorIImm => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            OpCode::Neg | OpCode::Not | OpCode::BitNot | OpCode::NotI => {
+            OpCode::Neg | OpCode::Not | OpCode::BitNot | OpCode::NotI | OpCode::Cast => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
             OpCode::Jump => {
@@ -170,6 +172,7 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
             OpCode::Return0 => {}
+            OpCode::MatchFail => {}
             OpCode::GetGlobal | OpCode::SetGlobal => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
@@ -359,6 +362,24 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(b as usize),
                     Some(c as usize),
                 );
+            }
+            OpCode::RangeNew
+            | OpCode::RangeNewInclusive
+            | OpCode::ArraySlice
+            | OpCode::VecSlice => {
+                update_max_reg(
+                    &mut max_reg,
+                    &mut used,
+                    a as usize,
+                    Some(b as usize),
+                    Some(c as usize),
+                );
+            }
+            OpCode::MakeSum | OpCode::SumTest => {
+                update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
+            }
+            OpCode::SumPayload => {
+                update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
             // String for loop - uses consecutive regs [char_result(a), byte_offset(a+1), string_ptr(a+2)]
             OpCode::StringForLoop | OpCode::StringForLoopLong => {
