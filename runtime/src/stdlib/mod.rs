@@ -130,6 +130,22 @@ pub trait VmResources {
 pub mod helpers {
     use super::*;
 
+    pub fn result_ok(vm: &mut VM, value: Value) -> Result<Value, RuntimeError> {
+        let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultOk, value)?;
+        Ok(Value::ptr(sum.index()))
+    }
+
+    pub fn result_err(vm: &mut VM, message: &str) -> Result<Value, RuntimeError> {
+        let message = make_string(vm, message)?;
+        let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultErr, message)?;
+        Ok(Value::ptr(sum.index()))
+    }
+
+    pub fn option_some(vm: &mut VM, value: Value) -> Result<Value, RuntimeError> {
+        let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::OptionSome, value)?;
+        Ok(Value::ptr(sum.index()))
+    }
+
     pub fn get_number(vm: &VM, value: Value, op: &'static str) -> Result<f64, RuntimeError> {
         if let Some(f) = value.as_float() {
             Ok(f)
