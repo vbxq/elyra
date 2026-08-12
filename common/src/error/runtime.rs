@@ -57,7 +57,12 @@ pub enum RuntimeErrorKind {
     NativeError {
         code: i32,
     },
+    NativeReturnedNull,
     NativePanic,
+    SumUnwrapFailed {
+        family: &'static str,
+        message: Option<String>,
+    },
     IntegerOverflow,
     RuntimePanic {
         message: String,
@@ -134,7 +139,13 @@ impl RuntimeErrorKind {
             }
             Self::InvalidBytecode(message) => format!("invalid bytecode: {}", message),
             Self::NativeError { code } => format!("native error: code {}", code),
+            Self::NativeReturnedNull => {
+                "native function returned the forbidden null sentinel".to_string()
+            }
             Self::NativePanic => "native function panicked".to_string(),
+            Self::SumUnwrapFailed { family, message } => message.clone().unwrap_or_else(|| {
+                format!("{family}::unwrap failed: value was not the success variant")
+            }),
             Self::IntegerOverflow => {
                 "integer overflow outside the supported 48-bit range".to_string()
             }
