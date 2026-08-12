@@ -2,14 +2,18 @@ use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_modules::native::{
     NativeError, NativeExport, descriptor_module_name, validate_descriptor,
 };
-use aelys_native::{AelysExportKind, AelysInitFn, AelysModuleDescriptor, AelysNativeFn};
+use aelys_native::{
+    AelysExportKind, AelysInitFn, AelysModuleDescriptor, AelysNativeFn, AelysNativeType,
+};
+use aelys_sema::InferType;
 use aelys_syntax::{Source, Span};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 
 pub struct NativeModuleRegistration {
     pub alias: String,
-    pub functions: Vec<(String, u16, AelysNativeFn)>,
+    pub functions: Vec<(String, u16, AelysNativeFn, Option<AelysNativeType>)>,
+    pub signatures: HashMap<String, InferType>,
 }
 
 impl NativeModuleRegistration {
@@ -42,7 +46,7 @@ impl NativeModuleRegistration {
     pub fn qualified_names(&self) -> HashSet<String> {
         self.functions
             .iter()
-            .map(|(name, _, _)| name.clone())
+            .map(|(name, _, _, _)| name.clone())
             .collect()
     }
 }
@@ -74,6 +78,7 @@ impl ValidatedNativeModule {
         }
 
         let mut functions = Vec::with_capacity(exports.len());
+        let mut signatures = HashMap::new();
         for (name, export) in exports {
             if export.kind != AelysExportKind::Function || export.value.is_null() {
                 continue;
@@ -82,12 +87,63 @@ impl ValidatedNativeModule {
             // only ever stores an `AelysNativeFn` in the value slot of a `Function` export, so the pointer already has that ABI. the contract accepted at validate keeps the code it addresses alive.
             let function =
                 unsafe { std::mem::transmute::<*const c_void, AelysNativeFn>(export.value) };
-            functions.push((format!("{alias}::{name}"), export.arity, function));
+            let qualified = format!("{alias}::{name}");
+            let result_type = export.signature.as_ref().map(|signature| signature.result);
+            if let Some(signature) = export.signature {
+                let params = signature
+                    .params
+                    .into_iter()
+                    .map(native_type_to_infer_type)
+                    .collect();
+                signatures.insert(
+                    qualified.clone(),
+                    InferType::Function {
+                        params,
+                        ret: Box::new(native_type_to_infer_type(signature.result)),
+                    },
+                );
+            }
+            functions.push((qualified, export.arity, function, result_type));
         }
         // `validate_descriptor` returns exports in a `HashMap`; sort so the resolved order is deterministic across runs.
-        functions.sort_by(|(left, _, _), (right, _, _)| left.cmp(right));
+        functions.sort_by(|(left, _, _, _), (right, _, _, _)| left.cmp(right));
 
-        Ok(NativeModuleRegistration { alias, functions })
+        Ok(NativeModuleRegistration {
+            alias,
+            functions,
+            signatures,
+        })
+    }
+}
+
+fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
+    match native_type {
+        AelysNativeType::Int => InferType::I64,
+        AelysNativeType::Float => InferType::F64,
+        AelysNativeType::Bool => InferType::Bool,
+        AelysNativeType::String => InferType::String,
+        AelysNativeType::Unit => InferType::Unit,
+        AelysNativeType::Dynamic => InferType::Dynamic,
+        AelysNativeType::OptionInt => InferType::Option(Box::new(InferType::I64)),
+        AelysNativeType::OptionFloat => InferType::Option(Box::new(InferType::F64)),
+        AelysNativeType::OptionBool => InferType::Option(Box::new(InferType::Bool)),
+        AelysNativeType::OptionString => InferType::Option(Box::new(InferType::String)),
+        AelysNativeType::OptionUnit => InferType::Option(Box::new(InferType::Unit)),
+        AelysNativeType::ResultIntString => {
+            InferType::Result(Box::new(InferType::I64), Box::new(InferType::String))
+        }
+        AelysNativeType::ResultFloatString => {
+            InferType::Result(Box::new(InferType::F64), Box::new(InferType::String))
+        }
+        AelysNativeType::ResultBoolString => {
+            InferType::Result(Box::new(InferType::Bool), Box::new(InferType::String))
+        }
+        AelysNativeType::ResultStringString => {
+            InferType::Result(Box::new(InferType::String), Box::new(InferType::String))
+        }
+        AelysNativeType::ResultUnitString => {
+            InferType::Result(Box::new(InferType::Unit), Box::new(InferType::String))
+        }
     }
 }
 
