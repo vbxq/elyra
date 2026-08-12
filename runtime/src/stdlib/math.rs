@@ -131,11 +131,11 @@ fn native_sign(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if f.is_nan() {
             Ok(Value::float(f64::NAN))
         } else if f == 0.0 {
-            Ok(Value::int(0))
+            Ok(Value::float(0.0))
         } else if f > 0.0 {
-            Ok(Value::int(1))
+            Ok(Value::float(1.0))
         } else {
-            Ok(Value::int(-1))
+            Ok(Value::float(-1.0))
         }
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -212,13 +212,6 @@ fn native_log2(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_pow(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    // try int pow for small exponents - better precision
-    if let (Some(b), Some(e)) = (args[0].as_int(), args[1].as_int())
-        && (0..=62).contains(&e)
-        && let Some(r) = b.checked_pow(u32::try_from(e).expect("exponent was range checked"))
-    {
-        return Ok(Value::int(r));
-    }
     let base = get_number(vm, args[0], "pow")?;
     let exp = get_number(vm, args[1], "pow")?;
     Ok(Value::float(base.powf(exp)))
