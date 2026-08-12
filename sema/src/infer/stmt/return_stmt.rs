@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{Constraint, ConstraintReason};
+use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::TypedStmtKind;
 use crate::types::InferType;
 use aelys_syntax::{Expr, Span};
@@ -12,11 +12,11 @@ impl TypeInference {
             let actual_ret = typed_expr
                 .as_ref()
                 .map(|e| e.ty.clone())
-                .unwrap_or(InferType::Null);
+                .unwrap_or(InferType::Unit);
 
-            self.constraints.push(Constraint::equal(
-                actual_ret,
-                expected_ret,
+            if self.reject_dynamic(
+                &actual_ret,
+                &expected_ret,
                 span,
                 ConstraintReason::Return {
                     func_name: self
@@ -25,7 +25,38 @@ impl TypeInference {
                         .cloned()
                         .unwrap_or_else(|| "<anonymous>".to_string()),
                 },
-            ));
+            ) {
+            } else if let InferType::UntypedNative(name) = &actual_ret {
+                if !matches!(expected_ret, InferType::Dynamic) {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::UntypedNativeTypeMismatch {
+                            name: name.clone(),
+                            expected: expected_ret.clone(),
+                        },
+                        span,
+                        reason: ConstraintReason::Return {
+                            func_name: self
+                                .env
+                                .current_function()
+                                .cloned()
+                                .unwrap_or_else(|| "<anonymous>".to_string()),
+                        },
+                    });
+                }
+            } else {
+                self.constraints.push(Constraint::equal(
+                    actual_ret,
+                    expected_ret,
+                    span,
+                    ConstraintReason::Return {
+                        func_name: self
+                            .env
+                            .current_function()
+                            .cloned()
+                            .unwrap_or_else(|| "<anonymous>".to_string()),
+                    },
+                ));
+            }
         }
 
         TypedStmtKind::Return(typed_expr)
