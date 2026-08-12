@@ -15,7 +15,15 @@ pub enum InferType {
     F64,
     Bool,
     String,
+    Unit,
     Null,
+
+    Option(Box<InferType>),
+    Result(Box<InferType>, Box<InferType>),
+    Error,
+    Never,
+    Numeric,
+    UntypedNative(String),
 
     Function {
         params: Vec<InferType>,
@@ -54,7 +62,7 @@ impl InferType {
     }
 
     pub fn is_numeric(&self) -> bool {
-        self.is_integer() || self.is_float()
+        self.is_integer() || self.is_float() || matches!(self, InferType::Numeric)
     }
 
     pub fn has_vars(&self) -> bool {
@@ -63,7 +71,10 @@ impl InferType {
             InferType::Function { params, ret } => {
                 params.iter().any(|p| p.has_vars()) || ret.has_vars()
             }
-            InferType::Array(inner) | InferType::Vec(inner) => inner.has_vars(),
+            InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
+                inner.has_vars()
+            }
+            InferType::Result(ok, err) => ok.has_vars() || err.has_vars(),
             InferType::Tuple(elems) => elems.iter().any(|e| e.has_vars()),
             _ => false,
         }
@@ -74,23 +85,32 @@ impl InferType {
     }
 
     pub fn is_concrete(&self) -> bool {
-        matches!(
-            self,
-            InferType::I8
-                | InferType::I16
-                | InferType::I32
-                | InferType::I64
-                | InferType::U8
-                | InferType::U16
-                | InferType::U32
-                | InferType::U64
-                | InferType::F32
-                | InferType::F64
-                | InferType::Bool
-                | InferType::String
-                | InferType::Null
-                | InferType::Struct(_)
-        )
+        match self {
+            InferType::Option(inner) => inner.is_concrete(),
+            InferType::Result(ok, error) => ok.is_concrete() && error.is_concrete(),
+            InferType::UntypedNative(_) | InferType::Var(_) | InferType::Dynamic => false,
+            _ => matches!(
+                self,
+                InferType::I8
+                    | InferType::I16
+                    | InferType::I32
+                    | InferType::I64
+                    | InferType::U8
+                    | InferType::U16
+                    | InferType::U32
+                    | InferType::U64
+                    | InferType::F32
+                    | InferType::F64
+                    | InferType::Bool
+                    | InferType::String
+                    | InferType::Unit
+                    | InferType::Null
+                    | InferType::Error
+                    | InferType::Never
+                    | InferType::Numeric
+                    | InferType::Struct(_)
+            ),
+        }
     }
 
     pub fn from_annotation(ann: &aelys_syntax::TypeAnnotation) -> Self {
@@ -104,7 +124,7 @@ impl InferType {
                 .fn_ret
                 .as_ref()
                 .map(|r| Self::from_annotation(r))
-                .unwrap_or(InferType::Null);
+                .unwrap_or(InferType::Unit);
             return InferType::Function {
                 params,
                 ret: Box::new(ret),
@@ -124,23 +144,47 @@ impl InferType {
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
             "string" => InferType::String,
-            "null" | "void" => InferType::Null,
+            "unit" | "void" => InferType::Unit,
+            "dynamic" => InferType::Dynamic,
+            "null" => InferType::Null,
             "array" => {
                 let inner = ann
-                    .type_param
-                    .as_ref()
-                    .map(|p| Self::from_annotation(p))
+                    .type_params
+                    .first()
+                    .map(Self::from_annotation)
                     .unwrap_or(InferType::Dynamic);
                 InferType::Array(Box::new(inner))
             }
             "vec" => {
                 let inner = ann
-                    .type_param
-                    .as_ref()
-                    .map(|p| Self::from_annotation(p))
+                    .type_params
+                    .first()
+                    .map(Self::from_annotation)
                     .unwrap_or(InferType::Dynamic);
                 InferType::Vec(Box::new(inner))
             }
+            "option" => {
+                let inner = ann
+                    .type_params
+                    .first()
+                    .map(Self::from_annotation)
+                    .unwrap_or(InferType::Dynamic);
+                InferType::Option(Box::new(inner))
+            }
+            "result" => {
+                let ok = ann
+                    .type_params
+                    .first()
+                    .map(Self::from_annotation)
+                    .unwrap_or(InferType::Dynamic);
+                let err = ann
+                    .type_params
+                    .get(1)
+                    .map(Self::from_annotation)
+                    .unwrap_or(InferType::Dynamic);
+                InferType::Result(Box::new(ok), Box::new(err))
+            }
+            "error" => InferType::Error,
             _ => {
                 if ann.name.chars().next().is_some_and(|c| c.is_uppercase()) {
                     InferType::Struct(ann.name.clone())
@@ -165,7 +209,14 @@ impl InferType {
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
             "string" => InferType::String,
-            "null" | "void" => InferType::Null,
+            "unit" | "void" => InferType::Unit,
+            "dynamic" => InferType::Dynamic,
+            "null" => InferType::Null,
+            "option" => InferType::Option(Box::new(InferType::Dynamic)),
+            "result" => {
+                InferType::Result(Box::new(InferType::Dynamic), Box::new(InferType::Dynamic))
+            }
+            "error" => InferType::Error,
             _ => {
                 if name.chars().next().is_some_and(|c| c.is_uppercase()) {
                     InferType::Struct(name.to_string())
@@ -236,7 +287,14 @@ impl fmt::Display for InferType {
             InferType::F64 => write!(f, "f64"),
             InferType::Bool => write!(f, "bool"),
             InferType::String => write!(f, "string"),
+            InferType::Unit => write!(f, "unit"),
             InferType::Null => write!(f, "null"),
+            InferType::Option(inner) => write!(f, "Option<{}>", inner),
+            InferType::Result(ok, err) => write!(f, "Result<{}, {}>", ok, err),
+            InferType::Error => write!(f, "Error"),
+            InferType::Never => write!(f, "never"),
+            InferType::Numeric => write!(f, "number"),
+            InferType::UntypedNative(name) => write!(f, "untyped native '{}'", name),
             InferType::Function { params, ret } => {
                 write!(f, "(")?;
                 for (i, p) in params.iter().enumerate() {
@@ -261,7 +319,7 @@ impl fmt::Display for InferType {
             }
             InferType::Range => write!(f, "range"),
             InferType::Struct(name) => write!(f, "{}", name),
-            InferType::Var(id) => write!(f, "{}", id),
+            InferType::Var(_) => write!(f, "inferred type"),
             InferType::Dynamic => write!(f, "dynamic"),
         }
     }
