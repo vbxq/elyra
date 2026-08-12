@@ -1,6 +1,7 @@
 use super::super::Compiler;
 use aelys_bytecode::OpCode;
 use aelys_common::Result;
+use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{InferType, ResolvedType, TypedExpr};
 use aelys_syntax::Span;
 
@@ -235,23 +236,67 @@ impl Compiler {
 
     pub(super) fn compile_typed_slice(
         &mut self,
-        _object: &TypedExpr,
-        _range: &TypedExpr,
-        _dest: u16,
-        _span: Span,
+        object: &TypedExpr,
+        range: &TypedExpr,
+        dest: u16,
+        span: Span,
     ) -> Result<()> {
-        todo!("slice")
+        let opcode = match &object.ty {
+            InferType::Array(_) => OpCode::ArraySlice,
+            InferType::Vec(_) => OpCode::VecSlice,
+            receiver => {
+                return Err(CompileError::new(
+                    CompileErrorKind::TypeInferenceError(format!(
+                        "cannot slice a value of type {receiver}"
+                    )),
+                    span,
+                    self.source.clone(),
+                )
+                .into());
+            }
+        };
+
+        let object_reg = self.alloc_register()?;
+        self.compile_typed_expr(object, object_reg)?;
+        let range_reg = self.alloc_register()?;
+        self.compile_typed_expr(range, range_reg)?;
+        self.emit_a(opcode, dest, object_reg, range_reg, span);
+        self.free_register(range_reg);
+        self.free_register(object_reg);
+        Ok(())
     }
 
     pub(super) fn compile_typed_range(
         &mut self,
-        _start: &Option<Box<TypedExpr>>,
-        _end: &Option<Box<TypedExpr>>,
-        _inclusive: bool,
-        _dest: u16,
-        _span: Span,
+        start: &Option<Box<TypedExpr>>,
+        end: &Option<Box<TypedExpr>>,
+        inclusive: bool,
+        dest: u16,
+        span: Span,
     ) -> Result<()> {
-        todo!("range")
+        let start_reg = self.alloc_register()?;
+        if let Some(start) = start {
+            self.compile_typed_expr(start, start_reg)?;
+        } else {
+            self.emit_a(OpCode::LoadNone, start_reg, 0, 0, span);
+        }
+
+        let end_reg = self.alloc_register()?;
+        if let Some(end) = end {
+            self.compile_typed_expr(end, end_reg)?;
+        } else {
+            self.emit_a(OpCode::LoadNone, end_reg, 0, 0, span);
+        }
+
+        let opcode = if inclusive {
+            OpCode::RangeNewInclusive
+        } else {
+            OpCode::RangeNew
+        };
+        self.emit_a(opcode, dest, start_reg, end_reg, span);
+        self.free_register(end_reg);
+        self.free_register(start_reg);
+        Ok(())
     }
 
     fn select_typed_opcode(
@@ -318,7 +363,7 @@ impl Compiler {
         );
 
         self.emit_a(opcode, obj_reg, val_reg, 0, span);
-        self.emit_a(OpCode::LoadNull, dest, 0, 0, span);
+        self.emit_a(OpCode::LoadUnit, dest, 0, 0, span);
 
         self.free_register(val_reg);
         self.free_register(obj_reg);
@@ -344,6 +389,40 @@ impl Compiler {
         );
 
         self.emit_a(opcode, dest, obj_reg, 0, span);
+        self.free_register(obj_reg);
+        Ok(())
+    }
+
+    pub(super) fn compile_typed_collection_get(
+        &mut self,
+        object: &TypedExpr,
+        index: &TypedExpr,
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
+        let obj_reg = self.alloc_register()?;
+        self.compile_typed_expr(object, obj_reg)?;
+        let idx_reg = self.alloc_register()?;
+        self.compile_typed_expr(index, idx_reg)?;
+        let opcode = match &object.ty {
+            InferType::Array(inner) => Self::select_typed_opcode(
+                inner,
+                OpCode::ArrayGetI,
+                OpCode::ArrayGetF,
+                OpCode::ArrayGetB,
+                OpCode::ArrayGetP,
+            ),
+            InferType::Vec(inner) => Self::select_typed_opcode(
+                inner,
+                OpCode::VecGetI,
+                OpCode::VecGetF,
+                OpCode::VecGetB,
+                OpCode::VecGetP,
+            ),
+            _ => OpCode::VecGetP,
+        };
+        self.emit_a(opcode, dest, obj_reg, idx_reg, span);
+        self.free_register(idx_reg);
         self.free_register(obj_reg);
         Ok(())
     }
@@ -375,7 +454,7 @@ impl Compiler {
         self.compile_typed_expr(capacity, cap_reg)?;
 
         self.emit_a(OpCode::VecReserve, obj_reg, cap_reg, 0, span);
-        self.emit_a(OpCode::LoadNull, dest, 0, 0, span);
+        self.emit_a(OpCode::LoadUnit, dest, 0, 0, span);
 
         self.free_register(cap_reg);
         self.free_register(obj_reg);
