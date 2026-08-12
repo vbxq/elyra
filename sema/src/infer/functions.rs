@@ -1,7 +1,8 @@
 use super::TypeInference;
+use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedFunction, TypedParam};
 use crate::types::InferType;
-use aelys_syntax::Function;
+use aelys_syntax::{Function, Stmt, StmtKind};
 
 impl TypeInference {
     /// Infer function type
@@ -49,13 +50,27 @@ impl TypeInference {
                     .as_ref()
                     .map(|ann| self.type_from_annotation(ann))
             })
-            .unwrap_or_else(|| self.type_gen.fresh());
+            .unwrap_or_else(|| {
+                if func.body.is_empty() {
+                    InferType::Unit
+                } else {
+                    self.type_gen.fresh()
+                }
+            });
 
         let mut func_env = self.env.for_closure();
         func_env.set_current_function(Some(func.name.clone()));
 
-        for param in &typed_params {
-            func_env.define_local(param.name.clone(), param.ty.clone());
+        for (param, syntax_param) in typed_params.iter().zip(&func.params) {
+            if syntax_param
+                .type_annotation
+                .as_ref()
+                .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
+            {
+                func_env.define_explicit_dynamic_local(param.name.clone(), param.ty.clone());
+            } else {
+                func_env.define_local(param.name.clone(), param.ty.clone());
+            }
         }
 
         let saved_env = std::mem::replace(&mut self.env, func_env);
@@ -79,6 +94,21 @@ impl TypeInference {
             stmts
         };
 
+        if func.return_type.is_some()
+            && !matches!(return_type, InferType::Unit)
+            && !body_always_returns(&func.body, true)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MissingReturnValue {
+                    expected: return_type.clone(),
+                },
+                span: func.span,
+                reason: ConstraintReason::Return {
+                    func_name: func.name.clone(),
+                },
+            });
+        }
+
         let captures = self.collect_captures_from_stmts(&typed_body, &typed_params);
 
         self.pop_return_type();
@@ -96,5 +126,36 @@ impl TypeInference {
             span: func.span,
             captures,
         }
+    }
+}
+
+pub(super) fn body_always_returns(stmts: &[Stmt], implicit_tail: bool) -> bool {
+    let Some((last, prefix)) = stmts.split_last() else {
+        return false;
+    };
+
+    for stmt in prefix {
+        if stmt_always_returns(stmt, false) {
+            return true;
+        }
+    }
+
+    stmt_always_returns(last, implicit_tail)
+}
+
+fn stmt_always_returns(stmt: &Stmt, implicit_tail: bool) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(_) => true,
+        StmtKind::Expression(_) => implicit_tail,
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            stmt_always_returns(then_branch, implicit_tail)
+                && stmt_always_returns(else_branch, implicit_tail)
+        }
+        StmtKind::Block(stmts) => body_always_returns(stmts, implicit_tail),
+        _ => false,
     }
 }
