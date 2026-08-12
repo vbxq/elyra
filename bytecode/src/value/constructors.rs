@@ -1,6 +1,6 @@
 use super::{
     CANONICAL_NAN, IntegerOverflowError, PAYLOAD_MASK, QNAN, TAG_BOOL, TAG_INT, TAG_NESTED_FN,
-    TAG_NULL, TAG_PTR, Value,
+    TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
 };
 
 impl Value {
@@ -49,6 +49,14 @@ impl Value {
 
     pub fn null() -> Self {
         Self(QNAN | TAG_NULL)
+    }
+
+    pub fn unit() -> Self {
+        Self(QNAN | TAG_UNIT)
+    }
+
+    pub fn none() -> Self {
+        Self(QNAN | TAG_NONE)
     }
 
     pub fn ptr(p: usize) -> Self {
