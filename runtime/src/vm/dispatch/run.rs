@@ -209,6 +209,24 @@ impl VM {
                     }
                 }
 
+                185..=190 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_sum(&state, &mut ip, opcode_byte, instr)? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => unreachable!(),
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!()
+                        }
+                    }
+                }
+
                 39 => {
                     let (dest, source, global) = decode_abc(instr);
                     let left = self
@@ -683,7 +701,7 @@ impl VM {
                             self.pop_frame_with_jit_metadata();
 
                             if self.frames.is_empty() {
-                                return Ok(Value::null());
+                                return Ok(Value::unit());
                             }
 
                             reload_frame_state!();
@@ -692,7 +710,7 @@ impl VM {
                                 self.prepare_globals_for_function(func_ref);
                             }
 
-                            reg_set!(base + dest as usize, Value::null());
+                            reg_set!(base + dest as usize, Value::unit());
                         }
 
                         // CallGlobal (77)
@@ -1246,7 +1264,7 @@ impl VM {
                 }
 
                 // Array, Vec, and String operations: wide literals 122-123, compact 130-176
-                122..=123 | 130..=176 => {
+                122..=123 | 130..=176 | 192..=195 => {
                     super::ops::arrays::execute_arrays!(
                         self,
                         opcode_byte,
@@ -1258,6 +1276,18 @@ impl VM {
                         reg_get,
                         reg_set
                     );
+                }
+
+                191 => {
+                    super::ops::casts::execute(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        instr,
+                    )?;
                 }
 
                 184 => {
