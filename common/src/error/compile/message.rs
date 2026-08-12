@@ -17,6 +17,19 @@ impl CompileErrorKind {
             Self::ExpectedExpression => "expected expression".to_string(),
             Self::ExpectedIdentifier => "expected identifier".to_string(),
             Self::InvalidAssignmentTarget => "invalid assignment target".to_string(),
+            Self::NullIsNotInSurface => {
+                "null is not part of Aelys; use Option for absence or Result for failure"
+                    .to_string()
+            }
+            Self::ExpectedPattern => "expected a match pattern".to_string(),
+            Self::InvalidPattern { reason } => format!("invalid match pattern: {reason}"),
+            Self::UnknownVariant { variant, expected } => {
+                format!("unknown variant '{variant}' for {expected}")
+            }
+            Self::MatchArmValueRequired => {
+                "match arm must produce a value or diverge with return, break, or continue"
+                    .to_string()
+            }
             Self::RecursionDepthExceeded { max } => {
                 format!("expression nesting too deep (max {} levels)", max)
             }
@@ -46,6 +59,9 @@ impl CompileErrorKind {
             Self::BreakOutsideLoop => "'break' outside of loop".to_string(),
             Self::ContinueOutsideLoop => "'continue' outside of loop".to_string(),
             Self::ReturnOutsideFunction => "'return' outside of function".to_string(),
+            Self::MissingReturnValue { expected } => {
+                format!("function can fall through without returning {expected}")
+            }
             Self::AssignToLoopVariable(name) => {
                 format!("cannot assign to loop variable '{}'", name)
             }
@@ -116,6 +132,38 @@ impl CompileErrorKind {
                 "module members are reached with '::'; write '{}::{}'",
                 module, member
             ),
+            Self::NonExhaustiveMatch { missing } => format!(
+                "non-exhaustive match; missing {}\n   = help: add a missing arm or '_'",
+                missing.join(", ")
+            ),
+            Self::IgnoredResult => {
+                "unused Result value; handle it with match, return, ?, or a consuming method"
+                    .to_string()
+            }
+            Self::IgnoredOption => {
+                "unused Option value; handle it with match, return, or a consuming method"
+                    .to_string()
+            }
+            Self::QuestionMarkOutsideResult => {
+                "cannot use '?' here; the enclosing function must return Option or Result"
+                    .to_string()
+            }
+            Self::QuestionMarkTypeMismatch { source, target } => format!(
+                "cannot propagate {source} with '?' from a function returning {target}\n   = help: use map_err for an explicit error conversion"
+            ),
+            Self::UnresolvedSumType { constructor } => format!(
+                "cannot infer the type carried by {constructor}\n   = help: add an Option<T> or Result<T, E> annotation"
+            ),
+            Self::UntypedSumValue { name } => format!(
+                "cannot use untyped native value '{name}' as Option or Result\n   = help: wrap it in a typed Aelys function"
+            ),
+            Self::InvalidSumMethod { method, receiver } => {
+                format!("method '{method}' is not available on {receiver}")
+            }
+            Self::DynamicSumMethod { method } => format!(
+                "dynamic value cannot use sum method '{method}'; annotate it as Option<T> or Result<T, E>"
+            ),
+            Self::NamedTypeError { message, .. } => message.clone(),
         }
     }
 }
