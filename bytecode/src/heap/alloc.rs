@@ -1,6 +1,8 @@
 use super::Heap;
 use crate::Function;
-use crate::object::{AelysFunction, AelysString, GcObject, GcRef, NativeFunction, ObjectKind};
+use crate::object::{
+    AelysFunction, AelysString, AelysSum, GcObject, GcRef, NativeFunction, ObjectKind, SumTag,
+};
 
 impl Heap {
     pub fn alloc(&mut self, mut obj: GcObject) -> GcRef {
@@ -53,5 +55,9 @@ impl Heap {
     // same as alloc_native, just different name for clarity in calling code
     pub fn alloc_foreign(&mut self, name: &str, arity: u16) -> GcRef {
         self.alloc_native(name, arity)
+    }
+
+    pub fn alloc_sum(&mut self, tag: SumTag, payload: crate::Value) -> GcRef {
+        self.alloc(GcObject::new(ObjectKind::Sum(AelysSum::new(tag, payload))))
     }
 }
