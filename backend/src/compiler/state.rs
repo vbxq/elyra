@@ -62,4 +62,5 @@ pub struct Compiler {
     pub symbol_origins: Rc<HashMap<String, String>>, // bare name -> qualified name
     pub accessed_globals: HashSet<String>,
     pub function_depth: usize,
+    pub current_return_type: Option<aelys_sema::InferType>,
 }
