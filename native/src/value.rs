@@ -8,10 +8,15 @@ const TAG_INT: u64 = 0x0001_0000_0000_0000;
 const TAG_BOOL: u64 = 0x0002_0000_0000_0000;
 const TAG_NULL: u64 = 0x0003_0000_0000_0000;
 const TAG_NAN: u64 = 0x0004_0000_0000_0000;
+const TAG_UNIT: u64 = 0x0006_0000_0000_0000;
 const PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 
 pub fn value_null() -> AelysValue {
     AelysValue::from_bits(QNAN | TAG_NULL)
+}
+
+pub fn value_unit() -> AelysValue {
+    AelysValue::from_bits(QNAN | TAG_UNIT)
 }
 
 pub fn value_bool(b: bool) -> AelysValue {
@@ -73,6 +78,10 @@ pub fn value_as_bool(v: AelysValue) -> bool {
 pub fn value_is_null(v: AelysValue) -> bool {
     let v = v.bits();
     (v & (QNAN | 0x0007_0000_0000_0000)) == (QNAN | TAG_NULL)
+}
+pub fn value_is_unit(v: AelysValue) -> bool {
+    let v = v.bits();
+    (v & (QNAN | 0x0007_0000_0000_0000)) == (QNAN | TAG_UNIT)
 }
 pub fn value_is_int(v: AelysValue) -> bool {
     let v = v.bits();
