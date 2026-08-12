@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{Constraint, ConstraintReason};
+use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::TypedStmtKind;
 use crate::types::InferType;
 use aelys_syntax::{Expr, Span, Stmt};
@@ -13,12 +13,24 @@ impl TypeInference {
     ) -> TypedStmtKind {
         let typed_cond = self.infer_expr(condition);
 
-        self.constraints.push(Constraint::equal(
-            typed_cond.ty.clone(),
-            InferType::Bool,
+        if !self.reject_dynamic(
+            &typed_cond.ty,
+            &InferType::Bool,
             condition.span,
             ConstraintReason::IfCondition,
-        ));
+        ) && !self.reject_untyped_native(
+            &typed_cond.ty,
+            &InferType::Bool,
+            condition.span,
+            ConstraintReason::IfCondition,
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_cond.ty.clone(),
+                InferType::Bool,
+                condition.span,
+                ConstraintReason::IfCondition,
+            ));
+        }
 
         let typed_then = self.infer_stmt(then_branch);
         let typed_else = else_branch.map(|e| Box::new(self.infer_stmt(e)));
@@ -33,12 +45,24 @@ impl TypeInference {
     pub(super) fn infer_while_stmt(&mut self, condition: &Expr, body: &Stmt) -> TypedStmtKind {
         let typed_cond = self.infer_expr(condition);
 
-        self.constraints.push(Constraint::equal(
-            typed_cond.ty.clone(),
-            InferType::Bool,
+        if !self.reject_dynamic(
+            &typed_cond.ty,
+            &InferType::Bool,
             condition.span,
             ConstraintReason::WhileCondition,
-        ));
+        ) && !self.reject_untyped_native(
+            &typed_cond.ty,
+            &InferType::Bool,
+            condition.span,
+            ConstraintReason::WhileCondition,
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_cond.ty.clone(),
+                InferType::Bool,
+                condition.span,
+                ConstraintReason::WhileCondition,
+            ));
+        }
 
         let typed_body = self.infer_stmt(body);
 
@@ -61,26 +85,62 @@ impl TypeInference {
         let typed_end = self.infer_expr(end);
         let typed_step = step.map(|s| self.infer_expr(s));
 
-        self.constraints.push(Constraint::equal(
-            typed_start.ty.clone(),
-            InferType::I64,
+        if !self.reject_dynamic(
+            &typed_start.ty,
+            &InferType::I64,
             start.span,
             ConstraintReason::ForBounds,
-        ));
-        self.constraints.push(Constraint::equal(
-            typed_end.ty.clone(),
-            InferType::I64,
-            end.span,
+        ) && !self.reject_untyped_native(
+            &typed_start.ty,
+            &InferType::I64,
+            start.span,
             ConstraintReason::ForBounds,
-        ));
-        if let Some(ref ts) = typed_step {
-            let step_span = step.map(|s| s.span).unwrap_or(body.span);
+        ) {
             self.constraints.push(Constraint::equal(
-                ts.ty.clone(),
+                typed_start.ty.clone(),
                 InferType::I64,
-                step_span,
+                start.span,
                 ConstraintReason::ForBounds,
             ));
+        }
+        if !self.reject_dynamic(
+            &typed_end.ty,
+            &InferType::I64,
+            end.span,
+            ConstraintReason::ForBounds,
+        ) && !self.reject_untyped_native(
+            &typed_end.ty,
+            &InferType::I64,
+            end.span,
+            ConstraintReason::ForBounds,
+        ) {
+            self.constraints.push(Constraint::equal(
+                typed_end.ty.clone(),
+                InferType::I64,
+                end.span,
+                ConstraintReason::ForBounds,
+            ));
+        }
+        if let Some(ref ts) = typed_step {
+            let step_span = step.map(|s| s.span).unwrap_or(body.span);
+            if !self.reject_dynamic(
+                &ts.ty,
+                &InferType::I64,
+                step_span,
+                ConstraintReason::ForBounds,
+            ) && !self.reject_untyped_native(
+                &ts.ty,
+                &InferType::I64,
+                step_span,
+                ConstraintReason::ForBounds,
+            ) {
+                self.constraints.push(Constraint::equal(
+                    ts.ty.clone(),
+                    InferType::I64,
+                    step_span,
+                    ConstraintReason::ForBounds,
+                ));
+            }
         }
 
         self.env.push_scope();
@@ -111,8 +171,49 @@ impl TypeInference {
             InferType::String => InferType::String,
             InferType::Vec(inner) => (**inner).clone(),
             InferType::Array(inner) => (**inner).clone(),
-            InferType::Dynamic => InferType::Dynamic,
-            _ => InferType::Dynamic,
+            InferType::Dynamic => {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::NotIterable {
+                        receiver: InferType::Dynamic,
+                    },
+                    span: iterable.span,
+                    reason: ConstraintReason::Other("for iteration".to_string()),
+                });
+                InferType::Dynamic
+            }
+            InferType::Var(_) => {
+                let element = self.type_gen.fresh();
+                self.constraints.push(Constraint::one_of(
+                    typed_iterable.ty.clone(),
+                    vec![
+                        InferType::String,
+                        InferType::Array(Box::new(element.clone())),
+                        InferType::Vec(Box::new(element.clone())),
+                    ],
+                    iterable.span,
+                    ConstraintReason::Other("for iteration".to_string()),
+                ));
+                element
+            }
+            InferType::UntypedNative(_) => {
+                self.reject_untyped_native(
+                    &typed_iterable.ty,
+                    &InferType::Dynamic,
+                    iterable.span,
+                    ConstraintReason::Other("for iteration".to_string()),
+                );
+                InferType::Dynamic
+            }
+            receiver => {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::NotIterable {
+                        receiver: receiver.clone(),
+                    },
+                    span: iterable.span,
+                    reason: ConstraintReason::Other("for iteration".to_string()),
+                });
+                InferType::Dynamic
+            }
         };
 
         self.env.push_scope();
