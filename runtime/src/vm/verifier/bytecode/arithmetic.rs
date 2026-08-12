@@ -1,4 +1,4 @@
-use crate::vm::OpCode;
+use crate::vm::{CastTarget, OpCode};
 
 use super::verify_reg;
 
@@ -86,6 +86,13 @@ pub(super) fn verify(
         OpCode::Neg | OpCode::Not | OpCode::BitNot | OpCode::NotI => {
             verify_reg(a, num_regs, "UnaryOp")?;
             verify_reg(b, num_regs, "UnaryOp")?;
+        }
+        OpCode::Cast => {
+            verify_reg(a, num_regs, "Cast")?;
+            verify_reg(b, num_regs, "Cast")?;
+            if CastTarget::from_u8(u8::try_from(c).expect("operand occupies one byte")).is_none() {
+                return Err(format!("invalid cast target {c}"));
+            }
         }
         OpCode::AddI | OpCode::SubI => {
             verify_reg(a, num_regs, "AddI")?;
