@@ -2,6 +2,7 @@ use crate::modules::loader::{LoadResult, ModuleImports, ModuleLoader};
 use aelys_common::Result;
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_runtime::VM;
+use aelys_sema::InferType;
 use aelys_syntax::Source;
 use aelys_syntax::{ImportKind, Stmt, StmtKind};
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ pub fn load_modules_for_program(
     let mut module_aliases = std::collections::HashSet::new();
     let mut known_globals = std::collections::HashSet::new();
     let mut known_native_globals = std::collections::HashSet::new();
+    let mut native_signatures: HashMap<String, InferType> = HashMap::new();
     let mut symbol_origins: HashMap<String, String> = HashMap::new();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
@@ -75,9 +77,18 @@ pub fn load_modules_for_program(
                                 module_path.clone()
                             },
                         );
+                        known_globals.insert(qualified.clone());
                         known_globals.insert(name.clone());
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(name.clone());
+                        }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(name))
+                        {
+                            native_signatures.insert(qualified.clone(), signature.clone());
+                            native_signatures.insert(name.clone(), signature.clone());
                         }
                     }
                 }
@@ -96,6 +107,13 @@ pub fn load_modules_for_program(
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(sym.clone());
                         }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(sym))
+                        {
+                            native_signatures.insert(sym.clone(), signature.clone());
+                        }
                     }
                 }
                 ImportKind::Wildcard => {
@@ -109,9 +127,18 @@ pub fn load_modules_for_program(
                                 module_path.clone()
                             },
                         );
+                        known_globals.insert(qualified.clone());
                         known_globals.insert(name.clone());
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(name.clone());
+                        }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(name))
+                        {
+                            native_signatures.insert(qualified.clone(), signature.clone());
+                            native_signatures.insert(name.clone(), signature.clone());
                         }
                     }
                 }
@@ -119,10 +146,19 @@ pub fn load_modules_for_program(
                     for name in module_info.exports.keys() {
                         let alias_qualified = format!("{}::{}", module_alias, name);
                         let internal_qualified = format!("{}::{}", module_info.name, name);
+                        known_globals.insert(alias_qualified.clone());
                         if module_info.native_functions.contains(&alias_qualified)
                             || module_info.native_functions.contains(&internal_qualified)
                         {
-                            known_native_globals.insert(alias_qualified);
+                            known_native_globals.insert(alias_qualified.clone());
+                        }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&alias_qualified)
+                            .or_else(|| module_info.native_signatures.get(&internal_qualified))
+                            .or_else(|| module_info.native_signatures.get(name))
+                        {
+                            native_signatures.insert(alias_qualified, signature.clone());
                         }
                     }
                 }
@@ -134,6 +170,7 @@ pub fn load_modules_for_program(
         module_aliases,
         known_globals,
         known_native_globals,
+        native_signatures,
         symbol_origins,
     })
 }
@@ -148,6 +185,7 @@ pub fn load_modules_with_loader(
     let mut module_aliases = std::collections::HashSet::new();
     let mut known_globals = std::collections::HashSet::new();
     let mut known_native_globals = std::collections::HashSet::new();
+    let mut native_signatures: HashMap<String, InferType> = HashMap::new();
     let mut symbol_origins: HashMap<String, String> = HashMap::new();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
@@ -205,9 +243,18 @@ pub fn load_modules_with_loader(
                                 module_path.clone()
                             },
                         );
+                        known_globals.insert(qualified.clone());
                         known_globals.insert(name.clone());
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(name.clone());
+                        }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(name))
+                        {
+                            native_signatures.insert(qualified.clone(), signature.clone());
+                            native_signatures.insert(name.clone(), signature.clone());
                         }
                     }
                 }
@@ -226,6 +273,13 @@ pub fn load_modules_with_loader(
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(sym.clone());
                         }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(sym))
+                        {
+                            native_signatures.insert(sym.clone(), signature.clone());
+                        }
                     }
                 }
                 ImportKind::Wildcard => {
@@ -239,9 +293,18 @@ pub fn load_modules_with_loader(
                                 module_path.clone()
                             },
                         );
+                        known_globals.insert(qualified.clone());
                         known_globals.insert(name.clone());
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(name.clone());
+                        }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(name))
+                        {
+                            native_signatures.insert(qualified.clone(), signature.clone());
+                            native_signatures.insert(name.clone(), signature.clone());
                         }
                     }
                 }
@@ -249,10 +312,19 @@ pub fn load_modules_with_loader(
                     for name in module_info.exports.keys() {
                         let alias_qualified = format!("{}::{}", module_alias, name);
                         let internal_qualified = format!("{}::{}", module_info.name, name);
+                        known_globals.insert(alias_qualified.clone());
                         if module_info.native_functions.contains(&alias_qualified)
                             || module_info.native_functions.contains(&internal_qualified)
                         {
-                            known_native_globals.insert(alias_qualified);
+                            known_native_globals.insert(alias_qualified.clone());
+                        }
+                        if let Some(signature) = module_info
+                            .native_signatures
+                            .get(&alias_qualified)
+                            .or_else(|| module_info.native_signatures.get(&internal_qualified))
+                            .or_else(|| module_info.native_signatures.get(name))
+                        {
+                            native_signatures.insert(alias_qualified, signature.clone());
                         }
                     }
                 }
@@ -265,6 +337,7 @@ pub fn load_modules_with_loader(
             module_aliases,
             known_globals,
             known_native_globals,
+            native_signatures,
             symbol_origins,
         },
         loader,
