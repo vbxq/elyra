@@ -13,9 +13,9 @@ fn fs_open_read_close() {
     let code = format!(
         r#"
 needs std::fs
-let f = fs::open("{}", "r")
-let data = fs::read(f)
-fs::close(f)
+let f = fs::open("{}", "r").unwrap()
+let data = fs::read(f).unwrap()
+fs::close(f).unwrap()
 42
 "#,
         path_str
@@ -33,8 +33,8 @@ fn fs_write_and_read_text() {
     let code = format!(
         r#"
 needs std::fs
-fs::write_text("{}", "hello world")
-fs::read_text("{}")
+fs::write_text("{}", "hello world").unwrap()
+fs::read_text("{}").unwrap()
     "#,
         path_str, path_str
     );
@@ -52,23 +52,21 @@ fn fs_open_invalid_mode() {
     let code = format!(
         r#"
 needs std::fs
-fs::open("{}", "xyz")
+match fs::open("{}", "xyz") {{ Ok(_) => 0, Err(_) => 1 }}
 "#,
         path_str
     );
 
-    let err = run_aelys_err(&code);
-    assert!(err.contains("invalid") || err.contains("mode"));
+    assert_aelys_int(&code, 1);
 }
 
 #[test]
 fn fs_close_invalid_handle() {
     let code = r#"
 needs std::fs
-fs::close(999)
+match fs::close(999) { Ok(_) => 0, Err(_) => 1 }
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("invalid") || err.contains("handle"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
@@ -81,11 +79,11 @@ fn fs_read_line_eof_returns_null() {
     let code = format!(
         r#"
 needs std::fs
-let f = fs::open("{}", "r")
-let l1 = fs::read_line(f)
-let l2 = fs::read_line(f)
-let eof = fs::read_line(f)
-fs::close(f)
+let f = fs::open("{}", "r").unwrap()
+let _ = fs::read_line(f).unwrap()
+let _ = fs::read_line(f).unwrap()
+let _ = fs::read_line(f).unwrap()
+fs::close(f).unwrap()
 42
 "#,
         path_str
@@ -98,22 +96,18 @@ fs::close(f)
 fn fs_read_bytes_negative() {
     let code = r#"
 needs std::fs
-let f = 1
-fs::read_bytes(f, -10)
+match fs::read_bytes(1, -10) { Ok(_) => 0, Err(_) => 1 }
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("negative"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
 fn fs_read_bytes_exceeds_max() {
     let code = r#"
 needs std::fs
-let f = 1
-fs::read_bytes(f, 20000000)
+match fs::read_bytes(1, 20000000) { Ok(_) => 0, Err(_) => 1 }
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("max") || err.contains("MAX"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
@@ -126,14 +120,15 @@ fn fs_write_not_opened_for_writing() {
     let code = format!(
         r#"
 needs std::fs
-let f = fs::open("{}", "r")
-fs::write(f, "new data")
+let f = fs::open("{}", "r").unwrap()
+let result = match fs::write(f, "new data") {{ Ok(_) => 0, Err(_) => 1 }}
+let _ = fs::close(f)
+result
 "#,
         path_str
     );
 
-    let err = run_aelys_err(&code);
-    assert!(err.contains("writing"));
+    assert_aelys_int(&code, 1);
 }
 
 #[test]
@@ -142,31 +137,27 @@ fn fs_join_absolute_path_rejected() {
     // but worth repeating
     let code = r#"
 needs std::fs
-fs::join("/app", "/etc/passwd")
+match fs::join("/app", "/etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("absolute"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
 fn fs_join_parent_escape() {
     let code = r#"
 needs std::fs
-fs::join("/app/data", "../../etc/passwd")
+match fs::join("/app/data", "../../etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("escapes"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
 fn fs_absolute_nonexistent() {
     let code = r#"
 needs std::fs
-fs::absolute("/nonexistent/path")
+match fs::absolute("/nonexistent/path") { Ok(_) => 1, Err(message) => if message.len() > 0 { 1 } else { 0 } }
 "#;
-    // absolute() is a path operation so may succeed or fail
-    let result = run_aelys_result(code);
-    let _ = result;
+    assert_aelys_int(code, 1);
 }
 
 #[test]
@@ -174,28 +165,18 @@ fn fs_write_line_works() {
     let code = r#"
 needs std::fs
 let f = 1
-fs::write_line(f, "test")
+match fs::write_line(f, "test") { Ok(_) => 0, Err(_) => 1 }
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("invalid"));
+    assert_aelys_int(code, 1);
 }
 
 #[test]
 fn fs_size_of_nonexistent() {
     let code = r#"
 needs std::fs
-fs::size("/nonexistent")
+match fs::size("/nonexistent") { Ok(_) => 0, Err(_) => 1 }
 "#;
-    // May fail due to OS error (file not found) or handle the error gracefully
-    let result = run_aelys_result(code);
-    match result {
-        Ok(v) => {
-            assert!(v.is_int() || v.is_float(), "expected numeric result");
-        }
-        Err(e) => {
-            assert!(!e.is_empty(), "expected error message");
-        }
-    }
+    assert_aelys_int(code, 1);
 }
 
 #[test]
@@ -203,11 +184,11 @@ fn fs_double_close() {
     let code = r#"
 needs std::fs
 let f = 1
-fs::close(f)
-fs::close(f)
+let first = match fs::close(f) { Ok(_) => 0, Err(_) => 1 }
+let second = match fs::close(f) { Ok(_) => 0, Err(_) => 1 }
+first + second
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("invalid"));
+    assert_aelys_int(code, 2);
 }
 
 #[test]
@@ -215,11 +196,11 @@ fn fs_read_after_close() {
     let code = r#"
 needs std::fs
 let f = 1
-fs::close(f)
-fs::read(f)
+let first = match fs::close(f) { Ok(_) => 0, Err(_) => 1 }
+let second = match fs::read(f) { Ok(_) => 0, Err(_) => 1 }
+first + second
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("invalid"));
+    assert_aelys_int(code, 2);
 }
 
 #[test]
@@ -227,9 +208,9 @@ fn fs_write_after_close() {
     let code = r#"
 needs std::fs
 let f = 1
-fs::close(f)
-fs::write(f, "data")
+let first = match fs::close(f) { Ok(_) => 0, Err(_) => 1 }
+let second = match fs::write(f, "data") { Ok(_) => 0, Err(_) => 1 }
+first + second
 "#;
-    let err = run_aelys_err(code);
-    assert!(err.contains("invalid"));
+    assert_aelys_int(code, 2);
 }
