@@ -104,7 +104,108 @@ impl VM {
                 self.set_global_by_index(index, value);
             }
             OpCode::LoadNull => reg_set!(base + a, Value::null()),
+            OpCode::LoadUnit => reg_set!(base + a, Value::unit()),
+            OpCode::LoadNone => reg_set!(base + a, Value::none()),
             OpCode::LoadBool => reg_set!(base + a, Value::bool(b != 0)),
+            OpCode::RangeNew | OpCode::RangeNewInclusive => {
+                let start = reg_get!(base + b);
+                let end = reg_get!(base + c);
+                self.frames[current_frame_idx].ip = ip;
+                let range =
+                    self.alloc_range(start, end, inner_opcode == OpCode::RangeNewInclusive)?;
+                reg_set!(base + a, Value::ptr(range.index()));
+            }
+            OpCode::MakeSum => {
+                let tag =
+                    aelys_bytecode::object::SumTag::from_u8(u8::try_from(c).map_err(|_| {
+                        self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                            "wide sum tag exceeds u8".to_string(),
+                        ))
+                    })?)
+                    .ok_or_else(|| {
+                        self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                            "invalid sum tag {c}"
+                        )))
+                    })?;
+                let payload = reg_get!(base + b);
+                let sum = self.alloc_sum(tag, payload)?;
+                reg_set!(base + a, Value::ptr(sum.index()));
+            }
+            OpCode::SumTest => {
+                let value = reg_get!(base + b);
+                let tag = u8::try_from(c).map_err(|_| {
+                    self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                        "wide sum tag exceeds u8".to_string(),
+                    ))
+                })?;
+                let matches = if tag == 4 {
+                    value.is_none()
+                } else {
+                    let expected =
+                        aelys_bytecode::object::SumTag::from_u8(tag).ok_or_else(|| {
+                            self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                                "invalid sum tag {tag}"
+                            )))
+                        })?;
+                    value.as_ptr().is_some_and(|pointer| {
+                        self.heap.get(GcRef::new(pointer)).is_some_and(|object| {
+                            match &object.kind {
+                                ObjectKind::Sum(sum) => sum.tag == expected,
+                                _ => false,
+                            }
+                        })
+                    })
+                };
+                reg_set!(base + a, Value::bool(matches));
+            }
+            OpCode::SumPayload => {
+                let value = reg_get!(base + b);
+                let pointer = value.as_ptr().ok_or_else(|| {
+                    self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "sum payload",
+                        expected: "sum",
+                        got: value.type_name().to_string(),
+                    })
+                })?;
+                let object = self
+                    .heap
+                    .get(GcRef::new(pointer))
+                    .ok_or_else(|| self.runtime_error(RuntimeErrorKind::UseAfterFree))?;
+                let ObjectKind::Sum(sum) = &object.kind else {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "sum payload",
+                        expected: "sum",
+                        got: value.type_name().to_string(),
+                    }));
+                };
+                reg_set!(base + a, sum.payload);
+            }
+            OpCode::Cast => {
+                let target = u8::try_from(c)
+                    .ok()
+                    .and_then(aelys_bytecode::CastTarget::from_u8)
+                    .ok_or_else(|| {
+                        self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                            "invalid cast target {c}"
+                        )))
+                    })?;
+                let value = reg_get!(base + b);
+                let result = self.cast_value(value, target)?;
+                reg_set!(base + a, result);
+            }
+            OpCode::MatchFail => {
+                if a == 0 {
+                    return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                        "match reached an invalid runtime value".to_string(),
+                    )));
+                }
+                let message = if c == 1 {
+                    Some(reg_get!(base + b))
+                } else {
+                    None
+                };
+                return Err(self.sum_unwrap_error(u8::try_from(a).unwrap_or(u8::MAX), message));
+            }
             OpCode::Add | OpCode::AddII | OpCode::AddFF | OpCode::AddIIG | OpCode::AddFFG => {
                 let left = reg_get!(base + b);
                 let right = reg_get!(base + c);
@@ -371,18 +472,7 @@ impl VM {
             OpCode::ArrayGetI | OpCode::ArrayGetF | OpCode::ArrayGetB | OpCode::ArrayGetP => {
                 let array_value = reg_get!(base + b);
                 let index = reg_get!(base + c).as_int().unwrap_or(-1);
-                let value = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| {
-                        let array_ref = GcRef::new(array_value.as_ptr().unwrap_or(0));
-                        self.heap
-                            .get(array_ref)
-                            .and_then(|object| match &object.kind {
-                                ObjectKind::Array(array) => array.get(index),
-                                _ => None,
-                            })
-                    })
-                    .unwrap_or(Value::null());
+                let value = self.array_get_option(array_value, index)?;
                 reg_set!(base + a, value);
             }
             OpCode::ArrayStoreI
@@ -461,6 +551,20 @@ impl VM {
                     Value::int(i64::try_from(length).unwrap_or(i64::MAX))
                 );
             }
+            OpCode::ArraySlice => {
+                let array = reg_get!(base + b);
+                let range = reg_get!(base + c);
+                self.frames[current_frame_idx].ip = ip;
+                let sliced = self.slice_array(array, range)?;
+                reg_set!(base + a, sliced);
+            }
+            OpCode::VecSlice => {
+                let vector = reg_get!(base + b);
+                let range = reg_get!(base + c);
+                self.frames[current_frame_idx].ip = ip;
+                let sliced = self.slice_vec(vector, range)?;
+                reg_set!(base + a, sliced);
+            }
             OpCode::VecNewI | OpCode::VecNewF | OpCode::VecNewB | OpCode::VecNewP => {
                 let vector = match inner_opcode {
                     OpCode::VecNewI => AelysVec::new_ints(),
@@ -502,22 +606,7 @@ impl VM {
             }
             OpCode::VecPopI | OpCode::VecPopF | OpCode::VecPopB | OpCode::VecPopP => {
                 let vector_value = reg_get!(base + b);
-                let vector_ref = GcRef::new(vector_value.as_ptr().unwrap_or(0));
-                let value = match self.heap.get_mut(vector_ref) {
-                    Some(object) => match &mut object.kind {
-                        ObjectKind::Vec(vector) => vector.pop().unwrap_or(Value::null()),
-                        _ => {
-                            return Err(self.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec pop",
-                                expected: "vec",
-                                got: "non-vec object".to_string(),
-                            }));
-                        }
-                    },
-                    None => {
-                        return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                    }
-                };
+                let value = self.pop_vec_option(vector_value)?;
                 reg_set!(base + a, value);
             }
             OpCode::VecLen => {
@@ -658,18 +747,7 @@ impl VM {
             OpCode::VecGetI | OpCode::VecGetF | OpCode::VecGetB | OpCode::VecGetP => {
                 let vec_value = reg_get!(base + b);
                 let index = reg_get!(base + c).as_int().unwrap_or(-1);
-                let value = usize::try_from(index)
-                    .ok()
-                    .and_then(|index| {
-                        let vec_ref = GcRef::new(vec_value.as_ptr().unwrap_or(0));
-                        self.heap
-                            .get(vec_ref)
-                            .and_then(|object| match &object.kind {
-                                ObjectKind::Vec(vector) => vector.get(index),
-                                _ => None,
-                            })
-                    })
-                    .unwrap_or(Value::null());
+                let value = self.vec_get_option(vec_value, index)?;
                 reg_set!(base + a, value);
             }
             OpCode::VecStoreI | OpCode::VecStoreF | OpCode::VecStoreB | OpCode::VecStoreP => {
