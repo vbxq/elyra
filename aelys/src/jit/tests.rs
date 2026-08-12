@@ -3,9 +3,11 @@ use super::ir::{
     BlockId, DeoptMap, FunctionIr, IntPredicate, IrBlock, IrInstruction, IrInstructionKind,
     IrTerminator, IrType, SourcePosition, ValueId,
 };
-use super::translate::translate_integer_osr;
-use super::translate::{translate_integer_function, translate_optimized_integer_function};
-use aelys_bytecode::{Function, OpCode};
+use super::translate::{
+    translate_controlled_integer_function, translate_controlled_integer_osr,
+    translate_integer_function, translate_integer_osr, translate_optimized_integer_function,
+};
+use aelys_bytecode::{Function, OpCode, Register};
 use aelys_driver::pipeline::compilation_pipeline_with_opt;
 use aelys_opt::OptimizationLevel;
 use aelys_runtime::{JitArgument, JitCallResult, JitExecutor, JitFunctionKey, Value};
@@ -61,6 +63,56 @@ fn cranelift_executes_verified_ssa_and_reuses_cache_entry() {
     assert_eq!(compiled.execute_i64(&[19, 2]).unwrap(), 42);
     let cached = engine.cached(&key).unwrap().expect("entry must be cached");
     assert!(std::sync::Arc::ptr_eq(&compiled, &cached));
+}
+
+#[test]
+fn sum_bytecode_never_enters_the_jit_cache() {
+    let opcodes = [
+        OpCode::LoadUnit,
+        OpCode::LoadNone,
+        OpCode::MakeSum,
+        OpCode::SumTest,
+        OpCode::SumPayload,
+        OpCode::MatchFail,
+    ];
+
+    for (index, opcode) in opcodes.into_iter().enumerate() {
+        for wide in [false, true] {
+            let function = sum_guarded_function(opcode, wide);
+            assert!(translate_integer_function(&function).is_none());
+            assert!(translate_controlled_integer_function(&function).is_none());
+            assert!(translate_optimized_integer_function(&function).is_none());
+            assert!(translate_integer_osr(&function, 0).is_none());
+            assert!(translate_controlled_integer_osr(&function, 0).is_none());
+
+            let provider = super::provider::JitProvider::new(2, 1, None).unwrap();
+            let key = JitFunctionKey::root(17 + u64::try_from(index).unwrap());
+            assert_eq!(
+                provider.try_execute(&key, &function, &[], 1),
+                JitCallResult::Unsupported
+            );
+            assert_eq!(provider.cache_len(), 0);
+        }
+    }
+}
+
+fn sum_guarded_function(opcode: OpCode, wide: bool) -> Function {
+    let mut function = Function::new(Some("sum-guarded".to_string()), 0);
+    function.emit_b(OpCode::LoadI, 0, 42, 1);
+    function.emit_a(OpCode::Return, 0, 0, 0, 1);
+    if wide {
+        function.emit_wide_abc(
+            opcode,
+            Register::new(256),
+            Register::new(257),
+            Register::new(258),
+            1,
+        );
+    } else {
+        function.emit_a(opcode, 1, 0, 0, 1);
+    }
+    function.finalize_bytecode();
+    function
 }
 
 #[test]
