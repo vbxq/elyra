@@ -4,6 +4,10 @@ impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_null() {
             write!(f, "null")
+        } else if self.is_unit() {
+            write!(f, "()")
+        } else if self.is_none() {
+            write!(f, "None")
         } else if let Some(b) = self.as_bool() {
             write!(f, "{}", b)
         } else if let Some(n) = self.as_int() {
@@ -26,6 +30,10 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_null() {
             write!(f, "null")
+        } else if self.is_unit() {
+            write!(f, "()")
+        } else if self.is_none() {
+            write!(f, "None")
         } else if let Some(b) = self.as_bool() {
             write!(f, "{}", b)
         } else if let Some(n) = self.as_int() {
