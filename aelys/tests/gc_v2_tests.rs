@@ -1,5 +1,5 @@
 use aelys_bytecode::{
-    AelysVec, GcObject, Heap, HeapGeneration, MajorSliceResult, ObjectKind, Value,
+    AelysVec, GcObject, Heap, HeapGeneration, MajorSliceResult, ObjectKind, SumTag, Value,
 };
 use aelys_runtime::VM;
 use aelys_syntax::Source;
@@ -217,4 +217,24 @@ fn allocation_safepoints_collect_without_execution_controls() {
     }
 
     assert!(vm.heap().minor_collection_count() > 0);
+}
+
+#[test]
+fn sum_payload_survives_collection() {
+    let mut heap = Heap::new();
+    let payload = heap.alloc_string("payload");
+    let sum = heap.alloc_sum(SumTag::ResultErr, Value::ptr(payload.index()));
+
+    assert!(heap.begin_major_collection(vec![sum]));
+    while heap.major_collection_active() {
+        heap.major_collection_slice(Duration::ZERO);
+    }
+
+    assert!(heap.get(sum).is_some());
+    assert!(heap.get(payload).is_some());
+    let ObjectKind::Sum(value) = &heap.get(sum).unwrap().kind else {
+        panic!("sum root was reclaimed or changed");
+    };
+    assert_eq!(value.tag, SumTag::ResultErr);
+    assert_eq!(value.payload.as_ptr(), Some(payload.index()));
 }
