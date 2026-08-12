@@ -215,7 +215,7 @@ fn test_global_calls_above_u8_index() {
     let mut vm = new_vm().unwrap();
     let mut native_globals = HashSet::new();
     let mut source = String::new();
-    source.push_str("fn main() -> int {\n");
+    source.push_str("fn main() -> dynamic {\n");
     for index in 0..260 {
         let name = format!("stress_{index}");
         let function = vm.alloc_native(&name, 0, native_value).unwrap();
