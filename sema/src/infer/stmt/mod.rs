@@ -22,6 +22,7 @@ impl TypeInference {
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
                 let typed_expr = self.infer_expr(expr);
+                self.record_must_use_value(&typed_expr);
                 TypedStmtKind::Expression(typed_expr)
             }
             StmtKind::Let {
@@ -87,7 +88,7 @@ impl TypeInference {
                 fields: fields
                     .iter()
                     .map(|f| {
-                        let ty = crate::types::InferType::from_annotation(&f.type_annotation);
+                        let ty = self.type_from_annotation(&f.type_annotation);
                         (f.name.clone(), ty)
                     })
                     .collect(),
