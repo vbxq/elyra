@@ -14,6 +14,6 @@ pub use constant::Constant;
 pub use decode::{decode_a, decode_b, decode_c};
 pub use function::Function;
 pub use global_layout::GlobalLayout;
-pub use opcode::{InstructionFormat, OpCode, WideRegisterOperands};
+pub use opcode::{CastTarget, InstructionFormat, OpCode, WideRegisterOperands};
 pub use operand::{Arity, ConstantIndex, GlobalIndex, JumpOffset, OperandRangeError, Register};
 pub use upvalue::UpvalueDescriptor;
