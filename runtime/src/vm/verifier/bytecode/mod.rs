@@ -1,4 +1,6 @@
-use crate::vm::{CastTarget, Function, InstructionFormat, OpCode, WideRegisterOperands};
+use crate::vm::{
+    CastTarget, Function, InstructionFormat, MAX_REGISTERS, OpCode, WideRegisterOperands,
+};
 
 mod arithmetic;
 mod arrays;
@@ -12,15 +14,21 @@ mod registers;
 use super::checks::{
     check_call_args, check_const_index, check_jump, check_reg, check_reg_range, check_upval_index,
 };
+use std::collections::HashSet;
 
 pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
+    if usize::try_from(func.num_registers).unwrap_or(usize::MAX) > MAX_REGISTERS {
+        return Err(format!(
+            "register count {} exceeds maximum {}",
+            func.num_registers, MAX_REGISTERS
+        ));
+    }
     let num_regs = usize::try_from(func.num_registers)
         .map_err(|_| "register count does not fit this target".to_string())?;
     let constants_len = func.constants.len();
     let upvalues_len = func.upvalue_descriptors.len();
     let bytecode = &func.bytecode;
 
-    // security: Validate function size limits to prevent integer truncation
     if bytecode.len() > u32::MAX as usize {
         return Err(format!(
             "bytecode length {} exceeds maximum {} (u32::MAX)",
@@ -35,6 +43,10 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             u32::MAX
         ));
     }
+
+    verify_enum_schemas(func)?;
+    verify_struct_schemas(func)?;
+    verify_schema_descriptors(func)?;
 
     let mut ip = 0;
     while ip < bytecode.len() {
@@ -117,6 +129,153 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                     .checked_add(2)
                     .ok_or_else(|| "wide while ip overflow".to_string())?;
                 super::checks::check_jump(adjusted_ip, offset, bytecode.len(), "wide while loop")?;
+            }
+            ip += 3;
+            continue;
+        }
+
+        if opcode.format() == InstructionFormat::Struct {
+            let first = bytecode
+                .as_slice()
+                .get(ip + 1)
+                .ok_or_else(|| format!("{opcode:?} at {ip} is missing operand word 1"))?;
+            let second = bytecode
+                .as_slice()
+                .get(ip + 2)
+                .ok_or_else(|| format!("{opcode:?} at {ip} is missing operand word 2"))?;
+            if instr & 0x00ff_0000 != 0
+                || (matches!(
+                    opcode,
+                    OpCode::StructNew | OpCode::StructLoad | OpCode::StructStore
+                ) && second & 0xffff != 0)
+            {
+                return Err(format!("{opcode:?} at {ip} has non-zero reserved bits"));
+            }
+            let schema_index = (instr & 0xffff) as usize;
+            let wide_a = (first >> 16) as usize;
+            let wide_b = (first & 0xffff) as usize;
+            let wide_c = (second >> 16) as usize;
+            match opcode {
+                OpCode::StructNew => {
+                    let schema = func
+                        .struct_schemas
+                        .get(schema_index)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid schema index"))?;
+                    if schema.schema_id != u32::try_from(schema_index).unwrap_or(u32::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched schema id"));
+                    }
+                    verify_reg(wide_a, num_regs, "StructNew destination")?;
+                    if wide_c != schema.fields.len() {
+                        return Err(format!(
+                            "StructNew field count {wide_c} does not match schema {}",
+                            schema.fields.len()
+                        ));
+                    }
+                    verify_reg_range(wide_b, wide_c, num_regs, "StructNew fields")?;
+                }
+                OpCode::StructLoad => {
+                    let schema = func
+                        .struct_schemas
+                        .get(schema_index)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid schema index"))?;
+                    if schema.schema_id != u32::try_from(schema_index).unwrap_or(u32::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched schema id"));
+                    }
+                    verify_reg(wide_a, num_regs, "StructLoad destination")?;
+                    verify_reg(wide_b, num_regs, "StructLoad object")?;
+                    if wide_c >= schema.fields.len() {
+                        return Err("StructLoad field offset is out of bounds".to_string());
+                    }
+                }
+                OpCode::StructStore => {
+                    let schema = func
+                        .struct_schemas
+                        .get(schema_index)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid schema index"))?;
+                    if schema.schema_id != u32::try_from(schema_index).unwrap_or(u32::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched schema id"));
+                    }
+                    verify_reg(wide_a, num_regs, "StructStore object")?;
+                    verify_reg(wide_b, num_regs, "StructStore value")?;
+                    if wide_c >= schema.fields.len() {
+                        return Err("StructStore field offset is out of bounds".to_string());
+                    }
+                }
+                OpCode::EnumNew => {
+                    let schema = func
+                        .enum_schemas
+                        .get(schema_index)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid schema index"))?;
+                    if schema.schema_id != u16::try_from(schema_index).unwrap_or(u16::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched schema id"));
+                    }
+                    let variant = schema
+                        .variants
+                        .get(wide_c)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid variant index"))?;
+                    if variant.variant_id != u16::try_from(wide_c).unwrap_or(u16::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched variant id"));
+                    }
+                    let count = usize::from((second & 0xffff) as u16);
+                    if count != variant.fields.len() {
+                        return Err(format!(
+                            "EnumNew field count {count} does not match variant {}",
+                            variant.fields.len()
+                        ));
+                    }
+                    verify_reg(wide_a, num_regs, "EnumNew destination")?;
+                    verify_reg_range(wide_b, count, num_regs, "EnumNew fields")?;
+                }
+                OpCode::EnumTest => {
+                    let schema = func
+                        .enum_schemas
+                        .get(schema_index)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid schema index"))?;
+                    if schema.schema_id != u16::try_from(schema_index).unwrap_or(u16::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched schema id"));
+                    }
+                    if schema.variants.get(wide_c).is_none() {
+                        return Err(format!("{opcode:?} at {ip} has invalid variant index"));
+                    }
+                    if schema.variants[wide_c].variant_id
+                        != u16::try_from(wide_c).unwrap_or(u16::MAX)
+                    {
+                        return Err(format!("{opcode:?} at {ip} has mismatched variant id"));
+                    }
+                    if second & 0xffff != 0 {
+                        return Err("EnumTest has non-zero reserved bits".to_string());
+                    }
+                    verify_reg(wide_a, num_regs, "EnumTest destination")?;
+                    verify_reg(wide_b, num_regs, "EnumTest source")?;
+                }
+                OpCode::EnumLoad => {
+                    let schema = func
+                        .enum_schemas
+                        .get(schema_index)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid schema index"))?;
+                    if schema.schema_id != u16::try_from(schema_index).unwrap_or(u16::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched schema id"));
+                    }
+                    let variant = schema
+                        .variants
+                        .get(wide_c)
+                        .ok_or_else(|| format!("{opcode:?} at {ip} has invalid variant index"))?;
+                    if variant.variant_id != u16::try_from(wide_c).unwrap_or(u16::MAX) {
+                        return Err(format!("{opcode:?} at {ip} has mismatched variant id"));
+                    }
+                    let field_offset = (second & 0xffff) as usize;
+                    if field_offset >= variant.fields.len() {
+                        return Err("EnumLoad field offset is out of bounds".to_string());
+                    }
+                    if variant.fields[field_offset].offset
+                        != u16::try_from(field_offset).unwrap_or(u16::MAX)
+                    {
+                        return Err("EnumLoad field offset metadata is invalid".to_string());
+                    }
+                    verify_reg(wide_a, num_regs, "EnumLoad destination")?;
+                    verify_reg(wide_b, num_regs, "EnumLoad source")?;
+                }
+                _ => unreachable!(),
             }
             ip += 3;
             continue;
@@ -351,6 +510,211 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
     Ok(())
 }
 
+fn verify_enum_schemas(func: &Function) -> Result<(), String> {
+    let mut enum_names = HashSet::with_capacity(func.enum_schemas.len());
+    let mut enum_identities = HashSet::with_capacity(func.enum_schemas.len());
+    for (schema_index, schema) in func.enum_schemas.iter().enumerate() {
+        if schema.name.is_empty() || !enum_names.insert(schema.name.as_str()) {
+            return Err("enum schema names must be non-empty and unique".to_string());
+        }
+        if schema.def_id.package.is_empty()
+            || schema.def_id.module.is_empty()
+            || schema.def_id.module.iter().any(String::is_empty)
+            || !enum_identities.insert((&schema.def_id, schema.type_args.as_ref()))
+        {
+            return Err("enum definition paths must be non-empty and unique".to_string());
+        }
+        if schema.schema_id != u16::try_from(schema_index).unwrap_or(u16::MAX) {
+            return Err("enum schema ids must be ordered from zero".to_string());
+        }
+        if schema.arity != u16::try_from(schema.type_args.len()).unwrap_or(u16::MAX) {
+            return Err(format!(
+                "enum {} has mismatched type parameter arity",
+                schema.name
+            ));
+        }
+        for type_arg in &schema.type_args {
+            verify_enum_descriptor(type_arg, &func.enum_schemas, 0)?;
+        }
+        let mut variant_names = HashSet::with_capacity(schema.variants.len());
+        for (variant_index, variant) in schema.variants.iter().enumerate() {
+            if variant.name.is_empty() || !variant_names.insert(variant.name.as_str()) {
+                return Err(format!(
+                    "enum {} has duplicate or empty variant name",
+                    schema.name
+                ));
+            }
+            if variant.variant_id != u16::try_from(variant_index).unwrap_or(u16::MAX) {
+                return Err(format!("enum {} has unordered variant ids", schema.name));
+            }
+            let named = variant
+                .fields
+                .iter()
+                .filter(|field| field.name.is_some())
+                .count();
+            if named != 0 && named != variant.fields.len() {
+                return Err(format!(
+                    "enum {}::{} mixes named and tuple fields",
+                    schema.name, variant.name
+                ));
+            }
+            let mut field_names = HashSet::new();
+            for (field_index, field) in variant.fields.iter().enumerate() {
+                if field.offset != u16::try_from(field_index).unwrap_or(u16::MAX) {
+                    return Err(format!(
+                        "enum {}::{} has unordered field offsets",
+                        schema.name, variant.name
+                    ));
+                }
+                if let Some(name) = &field.name
+                    && (name.is_empty() || !field_names.insert(name.as_str()))
+                {
+                    return Err(format!(
+                        "enum {}::{} has duplicate or empty field name",
+                        schema.name, variant.name
+                    ));
+                }
+                verify_enum_descriptor(&field.ty, &func.enum_schemas, 0)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_enum_descriptor(
+    descriptor: &aelys_bytecode::TypeDescriptor,
+    enum_schemas: &[aelys_bytecode::EnumSchema],
+    depth: usize,
+) -> Result<(), String> {
+    if depth > 64 {
+        return Err("enum field descriptor nesting exceeds 64".to_string());
+    }
+    match descriptor {
+        aelys_bytecode::TypeDescriptor::Any | aelys_bytecode::TypeDescriptor::Never => {
+            return Err("enum descriptors must be concrete".to_string());
+        }
+        aelys_bytecode::TypeDescriptor::Enum(schema_id) => {
+            if enum_schemas
+                .get(usize::from(*schema_id))
+                .is_none_or(|schema| schema.schema_id != *schema_id)
+            {
+                return Err(format!(
+                    "enum field refers to unknown schema id {schema_id}"
+                ));
+            }
+        }
+        aelys_bytecode::TypeDescriptor::Option(inner)
+        | aelys_bytecode::TypeDescriptor::Array(inner)
+        | aelys_bytecode::TypeDescriptor::FixedArray(inner, _)
+        | aelys_bytecode::TypeDescriptor::Vec(inner) => {
+            verify_enum_descriptor(inner, enum_schemas, depth + 1)?;
+        }
+        aelys_bytecode::TypeDescriptor::Result(ok, err) => {
+            verify_enum_descriptor(ok, enum_schemas, depth + 1)?;
+            verify_enum_descriptor(err, enum_schemas, depth + 1)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn verify_struct_schemas(func: &Function) -> Result<(), String> {
+    let mut identities = HashSet::with_capacity(func.struct_schemas.len());
+    for (schema_index, schema) in func.struct_schemas.iter().enumerate() {
+        if schema.schema_id != u32::try_from(schema_index).unwrap_or(u32::MAX) {
+            return Err("struct schema ids must be ordered from zero".to_string());
+        }
+        if schema.ctor.package.is_empty()
+            || schema.ctor.module.is_empty()
+            || schema.ctor.module.iter().any(String::is_empty)
+            || !identities.insert((&schema.ctor, schema.type_args.as_ref()))
+        {
+            return Err("struct definition paths must be non-empty and unique".to_string());
+        }
+        let mut field_names = HashSet::with_capacity(schema.fields.len());
+        for (field_index, field) in schema.fields.iter().enumerate() {
+            if field.offset != u16::try_from(field_index).unwrap_or(u16::MAX) {
+                return Err(format!(
+                    "struct {} has unordered field offsets",
+                    schema.display_name()
+                ));
+            }
+            if field.name.is_empty() || !field_names.insert(field.name.as_str()) {
+                return Err(format!(
+                    "struct {} has a duplicate or empty field name",
+                    schema.display_name()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_schema_descriptors(func: &Function) -> Result<(), String> {
+    let struct_count = u32::try_from(func.struct_schemas.len()).unwrap_or(u32::MAX);
+    for schema in &func.struct_schemas {
+        for type_arg in &schema.type_args {
+            verify_descriptor_ids(type_arg, struct_count, &func.enum_schemas, 0)?;
+        }
+        for field in &schema.fields {
+            verify_descriptor_ids(&field.ty, struct_count, &func.enum_schemas, 0)?;
+        }
+    }
+    for schema in &func.enum_schemas {
+        for type_arg in &schema.type_args {
+            verify_descriptor_ids(type_arg, struct_count, &func.enum_schemas, 0)?;
+        }
+        for variant in &schema.variants {
+            for field in &variant.fields {
+                verify_descriptor_ids(&field.ty, struct_count, &func.enum_schemas, 0)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_descriptor_ids(
+    descriptor: &aelys_bytecode::TypeDescriptor,
+    struct_count: u32,
+    enum_schemas: &[aelys_bytecode::EnumSchema],
+    depth: usize,
+) -> Result<(), String> {
+    if depth > 64 {
+        return Err("schema descriptor nesting exceeds 64".to_string());
+    }
+    match descriptor {
+        aelys_bytecode::TypeDescriptor::Struct(schema_id) => {
+            if *schema_id >= struct_count {
+                return Err(format!(
+                    "field refers to unknown struct schema id {schema_id}"
+                ));
+            }
+        }
+        aelys_bytecode::TypeDescriptor::Enum(schema_id) => {
+            if enum_schemas
+                .get(usize::from(*schema_id))
+                .is_none_or(|schema| schema.schema_id != *schema_id)
+            {
+                return Err(format!(
+                    "enum field refers to unknown schema id {schema_id}"
+                ));
+            }
+        }
+        aelys_bytecode::TypeDescriptor::Option(inner)
+        | aelys_bytecode::TypeDescriptor::Array(inner)
+        | aelys_bytecode::TypeDescriptor::FixedArray(inner, _)
+        | aelys_bytecode::TypeDescriptor::Vec(inner) => {
+            verify_descriptor_ids(inner, struct_count, enum_schemas, depth + 1)?;
+        }
+        aelys_bytecode::TypeDescriptor::Result(ok, err) => {
+            verify_descriptor_ids(ok, struct_count, enum_schemas, depth + 1)?;
+            verify_descriptor_ids(err, struct_count, enum_schemas, depth + 1)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub(super) fn verify_call_args(
     base_reg: usize,
     nargs: usize,
@@ -389,4 +753,62 @@ pub(super) fn verify_reg_range(
     op: &str,
 ) -> Result<(), String> {
     check_reg_range(base, count, num_regs, op)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aelys_bytecode::{
+        EnumFieldSchema, EnumSchema, EnumVariantSchema, IntWidth, TypeDescriptor,
+    };
+
+    #[test]
+    fn enum_load_rejects_field_offset_for_expected_variant() {
+        let mut function = Function::new(Some("bad_enum_load".to_string()), 0);
+        function.num_registers = 2;
+        function.enum_schemas = vec![EnumSchema::new(
+            "test::Shape".to_string(),
+            vec![EnumVariantSchema {
+                variant_id: 0,
+                name: "Point".to_string(),
+                fields: vec![EnumFieldSchema {
+                    offset: 0,
+                    name: Some("x".to_string()),
+                    ty: TypeDescriptor::Int(IntWidth::I64),
+                }]
+                .into_boxed_slice(),
+            }],
+        )];
+        function.emit_enum(OpCode::EnumLoad, 0, 0, 1, 0, 1, 1);
+        function.finalize_bytecode();
+
+        let error = verify_bytecode(&function).expect_err("invalid enum field offset");
+        assert!(
+            error.contains("EnumLoad field offset is out of bounds"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_duplicate_enum_variant_names() {
+        let mut function = Function::new(Some("duplicate_enum_variant".to_string()), 0);
+        function.enum_schemas = vec![EnumSchema::new(
+            "test::Shape".to_string(),
+            vec![
+                EnumVariantSchema {
+                    variant_id: 0,
+                    name: "Same".to_string(),
+                    fields: Vec::new().into_boxed_slice(),
+                },
+                EnumVariantSchema {
+                    variant_id: 1,
+                    name: "Same".to_string(),
+                    fields: Vec::new().into_boxed_slice(),
+                },
+            ],
+        )];
+
+        let error = verify_bytecode(&function).expect_err("duplicate enum variant");
+        assert!(error.contains("duplicate or empty variant name"), "{error}");
+    }
 }
