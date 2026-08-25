@@ -23,7 +23,7 @@ const WORKLOADS: [(&str, &str); 8] = [
     ),
     (
         "gc",
-        "let mut n = 0; for i in 0..2000 { let v = Vec[i, i + 1, i + 2]; n += v[1] } n",
+        "let mut n = 0; for i in 0..2000 { let v = vec![i, i + 1, i + 2]; n += v[1] } n",
     ),
     (
         "raizen_scheduler",
@@ -142,7 +142,7 @@ fn jit_collection_loop_benchmarks(criterion: &mut Criterion) {
         .join(", ");
     let source = format!(
         r#"
-fn sum(values: Array<Int>) -> int {{
+fn sum(values: [Int; 4096]) -> int {{
     let mut index = 0
     let mut total = 0
     while index < values.len() {{
@@ -151,7 +151,7 @@ fn sum(values: Array<Int>) -> int {{
     }}
     return total
 }}
-let values = Array[{elements}]
+let values = [{elements}]
 let mut result = 0
 for repeat in 0..10 {{
     result = sum(values)
