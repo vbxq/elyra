@@ -1,16 +1,90 @@
 use super::TypeInference;
-use crate::types::InferType;
-use aelys_syntax::{Function, Stmt, StmtKind};
+use super::functions::{struct_method_symbol, trait_method_symbol};
+use crate::types::{InferType, StructMethod, TraitDef, TraitImplDef, TraitMethod};
+use aelys_syntax::{Function, Stmt, StmtKind, TraitMethod as SyntaxTraitMethod};
+use std::collections::HashMap;
 use std::rc::Rc;
 
+fn is_foreign_impl_target(ty: &InferType, type_table: &crate::types::TypeTable) -> bool {
+    match ty {
+        InferType::Struct(name) | InferType::Applied { name, .. } => !type_table.has_nominal(name),
+        InferType::Option(_)
+        | InferType::Result(_, _)
+        | InferType::Array(_)
+        | InferType::FixedArray(_, _)
+        | InferType::Vec(_)
+        | InferType::Tuple(_)
+        | InferType::Function { .. }
+        | InferType::Param(_)
+        | InferType::Var(_)
+        | InferType::Dynamic
+        | InferType::I8
+        | InferType::I16
+        | InferType::I32
+        | InferType::I64
+        | InferType::U8
+        | InferType::U16
+        | InferType::U32
+        | InferType::U64
+        | InferType::F32
+        | InferType::F64
+        | InferType::Bool
+        | InferType::String
+        | InferType::Unit
+        | InferType::Null
+        | InferType::Error
+        | InferType::Never
+        | InferType::Numeric
+        | InferType::UntypedNative(_)
+        | InferType::Poison
+        | InferType::Range => true,
+    }
+}
+
 impl TypeInference {
-    /// Collect function signatures before inference (pre-pass)
+    pub(super) fn collect_traits(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            if let StmtKind::TraitDecl {
+                name,
+                type_params,
+                super_bounds,
+                methods,
+                ..
+            } = &stmt.kind
+            {
+                for method in methods.iter().filter(|method| method.has_body) {
+                    self.trait_defaults.insert(
+                        (name.clone(), method.function.name.clone()),
+                        method.function.clone(),
+                    );
+                }
+                self.collect_trait_signature(name, type_params, super_bounds, methods);
+            }
+        }
+    }
+
     pub(super) fn collect_signatures(&mut self, stmts: &[Stmt], prefix: &str) {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Function(func) => {
                     self.collect_function_signature(func, prefix);
                 }
+                StmtKind::ImplDecl {
+                    type_params,
+                    self_type,
+                    trait_path,
+                    where_clauses,
+                    methods,
+                } => {
+                    self.collect_impl_signatures(
+                        self_type,
+                        type_params,
+                        methods,
+                        trait_path.as_ref(),
+                        where_clauses,
+                    );
+                }
+                StmtKind::TraitDecl { .. } => {}
                 StmtKind::Block(inner_stmts) => {
                     self.collect_signatures(inner_stmts, prefix);
                 }
@@ -38,7 +112,108 @@ impl TypeInference {
         }
     }
 
-    /// Collect signatures from a single statement
+    fn collect_trait_signature(
+        &mut self,
+        name: &str,
+        type_params: &[String],
+        super_bounds: &[aelys_syntax::TypeAnnotation],
+        methods: &[SyntaxTraitMethod],
+    ) {
+        if self.type_table.get_trait(name).is_some() {
+            self.errors.push(crate::constraint::TypeError {
+                kind: crate::constraint::TypeErrorKind::DuplicateStruct {
+                    name: name.to_string(),
+                },
+                span: methods
+                    .first()
+                    .map_or_else(aelys_syntax::Span::dummy, |method| method.function.span),
+                reason: crate::constraint::ConstraintReason::Other("trait declaration".to_string()),
+            });
+            return;
+        }
+
+        let mut seen_methods = std::collections::HashSet::new();
+        for method in methods {
+            if !seen_methods.insert(method.function.name.clone()) {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::DuplicateTraitMethod {
+                        trait_name: name.to_string(),
+                        method: method.function.name.clone(),
+                    },
+                    span: method.function.span,
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "trait method set".to_string(),
+                    ),
+                });
+            }
+        }
+        let saved_type_params =
+            std::mem::replace(&mut self.type_params_in_scope, type_params.to_vec());
+        let typed_methods = methods
+            .iter()
+            .map(|method| {
+                self.trait_method_signature(&method.function, type_params, method.has_body)
+            })
+            .collect();
+        self.type_params_in_scope = saved_type_params;
+        self.type_table.register_trait(TraitDef {
+            name: name.to_string(),
+            type_params: type_params.to_vec(),
+            super_bounds: super_bounds
+                .iter()
+                .map(|bound| bound.path.join("::"))
+                .collect(),
+            methods: typed_methods,
+        });
+    }
+
+    fn trait_method_signature(
+        &mut self,
+        method: &Function,
+        trait_type_params: &[String],
+        has_body: bool,
+    ) -> TraitMethod {
+        let has_self = method
+            .params
+            .first()
+            .is_some_and(|param| param.name == "self");
+        let mut method_type_params = trait_type_params.to_vec();
+        method_type_params.extend(method.type_params.iter().cloned());
+        let saved_type_params =
+            std::mem::replace(&mut self.type_params_in_scope, method_type_params);
+        let params = method
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| {
+                if has_self && index == 0 {
+                    InferType::Param("Self".to_string())
+                } else {
+                    param
+                        .type_annotation
+                        .as_ref()
+                        .map(|annotation| self.type_from_annotation(annotation))
+                        .unwrap_or_else(|| self.type_gen.fresh())
+                }
+            })
+            .collect();
+        let return_type = method
+            .return_type
+            .as_ref()
+            .map(|annotation| self.type_from_annotation(annotation))
+            .unwrap_or(InferType::Unit);
+        self.type_params_in_scope = saved_type_params;
+        TraitMethod {
+            name: method.name.clone(),
+            symbol: String::new(),
+            params,
+            return_type,
+            has_self,
+            mutable_self: has_self && method.params[0].mutable,
+            has_body,
+        }
+    }
+
     fn collect_signatures_from_stmt(&mut self, stmt: &Stmt, prefix: &str) {
         match &stmt.kind {
             StmtKind::Function(func) => {
@@ -51,7 +226,6 @@ impl TypeInference {
         }
     }
 
-    /// Collect a single function's signature
     fn collect_function_signature(&mut self, func: &Function, prefix: &str) {
         let full_name = if prefix.is_empty() {
             func.name.clone()
@@ -76,13 +250,14 @@ impl TypeInference {
             None => self.type_gen.fresh(),
         };
 
-        if func
-            .return_type
-            .as_ref()
-            .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
-        {
+        if ret_type.contains_dynamic() {
             self.explicit_dynamic_functions.insert(full_name.clone());
+            if !prefix.is_empty() {
+                self.explicit_dynamic_functions.insert(func.name.clone());
+            }
         }
+
+        let bounds = self.bounds_from_where_clauses(&func.where_clauses);
 
         self.type_params_in_scope = saved_type_params;
 
@@ -91,9 +266,419 @@ impl TypeInference {
             ret: Box::new(ret_type),
         });
 
+        if !bounds.is_empty() {
+            self.generic_function_bounds
+                .insert(full_name.clone(), bounds.clone());
+            if !prefix.is_empty() {
+                self.generic_function_bounds
+                    .insert(func.name.clone(), bounds);
+            }
+        }
+
+        self.function_type_params
+            .insert(full_name.clone(), func.type_params.clone());
+        if !prefix.is_empty() {
+            self.function_type_params
+                .insert(func.name.clone(), func.type_params.clone());
+        }
+
         self.env.define_function(full_name, Rc::clone(&fn_type));
         if !prefix.is_empty() {
             self.env.define_function(func.name.clone(), fn_type);
         }
+    }
+
+    fn bounds_from_where_clauses(
+        &mut self,
+        clauses: &[aelys_syntax::WhereClause],
+    ) -> Vec<(String, String, Vec<InferType>)> {
+        let mut bounds = Vec::new();
+        for clause in clauses {
+            for bound in &clause.bounds {
+                let trait_args = bound
+                    .type_params
+                    .iter()
+                    .map(|argument| self.type_from_annotation(argument))
+                    .collect();
+                let trait_name = bound.path.join("::");
+                if let Some(module) = self.withholding_module(&trait_name).map(str::to_string) {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::TypeNotImported {
+                            name: trait_name.clone(),
+                            module,
+                        },
+                        span: clause.type_annotation.span,
+                        reason: crate::constraint::ConstraintReason::UnknownType {
+                            name: trait_name.clone(),
+                        },
+                    });
+                }
+                bounds.push((clause.type_annotation.name.clone(), trait_name, trait_args));
+            }
+        }
+        bounds
+    }
+
+    fn collect_impl_signatures(
+        &mut self,
+        self_type: &aelys_syntax::TypeAnnotation,
+        impl_type_params: &[String],
+        methods: &[Function],
+        trait_path: Option<&aelys_syntax::TypeAnnotation>,
+        where_clauses: &[aelys_syntax::WhereClause],
+    ) {
+        let trait_name = trait_path.map(|path| path.path.join("::"));
+        let target = self_type
+            .path
+            .last()
+            .cloned()
+            .unwrap_or_else(|| self_type.name.clone());
+        let saved_type_params =
+            std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
+        let target_ty = self.type_from_annotation(self_type);
+        let trait_args = trait_path
+            .map(|path| {
+                path.type_params
+                    .iter()
+                    .map(|argument| self.type_from_annotation(argument))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let impl_bounds = self.bounds_from_where_clauses(where_clauses);
+        self.type_params_in_scope = saved_type_params;
+        let effective_methods = self.effective_impl_methods(methods, trait_name.as_deref());
+        let methods = effective_methods.as_slice();
+        if trait_name.is_some() && is_foreign_impl_target(&target_ty, &self.type_table) {
+            self.errors.push(crate::constraint::TypeError {
+                kind: crate::constraint::TypeErrorKind::OrphanTraitImpl {
+                    trait_name: trait_name.clone().unwrap_or_default(),
+                    target: target_ty.clone(),
+                },
+                span: methods
+                    .first()
+                    .map_or_else(aelys_syntax::Span::dummy, |m| m.span),
+                reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
+            });
+            return;
+        }
+        if !self.type_table.has_nominal(&target) {
+            self.errors.push(crate::constraint::TypeError {
+                kind: self.nominal_error_kind(
+                    &target,
+                    crate::constraint::TypeErrorKind::UnknownStruct {
+                        name: target.clone(),
+                    },
+                ),
+                span: methods
+                    .first()
+                    .map_or_else(aelys_syntax::Span::dummy, |m| m.span),
+                reason: crate::constraint::ConstraintReason::UnknownType {
+                    name: target.clone(),
+                },
+            });
+            return;
+        }
+
+        if let Some(trait_name) = trait_name.as_deref() {
+            let Some(trait_def) = self.type_table.get_trait(trait_name).cloned() else {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: self.nominal_error_kind(
+                        trait_name,
+                        crate::constraint::TypeErrorKind::UnknownTrait {
+                            name: trait_name.to_string(),
+                        },
+                    ),
+                    span: methods
+                        .first()
+                        .map_or_else(aelys_syntax::Span::dummy, |method| method.span),
+                    reason: crate::constraint::ConstraintReason::UnknownType {
+                        name: trait_name.to_string(),
+                    },
+                });
+                return;
+            };
+            if crate::prelude::reserves_header(trait_name, &target_ty, &trait_args) {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::ReservedIdentityConversion {
+                        ty: target_ty.clone(),
+                    },
+                    span: methods
+                        .first()
+                        .map_or_else(aelys_syntax::Span::dummy, |method| method.span),
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "trait coherence".to_string(),
+                    ),
+                });
+                return;
+            }
+            if !self.type_table.register_trait_impl_with_args(
+                trait_name.to_string(),
+                target_ty.to_string(),
+                &trait_args,
+            ) {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::DuplicateTraitImpl {
+                        trait_name: trait_name.to_string(),
+                        target: target.to_string(),
+                    },
+                    span: methods
+                        .first()
+                        .map_or_else(aelys_syntax::Span::dummy, |method| method.span),
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "trait coherence".to_string(),
+                    ),
+                });
+                return;
+            }
+            if self
+                .type_table
+                .trait_impl_overlaps(trait_name, &trait_args, &target_ty)
+            {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::OverlappingTraitImpl {
+                        trait_name: trait_name.to_string(),
+                        target: target_ty.clone(),
+                    },
+                    span: methods
+                        .first()
+                        .map_or_else(aelys_syntax::Span::dummy, |method| method.span),
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "trait coherence".to_string(),
+                    ),
+                });
+                return;
+            }
+            for method in methods {
+                let Some(required) = trait_def
+                    .methods
+                    .iter()
+                    .find(|candidate| candidate.name == method.name)
+                else {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::TraitMethodNotInTrait {
+                            trait_name: trait_name.to_string(),
+                            method: method.name.clone(),
+                        },
+                        span: method.span,
+                        reason: crate::constraint::ConstraintReason::Other(
+                            "trait method set".to_string(),
+                        ),
+                    });
+                    continue;
+                };
+                let has_self = method
+                    .params
+                    .first()
+                    .is_some_and(|param| param.name == "self");
+                if has_self != required.has_self || method.params.len() != required.params.len() {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::TraitMethodSignatureMismatch {
+                            trait_name: trait_name.to_string(),
+                            method: method.name.clone(),
+                        },
+                        span: method.span,
+                        reason: crate::constraint::ConstraintReason::Other(
+                            "trait method signature".to_string(),
+                        ),
+                    });
+                }
+            }
+            for required in &trait_def.methods {
+                if !required.has_body && !methods.iter().any(|method| method.name == required.name)
+                {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::MissingTraitMethod {
+                            trait_name: trait_name.to_string(),
+                            method: required.name.clone(),
+                        },
+                        span: methods
+                            .first()
+                            .map_or_else(aelys_syntax::Span::dummy, |method| method.span),
+                        reason: crate::constraint::ConstraintReason::Other(
+                            "trait method set".to_string(),
+                        ),
+                    });
+                }
+            }
+        }
+
+        let mut registered_trait_methods = Vec::new();
+        for method in methods {
+            let has_self = method.params.first().is_some_and(|p| p.name == "self");
+            if method
+                .params
+                .iter()
+                .skip(usize::from(has_self))
+                .any(|p| p.name == "self")
+            {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::InvalidStructMethod {
+                        method: method.name.clone(),
+                        structure: target.to_string(),
+                    },
+                    span: method.span,
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "struct method receiver".to_string(),
+                    ),
+                });
+                continue;
+            }
+            if trait_name.is_none() && self.type_table.method(&target, &method.name).is_some() {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::InvalidStructMethod {
+                        method: method.name.clone(),
+                        structure: target.to_string(),
+                    },
+                    span: method.span,
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "duplicate struct method".to_string(),
+                    ),
+                });
+                continue;
+            }
+
+            let mut method_type_params = impl_type_params.to_vec();
+            method_type_params.extend(method.type_params.iter().cloned());
+            let saved_type_params =
+                std::mem::replace(&mut self.type_params_in_scope, method_type_params);
+            let mut params = Vec::with_capacity(method.params.len());
+            for (index, param) in method.params.iter().enumerate() {
+                let ty = if has_self && index == 0 {
+                    target_ty.clone()
+                } else {
+                    param
+                        .type_annotation
+                        .as_ref()
+                        .map(|ann| self.type_from_annotation(ann))
+                        .unwrap_or_else(|| self.type_gen.fresh())
+                };
+                params.push(ty);
+            }
+            let ret = method
+                .return_type
+                .as_ref()
+                .map(|ann| self.type_from_annotation(ann))
+                .unwrap_or_else(|| self.type_gen.fresh());
+            let mut method_bounds = impl_bounds.clone();
+            method_bounds.extend(self.bounds_from_where_clauses(&method.where_clauses));
+            self.type_params_in_scope = saved_type_params;
+            if let Some(trait_name) = trait_name.as_deref()
+                && let Some(required) =
+                    self.type_table
+                        .get_trait(trait_name)
+                        .and_then(|definition| {
+                            definition
+                                .methods
+                                .iter()
+                                .find(|candidate| candidate.name == method.name)
+                        })
+            {
+                let mut substitutions = HashMap::from([("Self".to_string(), target_ty.clone())]);
+                if let Some(trait_def) = self.type_table.get_trait(trait_name) {
+                    for (parameter, argument) in trait_def.type_params.iter().zip(&trait_args) {
+                        substitutions.insert(parameter.clone(), argument.clone());
+                    }
+                }
+                let expected_params: Vec<_> = required
+                    .params
+                    .iter()
+                    .map(|param| param.substitute_params(&substitutions))
+                    .collect();
+                let expected_return = required.return_type.substitute_params(&substitutions);
+                let signature_matches = params.len() == expected_params.len()
+                    && params
+                        .iter()
+                        .zip(expected_params.iter())
+                        .all(|(actual, expected)| self.type_table.types_match(expected, actual))
+                    && self.type_table.types_match(&expected_return, &ret);
+                if !signature_matches {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::TraitMethodSignatureMismatch {
+                            trait_name: trait_name.to_string(),
+                            method: method.name.clone(),
+                        },
+                        span: method.span,
+                        reason: crate::constraint::ConstraintReason::Other(
+                            "trait method signature".to_string(),
+                        ),
+                    });
+                }
+            }
+            let symbol = trait_name
+                .as_deref()
+                .map(|name| trait_method_symbol(name, &target, &method.name, &trait_args))
+                .unwrap_or_else(|| struct_method_symbol(&target, &method.name));
+            if !method_bounds.is_empty() {
+                self.generic_function_bounds
+                    .insert(symbol.clone(), method_bounds);
+            }
+            self.env.define_function(
+                symbol.clone(),
+                Rc::new(InferType::Function {
+                    params: params.clone(),
+                    ret: Box::new(ret.clone()),
+                }),
+            );
+            if trait_name.is_some() {
+                let trait_method = TraitMethod {
+                    name: method.name.clone(),
+                    symbol,
+                    params,
+                    return_type: ret,
+                    has_self,
+                    mutable_self: has_self && method.params[0].mutable,
+                    has_body: false,
+                };
+                self.type_table
+                    .register_trait_method(target.clone(), trait_method.clone());
+                registered_trait_methods.push(trait_method);
+            } else {
+                self.type_table.register_method(
+                    target.to_string(),
+                    StructMethod {
+                        name: method.name.clone(),
+                        symbol,
+                        params,
+                        return_type: ret,
+                        has_self,
+                        mutable_self: has_self && method.params[0].mutable,
+                    },
+                );
+            }
+        }
+        if let Some(trait_name) = trait_name.as_deref() {
+            self.type_table.register_trait_impl_def(TraitImplDef {
+                trait_name: trait_name.to_string(),
+                trait_args,
+                self_type: target_ty,
+                methods: registered_trait_methods,
+            });
+        }
+    }
+
+    pub(super) fn effective_impl_methods(
+        &self,
+        methods: &[Function],
+        trait_name: Option<&str>,
+    ) -> Vec<Function> {
+        let mut effective = methods.to_vec();
+        let Some(trait_name) = trait_name else {
+            return effective;
+        };
+        let Some(trait_def) = self.type_table.get_trait(trait_name) else {
+            return effective;
+        };
+        for required in trait_def.methods.iter().filter(|method| method.has_body) {
+            if effective.iter().any(|method| method.name == required.name) {
+                continue;
+            }
+            if let Some(default) = self
+                .trait_defaults
+                .get(&(trait_name.to_string(), required.name.clone()))
+            {
+                effective.push(default.clone());
+            }
+        }
+        effective
     }
 }
