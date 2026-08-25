@@ -14,6 +14,7 @@ pub(super) fn finalize_typed_function(
     nested_compiler.current.global_layout = nested_compiler.build_global_layout();
     nested_compiler.current.compute_global_layout_hash();
     nested_compiler.current.finalize_bytecode();
+    nested_compiler.update_jit_eligibility();
 
     parent.mark_captures_from_nested(&nested_compiler);
 
