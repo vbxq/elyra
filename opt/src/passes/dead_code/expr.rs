@@ -9,7 +9,6 @@ impl DeadCodeEliminator {
                 then_branch,
                 else_branch,
             } => {
-                // ternary with constant condition -> just the result
                 if let Some(cond_value) = Self::is_const_bool(condition) {
                     let taken = if cond_value { then_branch } else { else_branch };
                     self.eliminate_in_expr(taken);
@@ -43,6 +42,12 @@ impl DeadCodeEliminator {
                 self.eliminate_in_block(body);
             }
             TypedExprKind::Member { object, .. } => self.eliminate_in_expr(object),
+            TypedExprKind::StructField { object, .. }
+            | TypedExprKind::StructMethod { object, .. } => self.eliminate_in_expr(object),
+            TypedExprKind::MemberAssign { object, value, .. } => {
+                self.eliminate_in_expr(object);
+                self.eliminate_in_expr(value);
+            }
             TypedExprKind::ArrayLiteral { elements, .. }
             | TypedExprKind::VecLiteral { elements, .. } => {
                 for elem in elements {
@@ -89,10 +94,15 @@ impl DeadCodeEliminator {
                     self.eliminate_in_expr(value);
                 }
             }
+            TypedExprKind::EnumConstruct { fields, .. } => {
+                for (_, value) in fields {
+                    self.eliminate_in_expr(value);
+                }
+            }
             TypedExprKind::Cast { expr, .. } => {
                 self.eliminate_in_expr(expr);
             }
-            TypedExprKind::Try(inner) => self.eliminate_in_expr(inner),
+            TypedExprKind::Try { operand, .. } => self.eliminate_in_expr(operand),
             TypedExprKind::Match { scrutinee, arms } => {
                 self.eliminate_in_expr(scrutinee);
                 for arm in arms {
