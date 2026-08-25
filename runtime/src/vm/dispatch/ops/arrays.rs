@@ -8,7 +8,22 @@ macro_rules! execute_arrays {
             130 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count = $reg_get!($base + b as usize).as_int().unwrap_or(0) as usize;
+                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                if count_value < 0 {
+                    return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a non-negative size",
+                        got: count_value.to_string(),
+                    }));
+                }
+                let count = usize::try_from(count_value).map_err(|_| {
+                    $vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a representable size",
+                        got: count_value.to_string(),
+                    })
+                })?;
+                $vm.ensure_array_capacity(aelys_bytecode::object::TypeTag::Int, count)?;
                 let array = AelysArray::new_ints(count);
                 $vm.frames[$current_frame_idx].ip = $ip;
                 match $vm.alloc_array(array) {
@@ -22,7 +37,22 @@ macro_rules! execute_arrays {
             131 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count = $reg_get!($base + b as usize).as_int().unwrap_or(0) as usize;
+                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                if count_value < 0 {
+                    return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a non-negative size",
+                        got: count_value.to_string(),
+                    }));
+                }
+                let count = usize::try_from(count_value).map_err(|_| {
+                    $vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a representable size",
+                        got: count_value.to_string(),
+                    })
+                })?;
+                $vm.ensure_array_capacity(aelys_bytecode::object::TypeTag::Float, count)?;
                 let array = AelysArray::new_floats(count);
                 $vm.frames[$current_frame_idx].ip = $ip;
                 match $vm.alloc_array(array) {
@@ -36,7 +66,22 @@ macro_rules! execute_arrays {
             132 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count = $reg_get!($base + b as usize).as_int().unwrap_or(0) as usize;
+                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                if count_value < 0 {
+                    return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a non-negative size",
+                        got: count_value.to_string(),
+                    }));
+                }
+                let count = usize::try_from(count_value).map_err(|_| {
+                    $vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a representable size",
+                        got: count_value.to_string(),
+                    })
+                })?;
+                $vm.ensure_array_capacity(aelys_bytecode::object::TypeTag::Bool, count)?;
                 let array = AelysArray::new_bools(count);
                 $vm.frames[$current_frame_idx].ip = $ip;
                 match $vm.alloc_array(array) {
@@ -50,7 +95,22 @@ macro_rules! execute_arrays {
             133 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count = $reg_get!($base + b as usize).as_int().unwrap_or(0) as usize;
+                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                if count_value < 0 {
+                    return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a non-negative size",
+                        got: count_value.to_string(),
+                    }));
+                }
+                let count = usize::try_from(count_value).map_err(|_| {
+                    $vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a representable size",
+                        got: count_value.to_string(),
+                    })
+                })?;
+                $vm.ensure_array_capacity(aelys_bytecode::object::TypeTag::Object, count)?;
                 let array = AelysArray::new_objects(count);
                 $vm.frames[$current_frame_idx].ip = $ip;
                 match $vm.alloc_array(array) {
@@ -680,29 +740,10 @@ macro_rules! execute_arrays {
                 let (a, b, _) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
                 let value = $reg_get!($base + b as usize);
-
                 let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        if !vec.push(value) {
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec push",
-                                expected: "matching element type",
-                                got: "incompatible type".to_string(),
-                            }));
-                        }
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec push",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
+                if let Err(error) = $vm.push_vec_value(vec_ref, value) {
                     $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
+                    return Err(error);
                 }
             }
 
@@ -710,29 +751,10 @@ macro_rules! execute_arrays {
                 let (a, b, _) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
                 let value = $reg_get!($base + b as usize);
-
                 let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        if !vec.push(value) {
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec push",
-                                expected: "matching element type",
-                                got: "incompatible type".to_string(),
-                            }));
-                        }
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec push",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
+                if let Err(error) = $vm.push_vec_value(vec_ref, value) {
                     $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
+                    return Err(error);
                 }
             }
 
@@ -740,29 +762,10 @@ macro_rules! execute_arrays {
                 let (a, b, _) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
                 let value = $reg_get!($base + b as usize);
-
                 let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        if !vec.push(value) {
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec push",
-                                expected: "matching element type",
-                                got: "incompatible type".to_string(),
-                            }));
-                        }
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec push",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
+                if let Err(error) = $vm.push_vec_value(vec_ref, value) {
                     $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
+                    return Err(error);
                 }
             }
 
@@ -770,29 +773,10 @@ macro_rules! execute_arrays {
                 let (a, b, _) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
                 let value = $reg_get!($base + b as usize);
-
                 let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        if !vec.push(value) {
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec push",
-                                expected: "matching element type",
-                                got: "incompatible type".to_string(),
-                            }));
-                        }
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec push",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
+                if let Err(error) = $vm.push_vec_value(vec_ref, value) {
                     $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
+                    return Err(error);
                 }
             }
 
@@ -890,23 +874,26 @@ macro_rules! execute_arrays {
             163 => {
                 let (a, b, _) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
-                let additional = $reg_get!($base + b as usize).as_int().unwrap_or(0) as usize;
-
-                let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                if let Some(obj) = $vm.heap.get_mut(vec_ref) {
-                    if let ObjectKind::Vec(vec) = &mut obj.kind {
-                        vec.reserve(additional);
-                    } else {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
-                            operation: "vec reserve",
-                            expected: "vec",
-                            got: "non-vec object".to_string(),
-                        }));
-                    }
-                } else {
+                let additional_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                if additional_value < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
+                    return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec reserve",
+                        expected: "a non-negative amount",
+                        got: additional_value.to_string(),
+                    }));
+                }
+                let additional = usize::try_from(additional_value).map_err(|_| {
+                    $vm.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec reserve",
+                        expected: "a representable amount",
+                        got: additional_value.to_string(),
+                    })
+                })?;
+                let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
+                if let Err(error) = $vm.reserve_vec(vec_ref, additional) {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    return Err(error);
                 }
             }
 
@@ -1306,7 +1293,6 @@ macro_rules! execute_arrays {
                 }
 
                 let vec_ref = GcRef::new(vec_val.as_ptr().unwrap_or(0));
-                // Check if it's a Vec or Array and get the length
                 let container_len = $vm.heap.get(vec_ref).and_then(|obj| match &obj.kind {
                     ObjectKind::Vec(vec) => Some((true, vec.len() as i64)),
                     ObjectKind::Array(arr) => Some((false, arr.len() as i64)),
@@ -1354,7 +1340,6 @@ macro_rules! execute_arrays {
                 }
             }
 
-            // StringLoadChar (176)
             176 => {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
@@ -1548,7 +1533,9 @@ impl VM {
             None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
         };
         let (start, end) = self.slice_bounds(range_value, array.len())?;
-        let result = self.alloc_array(array.slice(start, end))?;
+        let result = self.alloc_vec(aelys_bytecode::object::AelysVec::from_array(
+            &array.slice(start, end),
+        ))?;
         Ok(Value::ptr(result.index()))
     }
 
