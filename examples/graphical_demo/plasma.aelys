@@ -13,7 +13,7 @@ fn run() {
     let sintab = bytes::alloc(256)
 
     for i in 0..256 {
-        let rad = (i * 2 * math::PI) / 256.0
+        let rad = (convert::to_float(i) * 2.0 * math::PI) / 256.0
         let s = math::sin(rad)
         let v = convert::to_int((s + 1.0) * 127.5)
         bytes::write_u8(sintab, i, v)
