@@ -24,7 +24,61 @@ impl Compiler {
             return Ok(());
         }
 
-        // Handle format string with placeholders: func("x={}", x) -> func("x=" + __tostring(x))
+        if let TypedExprKind::StructMethod {
+            object,
+            symbol,
+            separator,
+            ..
+        } = &callee.kind
+        {
+            let has_receiver = *separator == aelys_syntax::MemberSeparator::Dot;
+            let total_args = args.len() + usize::from(has_receiver);
+            let arg_start = dest.checked_add(1).ok_or_else(|| {
+                aelys_common::error::CompileError::new(
+                    CompileErrorKind::TooManyRegisters,
+                    span,
+                    self.source.clone(),
+                )
+            })?;
+            let call_global = self.get_or_create_global_index(symbol);
+            self.accessed_globals.insert(symbol.clone());
+            let mut reserved = Vec::with_capacity(total_args);
+            for index in 0..total_args {
+                let register = arg_start
+                    .checked_add(u16::try_from(index).expect("struct method arity fits"))
+                    .ok_or_else(|| {
+                        aelys_common::error::CompileError::new(
+                            CompileErrorKind::TooManyRegisters,
+                            span,
+                            self.source.clone(),
+                        )
+                    })?;
+                if self.register_pool[register as usize] {
+                    for reserved in reserved.into_iter().rev() {
+                        self.free_register(reserved);
+                    }
+                    return self.compile_typed_call_fallback(callee, args, dest, span);
+                }
+                self.register_pool[register as usize] = true;
+                self.next_register = self.next_register.max(u32::from(register) + 1);
+                reserved.push(register);
+            }
+            let mut position = 0;
+            if has_receiver {
+                self.compile_typed_expr(object, reserved[0])?;
+                position = 1;
+            }
+            for (index, arg) in args.iter().enumerate() {
+                self.compile_typed_expr(arg, reserved[position + index])?;
+            }
+            let arity = self.checked_call_arity(total_args, span)?;
+            self.emit_call_global_cached(dest, call_global, arity, symbol, span);
+            for register in reserved.into_iter().rev() {
+                self.free_register(register);
+            }
+            return Ok(());
+        }
+
         if let Some((fmt_parts, placeholder_count)) = Self::get_typed_fmt_placeholders(args)
             && placeholder_count > 0
         {
@@ -38,7 +92,6 @@ impl Compiler {
             );
         }
 
-        // Check for Array/Vec method calls first
         if let TypedExprKind::Member {
             object,
             member,
@@ -49,11 +102,25 @@ impl Compiler {
                 return Ok(());
             }
 
-            // Handle Array methods
-            if let InferType::Array(_) = &object.ty {
+            if matches!(
+                member.as_str(),
+                "iter" | "collect" | "map" | "filter" | "fold"
+            ) {
+                return self.compile_typed_collection_pipeline(
+                    object, member, args, &callee.ty, dest, span,
+                );
+            }
+
+            if matches!(
+                &object.ty,
+                InferType::Array(_) | InferType::FixedArray(_, _)
+            ) {
                 match member.as_str() {
                     "len" if args.is_empty() => {
                         return self.compile_array_len(object, dest, span);
+                    }
+                    "is_empty" if args.is_empty() => {
+                        return self.compile_collection_is_empty(object, dest, span);
                     }
                     "get" if args.len() == 1 => {
                         return self.compile_typed_collection_get(object, &args[0], dest, span);
@@ -62,11 +129,13 @@ impl Compiler {
                 }
             }
 
-            // Handle Vec methods
             if let InferType::Vec(inner) = &object.ty {
                 match member.as_str() {
                     "len" if args.is_empty() => {
                         return self.compile_vec_len(object, dest, span);
+                    }
+                    "is_empty" if args.is_empty() => {
+                        return self.compile_collection_is_empty(object, dest, span);
                     }
                     "push" if args.len() == 1 => {
                         return self.compile_vec_push(object, inner, &args[0], dest, span);
@@ -87,7 +156,6 @@ impl Compiler {
                 }
             }
 
-            // Handle String methods: s.method(args) → string::method(s, args...)
             if matches!(&object.ty, InferType::String)
                 && let Some(expected_args) = Self::string_method_arity(member)
                 && args.len() == expected_args
@@ -95,13 +163,11 @@ impl Compiler {
                 return self.compile_string_method_call(object, member, args, dest, span);
             }
 
-            // Handle to_string() on any type
             if member == "to_string" && args.is_empty() {
                 return self.compile_tostring_method(object, dest, span);
             }
 
-            // Module alias calls must be checked before Dynamic dispatch,
-            // otherwise methods like "join" get intercepted as string methods
+            // module alias calls must be checked before dynamic dispatch,
             if *separator == aelys_syntax::MemberSeparator::Path
                 && let Some(module_name) = Self::typed_path_name(object)
                 && self.has_module_alias(&module_name)
@@ -181,12 +247,13 @@ impl Compiler {
                 ));
             }
 
-            // Handle Vec/Array/String methods on Dynamic-typed objects (runtime dispatch)
-            // Vec/collection methods first — len uses polymorphic VecLen opcode
             if matches!(&object.ty, InferType::Dynamic | InferType::Var(_)) {
                 match member.as_str() {
                     "len" if args.is_empty() => {
                         return self.compile_vec_len(object, dest, span);
+                    }
+                    "is_empty" if args.is_empty() => {
+                        return self.compile_collection_is_empty(object, dest, span);
                     }
                     "push" if args.len() == 1 => {
                         return self.compile_vec_push(
@@ -209,7 +276,6 @@ impl Compiler {
                     _ => {}
                 }
 
-                // String methods on dynamic types (excludes len, handled above)
                 if let Some(expected_args) = Self::string_method_arity(member)
                     && args.len() == expected_args
                 {
@@ -285,7 +351,6 @@ impl Compiler {
             }
         }
 
-        // CallCached: when the callee is a local variable holding a function
         if let aelys_sema::TypedExprKind::Identifier(name) = &callee.kind
             && let Some((callee_reg, _mutable)) = self.resolve_variable(name)
         {
@@ -341,7 +406,14 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let nargs = args.len();
+        let receiver = match &callee.kind {
+            aelys_sema::TypedExprKind::StructMethod {
+                object, separator, ..
+            } if *separator == aelys_syntax::MemberSeparator::Dot => Some(object.as_ref()),
+            _ => None,
+        };
+        let leading = usize::from(receiver.is_some());
+        let nargs = args.len().saturating_add(leading);
         let callee_reg =
             self.alloc_consecutive_registers_for_call(nargs.saturating_add(1), span)?;
 
@@ -355,13 +427,18 @@ impl Compiler {
 
         self.compile_typed_expr(callee, callee_reg)?;
 
-        for (i, arg) in args.iter().enumerate() {
-            let arg_reg =
-                callee_reg + 1 + u16::try_from(i).expect("register offset was range checked");
+        // the successful allocation above bounds this walk, so no offset here can leave the window
+        let mut arg_reg = callee_reg;
+        if let Some(object) = receiver {
+            arg_reg += 1;
+            self.compile_typed_expr(object, arg_reg)?;
+        }
+        for arg in args {
+            arg_reg += 1;
             self.compile_typed_expr(arg, arg_reg)?;
         }
 
-        let call_arity = self.checked_call_arity(args.len(), span)?;
+        let call_arity = self.checked_call_arity(nargs, span)?;
         self.emit_c(OpCode::Call, dest, callee_reg, call_arity, span);
 
         for i in (0..=nargs).rev() {
@@ -372,25 +449,19 @@ impl Compiler {
         Ok(())
     }
 
-    /// returns the number of extra args (excluding self) expected by a string method, or None if not a valid method.
     fn string_method_arity(method: &str) -> Option<usize> {
         match method {
-            // 0-arg methods (only self)
             "len" | "char_len" | "chars" | "bytes" | "to_upper" | "to_lower" | "capitalize"
             | "trim" | "trim_start" | "trim_end" | "is_empty" | "is_whitespace" | "is_numeric"
             | "is_alphabetic" | "is_alphanumeric" | "reverse" | "lines" | "line_count" => Some(0),
-            // 1-arg methods (self + 1 arg)
             "char_at" | "byte_at" | "contains" | "starts_with" | "ends_with" | "find" | "rfind"
             | "count" | "split" | "repeat" | "concat" => Some(1),
-            // 2-arg methods (self + 2 args)
             "substr" | "replace" | "replace_first" | "pad_left" | "pad_right" => Some(2),
-            // join takes self + 1 arg (separator)
             "join" => Some(1),
             _ => None,
         }
     }
 
-    /// compile s.method(args) as string::method(s, args...)
     fn compile_string_method_call(
         &mut self,
         object: &aelys_sema::TypedExpr,
@@ -406,7 +477,6 @@ impl Compiler {
         self.accessed_globals.insert(qualified_name.clone());
 
         if global_idx <= 255 {
-            // Try to use CallGlobalCached: args go in dest+1, dest+2, ...
             let arg_start = match dest.checked_add(1) {
                 Some(s) => s,
                 None => {
@@ -440,7 +510,6 @@ impl Compiler {
             }
 
             if can_use_callglobal {
-                // Reserve registers
                 for i in 0..total_args {
                     let arg_reg =
                         arg_start + u16::try_from(i).expect("register offset was range checked");
@@ -450,10 +519,8 @@ impl Compiler {
                     }
                 }
 
-                // First arg: the string object itself
                 self.compile_typed_expr(object, arg_start)?;
 
-                // Remaining args
                 for (i, arg) in args.iter().enumerate() {
                     let arg_reg = arg_start
                         + 1
@@ -464,7 +531,6 @@ impl Compiler {
                 let call_arity = self.checked_call_arity(total_args, span)?;
                 self.emit_call_global_cached(dest, global_idx, call_arity, &qualified_name, span);
 
-                // Free registers
                 for i in (0..total_args).rev() {
                     let arg_reg =
                         arg_start + u16::try_from(i).expect("register offset was range checked");
@@ -499,15 +565,12 @@ impl Compiler {
             }
         }
 
-        // load the function by global index (avoids known_globals check)
         let global_idx = self.get_or_create_global_index(qualified_name);
         self.accessed_globals.insert(qualified_name.to_string());
         self.emit_get_global_index(callee_reg, global_idx, span);
 
-        // first arg: the string object
         self.compile_typed_expr(object, callee_reg + 1)?;
 
-        // remaining stuff
         for (i, arg) in args.iter().enumerate() {
             let arg_reg =
                 callee_reg + 2 + u16::try_from(i).expect("register offset was range checked");
@@ -524,7 +587,6 @@ impl Compiler {
         Ok(())
     }
 
-    /// compiled obj.to_string() as __tostring(obj)
     fn compile_tostring_method(
         &mut self,
         object: &aelys_sema::TypedExpr,
