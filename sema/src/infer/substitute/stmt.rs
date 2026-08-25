@@ -3,7 +3,6 @@ use crate::typed_ast::{TypedStmt, TypedStmtKind};
 use crate::unify::Substitution;
 
 impl TypeInference {
-    /// Apply substitution to a statement
     pub(super) fn apply_substitution_stmt(
         &self,
         stmt: &TypedStmt,
@@ -67,11 +66,13 @@ impl TypeInference {
                 iterator,
                 iterable,
                 elem_type,
+                read_only,
                 body,
             } => TypedStmtKind::ForEach {
                 iterator: iterator.clone(),
                 iterable: self.apply_substitution_expr(iterable, subst),
                 elem_type: subst.apply(elem_type),
+                read_only: *read_only,
                 body: Box::new(self.apply_substitution_stmt(body, subst)),
             },
             TypedStmtKind::Return(expr) => TypedStmtKind::Return(
@@ -83,6 +84,24 @@ impl TypeInference {
             TypedStmtKind::Function(func) => {
                 TypedStmtKind::Function(self.apply_substitution_func(func, subst))
             }
+            TypedStmtKind::ImplDecl {
+                target,
+                trait_name,
+                type_params,
+                target_type,
+                trait_args,
+                methods,
+            } => TypedStmtKind::ImplDecl {
+                target: target.clone(),
+                trait_name: trait_name.clone(),
+                type_params: type_params.clone(),
+                target_type: subst.apply(target_type),
+                trait_args: trait_args.iter().map(|arg| subst.apply(arg)).collect(),
+                methods: methods
+                    .iter()
+                    .map(|method| self.apply_substitution_func(method, subst))
+                    .collect(),
+            },
             TypedStmtKind::Needs(needs) => TypedStmtKind::Needs(needs.clone()),
             TypedStmtKind::StructDecl {
                 name,
@@ -95,6 +114,19 @@ impl TypeInference {
                     .iter()
                     .map(|(n, ty)| (n.clone(), subst.apply(ty)))
                     .collect(),
+            },
+            TypedStmtKind::EnumDecl {
+                name,
+                type_params,
+                variants,
+            } => TypedStmtKind::EnumDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                variants: variants.clone(),
+            },
+            TypedStmtKind::TraitDecl { name, type_params } => TypedStmtKind::TraitDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
             },
         };
 
