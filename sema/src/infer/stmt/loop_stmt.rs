@@ -163,6 +163,7 @@ impl TypeInference {
         iterator: &str,
         iterable: &Expr,
         body: &Stmt,
+        read_only: bool,
         _span: Span,
     ) -> TypedStmtKind {
         let typed_iterable = self.infer_expr(iterable);
@@ -170,7 +171,7 @@ impl TypeInference {
         let elem_type = match &typed_iterable.ty {
             InferType::String => InferType::String,
             InferType::Vec(inner) => (**inner).clone(),
-            InferType::Array(inner) => (**inner).clone(),
+            InferType::Array(inner) | InferType::FixedArray(inner, _) => (**inner).clone(),
             InferType::Dynamic => {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::NotIterable {
@@ -179,7 +180,7 @@ impl TypeInference {
                     span: iterable.span,
                     reason: ConstraintReason::Other("for iteration".to_string()),
                 });
-                InferType::Dynamic
+                InferType::Poison
             }
             InferType::Var(_) => {
                 let element = self.type_gen.fresh();
@@ -202,7 +203,7 @@ impl TypeInference {
                     iterable.span,
                     ConstraintReason::Other("for iteration".to_string()),
                 );
-                InferType::Dynamic
+                InferType::Poison
             }
             receiver => {
                 self.errors.push(TypeError {
@@ -212,13 +213,16 @@ impl TypeInference {
                     span: iterable.span,
                     reason: ConstraintReason::Other("for iteration".to_string()),
                 });
-                InferType::Dynamic
+                InferType::Poison
             }
         };
 
         self.env.push_scope();
         self.env
             .define_local(iterator.to_string(), elem_type.clone());
+        if let Some(name) = collection_binding_name(iterable) {
+            self.env.mark_read_only(name);
+        }
         let typed_body = self.infer_stmt(body);
         self.env.pop_scope();
 
@@ -226,7 +230,17 @@ impl TypeInference {
             iterator: iterator.to_string(),
             iterable: typed_iterable,
             elem_type,
+            read_only,
             body: Box::new(typed_body),
         }
+    }
+}
+
+fn collection_binding_name(expr: &aelys_syntax::Expr) -> Option<&str> {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Identifier(name) => Some(name.as_str()),
+        aelys_syntax::ExprKind::Grouping(inner) => collection_binding_name(inner),
+        aelys_syntax::ExprKind::Index { object, .. } => collection_binding_name(object),
+        _ => None,
     }
 }
