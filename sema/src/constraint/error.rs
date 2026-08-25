@@ -3,7 +3,6 @@ use crate::types::{InferType, TypeVarId};
 use aelys_syntax::Span;
 use std::fmt;
 
-/// Type error during inference
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub kind: TypeErrorKind,
@@ -19,39 +18,33 @@ impl TypeError {
 
 #[derive(Debug, Clone)]
 pub enum TypeErrorKind {
-    /// Two types could not be unified
     Mismatch {
         expected: InferType,
         found: InferType,
     },
-    /// Infinite type (occurs check failed)
     InfiniteType {
         var: TypeVarId,
         ty: InferType,
     },
-    /// Type is not one of the expected options
     NotOneOf {
         ty: InferType,
         options: Vec<InferType>,
     },
-    /// Arity mismatch in function call
     ArityMismatch {
         expected: usize,
         found: usize,
     },
-    /// Tried to call a non-function
     NotCallable {
         ty: InferType,
     },
-    /// Undefined variable
+    /// undefined variable
     UndefinedVariable {
         name: String,
     },
-    /// Undefined function
+    /// undefined function
     UndefinedFunction {
         name: String,
     },
-    /// Recursion depth limit exceeded in type inference
     RecursionLimit,
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -59,10 +52,31 @@ pub enum TypeErrorKind {
     IgnoredResult,
     IgnoredOption,
     NullIsNotInSurface,
+    DynamicIsNotInSurface,
+    UntypedNativeValue {
+        name: String,
+    },
+    UnmaterializedAppliedType {
+        name: String,
+    },
     QuestionMarkOutsideResult,
     QuestionMarkTypeMismatch {
         source: InferType,
         target: InferType,
+    },
+    InvalidTryResidual {
+        source: InferType,
+        target: InferType,
+    },
+    UnsatisfiedTryConversion {
+        source: InferType,
+        target: InferType,
+        source_error: InferType,
+        target_error: InferType,
+        candidates: Vec<String>,
+    },
+    ReservedIdentityConversion {
+        ty: InferType,
     },
     UnresolvedSumType {
         constructor: String,
@@ -128,8 +142,153 @@ pub enum TypeErrorKind {
         module: String,
         member: String,
     },
+    ModulePathSeparator {
+        module: String,
+        member: String,
+    },
     SizedArrayElementNotDefaultable {
         element: InferType,
+    },
+    NegativeArraySize {
+        size: i64,
+    },
+    NonConstantArrayRepeat,
+    ConstantSliceOutOfBounds {
+        start: Option<i64>,
+        end: Option<i64>,
+        length: usize,
+        inclusive: bool,
+    },
+    MutableCollectionRequired {
+        method: String,
+        receiver: InferType,
+    },
+    ReadOnlyCollectionRequired {
+        method: String,
+        receiver: InferType,
+    },
+    UnconsumedCollectionIterator,
+    CollectionCollectRequiresPipeline,
+    MutableCollectionAlias,
+    GenericStructDeferred {
+        name: String,
+    },
+    DuplicateStruct {
+        name: String,
+    },
+    DuplicateStructField {
+        structure: String,
+        field: String,
+    },
+    UnknownStruct {
+        name: String,
+    },
+    InvalidStructMethod {
+        method: String,
+        structure: String,
+    },
+    ImmutableStructField {
+        field: String,
+    },
+    ImmutableStructMethod {
+        method: String,
+    },
+    UnknownTrait {
+        name: String,
+    },
+    MissingTraitMethod {
+        trait_name: String,
+        method: String,
+    },
+    DuplicateTraitImpl {
+        trait_name: String,
+        target: String,
+    },
+    TraitMethodNotInTrait {
+        trait_name: String,
+        method: String,
+    },
+    TraitMethodSignatureMismatch {
+        trait_name: String,
+        method: String,
+    },
+    AmbiguousTraitMethod {
+        target: String,
+        method: String,
+    },
+    UnboundTypeParamMethod {
+        param: String,
+        method: String,
+    },
+    UnresolvedInstanceSymbol {
+        symbol: String,
+    },
+    UnsatisfiedTraitBound {
+        trait_name: String,
+        ty: InferType,
+    },
+    OrphanTraitImpl {
+        trait_name: String,
+        target: InferType,
+    },
+    OverlappingTraitImpl {
+        trait_name: String,
+        target: InferType,
+    },
+    DuplicateTraitMethod {
+        trait_name: String,
+        method: String,
+    },
+    InvalidTraitReceiver {
+        trait_name: String,
+        method: String,
+    },
+    UnresolvedGenericType {
+        name: String,
+    },
+    RecursiveMonomorphization {
+        name: String,
+    },
+    MonomorphizationLimit {
+        name: String,
+    },
+    MangledSymbolCollision {
+        name: String,
+    },
+    EnumLayoutTooLarge {
+        enum_name: String,
+        item: String,
+        count: usize,
+        limit: usize,
+    },
+    NonExhaustiveStruct {
+        structure: String,
+    },
+    UnreachablePattern {
+        pattern: String,
+    },
+    UnresolvedTypeVariable,
+    PoisonedType,
+    UndeterminedType,
+    GlobalWithoutSignature {
+        name: String,
+    },
+    NamespaceIsNotAValue {
+        name: String,
+    },
+    NotANamespace {
+        name: String,
+    },
+    NoSuchMember {
+        receiver: InferType,
+        member: String,
+    },
+    UnknownTypeName {
+        name: String,
+    },
+    TypeNotImported {
+        name: String,
+        module: String,
     },
 }
 
@@ -150,7 +309,7 @@ impl fmt::Display for TypeError {
                 if let ConstraintReason::CollectionMethodReceiver { method } = &self.reason {
                     let required = match method.as_str() {
                         "push" | "pop" | "capacity" | "reserve" => "a vector",
-                        "len" | "get" => "a string, array, or vector",
+                        "len" | "is_empty" | "get" => "a string, array, or vector",
                         _ => "an array or vector",
                     };
                     return write!(
@@ -190,13 +349,31 @@ impl fmt::Display for TypeError {
                 write!(f, "type inference recursion limit exceeded")
             }
             TypeErrorKind::NonExhaustiveMatch { missing } => {
-                write!(f, "non-exhaustive match; missing {}", missing.join(", "))
+                write!(
+                    f,
+                    "non-exhaustive match; missing {}\n   = help: add a missing arm or '_'",
+                    missing.join(", ")
+                )
             }
             TypeErrorKind::IgnoredResult => write!(f, "unused Result value"),
             TypeErrorKind::IgnoredOption => write!(f, "unused Option value"),
             TypeErrorKind::NullIsNotInSurface => write!(
                 f,
                 "null is not part of Aelys; use Option for absence or Result for failure"
+            ),
+            TypeErrorKind::DynamicIsNotInSurface => write!(
+                f,
+                "dynamic is not part of Aelys; use a concrete type or an explicit enum"
+            ),
+            TypeErrorKind::UntypedNativeValue { name } => write!(
+                f,
+                "native value '{}' has no Aelys type; declare its signature before using it",
+                name
+            ),
+            TypeErrorKind::UnmaterializedAppliedType { name } => write!(
+                f,
+                "generic type '{}' was not materialized before code generation",
+                name
             ),
             TypeErrorKind::QuestionMarkOutsideResult => {
                 write!(
@@ -211,6 +388,40 @@ impl fmt::Display for TypeError {
                     source, target
                 )
             }
+            TypeErrorKind::InvalidTryResidual { source, target } => {
+                let residual = if matches!(source, InferType::Option(_)) {
+                    "an Option residual cannot satisfy a Result return"
+                } else {
+                    "a Result residual cannot satisfy an Option return"
+                };
+                write!(
+                    f,
+                    "cannot propagate {} with '?' from a function returning {}: {}",
+                    source, target, residual
+                )
+            }
+            TypeErrorKind::UnsatisfiedTryConversion {
+                source,
+                target,
+                source_error,
+                target_error,
+                candidates,
+            } => {
+                write!(
+                    f,
+                    "cannot propagate {} with '?' from a function returning {}: no unique From<{}> for {} conversion",
+                    source, target, source_error, target_error
+                )?;
+                if !candidates.is_empty() {
+                    write!(f, "; candidate impls: {}", candidates.join(", "))?;
+                }
+                write!(f, "; use map_err or convert the error explicitly")
+            }
+            TypeErrorKind::ReservedIdentityConversion { ty } => write!(
+                f,
+                "From<{}> for {} is reserved; the compiler already provides the identity conversion",
+                ty, ty
+            ),
             TypeErrorKind::UnresolvedSumType { constructor } => {
                 write!(f, "cannot infer the sum type for {}", constructor)
             }
@@ -268,7 +479,7 @@ impl fmt::Display for TypeError {
             TypeErrorKind::InvalidCollectionMethod { method, receiver } => {
                 let required = match method.as_str() {
                     "push" | "pop" | "capacity" | "reserve" => "a vector",
-                    "len" | "get" => "a string, array, or vector",
+                    "len" | "is_empty" | "get" => "a string, array, or vector",
                     _ => "an array or vector",
                 };
                 write!(
@@ -301,10 +512,233 @@ impl fmt::Display for TypeError {
                 "module member '{}::{}' is not public; add 'pub' to its declaration",
                 module, member
             ),
+            TypeErrorKind::ModulePathSeparator { module, member } => write!(
+                f,
+                "module members are reached with '::'; write '{}::{}'",
+                module, member
+            ),
             TypeErrorKind::SizedArrayElementNotDefaultable { element } => write!(
                 f,
                 "cannot create a sized array of {}; initialize its elements explicitly",
                 element
+            ),
+            TypeErrorKind::NegativeArraySize { size } => {
+                write!(f, "array size cannot be negative: {}", size)
+            }
+            TypeErrorKind::NonConstantArrayRepeat => write!(
+                f,
+                "array repeat count must be a non-negative compile-time constant; use Vec for a dynamic count"
+            ),
+            TypeErrorKind::ConstantSliceOutOfBounds {
+                start,
+                end,
+                length,
+                inclusive,
+            } => write!(
+                f,
+                "constant slice {}{} is out of bounds for a collection of length {}",
+                start.map_or_else(|| "..".to_string(), |value| value.to_string()),
+                if *inclusive {
+                    end.map_or_else(|| "..=".to_string(), |value| format!("..={value}"))
+                } else {
+                    end.map_or_else(|| "..".to_string(), |value| format!("..{value}"))
+                },
+                length
+            ),
+            TypeErrorKind::MutableCollectionRequired { method, receiver } => {
+                write!(
+                    f,
+                    "collection operation '{}' requires a mutable collection receiver, found {}",
+                    method, receiver
+                )
+            }
+            TypeErrorKind::ReadOnlyCollectionRequired { method, receiver } => {
+                write!(
+                    f,
+                    "collection method '{}' is unavailable through a read-only receiver of type {}",
+                    method, receiver
+                )
+            }
+            TypeErrorKind::UnconsumedCollectionIterator => write!(
+                f,
+                "iterator value must be consumed with map, filter, fold, or collect"
+            ),
+            TypeErrorKind::CollectionCollectRequiresPipeline => write!(
+                f,
+                "collect is a pipeline terminal; call iter, map, or filter first"
+            ),
+            TypeErrorKind::MutableCollectionAlias => write!(
+                f,
+                "mutable aliases of collections are not supported; mutate the original binding"
+            ),
+            TypeErrorKind::GenericStructDeferred { .. } => {
+                write!(f, "generic struct support is reserved for Stage 2")
+            }
+            TypeErrorKind::DuplicateStruct { name } => {
+                write!(f, "duplicate struct declaration '{}'", name)
+            }
+            TypeErrorKind::DuplicateStructField { structure, field } => {
+                write!(f, "duplicate field '{}' in struct {}", field, structure)
+            }
+            TypeErrorKind::UnknownStruct { name } => write!(f, "unknown struct '{}'", name),
+            TypeErrorKind::InvalidStructMethod { method, structure } => {
+                write!(
+                    f,
+                    "method '{}' is not available on struct {}",
+                    method, structure
+                )
+            }
+            TypeErrorKind::ImmutableStructField { field } => {
+                write!(f, "cannot assign to immutable struct field '{}'", field)
+            }
+            TypeErrorKind::ImmutableStructMethod { method } => {
+                write!(
+                    f,
+                    "cannot call mutable struct method '{}' on an immutable receiver",
+                    method
+                )
+            }
+            TypeErrorKind::UnknownTrait { name } => write!(f, "unknown trait '{}'", name),
+            TypeErrorKind::MissingTraitMethod { trait_name, method } => write!(
+                f,
+                "trait '{}' is not implemented for this type: missing method '{}'",
+                trait_name, method
+            ),
+            TypeErrorKind::DuplicateTraitImpl { trait_name, target } => write!(
+                f,
+                "duplicate implementation of trait '{}' for type '{}'",
+                trait_name, target
+            ),
+            TypeErrorKind::TraitMethodNotInTrait { trait_name, method } => write!(
+                f,
+                "method '{}' is not declared by trait '{}'",
+                method, trait_name
+            ),
+            TypeErrorKind::TraitMethodSignatureMismatch { trait_name, method } => write!(
+                f,
+                "method '{}' does not match the signature declared by trait '{}'",
+                method, trait_name
+            ),
+            TypeErrorKind::AmbiguousTraitMethod { target, method } => write!(
+                f,
+                "method '{}' on '{}' is provided by more than one trait; use a qualified call",
+                method, target
+            ),
+            TypeErrorKind::UnboundTypeParamMethod { param, method } => write!(
+                f,
+                "method '{}' is not available on type parameter '{}' because no bound on '{}' provides it; add the bound '{}: Trait' that declares '{}'",
+                method, param, param, param, method
+            ),
+            TypeErrorKind::UnresolvedInstanceSymbol { symbol } => write!(
+                f,
+                "generic instance symbol '{}' was never specialized and would not exist at run time",
+                symbol
+            ),
+            TypeErrorKind::UnsatisfiedTraitBound { trait_name, ty } => write!(
+                f,
+                "trait '{}' is not implemented for {}; add an impl or change the bound",
+                trait_name, ty
+            ),
+            TypeErrorKind::OrphanTraitImpl { trait_name, target } => write!(
+                f,
+                "cannot implement trait '{}' for {}; the trait or type must be local",
+                trait_name, target
+            ),
+            TypeErrorKind::OverlappingTraitImpl { trait_name, target } => write!(
+                f,
+                "trait '{}' has overlapping implementations for {}; add a disjoint bound",
+                trait_name, target
+            ),
+            TypeErrorKind::DuplicateTraitMethod { trait_name, method } => write!(
+                f,
+                "trait '{}' declares method '{}' more than once",
+                trait_name, method
+            ),
+            TypeErrorKind::InvalidTraitReceiver { trait_name, method } => write!(
+                f,
+                "trait '{}' method '{}' must use a by-value self receiver",
+                trait_name, method
+            ),
+            TypeErrorKind::UnresolvedGenericType { name } => write!(
+                f,
+                "cannot infer the concrete type for generic parameter '{}'; add a type argument",
+                name
+            ),
+            TypeErrorKind::RecursiveMonomorphization { name } => write!(
+                f,
+                "generic instantiation of '{}' is recursive without a decreasing type argument",
+                name
+            ),
+            TypeErrorKind::MonomorphizationLimit { name } => write!(
+                f,
+                "generic instantiation limit exceeded while compiling '{}'",
+                name
+            ),
+            TypeErrorKind::MangledSymbolCollision { name } => write!(
+                f,
+                "internal generic symbol collision while compiling '{}'; use a fresh build",
+                name
+            ),
+            TypeErrorKind::EnumLayoutTooLarge {
+                enum_name,
+                item,
+                count,
+                limit,
+            } => write!(
+                f,
+                "EnumLayoutTooLarge: enum '{}' {} has {} entries, but the bytecode limit is {}; reduce the payload or split the enum",
+                enum_name, item, count, limit
+            ),
+            TypeErrorKind::NonExhaustiveStruct { structure } => write!(
+                f,
+                "non-exhaustive struct match for {}; add '_' or an irrefutable field pattern",
+                structure
+            ),
+            TypeErrorKind::UnreachablePattern { pattern } => write!(
+                f,
+                "unreachable pattern: {} is already covered by an earlier arm\n   = help: remove the arm or move it above the arm that covers it",
+                pattern
+            ),
+            TypeErrorKind::UnresolvedTypeVariable => write!(
+                f,
+                "a type here stayed unresolved after inference; add a type annotation so every surface value has a concrete type"
+            ),
+            TypeErrorKind::PoisonedType => write!(
+                f,
+                "this type was poisoned by an earlier type error; fix the errors above and compile again"
+            ),
+            TypeErrorKind::UndeterminedType => write!(
+                f,
+                "the type of this value could not be determined; add a type annotation so it has a concrete type"
+            ),
+            TypeErrorKind::GlobalWithoutSignature { name } => write!(
+                f,
+                "'{}' is announced as a global but the compiler holds no type signature for it, so it cannot be used here",
+                name
+            ),
+            TypeErrorKind::NamespaceIsNotAValue { name } => write!(
+                f,
+                "'{}' names a namespace, not a value; reach its members with '{}::member'",
+                name, name
+            ),
+            TypeErrorKind::NotANamespace { name } => write!(
+                f,
+                "'{}' is a value, not a namespace; reach its members with '{}.member'",
+                name, name
+            ),
+            TypeErrorKind::NoSuchMember { receiver, member } => write!(
+                f,
+                "no field or method '{}' on a value of type {}",
+                member, receiver
+            ),
+            TypeErrorKind::UnknownTypeName { name } => {
+                write!(f, "unknown type '{}'; no such type is in scope", name)
+            }
+            TypeErrorKind::TypeNotImported { name, module } => write!(
+                f,
+                "'{}' is exported by module '{}' but this file does not import it\n   \
+                 = help: write `needs {} from {}`",
+                name, module, name, module
             ),
         }
     }
@@ -405,6 +839,9 @@ impl TypeErrorKind {
             Self::IgnoredResult => 303,
             Self::IgnoredOption => 304,
             Self::NullIsNotInSurface => 106,
+            Self::DynamicIsNotInSurface => 347,
+            Self::UntypedNativeValue { .. } => 348,
+            Self::UnmaterializedAppliedType { .. } => 349,
             Self::QuestionMarkOutsideResult => 305,
             Self::QuestionMarkTypeMismatch { .. } => 306,
             Self::UnresolvedSumType { .. } => 307,
@@ -414,8 +851,73 @@ impl TypeErrorKind {
             Self::InvalidCollectionMethod { .. } => 311,
             Self::InvalidStringMethod { .. } => 312,
             Self::ModuleMemberNotPublic { .. } => 313,
+            Self::ModulePathSeparator { .. } => 411,
             Self::SizedArrayElementNotDefaultable { .. } => 314,
-            _ => 301,
+            Self::NegativeArraySize { .. } => 315,
+            Self::NonConstantArrayRepeat => 316,
+            Self::ConstantSliceOutOfBounds { .. } => 317,
+            Self::MutableCollectionRequired { .. } => 318,
+            Self::ReadOnlyCollectionRequired { .. } => 319,
+            Self::UnconsumedCollectionIterator => 320,
+            Self::ConstantIndexOutOfBounds { .. } => 321,
+            Self::CollectionCollectRequiresPipeline => 322,
+            Self::MutableCollectionAlias => 323,
+            Self::NonExhaustiveStruct { .. } => 324,
+            Self::GenericStructDeferred { .. } => 325,
+            Self::DuplicateStruct { .. } => 326,
+            Self::DuplicateStructField { .. } => 327,
+            Self::UnknownStruct { .. } => 328,
+            Self::InvalidStructMethod { .. } => 329,
+            Self::ImmutableStructField { .. } => 330,
+            Self::ImmutableStructMethod { .. } => 331,
+            Self::UnknownTrait { .. } => 332,
+            Self::MissingTraitMethod { .. } => 333,
+            Self::DuplicateTraitImpl { .. } => 334,
+            Self::TraitMethodNotInTrait { .. } => 335,
+            Self::TraitMethodSignatureMismatch { .. } => 336,
+            Self::AmbiguousTraitMethod { .. } => 337,
+            Self::UnboundTypeParamMethod { .. } => 351,
+            Self::UnresolvedInstanceSymbol { .. } => 352,
+            Self::UnresolvedTypeVariable => 353,
+            Self::PoisonedType => 354,
+            Self::UndeterminedType => 377,
+            Self::GlobalWithoutSignature { .. } => 376,
+            Self::UnsatisfiedTraitBound { .. } => 338,
+            Self::OrphanTraitImpl { .. } => 339,
+            Self::OverlappingTraitImpl { .. } => 340,
+            Self::DuplicateTraitMethod { .. } => 341,
+            Self::InvalidTraitReceiver { .. } => 342,
+            Self::UnresolvedGenericType { .. } => 343,
+            Self::RecursiveMonomorphization { .. } => 344,
+            Self::MonomorphizationLimit { .. } => 345,
+            Self::MangledSymbolCollision { .. } => 355,
+            Self::EnumLayoutTooLarge { .. } => 346,
+            Self::UnreachablePattern { .. } => 356,
+            Self::GenericArityMismatch { .. } => 357,
+            Self::PatternBindingMismatch { .. } => 358,
+            Self::ArityMismatch { .. } => 359,
+            Self::NotCallable { .. } => 360,
+            Self::InfiniteType { .. } => 361,
+            Self::UndefinedFunction { .. } => 362,
+            Self::UnknownField { .. } => 363,
+            Self::MissingField { .. } => 364,
+            Self::NotIterable { .. } => 365,
+            Self::InvalidIndex { .. } => 366,
+            Self::UntypedNativeTypeMismatch { .. } => 367,
+            Self::RecursionLimit => 368,
+            Self::NamespaceIsNotAValue { .. } => 369,
+            Self::NotANamespace { .. } => 370,
+            Self::NoSuchMember { .. } => 371,
+            Self::UnknownTypeName { .. } => 372,
+            Self::TypeNotImported { .. } => 378,
+            Self::InvalidTryResidual { .. } => 373,
+            Self::UnsatisfiedTryConversion { .. } => 374,
+            Self::ReservedIdentityConversion { .. } => 375,
+            Self::UnknownVariant { .. } => 109,
+            Self::MatchArmValueRequired => 110,
+            Self::MissingReturnValue { .. } => 215,
+            // an undefined name keeps 301 because the surface pins that code for it
+            Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,
         }
     }
 }
