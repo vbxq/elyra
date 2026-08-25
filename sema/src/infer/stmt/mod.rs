@@ -1,4 +1,3 @@
-//! Statement inference.
 
 mod block;
 mod implicit;
@@ -12,12 +11,10 @@ use crate::typed_ast::{TypedStmt, TypedStmtKind};
 use aelys_syntax::{Stmt, StmtKind};
 
 impl TypeInference {
-    /// Infer types for a list of statements
     pub(super) fn infer_stmts(&mut self, stmts: &[Stmt]) -> Vec<TypedStmt> {
         stmts.iter().map(|s| self.infer_stmt(s)).collect()
     }
 
-    /// Infer type for a single statement
     pub(super) fn infer_stmt(&mut self, stmt: &Stmt) -> TypedStmt {
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
@@ -65,7 +62,7 @@ impl TypeInference {
                 iterator,
                 iterable,
                 body,
-            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.span),
+            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.read_only, stmt.span),
             StmtKind::Return(expr) => self.infer_return_stmt(stmt.span, expr.as_ref()),
             StmtKind::Break => TypedStmtKind::Break,
             StmtKind::Continue => TypedStmtKind::Continue,
@@ -73,25 +70,50 @@ impl TypeInference {
                 let typed_func = self.infer_function(func);
                 TypedStmtKind::Function(typed_func)
             }
+            StmtKind::ImplDecl {
+                type_params,
+                self_type,
+                trait_path,
+                methods,
+                ..
+            } => self.infer_impl_decl(self_type, type_params, methods, trait_path.as_ref()),
+            StmtKind::TraitDecl {
+                name, type_params, ..
+            } => TypedStmtKind::TraitDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
+            },
             StmtKind::Needs(needs) => {
                 self.handle_needs_stmt(needs);
                 TypedStmtKind::Needs(needs.clone())
             }
             StmtKind::StructDecl {
-                name,
-                type_params,
-                fields,
-                ..
+                name, type_params, ..
             } => TypedStmtKind::StructDecl {
                 name: name.clone(),
                 type_params: type_params.clone(),
-                fields: fields
-                    .iter()
-                    .map(|f| {
-                        let ty = self.type_from_annotation(&f.type_annotation);
-                        (f.name.clone(), ty)
+                fields: self
+                    .type_table
+                    .get_struct(name)
+                    .map(|definition| {
+                        definition
+                            .fields
+                            .iter()
+                            .map(|field| (field.name.clone(), field.ty.clone()))
+                            .collect()
                     })
-                    .collect(),
+                    .unwrap_or_default(),
+            },
+            StmtKind::EnumDecl {
+                name, type_params, ..
+            } => TypedStmtKind::EnumDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                variants: self
+                    .type_table
+                    .get_enum(name)
+                    .map(|def| def.variants.clone())
+                    .unwrap_or_default(),
             },
         };
 
