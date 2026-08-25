@@ -513,10 +513,10 @@ fn baseline_jit_reads_borrowed_integer_arrays() {
     let module = runtime
         .compile(
             r#"
-fn read(values: Array<Int>, index: int) -> int {
+fn read(values: [Int; 2], index: int) -> int {
     return values.len() + values[index]
 }
-let values = Array[19, 40]
+let values = [19, 40]
 let mut result = 0
 for index in 0..1000 {
     result = read(values, 1)
@@ -545,10 +545,10 @@ fn array_jit_deoptimization_restores_the_original_reference() {
     let module = runtime
         .compile(
             r#"
-fn read(values: Array<Int>, index: int) -> int {
+fn read(values: [Int; 2], index: int) -> int {
     return values[index]
 }
-let values = Array[19, 42]
+let values = [19, 42]
 for index in 0..1000 {
     read(values, 1)
 }
@@ -591,7 +591,7 @@ fn vec_jit_reads_length_and_deoptimizes_out_of_bounds() {
 fn read(values: Vec<Int>, index: int) -> int {
     return values.len() + values[index]
 }
-let values = Vec[19, 40]
+let values = vec![19, 40]
 for index in 0..1000 {
     read(values, 1)
 }
@@ -631,7 +631,7 @@ fn baseline_jit_executes_integer_array_loops() {
     let module = runtime
         .compile(
             r#"
-fn sum(values: Array<Int>) -> int {
+fn sum(values: [Int; 8]) -> int {
     let mut index = 0
     let mut total = 0
     while index < values.len() {
@@ -640,7 +640,7 @@ fn sum(values: Array<Int>) -> int {
     }
     return total
 }
-let values = Array[1, 2, 3, 4, 5, 6, 7, 8]
+let values = [1, 2, 3, 4, 5, 6, 7, 8]
 sum(values)
 "#,
             options,
@@ -665,8 +665,8 @@ fn tiered_collection_calls_compile_optimized_code() {
     let module = runtime
         .compile(
             r#"
-fn read(values: Array<Int>) -> int { return values[1] }
-let values = Array[19, 42]
+fn read(values: [Int; 2]) -> int { return values[1] }
+let values = [19, 42]
 let mut result = 0
 for index in 0..10000 {
     result = read(values)
