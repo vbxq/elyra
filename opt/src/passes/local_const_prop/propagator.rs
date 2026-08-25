@@ -129,11 +129,19 @@ impl LocalConstantPropagator {
                 self.propagate_function(func);
             }
 
+            TypedStmtKind::ImplDecl { methods, .. } => {
+                for method in methods {
+                    self.propagate_function(method);
+                }
+            }
+
             TypedStmtKind::Return(None)
             | TypedStmtKind::Break
             | TypedStmtKind::Continue
             | TypedStmtKind::Needs(_)
-            | TypedStmtKind::StructDecl { .. } => {}
+            | TypedStmtKind::StructDecl { .. }
+            | TypedStmtKind::TraitDecl { .. }
+            | TypedStmtKind::EnumDecl { .. } => {}
         }
     }
 
@@ -220,6 +228,17 @@ impl LocalConstantPropagator {
             TypedExprKind::Member { object, .. } => {
                 Self::collect_assigned_vars_expr(object, out);
             }
+            TypedExprKind::StructField { object, .. }
+            | TypedExprKind::StructMethod { object, .. } => {
+                Self::collect_assigned_vars_expr(object, out);
+            }
+            TypedExprKind::MemberAssign { object, value, .. } => {
+                if let TypedExprKind::Identifier(name) = &object.kind {
+                    out.push(name.clone());
+                }
+                Self::collect_assigned_vars_expr(object, out);
+                Self::collect_assigned_vars_expr(value, out);
+            }
             TypedExprKind::ArrayLiteral { elements, .. }
             | TypedExprKind::VecLiteral { elements, .. } => {
                 for e in elements {
@@ -230,6 +249,11 @@ impl LocalConstantPropagator {
                 Self::collect_assigned_vars_expr(size, out);
             }
             TypedExprKind::StructLiteral { fields, .. } => {
+                for (_, val) in fields {
+                    Self::collect_assigned_vars_expr(val, out);
+                }
+            }
+            TypedExprKind::EnumConstruct { fields, .. } => {
                 for (_, val) in fields {
                     Self::collect_assigned_vars_expr(val, out);
                 }
@@ -336,6 +360,16 @@ impl LocalConstantPropagator {
                 self.propagate_expr(object);
             }
 
+            TypedExprKind::StructField { object, .. }
+            | TypedExprKind::StructMethod { object, .. } => {
+                self.propagate_expr(object);
+            }
+
+            TypedExprKind::MemberAssign { object, value, .. } => {
+                self.propagate_expr(object);
+                self.propagate_expr(value);
+            }
+
             TypedExprKind::ArrayLiteral { elements, .. }
             | TypedExprKind::VecLiteral { elements, .. } => {
                 for elem in elements.iter_mut() {
@@ -389,10 +423,15 @@ impl LocalConstantPropagator {
                     self.propagate_expr(value);
                 }
             }
+            TypedExprKind::EnumConstruct { fields, .. } => {
+                for (_, value) in fields.iter_mut() {
+                    self.propagate_expr(value);
+                }
+            }
             TypedExprKind::Cast { expr, .. } => {
                 self.propagate_expr(expr);
             }
-            TypedExprKind::Try(inner) => self.propagate_expr(inner),
+            TypedExprKind::Try { operand, .. } => self.propagate_expr(operand),
             TypedExprKind::Match { scrutinee, arms } => {
                 self.propagate_expr(scrutinee);
                 for arm in arms {
