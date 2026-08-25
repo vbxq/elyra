@@ -15,3 +15,7 @@ runs/
 run-report*
 *.trace
 *.journal
+# compiled bytecode emitted next to a source file by a local compile
+*.avbc
+# hostile-input fixtures are checked in, a test cannot regenerate a deliberately corrupted file
+!aelys/tests/fixtures/*.avbc
