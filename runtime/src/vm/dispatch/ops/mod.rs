@@ -9,6 +9,7 @@ pub(super) mod comparison;
 pub(super) mod control_flow;
 pub(super) mod globals;
 pub(super) mod load_store;
+pub(super) mod structs;
 pub(super) mod sums;
 pub(super) mod tail_call_upval;
 pub(super) mod wide;
