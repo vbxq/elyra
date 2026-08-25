@@ -81,14 +81,8 @@ impl ModuleLoader {
             ImportKind::Symbols(symbols) => {
                 for symbol in symbols {
                     if !exports.contains_key(symbol) {
-                        return Err(AelysError::Compile(CompileError::new(
-                            CompileErrorKind::SymbolNotFound {
-                                symbol: symbol.clone(),
-                                module: module_path_str.clone(),
-                            },
-                            needs.span,
-                            self.source.clone(),
-                        )));
+                        self.reject_unimportable_symbol(&module_path_str, symbol, needs.span)?;
+                        continue;
                     }
                     let value = vm.get_global(symbol).ok_or_else(|| {
                         AelysError::Compile(CompileError::new(
@@ -121,6 +115,46 @@ impl ModuleLoader {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn reject_unimportable_symbol(
+        &self,
+        module_path: &str,
+        symbol: &str,
+        span: aelys_syntax::Span,
+    ) -> Result<()> {
+        let exported_types = self
+            .loaded_modules
+            .get(module_path)
+            .map(|module_info| &module_info.exported_types);
+        if let Some(exported_types) = exported_types {
+            if exported_types
+                .types
+                .nominal_names()
+                .iter()
+                .any(|name| name == symbol)
+            {
+                return Ok(());
+            }
+            if exported_types.private_names.contains(symbol) {
+                return Err(AelysError::Compile(CompileError::new(
+                    CompileErrorKind::SymbolNotPublic {
+                        symbol: symbol.to_string(),
+                        module: module_path.to_string(),
+                    },
+                    span,
+                    self.source.clone(),
+                )));
+            }
+        }
+        Err(AelysError::Compile(CompileError::new(
+            CompileErrorKind::SymbolNotFound {
+                symbol: symbol.to_string(),
+                module: module_path.to_string(),
+            },
+            span,
+            self.source.clone(),
+        )))
     }
 
     pub fn is_symbol_public(&self, module_path: &str, symbol: &str) -> bool {
