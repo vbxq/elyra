@@ -1,4 +1,3 @@
-// disassembler: bytecode -> .aasm text
 
 use crate::bytecode::{Constant, Function, OpCode, decode_a, decode_b};
 use std::collections::{HashMap, HashSet};
@@ -25,7 +24,7 @@ pub fn disassemble_with_options(func: &Function, options: &DisassemblerOptions) 
     writeln_ignore!(output, "; Aelys Assembly (.aasm)");
     writeln_ignore!(output, "; Disassembled from bytecode");
     writeln_ignore!(output);
-    writeln_ignore!(output, ".version 2");
+    writeln_ignore!(output, ".version 3");
     writeln_ignore!(output);
 
     let mut all_functions = Vec::new();
@@ -75,7 +74,6 @@ impl<'a> DisasmContext<'a> {
             .iter()
             .map(|f| f.name.clone())
             .collect();
-        // also include names from all_functions for @N references
         if self.nested_fn_names.is_empty() {
             self.nested_fn_names = all_functions
                 .iter()
@@ -103,7 +101,6 @@ impl<'a> DisasmContext<'a> {
         writeln_ignore!(output, "  .arity {}", func.arity);
         writeln_ignore!(output, "  .registers {}", func.num_registers);
 
-        // Output global names for ALL functions (needed for indexed global access and module loading)
         if !func.global_layout.names().is_empty() {
             writeln_ignore!(output);
             writeln_ignore!(output, "  .globals");
@@ -122,7 +119,6 @@ impl<'a> DisasmContext<'a> {
             writeln_ignore!(output);
         }
 
-        // Output upvalue descriptors if present
         if !func.upvalue_descriptors.is_empty() {
             writeln_ignore!(output, "  .upvalues");
             for (idx, desc) in func.upvalue_descriptors.iter().enumerate() {
@@ -132,13 +128,88 @@ impl<'a> DisasmContext<'a> {
             writeln_ignore!(output);
         }
 
+        if !func.struct_schemas.is_empty() {
+            writeln_ignore!(output, "  .schemas");
+            for (schema_index, schema) in func.struct_schemas.iter().enumerate() {
+                writeln_ignore!(
+                    output,
+                    "    {}: \"{}\" {} {} {}{}",
+                    schema_index,
+                    escape_string(&schema.display_name()),
+                    schema.ctor.ordinal,
+                    schema.type_args.len(),
+                    schema.fields.len(),
+                    schema
+                        .type_args
+                        .iter()
+                        .map(|ty| format!(" \"{}\"", escape_string(&ty.to_string())))
+                        .collect::<String>()
+                );
+                for (field_index, field) in schema.fields.iter().enumerate() {
+                    writeln_ignore!(
+                        output,
+                        "      {}: \"{}\" \"{}\"",
+                        field_index,
+                        escape_string(&field.name),
+                        escape_string(&field.ty.to_string())
+                    );
+                }
+            }
+            writeln_ignore!(output);
+        }
+
+        if !func.enum_schemas.is_empty() {
+            writeln_ignore!(output, "  .enum_schemas");
+            for (schema_index, schema) in func.enum_schemas.iter().enumerate() {
+                writeln_ignore!(
+                    output,
+                    "    {}: \"{}\" \"{}\" {} {} {}{}",
+                    schema_index,
+                    escape_string(&schema.name),
+                    escape_string(&schema.def_id.display_name()),
+                    schema.def_id.ordinal,
+                    schema.arity,
+                    schema.variants.len(),
+                    schema
+                        .type_args
+                        .iter()
+                        .map(|ty| format!(" \"{}\"", escape_string(&ty.to_string())))
+                        .collect::<String>()
+                );
+                for (variant_index, variant) in schema.variants.iter().enumerate() {
+                    writeln_ignore!(
+                        output,
+                        "      {}: \"{}\" {}",
+                        variant_index,
+                        escape_string(&variant.name),
+                        variant.fields.len()
+                    );
+                    for (field_index, field) in variant.fields.iter().enumerate() {
+                        let field_name = field.name.as_deref().unwrap_or("");
+                        writeln_ignore!(
+                            output,
+                            "        {}: \"{}\" \"{}\"",
+                            field_index,
+                            escape_string(field_name),
+                            escape_string(&field.ty.to_string())
+                        );
+                    }
+                }
+            }
+            writeln_ignore!(output);
+        }
+
+        if func.jit_unsupported_struct {
+            writeln_ignore!(output, "  .jit_unsupported_struct true");
+            writeln_ignore!(output);
+        }
+
         if func.bytecode.is_empty() {
             writeln_ignore!(output, "  .code");
             writeln_ignore!(output, "    ; (empty)");
             return;
         }
 
-        // two-pass: collect jump targets first, then disasm with labels
         let labels = self.collect_jump_targets(func.bytecode.as_slice());
 
         writeln_ignore!(output, "  .code");
@@ -149,7 +220,6 @@ impl<'a> DisasmContext<'a> {
                 continue;
             }
 
-            // Emit label if this is a jump target
             if let Some(label) = labels.get(&offset) {
                 writeln_ignore!(output, "  {}:", label);
             }
@@ -244,7 +314,6 @@ impl<'a> DisasmContext<'a> {
         };
 
         match opcode {
-            // Format A: 3 registers
             OpCode::Move => {
                 let (_, a, b, _) = decode_a(instr);
                 format!("Move      r{}, r{}", a, b)
@@ -370,7 +439,10 @@ impl<'a> DisasmContext<'a> {
             }
             OpCode::LoopWideLong => {
                 let (_, inner, _, _) = decode_a(instr);
-                let inner = OpCode::from_u8(inner).expect("verified wide loop opcode");
+                let inner = match OpCode::from_u8(inner) {
+                    Some(op) => format!("{op:?}"),
+                    None => format!("<invalid {inner}>"),
+                };
                 let register = extension.unwrap_or(0) >> 16;
                 let relative = i32::from_ne_bytes(second_extension.unwrap_or(0).to_ne_bytes());
                 let target = (offset as i64 + 3 + i64::from(relative)) as usize;
@@ -378,7 +450,7 @@ impl<'a> DisasmContext<'a> {
                     .get(&target)
                     .cloned()
                     .unwrap_or_else(|| format!("@{target}"));
-                format!("LoopWideLong {inner:?}, r{register}, {target}")
+                format!("LoopWideLong {inner}, r{register}, {target}")
             }
             OpCode::Call => {
                 let (_, dest, func, nargs) = decode_a(instr);
@@ -405,7 +477,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, k, _) = decode_a(instr);
                 format!("SetGlobal r{}, {}", a, k)
             }
-            // Format B: register + immediate
             OpCode::LoadI => {
                 let (_, a, imm) = decode_b(instr);
                 format!("LoadI     r{}, {}", a, imm)
@@ -466,7 +537,6 @@ impl<'a> DisasmContext<'a> {
                 }
             }
 
-            // Closure opcodes
             OpCode::MakeClosure => {
                 let (_, a, k, upval_count) = decode_a(instr);
                 format!("MakeClosure r{}, k{}, {}", a, k, upval_count)
@@ -505,6 +575,30 @@ impl<'a> DisasmContext<'a> {
                     None => format!(".word 0x{instr:08x} ; invalid wide opcode {inner}"),
                 }
             }
+            OpCode::StructNew
+            | OpCode::StructLoad
+            | OpCode::StructStore
+            | OpCode::EnumNew
+            | OpCode::EnumTest
+            | OpCode::EnumLoad => {
+                let schema = instr & 0xffff;
+                let first = extension.unwrap_or(0);
+                let second = second_extension.unwrap_or(0);
+                let a = first >> 16;
+                let b = first & 0xffff;
+                let c = second >> 16;
+                let d = second & 0xffff;
+                // all six print five operands because the parser reads five; the low half of the second word is reserved and zero for the struct ops and enumtest
+                match opcode {
+                    OpCode::StructNew => format!("StructNew  {schema}, r{a}, r{b}, {c}, {d}"),
+                    OpCode::StructLoad => format!("StructLoad {schema}, r{a}, r{b}, {c}, {d}"),
+                    OpCode::StructStore => format!("StructStore {schema}, r{a}, r{b}, {c}, {d}"),
+                    OpCode::EnumNew => format!("EnumNew    {schema}, r{a}, r{b}, {c}, {d}"),
+                    OpCode::EnumTest => format!("EnumTest   {schema}, r{a}, r{b}, {c}, {d}"),
+                    OpCode::EnumLoad => format!("EnumLoad   {schema}, r{a}, r{b}, {c}, {d}"),
+                    _ => unreachable!(),
+                }
+            }
             OpCode::GetUpval => {
                 let (_, a, upval_idx, _) = decode_a(instr);
                 format!("GetUpval  r{}, upval[{}]", a, upval_idx)
@@ -525,7 +619,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, offset) = decode_b(instr);
                 format!("ForLoopIInc r{}, {}", a, offset)
             }
-            // Immediate arithmetic
             OpCode::AddI => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("AddI      r{}, r{}, {}", a, b, c)
@@ -534,7 +627,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("SubI      r{}, r{}, {}", a, b, c)
             }
-            // Immediate comparison
             OpCode::LtImm => {
                 let (_, a, imm) = decode_b(instr);
                 format!("LtImm     r{}, {}", a, imm)
@@ -551,12 +643,10 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, imm) = decode_b(instr);
                 format!("GeImm     r{}, {}", a, imm)
             }
-            // While loop superinstruction
             OpCode::WhileLoopLt => {
                 let (_, a, offset) = decode_b(instr);
                 format!("WhileLoopLt r{}, {}", a, offset)
             }
-            // Type-specialized integer arithmetic
             OpCode::AddII => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("AddII     r{}, r{}, r{}", a, b, c)
@@ -577,7 +667,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("ModII     r{}, r{}, r{}", a, b, c)
             }
-            // Type-specialized float arithmetic
             OpCode::AddFF => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("AddFF     r{}, r{}, r{}", a, b, c)
@@ -598,7 +687,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("ModFF     r{}, r{}, r{}", a, b, c)
             }
-            // Type-specialized integer comparisons
             OpCode::LtII => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("LtII      r{}, r{}, r{}", a, b, c)
@@ -623,7 +711,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("NeII      r{}, r{}, r{}", a, b, c)
             }
-            // Type-specialized float comparisons
             OpCode::LtFF => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("LtFF      r{}, r{}, r{}", a, b, c)
@@ -648,7 +735,6 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("NeFF      r{}, r{}, r{}", a, b, c)
             }
-            // Integer comparison with immediate
             OpCode::LtIImm => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("LtIImm    r{}, r{}, {}", a, b, c)
@@ -693,12 +779,10 @@ impl<'a> DisasmContext<'a> {
                     None => format!("CallGlobal r{}, {}, {}", dest, global_idx, nargs),
                 }
             }
-            // CallUpval - combined GetUpval + Call (for recursive closures)
             OpCode::CallUpval => {
                 let (_, dest, upval_idx, nargs) = decode_a(instr);
                 format!("CallUpval r{}, upval[{}], {}", dest, upval_idx, nargs)
             }
-            // TailCallUpval - tail call via upvalue (reuses stack frame)
             OpCode::TailCallUpval => {
                 let (_, dest, upval_idx, nargs) = decode_a(instr);
                 format!("TailCallUpval r{}, upval[{}], {}", dest, upval_idx, nargs)
@@ -708,7 +792,6 @@ impl<'a> DisasmContext<'a> {
                 format!("AddGlobalI r{}, r{}, {}", dest, source, global)
             }
 
-            // Guarded integer arithmetic
             OpCode::AddIIG => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("AddIIG    r{}, r{}, r{}", a, b, c)
@@ -730,7 +813,6 @@ impl<'a> DisasmContext<'a> {
                 format!("ModIIG    r{}, r{}, r{}", a, b, c)
             }
 
-            // Guarded float arithmetic
             OpCode::AddFFG => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("AddFFG    r{}, r{}, r{}", a, b, c)
@@ -752,7 +834,6 @@ impl<'a> DisasmContext<'a> {
                 format!("ModFFG    r{}, r{}, r{}", a, b, c)
             }
 
-            // Guarded integer comparisons
             OpCode::LtIIG => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("LtIIG     r{}, r{}, r{}", a, b, c)
@@ -778,7 +859,6 @@ impl<'a> DisasmContext<'a> {
                 format!("NeIIG     r{}, r{}, r{}", a, b, c)
             }
 
-            // Guarded float comparisons
             OpCode::LtFFG => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("LtFFG     r{}, r{}, r{}", a, b, c)
@@ -804,7 +884,6 @@ impl<'a> DisasmContext<'a> {
                 format!("NeFFG     r{}, r{}, r{}", a, b, c)
             }
 
-            // Generic bitwise operations
             OpCode::Shl => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("Shl       r{}, r{}, r{}", a, b, c)
@@ -830,7 +909,6 @@ impl<'a> DisasmContext<'a> {
                 format!("BitNot    r{}, r{}", a, b)
             }
 
-            // Type-specialized integer bitwise
             OpCode::ShlII => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("ShlII     r{}, r{}, r{}", a, b, c)
@@ -856,7 +934,6 @@ impl<'a> DisasmContext<'a> {
                 format!("NotI      r{}, r{}", a, b)
             }
 
-            // Bitwise with immediate
             OpCode::ShlIImm => {
                 let (_, a, b, c) = decode_a(instr);
                 format!("ShlIImm   r{}, r{}, {}", a, b, c)
@@ -878,7 +955,6 @@ impl<'a> DisasmContext<'a> {
                 format!("XorIImm   r{}, r{}, {}", a, b, c)
             }
 
-            // Array operations
             OpCode::ArrayNewI => {
                 let (_, a, b, _) = decode_a(instr);
                 format!("ArrayNewI r{}, r{}", a, b)
@@ -960,7 +1036,6 @@ impl<'a> DisasmContext<'a> {
                 format!("ArrayLen  r{}, r{}", a, b)
             }
 
-            // Vec operations
             OpCode::VecNewI => {
                 let (_, a, b, _) = decode_a(instr);
                 format!("VecNewI   r{}, r{}", a, b)
@@ -1182,7 +1257,6 @@ pub fn escape_string(s: &str) -> String {
             '"' => result.push_str("\\\""),
             '\0' => result.push_str("\\0"),
             c if c.is_control() => {
-                // Use \xNN for other control characters
                 for byte in c.to_string().bytes() {
                     result.push_str(&format!("\\x{:02x}", byte));
                 }
