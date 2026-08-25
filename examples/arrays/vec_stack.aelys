@@ -2,7 +2,7 @@ needs std::io
 needs std::convert
 
 fn stack_demo() {
-    let stack = Vec[]
+    let mut stack = vec![]
 
     io::print("Push 10, 20, 30:")
     stack.push(10)
@@ -12,7 +12,7 @@ fn stack_demo() {
 
     io::print("Pop all:")
     while stack.len() > 0 {
-        let val = stack.pop()
+        let val = stack.pop().unwrap_or(0)
         io::print("  Popped: " + convert::to_string(val))
     }
     io::print("Stack size: " + convert::to_string(stack.len()))
