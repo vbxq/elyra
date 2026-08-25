@@ -4,7 +4,7 @@ use aelys_runtime::Value;
 #[test]
 fn test_call_function_simple() {
     let mut vm = new_vm().unwrap();
-    run_with_vm(&mut vm, "fn add(a, b) { a + b }", "def").unwrap();
+    run_with_vm(&mut vm, "fn add(a: int, b: int) { a + b }", "def").unwrap();
 
     let result = call_function(&mut vm, "add", &[Value::int(10), Value::int(32)]).unwrap();
     assert_eq!(result.as_int(), Some(42));
@@ -22,7 +22,7 @@ fn test_call_function_no_args() {
 #[test]
 fn test_call_function_float() {
     let mut vm = new_vm().unwrap();
-    run_with_vm(&mut vm, "fn mul(a, b) { a * b }", "def").unwrap();
+    run_with_vm(&mut vm, "fn mul(a: float, b: float) { a * b }", "def").unwrap();
 
     let result = call_function(&mut vm, "mul", &[Value::float(2.5), Value::float(4.0)]).unwrap();
     assert_eq!(result.as_float(), Some(10.0));
@@ -41,7 +41,7 @@ fn test_call_function_not_found() {
 #[test]
 fn test_call_function_arity_mismatch() {
     let mut vm = new_vm().unwrap();
-    run_with_vm(&mut vm, "fn need_two(a, b) { a + b }", "def").unwrap();
+    run_with_vm(&mut vm, "fn need_two(a: int, b: int) { a + b }", "def").unwrap();
 
     let err = call_function(&mut vm, "need_two", &[Value::int(1)]);
     assert!(err.is_err());
@@ -91,8 +91,13 @@ fn test_get_function_not_found() {
 #[test]
 fn test_call_function_with_globals() {
     let mut vm = new_vm().unwrap();
-    run_with_vm(&mut vm, "let mut counter = 0", "init").unwrap();
-    run_with_vm(&mut vm, "fn increment(n) { counter += n; counter }", "def").unwrap();
+    run_with_vm(&mut vm, "let mut counter: int = 0", "init").unwrap();
+    run_with_vm(
+        &mut vm,
+        "fn increment(n: int) -> int { counter += n; counter }",
+        "def",
+    )
+    .unwrap();
 
     let result1 = call_function(&mut vm, "increment", &[Value::int(5)]).unwrap();
     assert_eq!(result1.as_int(), Some(5));
@@ -145,7 +150,7 @@ let add_10 = make_adder(10)
 #[test]
 fn test_callable_function_copy() {
     let mut vm = new_vm().unwrap();
-    run_with_vm(&mut vm, "fn id(x) { x }", "def").unwrap();
+    run_with_vm(&mut vm, "fn id(x: int) { x }", "def").unwrap();
 
     let f1 = get_function(&vm, "id").unwrap();
     let f2 = f1.clone();
@@ -202,7 +207,7 @@ fn check(flag, x) {
 #[test]
 fn test_callable_function_introspection() {
     let mut vm = new_vm().unwrap();
-    run_with_vm(&mut vm, "fn id(x) { x }", "def").unwrap();
+    run_with_vm(&mut vm, "fn id(x: int) { x }", "def").unwrap();
 
     let f = get_function(&vm, "id").unwrap();
 
@@ -224,7 +229,6 @@ fn test_performance_call_function_vs_run() {
         sum += result.as_int().unwrap();
     }
 
-    // sum of (i+1) for i in 0..10000 = sum of 1..10001 = 10000*10001/2 = 50005000
     assert_eq!(sum, 50005000);
 }
 
@@ -233,14 +237,12 @@ fn test_cached_vs_uncached_performance() {
     let mut vm = new_vm().unwrap();
     run_with_vm(&mut vm, "fn double(x) { x * 2 }", "def").unwrap();
 
-    // Uncached: HashMap lookup each time
     let start = std::time::Instant::now();
     for i in 0..100_000 {
         let _ = call_function(&mut vm, "double", &[Value::int(i)]).unwrap();
     }
     let uncached_time = start.elapsed();
 
-    // Cached: No lookups after get_function
     let double = get_function(&vm, "double").unwrap();
     let start = std::time::Instant::now();
     for i in 0..100_000 {
@@ -248,9 +250,6 @@ fn test_cached_vs_uncached_performance() {
     }
     let cached_time = start.elapsed();
 
-    // Cached should be faster (or at least not slower)
-    // We don't assert a specific ratio since it depends on the machine,
-    // but print for manual inspection
     eprintln!(
         "100k calls: uncached={:?}, cached={:?}, speedup={:.2}x",
         uncached_time,
