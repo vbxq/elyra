@@ -19,13 +19,12 @@ impl Stage for ParserStage {
             }
         };
 
-        let stmts =
-            Parser::new(tokens, source.clone())
-                .parse()
-                .map_err(|e| PipelineError::StageError {
-                    stage: "parser".to_string(),
-                    message: e.to_string(),
-                })?;
+        let stmts = Parser::new_rust_collections(tokens, source.clone())
+            .parse()
+            .map_err(|e| PipelineError::StageError {
+                stage: "parser".to_string(),
+                message: e.to_string(),
+            })?;
 
         Ok(StageOutput::Ast(stmts, source))
     }
