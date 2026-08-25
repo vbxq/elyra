@@ -1,4 +1,5 @@
 use super::TypeVarId;
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -31,18 +32,75 @@ pub enum InferType {
     },
 
     Array(Box<InferType>),
+    FixedArray(Box<InferType>, usize),
     Vec(Box<InferType>),
     Tuple(Vec<InferType>),
     Range,
 
     Struct(std::string::String),
 
+    Applied {
+        name: String,
+        args: Vec<InferType>,
+    },
+
+    Param(String),
+
     Var(TypeVarId),
 
     Dynamic,
+
+    // internal recovery marker: it never unifies, never lowers to a descriptor and fails the build
+    Poison,
 }
 
 impl InferType {
+    pub fn substitute_params(&self, substitutions: &HashMap<String, InferType>) -> Self {
+        match self {
+            InferType::Param(name) => substitutions
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| self.clone()),
+            InferType::Function { params, ret } => InferType::Function {
+                params: params
+                    .iter()
+                    .map(|param| param.substitute_params(substitutions))
+                    .collect(),
+                ret: Box::new(ret.substitute_params(substitutions)),
+            },
+            InferType::Array(inner) => {
+                InferType::Array(Box::new(inner.substitute_params(substitutions)))
+            }
+            InferType::FixedArray(inner, length) => {
+                InferType::FixedArray(Box::new(inner.substitute_params(substitutions)), *length)
+            }
+            InferType::Vec(inner) => {
+                InferType::Vec(Box::new(inner.substitute_params(substitutions)))
+            }
+            InferType::Option(inner) => {
+                InferType::Option(Box::new(inner.substitute_params(substitutions)))
+            }
+            InferType::Result(ok, err) => InferType::Result(
+                Box::new(ok.substitute_params(substitutions)),
+                Box::new(err.substitute_params(substitutions)),
+            ),
+            InferType::Tuple(elements) => InferType::Tuple(
+                elements
+                    .iter()
+                    .map(|element| element.substitute_params(substitutions))
+                    .collect(),
+            ),
+            InferType::Applied { name, args } => InferType::Applied {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| arg.substitute_params(substitutions))
+                    .collect(),
+            },
+            _ => self.clone(),
+        }
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -67,15 +125,51 @@ impl InferType {
 
     pub fn has_vars(&self) -> bool {
         match self {
-            InferType::Var(_) => true,
+            InferType::Var(_) | InferType::Param(_) => true,
             InferType::Function { params, ret } => {
                 params.iter().any(|p| p.has_vars()) || ret.has_vars()
             }
             InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
                 inner.has_vars()
             }
+            InferType::FixedArray(inner, _) => inner.has_vars(),
             InferType::Result(ok, err) => ok.has_vars() || err.has_vars(),
             InferType::Tuple(elems) => elems.iter().any(|e| e.has_vars()),
+            InferType::Applied { args, .. } => args.iter().any(|arg| arg.has_vars()),
+            _ => false,
+        }
+    }
+
+    pub fn contains_dynamic(&self) -> bool {
+        match self {
+            InferType::Dynamic => true,
+            InferType::Function { params, ret } => {
+                params.iter().any(Self::contains_dynamic) || ret.contains_dynamic()
+            }
+            InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
+                inner.contains_dynamic()
+            }
+            InferType::FixedArray(inner, _) => inner.contains_dynamic(),
+            InferType::Result(ok, err) => ok.contains_dynamic() || err.contains_dynamic(),
+            InferType::Tuple(elements) => elements.iter().any(Self::contains_dynamic),
+            InferType::Applied { args, .. } => args.iter().any(InferType::contains_dynamic),
+            _ => false,
+        }
+    }
+
+    pub fn contains_poison(&self) -> bool {
+        match self {
+            InferType::Poison => true,
+            InferType::Function { params, ret } => {
+                params.iter().any(Self::contains_poison) || ret.contains_poison()
+            }
+            InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
+                inner.contains_poison()
+            }
+            InferType::FixedArray(inner, _) => inner.contains_poison(),
+            InferType::Result(ok, err) => ok.contains_poison() || err.contains_poison(),
+            InferType::Tuple(elements) => elements.iter().any(Self::contains_poison),
+            InferType::Applied { args, .. } => args.iter().any(Self::contains_poison),
             _ => false,
         }
     }
@@ -86,30 +180,40 @@ impl InferType {
 
     pub fn is_concrete(&self) -> bool {
         match self {
-            InferType::Option(inner) => inner.is_concrete(),
+            InferType::Function { params, ret } => {
+                params.iter().all(InferType::is_concrete) && ret.is_concrete()
+            }
+            InferType::Array(inner)
+            | InferType::FixedArray(inner, _)
+            | InferType::Vec(inner)
+            | InferType::Option(inner) => inner.is_concrete(),
             InferType::Result(ok, error) => ok.is_concrete() && error.is_concrete(),
-            InferType::UntypedNative(_) | InferType::Var(_) | InferType::Dynamic => false,
-            _ => matches!(
-                self,
-                InferType::I8
-                    | InferType::I16
-                    | InferType::I32
-                    | InferType::I64
-                    | InferType::U8
-                    | InferType::U16
-                    | InferType::U32
-                    | InferType::U64
-                    | InferType::F32
-                    | InferType::F64
-                    | InferType::Bool
-                    | InferType::String
-                    | InferType::Unit
-                    | InferType::Null
-                    | InferType::Error
-                    | InferType::Never
-                    | InferType::Numeric
-                    | InferType::Struct(_)
-            ),
+            InferType::Tuple(elements) => elements.iter().all(InferType::is_concrete),
+            InferType::Applied { args, .. } => args.iter().all(InferType::is_concrete),
+            InferType::UntypedNative(_)
+            | InferType::Var(_)
+            | InferType::Param(_)
+            | InferType::Dynamic
+            | InferType::Poison => false,
+            InferType::I8
+            | InferType::I16
+            | InferType::I32
+            | InferType::I64
+            | InferType::U8
+            | InferType::U16
+            | InferType::U32
+            | InferType::U64
+            | InferType::F32
+            | InferType::F64
+            | InferType::Bool
+            | InferType::String
+            | InferType::Unit
+            | InferType::Null
+            | InferType::Error
+            | InferType::Never
+            | InferType::Numeric
+            | InferType::Struct(_)
+            | InferType::Range => true,
         }
     }
 
@@ -153,7 +257,10 @@ impl InferType {
                     .first()
                     .map(Self::from_annotation)
                     .unwrap_or(InferType::Dynamic);
-                InferType::Array(Box::new(inner))
+                match ann.array_length {
+                    Some(length) => InferType::FixedArray(Box::new(inner), length as usize),
+                    None => InferType::Array(Box::new(inner)),
+                }
             }
             "vec" => {
                 let inner = ann
@@ -187,7 +294,14 @@ impl InferType {
             "error" => InferType::Error,
             _ => {
                 if ann.name.chars().next().is_some_and(|c| c.is_uppercase()) {
-                    InferType::Struct(ann.name.clone())
+                    if ann.type_params.is_empty() {
+                        InferType::Struct(ann.name.clone())
+                    } else {
+                        InferType::Applied {
+                            name: ann.name.clone(),
+                            args: ann.type_params.iter().map(Self::from_annotation).collect(),
+                        }
+                    }
                 } else {
                     InferType::Dynamic
                 }
@@ -306,6 +420,7 @@ impl fmt::Display for InferType {
                 write!(f, ") -> {}", ret)
             }
             InferType::Array(inner) => write!(f, "[{}]", inner),
+            InferType::FixedArray(inner, length) => write!(f, "[{}; {}]", inner, length),
             InferType::Vec(inner) => write!(f, "vec[{}]", inner),
             InferType::Tuple(elems) => {
                 write!(f, "(")?;
@@ -319,8 +434,20 @@ impl fmt::Display for InferType {
             }
             InferType::Range => write!(f, "range"),
             InferType::Struct(name) => write!(f, "{}", name),
+            InferType::Applied { name, args } => {
+                write!(f, "{name}<")?;
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ">")
+            }
+            InferType::Param(name) => write!(f, "{name}"),
             InferType::Var(_) => write!(f, "inferred type"),
             InferType::Dynamic => write!(f, "dynamic"),
+            InferType::Poison => write!(f, "poisoned type"),
         }
     }
 }
