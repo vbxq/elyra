@@ -1,4 +1,4 @@
-use aelys_bytecode::Function;
+use aelys_bytecode::{EnumSchema, Function, StructSchema};
 use aelys_sema::ResolvedType;
 use aelys_syntax::Source;
 use std::collections::{HashMap, HashSet};
@@ -63,4 +63,6 @@ pub struct Compiler {
     pub accessed_globals: HashSet<String>,
     pub function_depth: usize,
     pub current_return_type: Option<aelys_sema::InferType>,
+    pub struct_schemas: Rc<Vec<StructSchema>>,
+    pub enum_schemas: Rc<Vec<EnumSchema>>,
 }
