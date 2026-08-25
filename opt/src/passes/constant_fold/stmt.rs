@@ -46,11 +46,18 @@ impl ConstantFolder {
             }
             TypedStmtKind::Return(Some(expr)) => self.optimize_expr(expr),
             TypedStmtKind::Function(func) => self.optimize_function(func),
+            TypedStmtKind::ImplDecl { methods, .. } => {
+                for method in methods {
+                    self.optimize_function(method);
+                }
+            }
             TypedStmtKind::Return(None)
             | TypedStmtKind::Break
             | TypedStmtKind::Continue
             | TypedStmtKind::Needs(_)
-            | TypedStmtKind::StructDecl { .. } => {}
+            | TypedStmtKind::StructDecl { .. }
+            | TypedStmtKind::TraitDecl { .. }
+            | TypedStmtKind::EnumDecl { .. } => {}
         }
     }
 
