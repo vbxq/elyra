@@ -38,7 +38,6 @@ impl fmt::Display for PipelineError {
 
 impl std::error::Error for PipelineError {}
 
-// not Send - VM has raw pointers, keep pipelines single-threaded
 pub trait Stage {
     fn name(&self) -> &str;
     fn cacheable(&self) -> bool {
@@ -52,7 +51,7 @@ pub enum StageInput {
     Source(Arc<Source>),
     Tokens(Vec<Token>, Arc<Source>),
     Ast(Vec<Stmt>, Arc<Source>),
-    TypedAst(TypedProgram, Arc<Source>),
+    TypedAst(Box<TypedProgram>, Arc<Source>),
     Compiled(Box<Function>, Arc<Source>),
 }
 
@@ -72,7 +71,7 @@ impl StageInput {
 pub enum StageOutput {
     Tokens(Vec<Token>, Arc<Source>),
     Ast(Vec<Stmt>, Arc<Source>),
-    TypedAst(TypedProgram, Arc<Source>),
+    TypedAst(Box<TypedProgram>, Arc<Source>),
     Compiled(Box<Function>, Arc<Source>),
     Value(Value),
 }
