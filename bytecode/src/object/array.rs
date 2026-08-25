@@ -1,6 +1,5 @@
 use crate::value::Value;
 
-/// Type tag for array element specialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TypeTag {
@@ -109,6 +108,14 @@ pub struct AelysArray {
 }
 
 impl AelysArray {
+    pub fn size_bytes_for(type_tag: TypeTag, len: usize) -> Option<usize> {
+        let element_size = match type_tag {
+            TypeTag::Int | TypeTag::Float | TypeTag::Object => 8,
+            TypeTag::Bool => 1,
+        };
+        std::mem::size_of::<Self>().checked_add(len.checked_mul(element_size)?)
+    }
+
     pub fn new_ints(len: usize) -> Self {
         Self {
             data: ArrayData::Ints(vec![0i64; len].into_boxed_slice()),
