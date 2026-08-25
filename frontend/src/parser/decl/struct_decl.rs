@@ -37,6 +37,14 @@ impl Parser {
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             let field_span = self.peek().span;
             let field_name = self.consume_identifier("field name")?;
+            if fields
+                .iter()
+                .any(|field: &StructFieldDecl| field.name == field_name)
+            {
+                return Err(self.error(CompileErrorKind::InvalidPattern {
+                    reason: format!("duplicate struct field '{field_name}'"),
+                }));
+            }
             self.consume(&TokenKind::Colon, ":")?;
             let type_annotation = self.parse_type_annotation()?;
             let end_span = self.previous().span;
