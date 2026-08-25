@@ -1,4 +1,3 @@
-// pratt-style precedence climbing
 
 mod atom;
 mod binary;
@@ -36,7 +35,23 @@ impl Parser {
                 ));
             }
 
-            // Index assignment: arr[i] = value
+            if let ExprKind::Member {
+                object,
+                member,
+                separator: aelys_syntax::MemberSeparator::Dot,
+            } = expr.kind
+            {
+                let span = object.span.merge(value.span);
+                return Ok(Expr::new(
+                    ExprKind::MemberAssign {
+                        object,
+                        member,
+                        value: Box::new(value),
+                    },
+                    span,
+                ));
+            }
+
             if let ExprKind::Index { object, index } = expr.kind {
                 let span = object.span.merge(value.span);
                 return Ok(Expr::new(
@@ -57,7 +72,6 @@ impl Parser {
             .into());
         }
 
-        // compound assignment: x += y → x = x + y
         if let Some(op) = self.match_compound_assign() {
             let rhs = self.assignment()?;
 
@@ -80,7 +94,6 @@ impl Parser {
                 ));
             }
 
-            // index compound assignment: arr[i] += y → arr[i] = arr[i] + y
             if let ExprKind::Index {
                 ref object,
                 ref index,
@@ -99,6 +112,31 @@ impl Parser {
                     ExprKind::IndexAssign {
                         object: object.clone(),
                         index: index.clone(),
+                        value: Box::new(binary),
+                    },
+                    span,
+                ));
+            }
+
+            if let ExprKind::Member {
+                ref object,
+                ref member,
+                separator: aelys_syntax::MemberSeparator::Dot,
+            } = expr.kind
+            {
+                let binary = Expr::new(
+                    ExprKind::Binary {
+                        left: Box::new(expr.clone()),
+                        op,
+                        right: Box::new(rhs),
+                    },
+                    expr.span.merge(self.previous().span),
+                );
+                let span = object.span.merge(binary.span);
+                return Ok(Expr::new(
+                    ExprKind::MemberAssign {
+                        object: object.clone(),
+                        member: member.clone(),
                         value: Box::new(binary),
                     },
                     span,
@@ -189,7 +227,6 @@ fn token_to_binary_op(kind: &TokenKind) -> Option<BinaryOp> {
         TokenKind::LtEq => Some(BinaryOp::Le),
         TokenKind::Gt => Some(BinaryOp::Gt),
         TokenKind::GtEq => Some(BinaryOp::Ge),
-        // Bitwise operators
         TokenKind::Shl => Some(BinaryOp::Shl),
         TokenKind::Shr => Some(BinaryOp::Shr),
         TokenKind::Ampersand => Some(BinaryOp::BitAnd),
