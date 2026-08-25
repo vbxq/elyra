@@ -166,13 +166,17 @@ fn verify_rejects_invalid_opcode() {
 fn binary_deserialize_enforces_bytecode_limit() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ");
-    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&3u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes()); // name len
     bytes.extend_from_slice(&0u16.to_le_bytes()); // arity
     bytes.extend_from_slice(&0u32.to_le_bytes()); // num_registers
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.push(0);
+    bytes.push(0);
     bytes.extend_from_slice(&0u32.to_le_bytes()); // constants
     bytes.extend_from_slice(&(1_000_001u32).to_le_bytes()); // bytecode length
 
@@ -385,16 +389,11 @@ result
 fn register_index_overflow_is_handled() {
     let mut vm = make_vm();
 
-    // ForLoopI uses 3 consecutive registers: a, a+1, a+2
-    // with num_registers=5 and a=3, registers 3,4,5 would be needed but only 0-4 exist
     let mut func = Function::new(Some("forloop_oob".to_string()), 0);
-    // ForLoopI with a=3 needs r3, r4, r5, but we'll limit to 5 registers (0-4)
-    // emit_b format: (opcode, reg_a, imm16, line)
     func.emit_b(OpCode::ForLoopI, 3, -1, 1); // jump offset doesn't matter for this test
     func.emit_a(OpCode::Return0, 0, 0, 0, 1);
 
     func.finalize_bytecode();
-    // override num_registers after finalize to force the oob condition
     func.num_registers = 5; // registers 0-4 available, but ForLoopI needs 3,4,5
     let func_ref = vm.alloc_function(func).unwrap();
     let err = vm.execute(func_ref).unwrap_err();
@@ -417,18 +416,20 @@ fn register_index_overflow_is_handled() {
 fn bytecode_rejects_invalid_nested_func_idx() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ"); // Magic
-    bytes.extend_from_slice(&2u16.to_le_bytes()); // Version major
+    bytes.extend_from_slice(&3u16.to_le_bytes()); // Version major
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Version minor
     bytes.extend_from_slice(&1u32.to_le_bytes()); // Flags
     bytes.extend_from_slice(&0u32.to_le_bytes()); // Entry point
 
-    // Function 0:
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Name length
     bytes.extend_from_slice(&0u16.to_le_bytes()); // Arity
     bytes.extend_from_slice(&1u32.to_le_bytes()); // Num registers
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.push(0);
+    bytes.push(0);
     bytes.extend_from_slice(&1u32.to_le_bytes()); // 1 constant
 
-    // Constant: TAG_FUNC with invalid index
     bytes.push(5u8); // TAG_FUNC
     bytes.extend_from_slice(&999u32.to_le_bytes()); // func_idx = 999 (but 0 nested functions)
 
@@ -839,7 +840,7 @@ pub fn get_shared() -> Option<int> {
 needs shared, set_to_none, get_shared from helper
 
 let before: Option<int> = get_shared()
-set_to_none()
+let _ = set_to_none()
 let after: Option<int> = get_shared()
 
 match before {
