@@ -36,7 +36,7 @@ pub fn run_with_config_and_opt(
 ) -> Result<Value> {
     let src = Source::new(name, source);
     let tokens = Lexer::with_source(src.clone()).scan()?;
-    let stmts = Parser::new(tokens, src.clone()).parse()?;
+    let stmts = Parser::new_rust_collections(tokens, src.clone()).parse()?;
 
     let typed_program = TypeInference::infer_program(stmts, src.clone()).map_err(|errors| {
         if let Some(err) = errors.first() {
@@ -68,7 +68,6 @@ pub fn run_with_config_and_opt(
     Ok(vm.execute(func_ref)?)
 }
 
-// convenience for tests/embedding
 pub fn run_source(source: &str, name: &str, opt_level: Option<OptimizationLevel>) -> Result<Value> {
     run_with_config_and_opt(
         source,
