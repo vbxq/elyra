@@ -36,13 +36,13 @@ fn render_frame(buf: int) {
     let y_min: float = -1.0
     let y_max: float = 1.0
 
-    let x_step: float = (x_max - x_min) / WIDTH
-    let y_step: float = (y_max - y_min) / HEIGHT
+    let x_step: float = (x_max - x_min) / convert::to_float(WIDTH)
+    let y_step: float = (y_max - y_min) / convert::to_float(HEIGHT)
 
     for y in 0..HEIGHT {
-        let ci: float = y_max - y * y_step
+        let ci: float = y_max - convert::to_float(y) * y_step
         for x in 0..WIDTH {
-            let cr: float = x_min + x * x_step
+            let cr: float = x_min + convert::to_float(x) * x_step
             let iter = mandelbrot(cr, ci)
             store(buf, y * WIDTH + x, iter)
         }
