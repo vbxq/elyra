@@ -86,11 +86,9 @@ impl Compiler {
         );
         self.loop_variables.push(iterator.to_string());
 
-        // Subtract step from iter so that the first ForLoopI increment gives the correct start value
-        // This ensures that for empty ranges (like 0..0), the loop body is never executed
+        // this ensures that for empty ranges (like 0..0), the loop body is never executed
         self.emit_a(OpCode::Sub, iter_reg, iter_reg, step_reg, span);
 
-        // Jump to the ForLoopI check before executing the body for the first time
         let jump_to_forloop = self.emit_jump(OpCode::Jump, span);
 
         let loop_start = self.current_offset();
@@ -112,7 +110,6 @@ impl Compiler {
 
         let continue_target = self.current_offset();
 
-        // Patch the initial jump to point here (to ForLoopI)
         self.patch_jump(jump_to_forloop);
 
         let long_opcode = if inclusive {
@@ -163,16 +160,16 @@ impl Compiler {
                 OpCode::VecForLoop,
                 span,
             ),
-            InferType::Array(inner) => self.compile_collection_for_each(
-                iterator,
-                iterable,
-                inner,
-                body,
-                OpCode::ArrayForLoop,
-                span,
-            ),
+            InferType::Array(inner) | InferType::FixedArray(inner, _) => self
+                .compile_collection_for_each(
+                    iterator,
+                    iterable,
+                    inner,
+                    body,
+                    OpCode::ArrayForLoop,
+                    span,
+                ),
             InferType::Dynamic | InferType::Var(_) => {
-                // dynamic: default to VecForLoop (works for both at runtime via object kind)
                 self.compile_collection_for_each(
                     iterator,
                     iterable,
@@ -208,7 +205,6 @@ impl Compiler {
     ) -> Result<()> {
         self.begin_scope();
 
-        // Allocate 3 consecutive registers: [element, index, collection_ptr]
         let elem_reg = self.alloc_consecutive_registers_for_call(3, span)?;
         let index_reg = elem_reg + 1;
         let coll_reg = elem_reg + 2;
@@ -218,13 +214,10 @@ impl Compiler {
         self.register_pool[coll_reg as usize] = true;
         self.next_register = self.next_register.max(u32::from(coll_reg) + 1);
 
-        // Compile iterable into collection_ptr register
         self.compile_typed_expr(iterable, coll_reg)?;
 
-        // Initialize index to 0
         self.emit_b(OpCode::LoadI, index_reg, 0, span);
 
-        // Jump to ForLoop check before executing body
         let jump_to_forloop = self.emit_jump(OpCode::Jump, span);
 
         let loop_start = self.current_offset();
@@ -236,19 +229,15 @@ impl Compiler {
             is_for_loop: true,
         });
 
-        // Register the iterator variable pointing to element register
         let resolved = Self::infer_to_resolved(inner_type);
         self.add_local(iterator.to_string(), false, elem_reg, resolved);
 
-        // Compile loop body
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
 
-        // Patch the initial jump to point here (to VecForLoop/ArrayForLoop)
         self.patch_jump(jump_to_forloop);
 
-        // Emit VecForLoop/ArrayForLoop: operates on elem_reg (consecutive regs)
         let long_opcode = match opcode {
             OpCode::VecForLoop => OpCode::VecForLoopLong,
             OpCode::ArrayForLoop => OpCode::ArrayForLoopLong,
@@ -286,7 +275,6 @@ impl Compiler {
     ) -> Result<()> {
         self.begin_scope();
 
-        // Allocate 3 consecutive registers: [char_result, byte_offset, string_ptr]
         let char_reg = self.alloc_consecutive_registers_for_call(3, span)?;
         let offset_reg = char_reg + 1;
         let str_reg = char_reg + 2;
@@ -296,13 +284,10 @@ impl Compiler {
         self.register_pool[str_reg as usize] = true;
         self.next_register = self.next_register.max(u32::from(str_reg) + 1);
 
-        // Compile iterable into string_ptr register
         self.compile_typed_expr(iterable, str_reg)?;
 
-        // Initialize byte_offset to 0
         self.emit_b(OpCode::LoadI, offset_reg, 0, span);
 
-        // Jump to StringForLoop check before executing body
         let jump_to_forloop = self.emit_jump(OpCode::Jump, span);
 
         let loop_start = self.current_offset();
@@ -314,7 +299,6 @@ impl Compiler {
             is_for_loop: true,
         });
 
-        // Register the iterator variable pointing to char_result register
         self.add_local(
             iterator.to_string(),
             false,
@@ -322,15 +306,12 @@ impl Compiler {
             aelys_sema::ResolvedType::String,
         );
 
-        // Compile loop body
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
 
-        // Patch the initial jump to point here (to StringForLoop)
         self.patch_jump(jump_to_forloop);
 
-        // Emit StringForLoop: operates on char_reg (consecutive regs)
         self.emit_loop_back(
             OpCode::StringForLoop,
             OpCode::StringForLoopLong,
