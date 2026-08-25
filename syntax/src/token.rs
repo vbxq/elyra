@@ -12,7 +12,6 @@ impl Token {
     }
 }
 
-/// Part of a format string: either literal text, a placeholder {}, or an expression {expr}
 #[derive(Debug, Clone, PartialEq)]
 pub enum FmtPart {
     Literal(String),
@@ -22,7 +21,6 @@ pub enum FmtPart {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // literals
     Int(i64),
     Float(f64),
     String(String),
@@ -33,7 +31,6 @@ pub enum TokenKind {
 
     Identifier(String),
 
-    // keywords
     Let,
     Mut,
     Fn,
@@ -54,9 +51,11 @@ pub enum TokenKind {
     In,
     Step,
     Struct,
+    Enum,
+    Trait,
+    Impl,
     Match,
 
-    // operators
     Plus,
     Minus,
     Star,
@@ -64,6 +63,7 @@ pub enum TokenKind {
     Percent,
     Eq,
     EqEq,
+    Bang,
     BangEq,
     Lt,
     LtEq,
@@ -82,7 +82,6 @@ pub enum TokenKind {
     PlusPlus,   // ++
     MinusMinus, // --
 
-    // bitwise
     Shl,
     Shr,       // << >>
     Ampersand, // &
@@ -90,7 +89,6 @@ pub enum TokenKind {
     Caret, // | ^
     Tilde, // ~
 
-    // delimiters
     LParen,
     RParen,
     LBrace,
@@ -103,7 +101,6 @@ pub enum TokenKind {
     DotDot,   // ..
     DotDotEq, // ..=
 
-    // special
     At,      // @ for decorators
     Newline, // for auto-semicolon insertion
     Eof,
@@ -123,7 +120,6 @@ impl TokenKind {
         )
     }
 
-    // semicolon insertion (Go-style, roughly)
     pub fn can_end_statement(&self) -> bool {
         matches!(
             self,
@@ -180,6 +176,9 @@ impl std::fmt::Display for TokenKind {
             Self::In => write!(f, "in"),
             Self::Step => write!(f, "step"),
             Self::Struct => write!(f, "struct"),
+            Self::Enum => write!(f, "enum"),
+            Self::Trait => write!(f, "trait"),
+            Self::Impl => write!(f, "impl"),
             Self::Match => write!(f, "match"),
             Self::Plus => write!(f, "+"),
             Self::Minus => write!(f, "-"),
@@ -188,6 +187,7 @@ impl std::fmt::Display for TokenKind {
             Self::Percent => write!(f, "%"),
             Self::Eq => write!(f, "="),
             Self::EqEq => write!(f, "=="),
+            Self::Bang => write!(f, "!"),
             Self::BangEq => write!(f, "!="),
             Self::Lt => write!(f, "<"),
             Self::LtEq => write!(f, "<="),
