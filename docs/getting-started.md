@@ -48,7 +48,9 @@ let name: string = "Bob"
 let active: bool = true
 ```
 
-Available types: `int`, `float`, `string`, `bool`, and `null`.
+Available types include `int`, `float`, `string`, `bool`, `Option<T>`,
+`Result<T, E>`, fixed arrays `[T; N]`, and growable `Vec<T>`. Absence uses
+`Option<T>`; there is no `null` value in the surface language.
 
 The type system uses Hindley-Milner inference with gradual typing. In practice, this means you get type checking where you add annotations, and flexibility where you don't. If inference fails somewhere, you'll get a warning (not an error) and the value becomes dynamic.
 
@@ -147,12 +149,12 @@ for i in 0..100 {
 You can iterate directly over arrays and vectors:
 
 ```rust
-let numbers = Array[10, 20, 30]
+let numbers = [10, 20, 30]
 for item in numbers {
     println(item)
 }
 
-let names = Vec["Alice", "Bob", "Charlie"]
+let names = vec!["Alice", "Bob", "Charlie"]
 for name in names {
     println(name)
 }
@@ -231,7 +233,7 @@ Double braces for literal braces: `"{{key}}"` gives `{key}`
 Arrays hold multiple values of the same type:
 
 ```rust
-let numbers = Array[10, 20, 30, 40, 50]
+let numbers = [10, 20, 30, 40, 50]
 println(numbers[0])  // 10
 println(numbers[2])  // 30
 println("{numbers.len()}")  // 5
@@ -240,7 +242,7 @@ println("{numbers.len()}")  // 5
 Modify elements like this:
 
 ```rust
-let scores = Array[95, 87, 92]
+let mut scores = [95, 87, 92]
 scores[1] = 90
 println(scores[1])  // 90
 ```
@@ -248,22 +250,21 @@ println(scores[1])  // 90
 You can add type annotations if you want to be explicit:
 
 ```rust
-let ints = Array<Int>[1, 2, 3]
-let floats = Array<Float>[1.5, 2.7, 3.9]
+let ints = [1, 2, 3]
+let floats = [1.5, 2.7, 3.9]
 ```
 
 Empty arrays need a type:
 
 ```rust
-let empty = Array<Int>[]
+let empty: [int; 0] = []
 ```
 
 If you need an array of a specific size without listing each element:
 
 ```rust
-let zeros = Array<Int>(10)    // 10 zeros
-let buffer = Array(100)       // 100 nulls
-let short = [; 5]             // same as Array(5)
+let zeros = [0; 10]           // fixed-size array
+let buffer = vec![0; 100]     // growable vector
 ```
 
 ### Vectors
@@ -271,7 +272,7 @@ let short = [; 5]             // same as Array(5)
 Vectors can grow after you create them:
 
 ```rust
-let v = Vec[1, 2, 3]
+let mut v = vec![1, 2, 3]
 v.push(4)
 v.push(5)
 println("{v.len()}")  // 5
@@ -283,7 +284,7 @@ println("{last}")  // 5
 Good for building lists on the fly:
 
 ```rust
-let scores = Vec[]
+let mut scores = vec![]
 scores.push(95)
 scores.push(87)
 scores.push(92)
