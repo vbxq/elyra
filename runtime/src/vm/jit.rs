@@ -45,6 +45,9 @@ impl VM {
         function: GcRef,
         arguments: &[Value],
     ) -> JitCallResult {
+        if self.function_jit_unsupported(function) {
+            return JitCallResult::Unsupported;
+        }
         let Some(executor) = self.jit_executor.as_ref().cloned() else {
             return JitCallResult::Unsupported;
         };
@@ -52,11 +55,6 @@ impl VM {
             return JitCallResult::Unsupported;
         };
         let calls = self.jit_call_counts.get(&key).copied().unwrap_or(0);
-        // A root/host-resolved JIT call has no interpreter frame yet. Prepare
-        // the callee's indexed global view before machine code can cross a
-        // dynamic native-module boundary. Pure script helpers have no such
-        // boundary; leaving the caller's mapping installed is important
-        // because this fast path does not push a frame that could restore it.
         let needs_native_globals = self.heap.get(function).is_some_and(|object| {
             matches!(&object.kind, ObjectKind::Function(bytecode_function)
                 if bytecode_function
@@ -131,6 +129,9 @@ impl VM {
     }
 
     pub(crate) fn prepare_jit_call(&mut self, function: GcRef) -> bool {
+        if self.function_jit_unsupported(function) {
+            return false;
+        }
         let Some(executor) = self.jit_executor.as_ref().cloned() else {
             return false;
         };
@@ -205,6 +206,9 @@ impl VM {
         function: GcRef,
         bytecode_ip: usize,
     ) -> Result<Option<Value>, RuntimeError> {
+        if self.function_jit_unsupported(function) {
+            return Ok(None);
+        }
         let initialized = self
             .frames
             .last()
@@ -253,6 +257,9 @@ impl VM {
         key: &JitFunctionKey,
         bytecode_ip: usize,
     ) -> Option<JitCallResult> {
+        if self.function_jit_unsupported(function) {
+            return None;
+        }
         let executor = self.jit_executor.as_ref()?.clone();
         let context = Some(self.jit_execution_context(
             self.execution_control.report || self.execution_control_enabled(),
@@ -296,6 +303,12 @@ impl VM {
             &registers,
             context.as_ref(),
         ))
+    }
+
+    fn function_jit_unsupported(&self, function: GcRef) -> bool {
+        self.heap.get(function).is_some_and(|object| {
+            matches!(&object.kind, ObjectKind::Function(function) if function.function.jit_unsupported_struct)
+        })
     }
 
     pub(crate) fn finish_jit_osr(&mut self, result: Value) -> Result<Option<Value>, RuntimeError> {
