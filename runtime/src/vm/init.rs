@@ -44,6 +44,8 @@ impl VM {
             jit_function_keys: crate::jit::InlineMap::default(),
             jit_call_counts: crate::jit::InlineMap::default(),
             jit_backedge_counts: crate::jit::InlineMap::default(),
+            schema_registry: HashMap::new(),
+            next_schema_id: 1,
             source,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),
@@ -67,8 +69,6 @@ impl VM {
         };
         super::builtins::register_builtins(&mut vm)?;
 
-        // Auto-register safe stdlib modules so they work without `needs std.X`.
-        // String: qualified only (dot-syntax compiles s.trim() → string::trim(s))
         let string_exports = crate::stdlib::string::register(&mut vm)?;
         vm.repl_module_aliases.insert("string".to_string());
         for name in &string_exports.all_exports {
@@ -79,7 +79,7 @@ impl VM {
                 .insert(name.clone(), format!("string::{}", name));
         }
 
-        // IO, math, convert, time: qualified + unqualified aliases
+        // io, math, convert, time: qualified + unqualified aliases
         type RegFn = fn(&mut VM) -> Result<crate::stdlib::StdModuleExports, RuntimeError>;
         let auto_modules: &[(&str, RegFn)] = &[
             ("io", crate::stdlib::io::register),
