@@ -11,6 +11,8 @@ mod lambda;
 mod lambda_stmts;
 mod logic;
 mod member;
+mod pipeline;
+mod structs;
 mod sum;
 mod sum_control;
 mod sum_methods;
