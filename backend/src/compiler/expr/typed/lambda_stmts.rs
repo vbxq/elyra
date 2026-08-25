@@ -27,6 +27,10 @@ impl Compiler {
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
         );
+        nested_compiler.struct_schemas = self.struct_schemas.clone();
+        nested_compiler.current.struct_schemas = nested_compiler.struct_schemas.as_ref().clone();
+        nested_compiler.enum_schemas = self.enum_schemas.clone();
+        nested_compiler.current.enum_schemas = nested_compiler.enum_schemas.as_ref().clone();
         nested_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
             aelys_common::error::CompileError::new(
                 aelys_common::error::CompileErrorKind::TooManyArguments,
@@ -113,6 +117,8 @@ impl Compiler {
         nested_compiler.current.num_registers = nested_compiler.next_register;
         nested_compiler.current.global_layout = nested_compiler.build_global_layout();
         nested_compiler.current.compute_global_layout_hash();
+        nested_compiler.current.finalize_bytecode();
+        nested_compiler.update_jit_eligibility();
 
         self.mark_captures_from_nested(&nested_compiler);
 
