@@ -1,4 +1,3 @@
-// removes unused let bindings (unless they have side effects)
 
 use super::super::OptimizationStats;
 use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
@@ -97,6 +96,12 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
         }
         TypedExprKind::Lambda(_) | TypedExprKind::LambdaInner { .. } => false,
         TypedExprKind::Member { object, .. } => has_side_effects(object),
+        TypedExprKind::StructField { object, .. } | TypedExprKind::StructMethod { object, .. } => {
+            has_side_effects(object)
+        }
+        TypedExprKind::MemberAssign { object, value, .. } => {
+            has_side_effects(object) || has_side_effects(value)
+        }
         TypedExprKind::ArrayLiteral { elements, .. }
         | TypedExprKind::VecLiteral { elements, .. } => elements.iter().any(has_side_effects),
         TypedExprKind::ArraySized { size, .. } => has_side_effects(size),
@@ -121,8 +126,11 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
         TypedExprKind::StructLiteral { fields, .. } => {
             fields.iter().any(|(_, v)| has_side_effects(v))
         }
+        TypedExprKind::EnumConstruct { fields, .. } => {
+            fields.iter().any(|(_, v)| has_side_effects(v))
+        }
         TypedExprKind::Cast { expr, .. } => has_side_effects(expr),
-        TypedExprKind::Try(inner) => has_side_effects(inner),
+        TypedExprKind::Try { operand, .. } => has_side_effects(operand),
         TypedExprKind::Match { scrutinee, arms } => {
             if has_side_effects(scrutinee) {
                 true
