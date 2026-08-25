@@ -75,6 +75,14 @@ fn collect_def_use_stmt(
                 analysis.captured_vars.insert(name.clone());
             }
         }
+        TypedStmtKind::ImplDecl { methods, .. } => {
+            for method in methods {
+                for (name, _) in &method.captures {
+                    uses.insert(name.clone());
+                    analysis.captured_vars.insert(name.clone());
+                }
+            }
+        }
         TypedStmtKind::ForEach {
             iterator,
             iterable,
@@ -89,7 +97,9 @@ fn collect_def_use_stmt(
         | TypedStmtKind::Break
         | TypedStmtKind::Continue
         | TypedStmtKind::Needs(_)
-        | TypedStmtKind::StructDecl { .. } => {}
+        | TypedStmtKind::StructDecl { .. }
+        | TypedStmtKind::TraitDecl { .. }
+        | TypedStmtKind::EnumDecl { .. } => {}
     }
 }
 
@@ -147,6 +157,13 @@ fn collect_uses_expr(
         TypedExprKind::Member { object, .. } => {
             collect_uses_expr(analysis, object, uses);
         }
+        TypedExprKind::StructField { object, .. } | TypedExprKind::StructMethod { object, .. } => {
+            collect_uses_expr(analysis, object, uses);
+        }
+        TypedExprKind::MemberAssign { object, value, .. } => {
+            collect_uses_expr(analysis, object, uses);
+            collect_uses_expr(analysis, value, uses);
+        }
         TypedExprKind::ArrayLiteral { elements, .. }
         | TypedExprKind::VecLiteral { elements, .. } => {
             for elem in elements {
@@ -193,10 +210,15 @@ fn collect_uses_expr(
                 collect_uses_expr(analysis, value, uses);
             }
         }
+        TypedExprKind::EnumConstruct { fields, .. } => {
+            for (_, value) in fields {
+                collect_uses_expr(analysis, value, uses);
+            }
+        }
         TypedExprKind::Cast { expr, .. } => {
             collect_uses_expr(analysis, expr, uses);
         }
-        TypedExprKind::Try(inner) => collect_uses_expr(analysis, inner, uses),
+        TypedExprKind::Try { operand, .. } => collect_uses_expr(analysis, operand, uses),
         TypedExprKind::Match { scrutinee, arms } => {
             collect_uses_expr(analysis, scrutinee, uses);
             for arm in arms {
