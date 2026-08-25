@@ -3,7 +3,7 @@ needs std::convert
 needs std::time
 
 fn create_matrix(n: int, val: int) {
-    let matrix = Vec[]
+    let mut matrix = vec![]
     let size = n * n
     let mut i = 0
     while i < size {
@@ -14,7 +14,7 @@ fn create_matrix(n: int, val: int) {
 }
 
 fn matrix_mult(a, b, n: int) {
-    let c = create_matrix(n, 0)
+    let mut c = create_matrix(n, 0)
     let mut i = 0
     while i < n {
         let mut j = 0
