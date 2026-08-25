@@ -143,6 +143,22 @@ impl Heap {
                     children.push(GcRef::new(pointer));
                 }
             }
+            ObjectKind::Enum(value) => {
+                children.extend(
+                    value
+                        .slots
+                        .iter()
+                        .filter_map(|slot| slot.as_ptr().map(GcRef::new)),
+                );
+            }
+            ObjectKind::Struct(structure) => {
+                children.extend(
+                    structure
+                        .slots
+                        .iter()
+                        .filter_map(|value| value.as_ptr().map(GcRef::new)),
+                );
+            }
         }
         children
     }
@@ -266,6 +282,8 @@ impl Heap {
             ObjectKind::Vec(v) => v.size_bytes(),
             ObjectKind::Range(_) => std::mem::size_of::<crate::object::AelysRange>(),
             ObjectKind::Sum(_) => std::mem::size_of::<crate::object::AelysSum>(),
+            ObjectKind::Enum(value) => value.size_bytes(),
+            ObjectKind::Struct(structure) => structure.size_bytes(),
         }
     }
 
@@ -278,5 +296,87 @@ impl Heap {
                     .len()
                     .saturating_mul(std::mem::size_of::<Value>()),
             )
+            .saturating_add(
+                function
+                    .struct_schemas
+                    .iter()
+                    .map(|schema| {
+                        std::mem::size_of_val(schema)
+                            .saturating_add(def_id_size(&schema.ctor))
+                            .saturating_add(
+                                schema.type_args.iter().map(descriptor_size).sum::<usize>(),
+                            )
+                            .saturating_add(
+                                schema
+                                    .fields
+                                    .iter()
+                                    .map(|field| {
+                                        std::mem::size_of_val(field)
+                                            .saturating_add(field.name.len())
+                                            .saturating_add(descriptor_size(&field.ty))
+                                    })
+                                    .sum::<usize>(),
+                            )
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                function
+                    .enum_schemas
+                    .iter()
+                    .map(|schema| {
+                        std::mem::size_of_val(schema)
+                            .saturating_add(schema.name.len())
+                            .saturating_add(
+                                schema
+                                    .variants
+                                    .iter()
+                                    .map(|variant| {
+                                        std::mem::size_of_val(variant)
+                                            .saturating_add(variant.name.len())
+                                            .saturating_add(
+                                                variant
+                                                    .fields
+                                                    .iter()
+                                                    .map(|field| {
+                                                        std::mem::size_of_val(field)
+                                                            .saturating_add(
+                                                                field
+                                                                    .name
+                                                                    .as_ref()
+                                                                    .map_or(0, String::len),
+                                                            )
+                                                            .saturating_add(descriptor_size(
+                                                                &field.ty,
+                                                            ))
+                                                    })
+                                                    .sum::<usize>(),
+                                            )
+                                    })
+                                    .sum::<usize>(),
+                            )
+                    })
+                    .sum::<usize>(),
+            )
     }
+}
+
+fn descriptor_size(descriptor: &crate::TypeDescriptor) -> usize {
+    use crate::TypeDescriptor;
+    std::mem::size_of_val(descriptor)
+        + match descriptor {
+            TypeDescriptor::Option(inner)
+            | TypeDescriptor::Array(inner)
+            | TypeDescriptor::Vec(inner) => descriptor_size(inner),
+            TypeDescriptor::Result(ok, err) => descriptor_size(ok) + descriptor_size(err),
+            TypeDescriptor::FixedArray(inner, _) => descriptor_size(inner),
+            _ => 0,
+        }
+}
+
+fn def_id_size(def_id: &crate::DefId) -> usize {
+    def_id
+        .package
+        .len()
+        .saturating_add(def_id.module.iter().map(String::len).sum::<usize>())
 }
