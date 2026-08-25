@@ -9,8 +9,10 @@ pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
         InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
             occurs_check(var, inner)
         }
+        InferType::FixedArray(inner, _) => occurs_check(var, inner),
         InferType::Result(ok, err) => occurs_check(var, ok) || occurs_check(var, err),
         InferType::Tuple(elems) => elems.iter().any(|e| occurs_check(var, e)),
+        InferType::Applied { args, .. } => args.iter().any(|arg| occurs_check(var, arg)),
         InferType::I8
         | InferType::I16
         | InferType::I32
@@ -31,6 +33,8 @@ pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
         | InferType::UntypedNative(_)
         | InferType::Range
         | InferType::Struct(_)
-        | InferType::Dynamic => false,
+        | InferType::Param(_)
+        | InferType::Dynamic
+        | InferType::Poison => false,
     }
 }
