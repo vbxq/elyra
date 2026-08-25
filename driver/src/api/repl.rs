@@ -9,9 +9,6 @@ use aelys_runtime::{VM, Value};
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
 
-const BUILTIN_NAMES: &[&str] = &["type"];
-
-// REPL mode - uses Basic opt to keep top-level vars for subsequent inputs
 pub fn run_with_vm(vm: &mut VM, source: &str, name: &str) -> Result<Value> {
     run_with_vm_and_opt(vm, source, name, OptimizationLevel::Basic)
 }
@@ -26,7 +23,7 @@ pub fn run_with_vm_and_opt(
 
     let src = Source::new(name, source);
     let tokens = Lexer::with_source(src.clone()).scan()?;
-    let stmts = Parser::new(tokens, src.clone()).parse()?;
+    let stmts = Parser::new_rust_collections(tokens, src.clone()).parse()?;
 
     let has_needs = stmts
         .iter()
@@ -36,11 +33,24 @@ pub fn run_with_vm_and_opt(
     let mut known_globals = vm.repl_known_globals().clone();
     let mut known_native_globals = vm.repl_known_native_globals().clone();
     let mut native_signatures = std::collections::HashMap::new();
-    let mut symbol_origins = vm.repl_symbol_origins().clone();
-
-    for builtin in BUILTIN_NAMES {
-        known_globals.insert(builtin.to_string());
+    for global in &known_globals {
+        let Some(value) = vm.get_global(global) else {
+            continue;
+        };
+        let ty = if value.as_int().is_some() {
+            Some(aelys_sema::types::InferType::I64)
+        } else if value.as_float().is_some() {
+            Some(aelys_sema::types::InferType::F64)
+        } else if value.as_bool().is_some() {
+            Some(aelys_sema::types::InferType::Bool)
+        } else {
+            None
+        };
+        if let Some(ty) = ty {
+            native_signatures.insert(global.clone(), ty);
+        }
     }
+    let mut symbol_origins = vm.repl_symbol_origins().clone();
 
     let main_stmts = if has_needs {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -125,7 +135,6 @@ pub fn run_with_vm_and_opt(
 
     vm.sync_globals_to_hashmap(&global_names);
 
-    // track new globals for subsequent REPL inputs
     let new_globals_set: std::collections::HashSet<String> = global_names
         .into_iter()
         .filter(|name| !name.is_empty())
