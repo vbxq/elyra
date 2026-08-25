@@ -3,29 +3,35 @@ use crate::Span;
 #[derive(Debug, Clone)]
 pub struct TypeAnnotation {
     pub name: String,
+    pub path: Vec<String>,
     pub type_params: Vec<TypeAnnotation>,
     pub fn_params: Option<Vec<TypeAnnotation>>,
     pub fn_ret: Option<Box<TypeAnnotation>>,
+    pub array_length: Option<u64>,
     pub span: Span,
 }
 
 impl TypeAnnotation {
     pub fn new(name: String, span: Span) -> Self {
         Self {
+            path: vec![name.clone()],
             name,
             type_params: Vec::new(),
             fn_params: None,
             fn_ret: None,
+            array_length: None,
             span,
         }
     }
 
     pub fn with_params(name: String, type_params: Vec<TypeAnnotation>, span: Span) -> Self {
         Self {
+            path: vec![name.clone()],
             name,
             type_params,
             fn_params: None,
             fn_ret: None,
+            array_length: None,
             span,
         }
     }
@@ -37,9 +43,23 @@ impl TypeAnnotation {
     pub fn function_type(params: Vec<TypeAnnotation>, ret: TypeAnnotation, span: Span) -> Self {
         Self {
             name: "fn".to_string(),
+            path: vec!["fn".to_string()],
             type_params: Vec::new(),
             fn_params: Some(params),
             fn_ret: Some(Box::new(ret)),
+            array_length: None,
+            span,
+        }
+    }
+
+    pub fn fixed_array(element: TypeAnnotation, length: u64, span: Span) -> Self {
+        Self {
+            name: "array".to_string(),
+            path: vec!["array".to_string()],
+            type_params: vec![element],
+            fn_params: None,
+            fn_ret: None,
+            array_length: Some(length),
             span,
         }
     }
@@ -86,15 +106,27 @@ impl Parameter {
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+    pub repeat: Option<Box<Expr>>,
 }
 
 impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            repeat: None,
+        }
+    }
+
+    pub fn with_repeat(kind: ExprKind, span: Span, repeat: Expr) -> Self {
+        Self {
+            kind,
+            span,
+            repeat: Some(Box::new(repeat)),
+        }
     }
 }
 
-/// Part of a format string in the AST (after parsing expressions)
 #[derive(Debug, Clone)]
 pub enum FmtStringPart {
     Literal(String),
@@ -104,7 +136,6 @@ pub enum FmtStringPart {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    // literals
     Int(i64),
     Float(f64),
     String(String),
@@ -125,7 +156,6 @@ pub enum ExprKind {
         operand: Box<Expr>,
     },
 
-    // short-circuit (separate from Binary because different codegen)
     And {
         left: Box<Expr>,
         right: Box<Expr>,
@@ -139,13 +169,21 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
+    GenericApply {
+        callee: Box<Expr>,
+        type_args: Vec<TypeAnnotation>,
+    },
     Assign {
         name: String,
         value: Box<Expr>,
     },
+    MemberAssign {
+        object: Box<Expr>,
+        member: String,
+        value: Box<Expr>,
+    },
     Grouping(Box<Expr>), // for precedence
 
-    // ternary: cond ? then : else
     If {
         condition: Box<Expr>,
         then_branch: Box<Expr>,
@@ -171,9 +209,8 @@ pub enum ExprKind {
         separator: MemberSeparator,
     }, // module.symbol
 
-    // Arrays and Vecs
     ArrayLiteral {
-        element_type: Option<TypeAnnotation>, // Array<Int>[...] or Array[...]
+        element_type: Option<TypeAnnotation>, // [...] or [...]
         elements: Vec<Expr>,
     },
     ArraySized {
@@ -205,6 +242,18 @@ pub enum ExprKind {
 
     StructLiteral {
         name: String,
+        type_args: Vec<TypeAnnotation>,
+        fields: Vec<StructFieldInit>,
+    },
+
+    EnumLiteral {
+        path: Vec<String>,
+        fields: Vec<StructFieldInit>,
+    },
+
+    GenericEnumLiteral {
+        path: Vec<String>,
+        type_args: Vec<TypeAnnotation>,
         fields: Vec<StructFieldInit>,
     },
 
@@ -249,9 +298,23 @@ pub enum PatternKind {
     Bool(bool),
     Variant {
         path: Vec<String>,
+        type_args: Vec<TypeAnnotation>,
         fields: Vec<Pattern>,
     },
+    Struct {
+        path: Vec<String>,
+        type_args: Vec<TypeAnnotation>,
+        fields: Vec<StructPatternField>,
+        has_rest: bool,
+    },
     Or(Vec<Pattern>),
+}
+
+#[derive(Debug, Clone)]
+pub struct StructPatternField {
+    pub name: String,
+    pub pattern: Pattern,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
