@@ -22,6 +22,7 @@ pub(super) fn finalize_lambda(
     lambda_compiler.current.global_layout = global_layout;
     lambda_compiler.current.compute_global_layout_hash();
     lambda_compiler.current.finalize_bytecode();
+    lambda_compiler.update_jit_eligibility();
 
     parent.mark_captures_from_nested(&lambda_compiler);
     parent.fix_transitive_captures(&mut lambda_compiler.upvalues);
