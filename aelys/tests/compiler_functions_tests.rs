@@ -20,6 +20,7 @@ fn untyped_function_needs_no_bytecode_call_site_slots() {
     let func = Function {
         name: "f".to_string(),
         type_params: Vec::new(),
+        where_clauses: Vec::new(),
         params: Vec::new(),
         return_type: None,
         body: vec![
