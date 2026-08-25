@@ -5,11 +5,24 @@ use crate::Span;
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
+    pub read_only: bool,
 }
 
 impl Stmt {
     pub fn new(kind: StmtKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            read_only: false,
+        }
+    }
+
+    pub fn read_only(kind: StmtKind, span: Span) -> Self {
+        Self {
+            kind,
+            span,
+            read_only: true,
+        }
     }
 }
 
@@ -37,7 +50,6 @@ pub enum StmtKind {
         body: Box<Stmt>,
     },
 
-    // for i in start..end { } or start..=end (inclusive)
     For {
         iterator: String,
         start: Expr,
@@ -47,7 +59,6 @@ pub enum StmtKind {
         body: Box<Stmt>,
     },
 
-    // for item in collection { }
     ForEach {
         iterator: String,
         iterable: Expr,
@@ -58,12 +69,34 @@ pub enum StmtKind {
     Continue,
     Return(Option<Expr>),
     Function(Function),
+    ImplDecl {
+        type_params: Vec<String>,
+        trait_path: Option<TypeAnnotation>,
+        self_type: TypeAnnotation,
+        where_clauses: Vec<WhereClause>,
+        methods: Vec<Function>,
+    },
+    TraitDecl {
+        name: String,
+        type_params: Vec<String>,
+        super_bounds: Vec<TypeAnnotation>,
+        where_clauses: Vec<WhereClause>,
+        methods: Vec<TraitMethod>,
+        is_pub: bool,
+    },
     Needs(NeedsStmt),
 
     StructDecl {
         name: String,
         type_params: Vec<String>,
         fields: Vec<StructFieldDecl>,
+        is_pub: bool,
+    },
+
+    EnumDecl {
+        name: String,
+        type_params: Vec<String>,
+        variants: Vec<EnumVariantDecl>,
         is_pub: bool,
     },
 }
@@ -75,7 +108,33 @@ pub struct StructFieldDecl {
     pub span: Span,
 }
 
-// module import - `needs utils.helpers` or `needs cos, sin from std.math`
+#[derive(Debug, Clone)]
+pub struct EnumVariantDecl {
+    pub name: String,
+    pub fields: EnumVariantFields,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum EnumVariantFields {
+    Unit,
+    Tuple(Vec<TypeAnnotation>),
+    Named(Vec<StructFieldDecl>),
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub function: Function,
+    pub has_body: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhereClause {
+    pub type_annotation: TypeAnnotation,
+    pub bounds: Vec<TypeAnnotation>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct NeedsStmt {
     pub path: Vec<String>, // ["utils", "helpers"]
@@ -94,6 +153,7 @@ pub enum ImportKind {
 pub struct Function {
     pub name: String,
     pub type_params: Vec<String>,
+    pub where_clauses: Vec<WhereClause>,
     pub params: Vec<Parameter>,
     pub return_type: Option<TypeAnnotation>,
     pub body: Vec<Stmt>,
