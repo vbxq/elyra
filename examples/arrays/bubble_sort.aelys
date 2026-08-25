@@ -1,7 +1,7 @@
 needs std::io
 needs std::convert
 
-fn bubble_sort(arr) {
+fn bubble_sort(mut arr) {
     let n = arr.len()
     let mut i = 0
     while i < n - 1 {
