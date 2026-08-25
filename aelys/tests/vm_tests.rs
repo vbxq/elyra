@@ -1,10 +1,9 @@
-//! Tests for the Aelys VM
 
 use aelys_bytecode::Register;
 use aelys_common::{RuntimeError, RuntimeErrorKind};
 use aelys_runtime::{
     AelysClosure, AelysUpvalue, CallFrame, Function, GcObject, GlobalLayout, MAX_FRAMES,
-    ObjectKind, OpCode, UpvalueDescriptor, VM, Value,
+    ObjectKind, OpCode, UpvalueDescriptor, VM, Value, builtin_type,
 };
 use aelys_syntax::Source;
 use std::sync::Arc;
@@ -19,7 +18,6 @@ fn test_vm_creation() {
     let vm = VM::new(source).unwrap();
 
     assert_eq!(vm.frame_count(), 0);
-    // VM now pre-allocates 32768 registers for performance
     assert_eq!(vm.register_count(), 32768);
 }
 
@@ -73,13 +71,11 @@ fn test_frame_stack_overflow() {
     func.finalize_bytecode();
     let func_ref = vm.alloc_function(func).unwrap();
 
-    // Push MAX_FRAMES frames
     for _ in 0..MAX_FRAMES {
         let frame = CallFrame::new(func_ref, 0, std::ptr::null(), 0, std::ptr::null(), 0, 0);
         vm.push_frame(frame).unwrap();
     }
 
-    // Next push should fail
     let frame = CallFrame::new(func_ref, 0, std::ptr::null(), 0, std::ptr::null(), 0, 0);
     let result = vm.push_frame(frame);
     assert!(result.is_err());
@@ -99,7 +95,6 @@ fn test_read_write_register() {
     let frame = CallFrame::new(func_ref, 0, std::ptr::null(), 0, std::ptr::null(), 0, 0);
     vm.push_frame(frame).unwrap();
 
-    // Write and read
     vm.write_register(0, Value::int(42)).unwrap();
     assert_eq!(vm.read_register(0).unwrap().as_int(), Some(42));
 
@@ -112,7 +107,6 @@ fn test_windowed_registers() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // First frame at base 0
     let mut func1 = Function::new(Some("func1".to_string()), 0);
     func1.num_registers = 5;
     let func1_ref = vm.alloc_function(func1).unwrap();
@@ -123,7 +117,6 @@ fn test_windowed_registers() {
     vm.write_register(0, Value::int(100)).unwrap();
     vm.write_register(1, Value::int(200)).unwrap();
 
-    // Second frame at base 5
     let mut func2 = Function::new(Some("func2".to_string()), 0);
     func2.num_registers = 3;
     let func2_ref = vm.alloc_function(func2).unwrap();
@@ -131,18 +124,14 @@ fn test_windowed_registers() {
     let frame2 = CallFrame::new(func2_ref, 5, std::ptr::null(), 0, std::ptr::null(), 0, 0);
     vm.push_frame(frame2).unwrap();
 
-    // These writes go to different slots
     vm.write_register(0, Value::int(10)).unwrap();
     vm.write_register(1, Value::int(20)).unwrap();
 
-    // Current frame sees 10, 20
     assert_eq!(vm.read_register(0).unwrap().as_int(), Some(10));
     assert_eq!(vm.read_register(1).unwrap().as_int(), Some(20));
 
-    // Pop back to first frame
     vm.pop_frame();
 
-    // First frame still has 100, 200
     assert_eq!(vm.read_register(0).unwrap().as_int(), Some(100));
     assert_eq!(vm.read_register(1).unwrap().as_int(), Some(200));
 }
@@ -166,28 +155,22 @@ fn test_collect_marks_registers() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create some strings
     let str1 = vm.alloc_string("keep me").unwrap();
     let str2 = vm.alloc_string("free me").unwrap();
 
-    // Push a frame and store str1 in a register
     let mut func = Function::new(Some("test".to_string()), 0);
     func.num_registers = 5;
     func.finalize_bytecode();
     func.finalize_bytecode();
     let func_ref = vm.alloc_function(func).unwrap();
 
-    // num_registers must match the function's register count for GC to mark them
     let frame = CallFrame::new(func_ref, 0, std::ptr::null(), 0, std::ptr::null(), 0, 5);
     vm.push_frame(frame).unwrap();
 
     vm.write_register(0, Value::ptr(str1.index())).unwrap();
 
-    // str2 is not rooted anywhere
-    // Force collection
     vm.collect();
 
-    // str1 should be kept, str2 should be freed
     assert!(vm.heap().get(str1).is_some());
     assert!(vm.heap().get(str2).is_none());
 }
@@ -250,14 +233,12 @@ fn test_current_frame_methods() {
     assert_eq!(vm.current_frame().unwrap().ip(), 42);
 }
 
-// VM Execution Tests
 
 #[test]
 fn test_execute_simple_return() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that returns 42
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 2;
     func.emit_b(OpCode::LoadI, 0, 42, 1); // r0 = 42
@@ -276,7 +257,6 @@ fn test_execute_arithmetic() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that computes 10 + 20 - 5
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 5;
     func.emit_b(OpCode::LoadI, 0, 10, 1); // r0 = 10
@@ -299,7 +279,6 @@ fn test_execute_multiplication_division() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that computes (6 * 7) / 2
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 5;
     func.emit_b(OpCode::LoadI, 0, 6, 1); // r0 = 6
@@ -322,7 +301,6 @@ fn test_execute_modulo() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that computes 17 % 5
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.emit_b(OpCode::LoadI, 0, 17, 1); // r0 = 17
@@ -343,7 +321,6 @@ fn test_execute_negation() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that computes -42
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 2;
     func.emit_b(OpCode::LoadI, 0, 42, 1); // r0 = 42
@@ -363,7 +340,6 @@ fn test_execute_division_by_zero() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that divides by zero
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.emit_b(OpCode::LoadI, 0, 10, 1); // r0 = 10
@@ -387,7 +363,6 @@ fn test_execute_comparison_operators() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test: 10 < 20
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.emit_b(OpCode::LoadI, 0, 10, 1); // r0 = 10
@@ -407,7 +382,6 @@ fn test_execute_equality() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test: 42 == 42
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.emit_b(OpCode::LoadI, 0, 42, 1); // r0 = 42
@@ -427,7 +401,6 @@ fn test_execute_not_equal() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test: 10 != 20
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.emit_b(OpCode::LoadI, 0, 10, 1); // r0 = 10
@@ -447,7 +420,6 @@ fn test_execute_logical_not() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test: !true
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 2;
     func.emit_a(OpCode::LoadBool, 0, 1, 0, 1); // r0 = true
@@ -466,7 +438,6 @@ fn test_execute_jump() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test unconditional jump: skip setting r0 to 99
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 1;
     func.emit_b(OpCode::Jump, 0, 2, 1); // jump forward 2 instructions
@@ -487,7 +458,6 @@ fn test_execute_jump_if() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test conditional jump: if true, jump
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 2;
     func.emit_a(OpCode::LoadBool, 0, 1, 0, 1); // r0 = true
@@ -508,7 +478,6 @@ fn test_execute_jump_if_not() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test conditional jump: if not false, jump
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 2;
     func.emit_a(OpCode::LoadBool, 0, 0, 0, 1); // r0 = false
@@ -529,7 +498,6 @@ fn test_execute_load_constant() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test loading a constant
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 1;
     let k = func.add_constant(Value::int(12345));
@@ -600,11 +568,9 @@ fn test_execute_global_variables() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test setting and getting global variables
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 2;
 
-    // Create a string constant for the variable name
     let k = func.add_structural_constant(aelys_bytecode::Constant::String("myvar".to_string()));
 
     func.emit_b(OpCode::LoadI, 0, 123, 1); // r0 = 123
@@ -624,17 +590,14 @@ fn test_execute_native_function_call() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Define a native function that adds two numbers
     fn add_native(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         let a = args[0].as_int().unwrap_or(0);
         let b = args[1].as_int().unwrap_or(0);
         Ok(Value::int(a + b))
     }
 
-    // Allocate native function
     let native_ref = vm.alloc_native("add", 2, add_native).unwrap();
 
-    // Create bytecode function that calls the native function
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 5;
 
@@ -692,7 +655,6 @@ fn test_execute_return0() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test Return0 (returns null)
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 1;
     func.emit_b(OpCode::LoadI, 0, 42, 1); // r0 = 42
@@ -710,7 +672,6 @@ fn test_execute_no_gc_control() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Test EnterNoGc and ExitNoGc
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 1;
     func.emit_b(OpCode::LoadI, 0, 42, 1);
@@ -728,7 +689,6 @@ fn test_type_error_add_incompatible() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Try to add null + int
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.emit_a(OpCode::LoadNull, 0, 0, 0, 1);
@@ -748,13 +708,10 @@ fn test_globals_survive_gc() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Set a global value
     vm.set_global("test_var".to_string(), Value::int(42));
 
-    // Force a GC collection
     vm.collect();
 
-    // Globals should survive GC and remain accessible
     let value = vm.get_global("test_var");
     assert!(value.is_some());
     assert_eq!(value.unwrap().as_int(), Some(42));
@@ -762,19 +719,16 @@ fn test_globals_survive_gc() {
 
 #[test]
 fn test_callglobal_native_function() {
-    // Test that CallGlobal works with native functions (like type, alloc)
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
+    let type_fn = vm.alloc_native("type", 1, builtin_type).unwrap();
+    vm.set_global("type".to_string(), Value::ptr(type_fn.index()));
 
-    // Create a simple function that calls type(42) using CallGlobal
     let mut func = Function::new(Some("main".to_string()), 0);
     func.num_registers = 3;
     func.global_layout = GlobalLayout::new(vec!["type".to_string()]);
 
-    // r1 = 42, then r0 = type(r1)
     func.emit_b(OpCode::LoadI, 1, 42, 1);
-    // CallGlobal r0, 0 (global_idx=0=type), 1 (nargs=1)
-    // Arguments start at r0+1=r1
     func.emit_a(OpCode::CallGlobal, 0, 0, 1, 1);
     func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
@@ -783,7 +737,6 @@ fn test_callglobal_native_function() {
     let func_ref = vm.alloc_function(func).unwrap();
     let result = vm.execute(func_ref);
 
-    // type(42) returns a string "int"
     assert!(result.is_ok());
     let value = result.unwrap();
     assert!(
@@ -832,11 +785,9 @@ fn test_callglobal_native_target_mutation_survives_gc() {
 
 #[test]
 fn test_callglobal_user_defined_function() {
-    // Test that CallGlobal works with user-defined functions
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a simple "add" function that adds two numbers
     let mut add_func = Function::new(Some("add".to_string()), 2);
     add_func.num_registers = 3;
     add_func.emit_a(OpCode::Add, 2, 0, 1, 1); // r2 = r0 + r1
@@ -846,19 +797,15 @@ fn test_callglobal_user_defined_function() {
     add_func.finalize_bytecode();
     let add_func_ref = vm.alloc_function(add_func).unwrap();
 
-    // Create a main function that calls add(10, 20) using CallGlobal
     let mut main_func = Function::new(Some("main".to_string()), 0);
     main_func.num_registers = 4;
     main_func.global_layout = GlobalLayout::new(vec!["add".to_string()]);
 
-    // Store add function in globals_by_index and globals hashmap
     vm.set_global_by_index(0, Value::ptr(add_func_ref.index()));
     vm.set_global("add".to_string(), Value::ptr(add_func_ref.index()));
 
-    // Setup arguments: r1 = 10, r2 = 20
     main_func.emit_b(OpCode::LoadI, 1, 10, 1); // r1 = 10
     main_func.emit_b(OpCode::LoadI, 2, 20, 1); // r2 = 20
-    // CallGlobal r0, 0 (global_idx=0=add), 2 (nargs=2)
     main_func.emit_a(OpCode::CallGlobal, 0, 0, 2, 1);
     main_func.emit_a(OpCode::Return, 0, 0, 0, 1);
 
@@ -1067,48 +1014,34 @@ fn test_tail_call_upvalue_resizes_register_window() {
 
 #[test]
 fn test_callglobal_recursive_function() {
-    // Test that CallGlobal works with recursive functions (inline cache hit)
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a recursive factorial function
-    // fn fact(n) { if n < 2 { return 1 } return n * fact(n - 1) }
     let mut fact_func = Function::new(Some("fact".to_string()), 1);
     fact_func.num_registers = 5;
     fact_func.global_layout = GlobalLayout::new(vec!["fact".to_string()]);
 
-    // if n < 2
     fact_func.emit_b(OpCode::LoadI, 1, 2, 1); // r1 = 2
     fact_func.emit_a(OpCode::Lt, 2, 0, 1, 1); // r2 = r0 < r1 (n < 2)
     fact_func.emit_b(OpCode::JumpIfNot, 2, 2, 1); // if not (n < 2), skip 2 instructions
 
-    // return 1
     fact_func.emit_b(OpCode::LoadI, 3, 1, 1); // r3 = 1
     fact_func.emit_a(OpCode::Return, 3, 0, 0, 1); // return 1
 
-    // return n * fact(n - 1)
     fact_func.emit_a(OpCode::SubI, 2, 0, 1, 1); // r2 = n - 1
     fact_func.emit_a(OpCode::CallGlobal, 3, 0, 1, 1); // r3 = fact(r2) - args at r3+1=r4, so we need to put r2 in the right place
 
-    // Actually, let me redo this more carefully
-    // For CallGlobal r3, 0, 1: result in r3, global_idx=0, nargs=1
-    // Arguments should be at r3+1 = r4
-    // So we need to load r4 = n - 1
     let mut fact_func = Function::new(Some("fact".to_string()), 1);
     fact_func.num_registers = 6;
     fact_func.global_layout = GlobalLayout::new(vec!["fact".to_string()]);
 
-    // if n < 2
     fact_func.emit_b(OpCode::LoadI, 1, 2, 1); // r1 = 2
     fact_func.emit_a(OpCode::Lt, 2, 0, 1, 1); // r2 = r0 < r1 (n < 2)
     fact_func.emit_b(OpCode::JumpIfNot, 2, 2, 1); // if not (n < 2), skip 2 instructions
 
-    // return 1
     fact_func.emit_b(OpCode::LoadI, 3, 1, 1); // r3 = 1
     fact_func.emit_a(OpCode::Return, 3, 0, 0, 1); // return 1
 
-    // return n * fact(n - 1)
-    // For CallGlobal with dest=3, args must be at r4
     fact_func.emit_a(OpCode::SubI, 4, 0, 1, 1); // r4 = n - 1
     fact_func.emit_a(OpCode::CallGlobal, 3, 0, 1, 1); // r3 = fact(r4) where args at r3+1=r4
     fact_func.emit_a(OpCode::Mul, 5, 0, 3, 1); // r5 = n * r3
@@ -1119,7 +1052,6 @@ fn test_callglobal_recursive_function() {
     vm.set_global_by_index(0, Value::ptr(fact_func_ref.index()));
     vm.set_global("fact".to_string(), Value::ptr(fact_func_ref.index()));
 
-    // Create main function that calls fact(5)
     let mut main_func = Function::new(Some("main".to_string()), 0);
     main_func.num_registers = 3;
     main_func.global_layout = GlobalLayout::new(vec!["fact".to_string()]);
@@ -1139,11 +1071,9 @@ fn test_callglobal_recursive_function() {
 
 #[test]
 fn test_callglobal_arity_mismatch() {
-    // Test that CallGlobal properly reports arity mismatches
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function that takes 2 arguments
     let mut add_func = Function::new(Some("add".to_string()), 2);
     add_func.num_registers = 3;
     add_func.emit_a(OpCode::Add, 2, 0, 1, 1);
@@ -1154,7 +1084,6 @@ fn test_callglobal_arity_mismatch() {
     vm.set_global_by_index(0, Value::ptr(add_func_ref.index()));
     vm.set_global("add".to_string(), Value::ptr(add_func_ref.index()));
 
-    // Create main function that calls add with wrong number of args
     let mut main_func = Function::new(Some("main".to_string()), 0);
     main_func.num_registers = 3;
     main_func.global_layout = GlobalLayout::new(vec!["add".to_string()]);
@@ -1181,11 +1110,9 @@ fn test_callglobal_arity_mismatch() {
 
 #[test]
 fn test_callglobal_cache_invalidation_on_gc() {
-    // Test that the CallGlobal cache is properly invalidated after GC
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
 
-    // Create a function
     let mut func = Function::new(Some("test".to_string()), 0);
     func.num_registers = 1;
     func.emit_b(OpCode::LoadI, 0, 42, 1);
@@ -1194,11 +1121,9 @@ fn test_callglobal_cache_invalidation_on_gc() {
     func.finalize_bytecode();
     func.finalize_bytecode();
     let func_ref = vm.alloc_function(func).unwrap();
-    // Store in both globals HashMap (for GC roots) and globals_by_index
     vm.set_global("test".to_string(), Value::ptr(func_ref.index()));
     vm.set_global_by_index(0, Value::ptr(func_ref.index()));
 
-    // Create main that calls the function
     let mut main_func = Function::new(Some("main".to_string()), 0);
     main_func.num_registers = 2;
     main_func.global_layout = GlobalLayout::new(vec!["test".to_string()]);
@@ -1209,16 +1134,12 @@ fn test_callglobal_cache_invalidation_on_gc() {
     main_func.finalize_bytecode();
     let main_func_ref = vm.alloc_function(main_func).unwrap();
 
-    // Execute once to populate cache
     let result1 = vm.execute(main_func_ref);
     assert!(result1.is_ok());
     assert_eq!(result1.unwrap().as_int(), Some(42));
 
-    // Force GC - this should clear the call_global_cache
     vm.collect();
 
-    // Execute again - should work even after cache invalidation
-    // The cache should be re-populated on the next call
     let mut main_func2 = Function::new(Some("main".to_string()), 0);
     main_func2.num_registers = 2;
     main_func2.global_layout = GlobalLayout::new(vec!["test".to_string()]);
