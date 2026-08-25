@@ -9,8 +9,6 @@ use aelys_runtime::{ExecutionControl, VM, Value, VmConfig};
 use aelys_sema::TypeInference;
 use aelys_syntax::{Source, Span};
 
-const BUILTIN_NAMES: &[&str] = &["type"];
-
 pub struct RunResult {
     pub value: Value,
     pub warnings: Vec<Warning>,
@@ -75,7 +73,7 @@ pub fn run_file_full_with_control(
     let src = Source::new(&name, &content);
 
     let tokens = Lexer::with_source(src.clone()).scan()?;
-    let stmts = Parser::new(tokens, src.clone()).parse()?;
+    let stmts = Parser::new_rust_collections(tokens, src.clone()).parse()?;
 
     let mut vm =
         VM::with_config_and_args(src.clone(), config, program_args).map_err(AelysError::Runtime)?;
@@ -89,16 +87,18 @@ pub fn run_file_full_with_control(
 
     let imports = load_modules_for_program(&stmts, file_path, src.clone(), &mut vm)?;
 
-    let main_stmts: Vec<_> = stmts
-        .into_iter()
-        .filter(|s| !matches!(s.kind, aelys_syntax::StmtKind::Needs(_)))
+    let main_stmts: Vec<_> = imports
+        .imported_impl_stmts
+        .iter()
+        .cloned()
+        .chain(
+            stmts
+                .into_iter()
+                .filter(|s| !matches!(s.kind, aelys_syntax::StmtKind::Needs(_))),
+        )
         .collect();
 
     let mut all_known_globals = imports.known_globals.clone();
-    for builtin in BUILTIN_NAMES {
-        all_known_globals.insert(builtin.to_string());
-    }
-    // Include auto-registered stdlib globals (available without `needs`)
     all_known_globals.extend(vm.repl_known_globals().iter().cloned());
 
     let mut all_module_aliases = imports.module_aliases.clone();
@@ -115,6 +115,7 @@ pub fn run_file_full_with_control(
         all_known_globals,
         all_known_native_globals,
         all_native_signatures,
+        imports.imported_types.clone(),
     )
     .map_err(|errors| {
         if let Some(err) = errors.first() {
