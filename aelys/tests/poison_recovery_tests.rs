@@ -1,7 +1,8 @@
 use aelys::run;
+use aelys_sema::ConstraintReason;
 use aelys_sema::TypeError;
 use aelys_sema::types::{InferType, TypeVarId};
-use aelys_sema::unify::{Substitution, unify};
+use aelys_sema::unify::{Substitution, unify, unify_error_to_type_error};
 
 fn inference_errors(text: &str) -> Vec<TypeError> {
     let source = aelys_syntax::Source::new("<poison>", text);
@@ -69,6 +70,13 @@ fn every_type_error_is_reported_not_only_the_first() {
 }
 
 #[test]
+fn exhaustivity_does_not_reorder_an_earlier_type_error() {
+    let errors = inference_errors("let bad: int = \"text\"\nmatch Ok(1) { Ok(value) => value }");
+    assert_eq!(errors.first().map(TypeError::diagnostic_code), Some(301));
+    assert!(codes(&errors).contains(&302), "got {:?}", codes(&errors));
+}
+
+#[test]
 fn poison_never_unifies_with_anything() {
     let mut subst = Substitution::new();
     assert!(
@@ -105,6 +113,32 @@ fn dynamic_no_longer_absorbs_a_concrete_type() {
     let mut subst = Substitution::new();
     assert!(unify(&InferType::Dynamic, &InferType::I64, &mut subst).is_err());
     assert!(unify(&InferType::Bool, &InferType::Dynamic, &mut subst).is_err());
+}
+
+#[test]
+fn an_untyped_native_never_unifies_with_dynamic() {
+    let mut subst = Substitution::new();
+    let native = InferType::UntypedNative("custom::read".to_string());
+    assert!(unify(&native, &InferType::Dynamic, &mut subst).is_err());
+    assert!(unify(&InferType::Dynamic, &native, &mut subst).is_err());
+    assert!(subst.is_empty());
+}
+
+#[test]
+fn untyped_native_dynamic_unification_keeps_the_named_boundary_error() {
+    let mut subst = Substitution::new();
+    let error = unify(
+        &InferType::UntypedNative("custom::read".to_string()),
+        &InferType::Dynamic,
+        &mut subst,
+    )
+    .expect_err("an untyped native must not unify with dynamic");
+    let diagnostic = unify_error_to_type_error(
+        error,
+        aelys_syntax::Span::dummy(),
+        ConstraintReason::Other("untyped native boundary".to_string()),
+    );
+    assert_eq!(diagnostic.diagnostic_code(), 379);
 }
 
 const POISONED_BINDING_FLOWS_ON: &str = r#"

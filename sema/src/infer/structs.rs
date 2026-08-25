@@ -121,6 +121,7 @@ impl TypeInference {
                             .map(|field| StructField {
                                 name: field.name.clone(),
                                 ty: self.type_from_annotation(&field.type_annotation),
+                                is_pub: field.is_pub,
                             })
                             .collect(),
                     ),
@@ -178,6 +179,7 @@ impl TypeInference {
                     .map(|f| StructField {
                         name: f.name.clone(),
                         ty: self.type_from_annotation(&f.type_annotation),
+                        is_pub: f.is_pub,
                     })
                     .collect();
                 self.type_params_in_scope = saved_type_params;

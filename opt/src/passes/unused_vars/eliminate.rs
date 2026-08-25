@@ -1,4 +1,3 @@
-
 use super::super::OptimizationStats;
 use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
@@ -102,8 +101,17 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
         TypedExprKind::MemberAssign { object, value, .. } => {
             has_side_effects(object) || has_side_effects(value)
         }
-        TypedExprKind::ArrayLiteral { elements, .. }
-        | TypedExprKind::VecLiteral { elements, .. } => elements.iter().any(has_side_effects),
+        TypedExprKind::ArrayLiteral {
+            elements, repeat, ..
+        }
+        | TypedExprKind::VecLiteral {
+            elements, repeat, ..
+        } => {
+            elements.iter().any(has_side_effects)
+                || repeat
+                    .as_ref()
+                    .is_some_and(|repeat| has_side_effects(repeat))
+        }
         TypedExprKind::ArraySized { size, .. } => has_side_effects(size),
         TypedExprKind::Index { object, index } => {
             has_side_effects(object) || has_side_effects(index)

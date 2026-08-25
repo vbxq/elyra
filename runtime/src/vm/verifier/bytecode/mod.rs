@@ -51,13 +51,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
     let mut ip = 0;
     while ip < bytecode.len() {
         let instr = bytecode[ip];
-        let opcode_byte = u8::try_from(instr >> 24).expect("opcode occupies one byte");
+        let opcode_byte = (instr >> 24) as u8;
         let opcode = OpCode::from_u8(opcode_byte)
             .ok_or_else(|| format!("invalid opcode {} at {}", opcode_byte, ip))?;
         let a = ((instr >> 16) & 0xFF) as usize;
         let b = ((instr >> 8) & 0xFF) as usize;
         let c = (instr & 0xFF) as usize;
-        let imm_bits = u16::try_from(instr & 0xFFFF).expect("immediate occupies two bytes");
+        let imm_bits = (instr & 0xFFFF) as u16;
         let imm = i16::from_ne_bytes(imm_bits.to_ne_bytes());
 
         if opcode == OpCode::Wide {
@@ -69,7 +69,7 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 .as_slice()
                 .get(ip + 2)
                 .ok_or_else(|| format!("wide instruction at {ip} is missing operand word 2"))?;
-            let inner = OpCode::from_u8(u8::try_from(a).expect("operand occupies one byte"))
+            let inner = OpCode::from_u8(a as u8)
                 .ok_or_else(|| format!("wide instruction at {ip} has invalid inner opcode {a}"))?;
             let wide_a = (first >> 16) as usize;
             let wide_b = (first & 0xffff) as usize;
@@ -123,7 +123,7 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 verify_const(index, constants_len, "LoadKWideRegister")?;
             }
             if inner == OpCode::WhileLoopLt {
-                let offset_bits = u16::try_from(wide_b).expect("wide immediate fits u16");
+                let offset_bits = wide_b as u16;
                 let offset = i16::from_ne_bytes(offset_bits.to_ne_bytes());
                 let adjusted_ip = ip
                     .checked_add(2)
@@ -385,7 +385,7 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             if instr & 0xffff != 0 || register_word & 0xffff != 0 {
                 return Err(format!("{opcode:?} at {ip} has non-zero reserved bits"));
             }
-            let inner = OpCode::from_u8(u8::try_from(a).expect("opcode occupies one byte"))
+            let inner = OpCode::from_u8(a as u8)
                 .ok_or_else(|| format!("{opcode:?} at {ip} has invalid inner opcode {a}"))?;
             if !matches!(
                 inner,
@@ -613,6 +613,12 @@ fn verify_enum_descriptor(
             verify_enum_descriptor(ok, enum_schemas, depth + 1)?;
             verify_enum_descriptor(err, enum_schemas, depth + 1)?;
         }
+        aelys_bytecode::TypeDescriptor::Function { params, ret } => {
+            for param in params {
+                verify_enum_descriptor(param, enum_schemas, depth + 1)?;
+            }
+            verify_enum_descriptor(ret, enum_schemas, depth + 1)?;
+        }
         _ => {}
     }
     Ok(())
@@ -709,6 +715,15 @@ fn verify_descriptor_ids(
         aelys_bytecode::TypeDescriptor::Result(ok, err) => {
             verify_descriptor_ids(ok, struct_count, enum_schemas, depth + 1)?;
             verify_descriptor_ids(err, struct_count, enum_schemas, depth + 1)?;
+        }
+        aelys_bytecode::TypeDescriptor::Function { params, ret } => {
+            for param in params {
+                verify_descriptor_ids(param, struct_count, enum_schemas, depth + 1)?;
+            }
+            verify_descriptor_ids(ret, struct_count, enum_schemas, depth + 1)?;
+        }
+        aelys_bytecode::TypeDescriptor::Any | aelys_bytecode::TypeDescriptor::Never => {
+            return Err("schema descriptors must be concrete".to_string());
         }
         _ => {}
     }

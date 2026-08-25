@@ -33,8 +33,10 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
 
         (InferType::UntypedNative(a), InferType::UntypedNative(b)) if a == b => Ok(()),
 
-        (InferType::UntypedNative(_), InferType::Dynamic)
-        | (InferType::Dynamic, InferType::UntypedNative(_)) => Ok(()),
+        (InferType::UntypedNative(name), InferType::Dynamic)
+        | (InferType::Dynamic, InferType::UntypedNative(name)) => {
+            Err(UnifyError::UntypedNativeBoundary(name.clone()))
+        }
 
         (InferType::UntypedNative(a), InferType::UntypedNative(b)) if a != b => {
             Err(UnifyError::Mismatch(t1.clone(), t2.clone()))

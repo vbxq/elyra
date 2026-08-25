@@ -4,7 +4,7 @@ mod binary;
 mod call;
 mod if_expr;
 mod lambda;
-mod member;
+pub(crate) mod member;
 mod primary;
 
 use super::TypeInference;
@@ -172,6 +172,7 @@ impl TypeInference {
             } => {
                 let typed_inner = self.infer_expr(inner);
                 let target_ty = self.type_from_annotation(target);
+                let target_has_invalid_arity = self.annotation_has_invalid_generic_arity(target);
                 let src = &typed_inner.ty;
                 let src_is_type_param = matches!(src, InferType::Var(_))
                     || matches!(src, InferType::Struct(name) if self.type_params_in_scope.contains(name));
@@ -181,7 +182,7 @@ impl TypeInference {
                         || *src == InferType::Dynamic
                         || matches!(src, InferType::UntypedNative(_)))
                         && (target_ty.is_numeric() || target_ty == InferType::Bool));
-                if !allowed {
+                if !target_has_invalid_arity && !allowed {
                     self.errors.push(TypeError {
                         kind: TypeErrorKind::Mismatch {
                             expected: target_ty.clone(),

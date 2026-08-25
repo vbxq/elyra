@@ -87,6 +87,7 @@ impl Parser {
                     fields.push(StructFieldDecl {
                         name: field_name,
                         type_annotation,
+                        is_pub: false,
                         span: field_span.merge(end_span),
                     });
                     if !self.match_token(&TokenKind::Comma)

@@ -164,10 +164,17 @@ fn collect_uses_expr(
             collect_uses_expr(analysis, object, uses);
             collect_uses_expr(analysis, value, uses);
         }
-        TypedExprKind::ArrayLiteral { elements, .. }
-        | TypedExprKind::VecLiteral { elements, .. } => {
+        TypedExprKind::ArrayLiteral {
+            elements, repeat, ..
+        }
+        | TypedExprKind::VecLiteral {
+            elements, repeat, ..
+        } => {
             for elem in elements {
                 collect_uses_expr(analysis, elem, uses);
+            }
+            if let Some(repeat) = repeat {
+                collect_uses_expr(analysis, repeat, uses);
             }
         }
         TypedExprKind::ArraySized { size, .. } => {

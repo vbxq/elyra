@@ -1,4 +1,3 @@
-
 use crate::cli::vm_config::parse_vm_args_or_error;
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize_with_manifest, disassemble_to_string};

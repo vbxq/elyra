@@ -4,7 +4,6 @@ macro_rules! execute_comparison {
         $current_frame_idx:ident, $ip:ident, $reg_get:ident,
         $reg_ref:ident, $reg_set:ident
     ) => {{
-
         match $opcode_byte {
             11 => {
                 let (a, b, c) = decode_abc($instr);

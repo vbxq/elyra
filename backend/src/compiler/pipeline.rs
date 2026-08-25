@@ -60,10 +60,7 @@ impl Compiler {
             .type_table
             .enums_in_declaration_order()
             .map(|def| {
-                let schema_id = program
-                    .type_table
-                    .enum_schema_index(&def.name)
-                    .expect("enum schema index missing");
+                let schema_id = program.type_table.enum_schema_index(&def.name)?;
                 let name = format!("{module_id}::{}", def.name);
                 let origin = program
                     .type_table
@@ -97,8 +94,7 @@ impl Compiler {
                                     .enumerate()
                                     .map(|(offset, ty)| {
                                         Some(EnumFieldSchema {
-                                            offset: u16::try_from(offset)
-                                                .expect("enum field count exceeds u16"),
+                                            offset: u16::try_from(offset).ok()?,
                                             name: None,
                                             ty: type_descriptor(ty, &program.type_table)?,
                                         })
@@ -109,8 +105,7 @@ impl Compiler {
                                     .enumerate()
                                     .map(|(offset, field)| {
                                         Some(EnumFieldSchema {
-                                            offset: u16::try_from(offset)
-                                                .expect("enum field count exceeds u16"),
+                                            offset: u16::try_from(offset).ok()?,
                                             name: Some(field.name.clone()),
                                             ty: type_descriptor(&field.ty, &program.type_table)?,
                                         })
@@ -118,8 +113,7 @@ impl Compiler {
                                     .collect::<Option<Vec<_>>>()?,
                             };
                             Some(EnumVariantSchema {
-                                variant_id: u16::try_from(variant_id)
-                                    .expect("enum variant count exceeds u16"),
+                                variant_id: u16::try_from(variant_id).ok()?,
                                 name: variant.name.clone(),
                                 fields: fields.into_boxed_slice(),
                             })
@@ -211,7 +205,7 @@ impl Compiler {
         }
 
         self.current.num_registers = self.next_register;
-        self.current.global_layout = self.build_global_layout();
+        self.current.global_layout = self.build_global_layout()?;
         self.current.compute_global_layout_hash();
         self.current.finalize_bytecode();
         self.update_jit_eligibility();
@@ -236,22 +230,39 @@ impl Compiler {
         Ok((self.current, self.globals))
     }
 
-    pub(super) fn build_global_layout(&self) -> Arc<GlobalLayout> {
+    pub(super) fn build_global_layout(&self) -> Result<Arc<GlobalLayout>> {
         if self.accessed_globals.is_empty() {
-            GlobalLayout::empty()
+            Ok(GlobalLayout::empty())
         } else {
-            let global_count = usize::try_from(self.next_global_index)
-                .expect("u32 global count fits target usize");
+            let Some(global_count) = usize::try_from(self.next_global_index).ok() else {
+                return Err(global_layout_error(&self.source));
+            };
             let mut names = vec![String::new(); global_count];
             for (name, &idx) in &self.global_indices {
                 if self.accessed_globals.contains(name) {
-                    names[usize::try_from(idx).expect("u32 global index fits target usize")] =
-                        name.clone();
+                    let Some(index) = usize::try_from(idx).ok() else {
+                        return Err(global_layout_error(&self.source));
+                    };
+                    let Some(slot) = names.get_mut(index) else {
+                        return Err(global_layout_error(&self.source));
+                    };
+                    *slot = name.clone();
                 }
             }
-            GlobalLayout::new(names)
+            Ok(GlobalLayout::new(names))
         }
     }
+}
+
+fn global_layout_error(source: &Arc<aelys_syntax::Source>) -> aelys_common::AelysError {
+    CompileError::new(
+        CompileErrorKind::TypeInferenceError(
+            "global layout index exceeds the target address space".to_string(),
+        ),
+        aelys_syntax::Span::dummy(),
+        source.clone(),
+    )
+    .into()
 }
 
 fn poisoned_schema_error(source: &Arc<aelys_syntax::Source>) -> aelys_common::AelysError {
@@ -285,15 +296,18 @@ fn type_descriptor(
         InferType::Bool => TypeDescriptor::Bool,
         InferType::String => TypeDescriptor::String,
         InferType::Unit => TypeDescriptor::Unit,
-        InferType::Null => TypeDescriptor::Any,
-        InferType::Applied { name, .. } if type_table.has_enum(name) => {
-            TypeDescriptor::Enum(enum_schema_id(name, type_table)?)
+        InferType::Null => return None,
+        InferType::Applied { name, args } => {
+            let instance = type_table.nominal_instance_for(name, args)?;
+            if type_table.has_enum(instance) {
+                TypeDescriptor::Enum(enum_schema_id(instance, type_table)?)
+            } else if type_table.has_struct(instance) {
+                TypeDescriptor::Struct(struct_schema_id(instance, type_table)?)
+            } else {
+                return None;
+            }
         }
-        InferType::Applied { name, .. } if type_table.has_struct(name) => {
-            TypeDescriptor::Struct(struct_schema_id(name, type_table)?)
-        }
-        InferType::Applied { .. } => TypeDescriptor::Any,
-        InferType::Dynamic | InferType::Var(_) | InferType::Param(_) => TypeDescriptor::Any,
+        InferType::Dynamic | InferType::Var(_) | InferType::Param(_) => return None,
         InferType::Error => TypeDescriptor::Error,
         InferType::Struct(name) if type_table.has_enum(name) => {
             TypeDescriptor::Enum(enum_schema_id(name, type_table)?)
@@ -301,8 +315,7 @@ fn type_descriptor(
         InferType::Struct(name) if type_table.has_struct(name) => {
             TypeDescriptor::Struct(struct_schema_id(name, type_table)?)
         }
-        // an unresolved nominal has no schema id, so no value may ever satisfy it
-        InferType::Struct(_) => TypeDescriptor::Never,
+        InferType::Struct(_) => return None,
         InferType::Option(inner) => {
             TypeDescriptor::Option(Box::new(type_descriptor(inner, type_table)?))
         }
@@ -318,9 +331,16 @@ fn type_descriptor(
             u32::try_from(*len).unwrap_or(u32::MAX),
         ),
         InferType::Vec(inner) => TypeDescriptor::Vec(Box::new(type_descriptor(inner, type_table)?)),
-        InferType::Tuple(_) | InferType::Function { .. } => TypeDescriptor::Any,
-        InferType::Never => TypeDescriptor::Never,
-        InferType::UntypedNative(_) | InferType::Range => TypeDescriptor::Any,
+        InferType::Tuple(_) | InferType::Never => return None,
+        InferType::Function { params, ret } => TypeDescriptor::Function {
+            params: params
+                .iter()
+                .map(|param| type_descriptor(param, type_table))
+                .collect::<Option<Vec<_>>>()?
+                .into_boxed_slice(),
+            ret: Box::new(type_descriptor(ret, type_table)?),
+        },
+        InferType::UntypedNative(_) | InferType::Range => return None,
         InferType::Poison => return None,
     };
     Some(descriptor)

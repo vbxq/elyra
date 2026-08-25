@@ -62,7 +62,7 @@ fn forbidden_surface_type(ty: &InferType, declared: &HashSet<String>) -> Option<
         InferType::Dynamic => Some(TypeErrorKind::DynamicIsNotInSurface),
         InferType::Null => Some(TypeErrorKind::NullIsNotInSurface),
         InferType::UntypedNative(name) => {
-            Some(TypeErrorKind::UntypedNativeValue { name: name.clone() })
+            Some(TypeErrorKind::UntypedNativeBoundary { name: name.clone() })
         }
         InferType::Var(_) => Some(TypeErrorKind::UnresolvedTypeVariable),
         InferType::Param(name) if !declared.contains(name) => {

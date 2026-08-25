@@ -169,16 +169,14 @@ impl Compiler {
                     OpCode::ArrayForLoop,
                     span,
                 ),
-            InferType::Dynamic | InferType::Var(_) => {
-                self.compile_collection_for_each(
-                    iterator,
-                    iterable,
-                    &InferType::Dynamic,
-                    body,
-                    OpCode::VecForLoop,
-                    span,
-                )
-            }
+            InferType::Dynamic | InferType::Var(_) => self.compile_collection_for_each(
+                iterator,
+                iterable,
+                &InferType::Dynamic,
+                body,
+                OpCode::VecForLoop,
+                span,
+            ),
             _ => Err(aelys_common::AelysError::Compile(CompileError::new(
                 CompileErrorKind::TypeInferenceError(format!(
                     "for-each over {:?} not yet supported",

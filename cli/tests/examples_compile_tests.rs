@@ -1,4 +1,3 @@
-
 use aelys_cli::cli::commands::compile::compile_to_avbc_with_output;
 use aelys_opt::OptimizationLevel;
 use std::path::{Path, PathBuf};
@@ -20,27 +19,6 @@ const KNOWN_FAILING: &[(&str, &str)] = &[
     (
         "main.aelys",
         "E0301: the program itself is wrong, main is declared -> i64 but its body ends in println",
-    ),
-    // the manual heap intrinsics these call were deleted from the runtime, so they cannot run either way
-    (
-        "examples/benchmark/fair_comparison.aelys",
-        "E0376: `store` has no signature and no runtime implementation",
-    ),
-    (
-        "examples/benchmark/latency_comparison.aelys",
-        "E0376: `store` has no signature and no runtime implementation",
-    ),
-    (
-        "examples/benchmark/mandelbrot_nogc.aelys",
-        "E0376: `store` has no signature and no runtime implementation",
-    ),
-    (
-        "examples/graphical_demo/donut.aelys",
-        "E0376: `store` has no signature and no runtime implementation",
-    ),
-    (
-        "examples/lang/simple_no_gc_demo.aelys",
-        "E0376: `store` has no signature and no runtime implementation",
     ),
 ];
 

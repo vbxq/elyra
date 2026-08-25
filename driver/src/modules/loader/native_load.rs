@@ -11,7 +11,6 @@ use aelys_syntax::NeedsStmt;
 use semver::{Version, VersionReq};
 use std::path::Path;
 
-
 impl ModuleLoader {
     pub(crate) fn load_native_module(
         &mut self,

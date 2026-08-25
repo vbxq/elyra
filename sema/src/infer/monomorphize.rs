@@ -6,11 +6,12 @@ use crate::typed_ast::{
 };
 use crate::types::{BoundSelection, InferType};
 use crate::unify::Substitution;
-use aelys_syntax::Span;
+use aelys_syntax::{MemberSeparator, Span};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_INSTANCES: usize = 65_536;
 const MAX_ACTIVE_INSTANCES: usize = 1_024;
+const MAX_IMPL_INSTANCES: usize = 64;
 
 pub(crate) const BOUND_MARKER_PREFIX: &str = "__aelys_bound::";
 pub(crate) const DISPLAY_MARKER_SYMBOL: &str = "__aelys_display::to_display";
@@ -1184,6 +1185,21 @@ impl TypeInference {
         }
     }
 
+    pub(super) fn resolve_deferred_members(&mut self, stmts: &mut [TypedStmt]) {
+        let type_table = &self.type_table;
+        let mut errors = Vec::new();
+        for stmt in stmts.iter_mut() {
+            visit_exprs_stmt(stmt, &mut |expr| {
+                resolve_deferred_member(expr, type_table, &mut errors);
+            });
+            visit_exprs_stmt(stmt, &mut |expr| {
+                resolve_deferred_call_type(expr);
+            });
+            resolve_deferred_statement_types(stmt);
+        }
+        self.errors.extend(errors);
+    }
+
     // a generated symbol with no definition must fail here, never as a runtime undefined variable
     fn reject_unresolved_instance_symbols(&mut self, stmts: &mut [TypedStmt]) {
         let mut defined = HashSet::new();
@@ -1293,12 +1309,22 @@ impl TypeInference {
                     target_type: target_type.clone(),
                     trait_args: trait_args.clone(),
                     methods: methods.clone(),
+                    span: stmt.span,
                 }),
                 _ => None,
             })
             .collect::<Vec<_>>();
         if templates.is_empty() {
             return;
+        }
+        let mut template_indices_by_method = HashMap::<String, Vec<usize>>::new();
+        for (template_index, template) in templates.iter().enumerate() {
+            for method in &template.methods {
+                template_indices_by_method
+                    .entry(method.name.clone())
+                    .or_default()
+                    .push(template_index);
+            }
         }
 
         let mut calls = Vec::new();
@@ -1310,15 +1336,18 @@ impl TypeInference {
         let mut replacements = HashMap::<String, Vec<(InferType, String)>>::new();
         let mut specialized_by_template = vec![Vec::new(); templates.len()];
         let mut marker_errors = Vec::new();
-        while next_call < calls.len() {
+        let mut limit_error = None;
+        'impl_work: while next_call < calls.len() {
             let mut discovered = Vec::<(usize, Vec<InferType>)>::new();
             while next_call < calls.len() {
                 let (symbol, receiver) = calls[next_call].clone();
                 next_call += 1;
-                for (template_index, template) in templates.iter().enumerate() {
-                    if !template.methods.iter().any(|method| method.name == symbol) {
-                        continue;
-                    }
+                for &template_index in template_indices_by_method
+                    .get(&symbol)
+                    .into_iter()
+                    .flatten()
+                {
+                    let template = &templates[template_index];
                     let mut mapping = HashMap::new();
                     if match_types(&template.target_type, &receiver, &mut mapping).is_none() {
                         continue;
@@ -1334,7 +1363,21 @@ impl TypeInference {
                     if args.iter().any(|arg| !arg.is_concrete()) {
                         continue;
                     }
-                    if seen.insert((template_index, args.clone())) {
+                    let key = (template_index, args.clone());
+                    if !seen.contains(&key) {
+                        if seen.len() >= MAX_IMPL_INSTANCES {
+                            limit_error = Some(TypeError {
+                                kind: TypeErrorKind::MonomorphizationLimit {
+                                    name: template.target.clone(),
+                                },
+                                span: template.span,
+                                reason: ConstraintReason::Other(
+                                    "generic impl instance worklist".to_string(),
+                                ),
+                            });
+                            break 'impl_work;
+                        }
+                        seen.insert(key);
                         discovered.push((template_index, args));
                     }
                 }
@@ -1400,6 +1443,9 @@ impl TypeInference {
                     aelys_syntax::Span::dummy(),
                 ));
             }
+        }
+        if let Some(error) = limit_error {
+            self.errors.push(error);
         }
         self.errors.append(&mut marker_errors);
 
@@ -1545,6 +1591,7 @@ impl TypeInference {
                                 &field.ty.substitute_params(&parameter_substitutions),
                                 &replacements,
                             ),
+                            is_pub: field.is_pub,
                         })
                         .collect();
                     return Some((
@@ -1601,6 +1648,7 @@ impl TypeInference {
                                                     ),
                                                     &replacements,
                                                 ),
+                                                is_pub: field.is_pub,
                                             })
                                             .collect(),
                                     )
@@ -1686,6 +1734,7 @@ struct GenericImplTemplate {
     target_type: InferType,
     trait_args: Vec<InferType>,
     methods: Vec<TypedFunction>,
+    span: Span,
 }
 
 fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<(String, InferType)>) {
@@ -2138,7 +2187,16 @@ fn resolve_bound_marker(
     let TypedExprKind::StructMethod { object, symbol, .. } = &mut expr.kind else {
         return;
     };
-    let Some((trait_name, _param, method_name)) = parse_bound_marker(symbol) else {
+    let marker = if symbol == DISPLAY_MARKER_SYMBOL {
+        Some((
+            crate::prelude::DISPLAY_TRAIT.to_string(),
+            String::new(),
+            crate::prelude::DISPLAY_METHOD.to_string(),
+        ))
+    } else {
+        parse_bound_marker(symbol)
+    };
+    let Some((trait_name, _param, method_name)) = marker else {
         return;
     };
     let receiver = object.ty.clone();
@@ -2147,7 +2205,8 @@ fn resolve_bound_marker(
     }
     match type_table.select_bound_method(&trait_name, &receiver, &method_name) {
         BoundSelection::Selected(resolved) => *symbol = resolved,
-        BoundSelection::CompilerRule | BoundSelection::Missing => errors.push(TypeError {
+        BoundSelection::CompilerRule => {}
+        BoundSelection::Missing => errors.push(TypeError {
             kind: TypeErrorKind::UnsatisfiedTraitBound {
                 trait_name,
                 ty: receiver,
@@ -2163,6 +2222,210 @@ fn resolve_bound_marker(
             span,
             reason: ConstraintReason::Other("bound method at a concrete instance".to_string()),
         }),
+    }
+}
+
+fn resolve_deferred_member(
+    expr: &mut TypedExpr,
+    type_table: &crate::types::TypeTable,
+    errors: &mut Vec<TypeError>,
+) {
+    let TypedExprKind::Member {
+        object,
+        member,
+        separator: MemberSeparator::Dot,
+    } = &mut expr.kind
+    else {
+        return;
+    };
+    if matches!(expr.ty, InferType::Poison) {
+        return;
+    }
+    let Some((name, substitutions)) =
+        crate::infer::expr::member::nominal_parts(&object.ty, type_table)
+    else {
+        return;
+    };
+    if let Some(definition) = type_table.get_struct(&name)
+        && let Some(field) = definition.fields.iter().find(|field| field.name == *member)
+    {
+        let field_ty = field.ty.substitute_params(&substitutions);
+        if expr.ty.is_concrete() && expr.ty != field_ty {
+            errors.push(TypeError {
+                kind: TypeErrorKind::Mismatch {
+                    expected: field_ty.clone(),
+                    found: expr.ty.clone(),
+                },
+                span: expr.span,
+                reason: ConstraintReason::Other("deferred field lookup".to_string()),
+            });
+        }
+        expr.kind = TypedExprKind::StructField {
+            object: std::mem::replace(
+                object,
+                Box::new(TypedExpr::new(
+                    TypedExprKind::Unit,
+                    InferType::Unit,
+                    expr.span,
+                )),
+            ),
+            member: member.clone(),
+            offset: definition
+                .fields
+                .iter()
+                .position(|candidate| candidate.name == *member)
+                .and_then(|index| u16::try_from(index).ok())
+                .unwrap_or(0),
+            schema_index: type_table.schema_index(&name).unwrap_or(0),
+        };
+        expr.ty = field_ty;
+        return;
+    }
+
+    let inherent = type_table
+        .method(&name, member)
+        .filter(|method| method.has_self)
+        .cloned();
+    let method = if inherent.is_some() {
+        inherent
+    } else {
+        let candidates: Vec<_> = type_table
+            .trait_methods(&name, member)
+            .iter()
+            .filter(|candidate| candidate.has_self)
+            .cloned()
+            .collect();
+        match candidates.as_slice() {
+            [candidate] => Some(crate::types::StructMethod {
+                name: candidate.name.clone(),
+                symbol: candidate.symbol.clone(),
+                params: candidate.params.clone(),
+                return_type: candidate.return_type.clone(),
+                has_self: candidate.has_self,
+                mutable_self: candidate.mutable_self,
+            }),
+            [] => None,
+            _ => {
+                errors.push(TypeError {
+                    kind: TypeErrorKind::AmbiguousTraitMethod {
+                        target: name.clone(),
+                        method: member.clone(),
+                    },
+                    span: expr.span,
+                    reason: ConstraintReason::Other("deferred member lookup".to_string()),
+                });
+                return;
+            }
+        }
+    };
+    let Some(mut method) = method else {
+        errors.push(TypeError {
+            kind: TypeErrorKind::UnknownField {
+                structure: name,
+                field: member.clone(),
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("deferred member lookup".to_string()),
+        });
+        return;
+    };
+    method.params = method
+        .params
+        .iter()
+        .map(|param| param.substitute_params(&substitutions))
+        .collect();
+    method.return_type = method.return_type.substitute_params(&substitutions);
+    let function_type = InferType::Function {
+        params: method.params.into_iter().skip(1).collect(),
+        ret: Box::new(method.return_type),
+    };
+    if expr.ty.is_concrete() && expr.ty != function_type {
+        errors.push(TypeError {
+            kind: TypeErrorKind::Mismatch {
+                expected: function_type.clone(),
+                found: expr.ty.clone(),
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("deferred method lookup".to_string()),
+        });
+    }
+    let receiver = std::mem::replace(
+        object,
+        Box::new(TypedExpr::new(
+            TypedExprKind::Unit,
+            InferType::Unit,
+            expr.span,
+        )),
+    );
+    expr.kind = TypedExprKind::StructMethod {
+        object: receiver,
+        symbol: method.symbol,
+        method: member.clone(),
+        separator: MemberSeparator::Dot,
+    };
+    expr.ty = function_type;
+}
+
+fn resolve_deferred_call_type(expr: &mut TypedExpr) {
+    let TypedExprKind::Call { callee, .. } = &expr.kind else {
+        return;
+    };
+    let InferType::Function { ret, .. } = &callee.ty else {
+        return;
+    };
+    if !expr.ty.is_concrete() {
+        expr.ty = ret.as_ref().clone();
+    }
+}
+
+fn resolve_deferred_statement_types(stmt: &mut TypedStmt) {
+    match &mut stmt.kind {
+        TypedStmtKind::Let {
+            initializer,
+            var_type,
+            ..
+        } if matches!(var_type, InferType::Var(_)) && initializer.ty.is_concrete() => {
+            *var_type = initializer.ty.clone();
+        }
+        TypedStmtKind::Block(stmts) => {
+            for stmt in stmts {
+                resolve_deferred_statement_types(stmt);
+            }
+        }
+        TypedStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            resolve_deferred_statement_types(then_branch);
+            if let Some(else_branch) = else_branch {
+                resolve_deferred_statement_types(else_branch);
+            }
+        }
+        TypedStmtKind::While { body, .. }
+        | TypedStmtKind::For { body, .. }
+        | TypedStmtKind::ForEach { body, .. } => resolve_deferred_statement_types(body),
+        TypedStmtKind::Function(function) => {
+            for stmt in &mut function.body {
+                resolve_deferred_statement_types(stmt);
+            }
+        }
+        TypedStmtKind::ImplDecl { methods, .. } => {
+            for method in methods {
+                for stmt in &mut method.body {
+                    resolve_deferred_statement_types(stmt);
+                }
+            }
+        }
+        TypedStmtKind::Expression(_)
+        | TypedStmtKind::Return(_)
+        | TypedStmtKind::Break
+        | TypedStmtKind::Continue
+        | TypedStmtKind::Needs(_)
+        | TypedStmtKind::TraitDecl { .. }
+        | TypedStmtKind::StructDecl { .. }
+        | TypedStmtKind::EnumDecl { .. }
+        | TypedStmtKind::Let { .. } => {}
     }
 }
 

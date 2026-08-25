@@ -42,6 +42,23 @@ impl TypeInference {
                         },
                     });
                 }
+            } else if let TypedExprKind::Float(value) = &typed_init.kind
+                && *decl == InferType::F32
+            {
+                if value.is_finite() && value.abs() <= f32::MAX as f64 {
+                    typed_init.ty = InferType::F32;
+                } else {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::Mismatch {
+                            expected: InferType::F32,
+                            found: InferType::F64,
+                        },
+                        span: typed_init.span,
+                        reason: ConstraintReason::TypeAnnotation {
+                            var_name: name.to_string(),
+                        },
+                    });
+                }
             } else if self.reject_dynamic(
                 &typed_init.ty,
                 decl,
@@ -50,19 +67,17 @@ impl TypeInference {
                     var_name: name.to_string(),
                 },
             ) {
-            } else if let InferType::UntypedNative(native) = &typed_init.ty
-                && !matches!(decl, InferType::Dynamic)
-            {
+            } else if let InferType::UntypedNative(native) = &typed_init.ty {
                 self.errors.push(TypeError {
-                    kind: TypeErrorKind::UntypedNativeTypeMismatch {
+                    kind: TypeErrorKind::UntypedNativeBoundary {
                         name: native.clone(),
-                        expected: decl.clone(),
                     },
                     span: typed_init.span,
                     reason: ConstraintReason::TypeAnnotation {
                         var_name: name.to_string(),
                     },
                 });
+            } else if matches!(decl, InferType::Dynamic) {
             } else {
                 self.constraints.push(Constraint::equal(
                     typed_init.ty.clone(),

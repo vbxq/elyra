@@ -257,6 +257,10 @@ impl Parser {
 
         let first = self.expression()?;
 
+        if matches!(first.kind, ExprKind::Range { .. }) {
+            return Ok(first);
+        }
+
         if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
             let inclusive = self.match_token(&TokenKind::DotDotEq);
             if !inclusive {

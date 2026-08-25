@@ -17,80 +17,54 @@ let K1: float = convert::to_float(WIDTH) * K2 * 3.0 / (8.0 * (R1 + R2))  // Scal
 // Luminance characters (from dark to bright)
 let CHARS: string = ".,-~:;=!*#$@"
 
-@no_gc
-fn fb_new(width: int, height: int) -> int {
+struct Frame { fb: Vec<int>, zbuf: Vec<float> }
+
+fn fb_new(width: int, height: int) -> Vec<int> {
     let size = width * height
-    let fb = alloc(size + 2)
-    store(fb, 0, width)
-    store(fb, 1, height)
+    vec![32; size]
+}
+
+fn fb_clear(mut fb: Vec<int>, width: int, height: int) -> Vec<int> {
+    let size = width * height
+    for i in 0..size {
+        fb[i] = 32
+    }
     fb
 }
 
-@no_gc
-fn fb_free(fb: int) {
-    free(fb)
+fn fb_set(mut fb: Vec<int>, width: int, x: int, y: int, char_code: int) -> Vec<int> {
+    let idx = y * width + x
+    fb[idx] = char_code
+    fb
 }
 
-@no_gc
-fn fb_clear(fb: int) {
-    let width: int = convert::to_int(load(fb, 0))
-    let height: int = convert::to_int(load(fb, 1))
+fn fb_get(fb: Vec<int>, width: int, x: int, y: int) -> int {
+    let idx = y * width + x
+    fb[idx]
+}
+
+fn zbuf_new(width: int, height: int) -> Vec<float> {
+    let size = width * height
+    vec![0.0; size]
+}
+
+fn zbuf_clear(mut zb: Vec<float>, width: int, height: int) -> Vec<float> {
     let size = width * height
     for i in 0..size {
-        store(fb, 2 + i, 32)  // Space character
+        zb[i] = 0.0
     }
-}
-
-@no_gc
-fn fb_set(fb: int, x: int, y: int, char_code: int) {
-    let width: int = convert::to_int(load(fb, 0))
-    let idx = 2 + y * width + x
-    store(fb, idx, char_code)
-}
-
-@no_gc
-fn fb_get(fb: int, x: int, y: int) -> int {
-    let width: int = convert::to_int(load(fb, 0))
-    let idx = 2 + y * width + x
-    convert::to_int(load(fb, idx))
-}
-
-@no_gc
-fn zbuf_new(width: int, height: int) -> int {
-    let size = width * height
-    let zb = alloc(size + 2)
-    store(zb, 0, width)
-    store(zb, 1, height)
     zb
 }
 
-@no_gc
-fn zbuf_free(zb: int) {
-    free(zb)
+fn zbuf_get(zb: Vec<float>, width: int, x: int, y: int) -> float {
+    let idx = y * width + x
+    zb[idx]
 }
 
-@no_gc
-fn zbuf_clear(zb: int) {
-    let width: int = convert::to_int(load(zb, 0))
-    let height: int = convert::to_int(load(zb, 1))
-    let size = width * height
-    for i in 0..size {
-        store(zb, 2 + i, 0.0)
-    }
-}
-
-@no_gc
-fn zbuf_get(zb: int, x: int, y: int) -> float {
-    let width: int = convert::to_int(load(zb, 0))
-    let idx = 2 + y * width + x
-    convert::to_float(load(zb, idx))
-}
-
-@no_gc
-fn zbuf_set(zb: int, x: int, y: int, z: float) {
-    let width: int = convert::to_int(load(zb, 0))
-    let idx = 2 + y * width + x
-    store(zb, idx, z)
+fn zbuf_set(mut zb: Vec<float>, width: int, x: int, y: int, z: float) -> Vec<float> {
+    let idx = y * width + x
+    zb[idx] = z
+    zb
 }
 
 fn char_code(idx: int) -> int {
@@ -127,9 +101,9 @@ fn code_to_char(code: int) -> string {
     return " "
 }
 
-fn render_frame(fb: int, zbuf: int, A: float, B: float) {
-    fb_clear(fb)
-    zbuf_clear(zbuf)
+fn render_frame(mut fb: Vec<int>, mut zbuf: Vec<float>, A: float, B: float) -> Frame {
+    fb = fb_clear(fb, WIDTH, HEIGHT)
+    zbuf = zbuf_clear(zbuf, WIDTH, HEIGHT)
 
     let cosA = math::cos(A)
     let sinA = math::sin(A)
@@ -166,12 +140,12 @@ fn render_frame(fb: int, zbuf: int, A: float, B: float) {
 
             if L > 0.0 {
                 if xp >= 0 and xp < WIDTH and yp >= 0 and yp < HEIGHT {
-                    if ooz > zbuf_get(zbuf, xp, yp) {
-                        zbuf_set(zbuf, xp, yp, ooz)
+                    if ooz > zbuf_get(zbuf, WIDTH, xp, yp) {
+                        zbuf = zbuf_set(zbuf, WIDTH, xp, yp, ooz)
                         let mut lum_idx: int = math::floor(L * 8.0)
                         if lum_idx > 11 { lum_idx = 11 }
                         if lum_idx < 0 { lum_idx = 0 }
-                        fb_set(fb, xp, yp, char_code(lum_idx))
+                        fb = fb_set(fb, WIDTH, xp, yp, char_code(lum_idx))
                     }
                 }
             }
@@ -179,16 +153,14 @@ fn render_frame(fb: int, zbuf: int, A: float, B: float) {
         }
         theta = theta + 0.14
     }
+    Frame { fb: fb, zbuf: zbuf }
 }
 
-fn display_frame(fb: int) {
-    let width: int = convert::to_int(load(fb, 0))
-    let height: int = convert::to_int(load(fb, 1))
-
+fn display_frame(fb: Vec<int>, width: int, height: int) {
     for y in 0..height {
         let mut row: string = ""
         for x in 0..width {
-            let code = fb_get(fb, x, y)
+            let code = fb_get(fb, width, x, y)
             row = row + code_to_char(code)
         }
         io::println(row)
@@ -200,8 +172,10 @@ fn main() {
     io::println("Screen: " + convert::to_string(WIDTH) + "x" + convert::to_string(HEIGHT))
     io::println("")
 
-    let fb = fb_new(WIDTH, HEIGHT)
-    let zbuf = zbuf_new(WIDTH, HEIGHT)
+    let mut state = Frame {
+        fb: fb_new(WIDTH, HEIGHT),
+        zbuf: zbuf_new(WIDTH, HEIGHT),
+    }
 
     let mut A: float = 0.0
     let mut B: float = 0.0
@@ -216,8 +190,8 @@ fn main() {
 
     for frame in 0..num_frames {
         io::cursor_home()
-        render_frame(fb, zbuf, A, B)
-        display_frame(fb)
+        state = render_frame(state.fb, state.zbuf, A, B)
+        display_frame(state.fb, WIDTH, HEIGHT)
 
         io::println("")
         io::println("Frame " + convert::to_string(frame + 1) + "/" + convert::to_string(num_frames) + " | A=" + convert::to_string(math::floor(A * 100.0) / 100.0) + " B=" + convert::to_string(math::floor(B * 100.0) / 100.0))
@@ -227,8 +201,6 @@ fn main() {
         time::sleep(frame_delay)
     }
 
-    fb_free(fb)
-    zbuf_free(zbuf)
     io::show_cursor()
 
     println("")

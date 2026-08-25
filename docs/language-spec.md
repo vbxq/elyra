@@ -815,6 +815,13 @@ pub fn make() -> Point { Point { x: 1, y: 2 } }
 // ✗ error[E0407]: 'Point' cannot be exported from module 'shapes'
 ```
 
+Stage 2 does not give struct fields a separate module-visibility boundary: every
+field of a public imported struct is available to the importer. Field-level `pub`
+is accepted as forward-compatible syntax and does not change that rule. Private
+field access and its diagnostic are reserved for the ownership and borrowing
+stage; this keeps imported impl bodies and their fixed schema compatible in the
+current compilation model.
+
 The restriction is on the exported signature only. A private function in the same
 module may take and return the type freely, and a `pub fn` may use it internally
 as long as the type does not appear in its signature:
@@ -1038,6 +1045,11 @@ let inclusive = source[1..=2]
 Slice bounds are checked statically when all operands and the source length are
 known, and otherwise trap on an invalid runtime range.
 
+Ranges are values as well as slice syntax. Open and closed forms are available:
+`..end`, `start..`, and `start..=end`. A range value can be bound and reused for
+a slice, for example `let span = 1..3; source[span]`. A range without a valid
+collection context is still a type error.
+
 ### String Indexing
 
 Strings support character-based indexing with `[]`:
@@ -1247,7 +1259,9 @@ concrete instantiation and is rejected with E0343 `cannot infer the concrete typ
 for generic parameter 'T'; add a type argument`. Recursive or excessive
 instantiation is a named compile-time error: E0344 for a recursive instantiation
 without a decreasing type argument, E0345 when the instantiation limit is
-exceeded.
+exceeded. The same bounded worklist applies to reachable generic `impl` method
+instances; recursive type growth is rejected before code generation rather than
+being allowed to exhaust the compiler.
 
 Generic structs and enums use the same concrete instance rule. Their field and
 variant descriptors are emitted with concrete types, and two different type
@@ -1751,6 +1765,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0376 | GlobalWithoutSignature | a global with no usable signature |
 | E0377 | UndeterminedType | a type that never became determinate |
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
+| E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 
 ### E04xx, modules

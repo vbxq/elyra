@@ -74,10 +74,17 @@ impl ConstantFolder {
                 self.optimize_expr(object);
                 self.optimize_expr(value);
             }
-            TypedExprKind::ArrayLiteral { elements, .. }
-            | TypedExprKind::VecLiteral { elements, .. } => {
+            TypedExprKind::ArrayLiteral {
+                elements, repeat, ..
+            }
+            | TypedExprKind::VecLiteral {
+                elements, repeat, ..
+            } => {
                 for elem in elements {
                     self.optimize_expr(elem);
+                }
+                if let Some(repeat) = repeat {
+                    self.optimize_expr(repeat);
                 }
             }
             TypedExprKind::ArraySized { size, .. } => {

@@ -1,7 +1,7 @@
 use super::Parser;
 use aelys_common::Result;
 use aelys_common::error::CompileErrorKind;
-use aelys_syntax::{Stmt, StmtKind, TokenKind};
+use aelys_syntax::{ExprKind, Stmt, StmtKind, TokenKind};
 
 impl Parser {
     pub fn statement(&mut self) -> Result<Stmt> {
@@ -95,6 +95,35 @@ impl Parser {
         let read_only = self.match_token(&TokenKind::Ampersand);
 
         let first_expr = self.with_brace_construction(false, Parser::expression)?;
+
+        if let ExprKind::Range {
+            start: Some(start),
+            end: Some(end),
+            inclusive,
+        } = first_expr.kind
+        {
+            let step = if self.match_token(&TokenKind::Step) {
+                Some(self.with_brace_construction(false, Parser::expression)?)
+            } else {
+                None
+            };
+
+            self.consume(&TokenKind::LBrace, "{")?;
+            let body = self.block_statement()?;
+            let end_span = self.previous().span;
+
+            return Ok(Stmt::new(
+                StmtKind::For {
+                    iterator,
+                    start: *start,
+                    end: *end,
+                    inclusive,
+                    step: Box::new(step),
+                    body: Box::new(body),
+                },
+                start_span.merge(end_span),
+            ));
+        }
 
         if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
             let inclusive = if self.match_token(&TokenKind::DotDotEq) {

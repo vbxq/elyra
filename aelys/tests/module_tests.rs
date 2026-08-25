@@ -19,7 +19,6 @@ fn write_file(dir: &TempDir, path: &str, content: &str) -> PathBuf {
     file_path
 }
 
-
 #[test]
 fn test_basic_module_import() {
     let dir = create_module_env();
@@ -160,7 +159,6 @@ add(10, 5)
     assert_eq!(result.as_int(), Some(15));
 }
 
-
 #[test]
 fn test_nested_module_path() {
     let dir = create_module_env();
@@ -257,7 +255,6 @@ utils::helper()
     assert_eq!(result.as_int(), Some(100));
 }
 
-
 #[test]
 fn test_private_function_not_exported() {
     let dir = create_module_env();
@@ -340,7 +337,6 @@ private_mod::public
     assert_eq!(result.as_int(), Some(200));
 }
 
-
 #[test]
 fn test_circular_dependency_detected() {
     let dir = create_module_env();
@@ -414,7 +410,6 @@ self_import::foo()
     );
 }
 
-
 #[test]
 fn test_module_not_found() {
     let dir = create_module_env();
@@ -468,7 +463,6 @@ nonexistent()
         err
     );
 }
-
 
 #[test]
 fn test_multiple_module_imports() {
@@ -538,7 +532,6 @@ derived::derived_func()
     assert_eq!(result.as_int(), Some(10));
 }
 
-
 #[test]
 fn test_empty_module() {
     let dir = create_module_env();
@@ -606,7 +599,6 @@ mod_a::get_counter() + mod_b::get_counter_too()
     let result = run_file(&main_path).expect("Diamond dependency should work");
     assert_eq!(result.as_int(), Some(2));
 }
-
 
 #[test]
 fn test_std_direct_import() {
@@ -829,7 +821,6 @@ a::shared() + b::shared()
     let result = run_file(&main_path).expect("Both aliased should work");
     assert_eq!(result.as_int(), Some(3));
 }
-
 
 #[test]
 fn test_symbol_path_import_does_not_pull_in_the_rest_of_the_module() {

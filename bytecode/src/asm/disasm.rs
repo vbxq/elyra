@@ -1,4 +1,3 @@
-
 use crate::bytecode::{Constant, Function, OpCode, decode_a, decode_b};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -224,8 +223,7 @@ impl<'a> DisasmContext<'a> {
                 writeln_ignore!(output, "  {}:", label);
             }
 
-            let opcode =
-                OpCode::from_u8(u8::try_from(instr >> 24).expect("opcode occupies one byte"));
+            let opcode = OpCode::from_u8((instr >> 24) as u8);
             skip_extension_words = opcode.map_or(0, OpCode::extension_words);
             let extension = (skip_extension_words >= 1)
                 .then(|| func.bytecode.as_slice().get(offset + 1).copied())
@@ -255,8 +253,7 @@ impl<'a> DisasmContext<'a> {
         let mut offset = 0;
         while offset < bytecode.len() {
             let instr = bytecode[offset];
-            let opcode =
-                OpCode::from_u8(u8::try_from(instr >> 24).expect("opcode occupies one byte"));
+            let opcode = OpCode::from_u8((instr >> 24) as u8);
 
             if let Some(OpCode::Jump | OpCode::JumpIf | OpCode::JumpIfNot) = opcode {
                 let (_, _, imm) = decode_b(instr);
@@ -307,7 +304,7 @@ impl<'a> DisasmContext<'a> {
         offset: usize,
         labels: &HashMap<usize, String>,
     ) -> String {
-        let opcode_byte = u8::try_from(instr >> 24).expect("opcode occupies one byte");
+        let opcode_byte = (instr >> 24) as u8;
         let opcode = match OpCode::from_u8(opcode_byte) {
             Some(op) => op,
             None => return format!(".word 0x{:08x}", instr),

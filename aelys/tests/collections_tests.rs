@@ -69,6 +69,11 @@ fn array_slices_are_owned_vectors() {
 }
 
 #[test]
+fn ranges_are_first_class_values() {
+    assert_aelys_int("let span = 1..3; [0, 1, 2, 3][span].len()", 2);
+}
+
+#[test]
 fn immutable_vec_cannot_be_mutated() {
     let message = compile_message("let v = vec![1]; v.push(2)");
     assert!(message.contains("mutable"), "{message}");

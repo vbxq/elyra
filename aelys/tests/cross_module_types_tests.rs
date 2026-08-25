@@ -43,7 +43,6 @@ impl Norm for Point {
 }
 "#;
 
-
 #[test]
 fn test_imported_enum_is_constructed_and_matched() {
     let dir = create_module_env();
@@ -97,7 +96,6 @@ match c {
     );
 }
 
-
 #[test]
 fn test_imported_trait_method_on_imported_struct() {
     let dir = create_module_env();
@@ -138,7 +136,6 @@ measure(p)
     let result = run_file(&main_path).expect("imported trait should be usable as a bound");
     assert_eq!(result.as_int(), Some(100));
 }
-
 
 #[test]
 fn test_private_type_is_not_importable() {
@@ -212,7 +209,6 @@ needs holder
     );
 }
 
-
 const CANDIDATE_BASE_MODULE: &str = r#"
 pub struct Vector {
     x: int,
@@ -285,7 +281,6 @@ measure(v)
         message
     );
 }
-
 
 #[test]
 fn test_same_type_name_in_two_modules_is_rejected() {
@@ -379,7 +374,6 @@ struct Point {
         message
     );
 }
-
 
 #[test]
 fn test_public_function_carrying_a_nominal_value_is_rejected() {

@@ -126,44 +126,33 @@ impl TypeInference {
             if enum_type_name(&ty).is_some_and(|name| self.type_table.get_enum(&name).is_some()) {
                 let missing = self.enum_missing_patterns(&ty, &patterns);
                 if !missing.is_empty() {
-                    self.errors.insert(
-                        0,
-                        TypeError {
-                            kind: TypeErrorKind::NonExhaustiveMatch { missing },
-                            span: residual.span,
-                            reason: ConstraintReason::Other("enum match exhaustivity".to_string()),
-                        },
-                    );
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::NonExhaustiveMatch { missing },
+                        span: residual.span,
+                        reason: ConstraintReason::Other("enum match exhaustivity".to_string()),
+                    });
                 }
                 continue;
             }
             if let InferType::Struct(name) = &ty {
                 if !self.struct_patterns_cover(name, &patterns) {
-                    self.errors.insert(
-                        0,
-                        TypeError {
-                            kind: TypeErrorKind::NonExhaustiveStruct {
-                                structure: name.clone(),
-                            },
-                            span: residual.span,
-                            reason: ConstraintReason::Other(
-                                "struct match exhaustivity".to_string(),
-                            ),
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::NonExhaustiveStruct {
+                            structure: name.clone(),
                         },
-                    );
+                        span: residual.span,
+                        reason: ConstraintReason::Other("struct match exhaustivity".to_string()),
+                    });
                 }
                 continue;
             }
             let missing = missing_patterns(&ty, &patterns);
             if !missing.is_empty() {
-                self.errors.insert(
-                    0,
-                    TypeError {
-                        kind: TypeErrorKind::NonExhaustiveMatch { missing },
-                        span: residual.span,
-                        reason: ConstraintReason::Other("match exhaustivity".to_string()),
-                    },
-                );
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::NonExhaustiveMatch { missing },
+                    span: residual.span,
+                    reason: ConstraintReason::Other("match exhaustivity".to_string()),
+                });
             }
         }
     }

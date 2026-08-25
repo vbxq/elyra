@@ -1,4 +1,3 @@
-
 use aelys_opt::OptimizationLevel;
 use std::io::Write;
 use std::path::PathBuf;
@@ -216,6 +215,20 @@ probe()
 "#
     ));
     assert_eq!(text, "[loud][5]");
+}
+
+#[test]
+fn generic_display_use_requires_a_display_bound() {
+    let mut vm = aelys::new_vm().expect("vm");
+    let error = aelys::run_with_vm_and_opt(
+        &mut vm,
+        "struct Silent { value: int }\nfn render<T>(value: T) -> string { __tostring(value) }\nrender(Silent { value: 1 })",
+        "<display-bound>",
+        OptimizationLevel::Standard,
+    )
+    .expect_err("a generic display call must reject a type without Display");
+    let message = error.to_string();
+    assert!(message.contains("Display"), "{message}");
 }
 
 #[test]

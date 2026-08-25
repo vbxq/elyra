@@ -115,7 +115,7 @@ impl Compiler {
 
         nested_compiler.end_scope();
         nested_compiler.current.num_registers = nested_compiler.next_register;
-        nested_compiler.current.global_layout = nested_compiler.build_global_layout();
+        nested_compiler.current.global_layout = nested_compiler.build_global_layout()?;
         nested_compiler.current.compute_global_layout_hash();
         nested_compiler.current.finalize_bytecode();
         nested_compiler.update_jit_eligibility();

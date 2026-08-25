@@ -33,7 +33,6 @@ impl CompilerOperand for i32 {
     }
 }
 
-
 impl Compiler {
     pub(super) fn update_jit_eligibility(&mut self) {
         self.current.jit_unsupported_struct = self.current.bytecode.as_slice().iter().any(|word| {

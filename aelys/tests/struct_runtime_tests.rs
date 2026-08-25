@@ -575,7 +575,7 @@ fn schema_table_roundtrips_the_descriptor_grammar() {
         StructFieldSchema {
             offset: 0,
             name: "array".to_string(),
-            ty: TypeDescriptor::Array(Box::new(TypeDescriptor::Any)),
+            ty: TypeDescriptor::Array(Box::new(TypeDescriptor::Bool)),
         },
         StructFieldSchema {
             offset: 0,
@@ -589,23 +589,21 @@ fn schema_table_roundtrips_the_descriptor_grammar() {
         },
         StructFieldSchema {
             offset: 0,
+            name: "function".to_string(),
+            ty: TypeDescriptor::Function {
+                params: vec![TypeDescriptor::Int(IntWidth::I64)].into_boxed_slice(),
+                ret: Box::new(TypeDescriptor::Bool),
+            },
+        },
+        StructFieldSchema {
+            offset: 0,
             name: "nested".to_string(),
             ty: TypeDescriptor::Struct(0),
         },
         StructFieldSchema {
             offset: 0,
-            name: "any".to_string(),
-            ty: TypeDescriptor::Any,
-        },
-        StructFieldSchema {
-            offset: 0,
             name: "error".to_string(),
             ty: TypeDescriptor::Error,
-        },
-        StructFieldSchema {
-            offset: 0,
-            name: "never".to_string(),
-            ty: TypeDescriptor::Never,
         },
     ];
     let mut function = Function::new(Some("schema".to_string()), 0);

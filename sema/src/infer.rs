@@ -82,21 +82,15 @@ impl TypeInference {
     pub(super) fn reject_untyped_native(
         &mut self,
         found: &InferType,
-        expected: &InferType,
+        _expected: &InferType,
         span: aelys_syntax::Span,
         reason: ConstraintReason,
     ) -> bool {
         let InferType::UntypedNative(name) = found else {
             return false;
         };
-        if matches!(expected, InferType::Dynamic) {
-            return false;
-        }
         self.errors.push(TypeError {
-            kind: TypeErrorKind::UntypedNativeTypeMismatch {
-                name: name.clone(),
-                expected: expected.clone(),
-            },
+            kind: TypeErrorKind::UntypedNativeBoundary { name: name.clone() },
             span,
             reason,
         });

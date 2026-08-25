@@ -1,4 +1,3 @@
-
 use super::lexer::{Lexer, Token};
 use crate::bytecode::{
     Constant, DefId, EnumDefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth,
@@ -737,86 +736,82 @@ impl<'a> AasmParser<'a> {
 
     fn parse_constant_value(&mut self) -> Result<Constant> {
         match self.advance()? {
-            Token::Ident(type_name) => {
-                match type_name.as_str() {
-                    "int" => {
-                        if let Token::Int(n) = self.advance()? {
-                            Ok(Constant::Int(n))
-                        } else {
-                            Err(AssemblerError::Expected {
-                                expected: "integer".to_string(),
-                                got: format!("{:?}", self.current),
-                            })
-                        }
+            Token::Ident(type_name) => match type_name.as_str() {
+                "int" => {
+                    if let Token::Int(n) = self.advance()? {
+                        Ok(Constant::Int(n))
+                    } else {
+                        Err(AssemblerError::Expected {
+                            expected: "integer".to_string(),
+                            got: format!("{:?}", self.current),
+                        })
                     }
-                    "float" => match self.advance()? {
-                        Token::Float(f) => Ok(Constant::Float(f.to_bits())),
-                        Token::Int(n) => Ok(Constant::Float((n as f64).to_bits())),
-                        Token::Ident(s) if s == "nan" => Ok(Constant::Float(f64::NAN.to_bits())),
-                        Token::Ident(s) if s == "inf" => {
-                            Ok(Constant::Float(f64::INFINITY.to_bits()))
-                        }
-                        t => Err(AssemblerError::Expected {
-                            expected: "float".to_string(),
-                            got: format!("{:?}", t),
-                        }),
-                    },
-                    "bool" => match self.advance()? {
-                        Token::Bool(b) => Ok(Constant::Bool(b)),
-                        Token::Ident(s) if s == "true" => Ok(Constant::Bool(true)),
-                        Token::Ident(s) if s == "false" => Ok(Constant::Bool(false)),
-                        t => Err(AssemblerError::Expected {
-                            expected: "bool".to_string(),
-                            got: format!("{:?}", t),
-                        }),
-                    },
-                    "string" => {
-                        if let Token::String(s) = self.advance()? {
-                            Ok(Constant::String(s))
-                        } else {
-                            Err(AssemblerError::Expected {
-                                expected: "string".to_string(),
-                                got: format!("{:?}", self.current),
-                            })
-                        }
-                    }
-                    "ptr" => Err(AssemblerError::ParseError {
-                        line: self.lexer.current_line(),
-                        message: "raw heap pointers are not valid AVBC v3 constants".to_string(),
-                    }),
-                    "func" => {
-                        self.expect(Token::At)?;
-                        if let Token::Int(n) = self.advance()? {
-                            let index = u32::try_from(n - 1).map_err(|_| {
-                                AssemblerError::InvalidNumber(format!(
-                                    "invalid nested function index: {n}"
-                                ))
-                            })?;
-                            if matches!(self.current, Token::String(_)) {
-                                self.advance()?;
-                            }
-                            Ok(Constant::NestedFunction(index))
-                        } else {
-                            Err(AssemblerError::Expected {
-                                expected: "function index".to_string(),
-                                got: format!("{:?}", self.current),
-                            })
-                        }
-                    }
-                    "null" => Ok(Constant::Null),
-                    "native" => {
-                        if let Token::String(_) = self.advance()? {
-                            Ok(Constant::Null)
-                        } else {
-                            Ok(Constant::Null)
-                        }
-                    }
-                    _ => Err(AssemblerError::Expected {
-                        expected: "constant type".to_string(),
-                        got: type_name,
-                    }),
                 }
-            }
+                "float" => match self.advance()? {
+                    Token::Float(f) => Ok(Constant::Float(f.to_bits())),
+                    Token::Int(n) => Ok(Constant::Float((n as f64).to_bits())),
+                    Token::Ident(s) if s == "nan" => Ok(Constant::Float(f64::NAN.to_bits())),
+                    Token::Ident(s) if s == "inf" => Ok(Constant::Float(f64::INFINITY.to_bits())),
+                    t => Err(AssemblerError::Expected {
+                        expected: "float".to_string(),
+                        got: format!("{:?}", t),
+                    }),
+                },
+                "bool" => match self.advance()? {
+                    Token::Bool(b) => Ok(Constant::Bool(b)),
+                    Token::Ident(s) if s == "true" => Ok(Constant::Bool(true)),
+                    Token::Ident(s) if s == "false" => Ok(Constant::Bool(false)),
+                    t => Err(AssemblerError::Expected {
+                        expected: "bool".to_string(),
+                        got: format!("{:?}", t),
+                    }),
+                },
+                "string" => {
+                    if let Token::String(s) = self.advance()? {
+                        Ok(Constant::String(s))
+                    } else {
+                        Err(AssemblerError::Expected {
+                            expected: "string".to_string(),
+                            got: format!("{:?}", self.current),
+                        })
+                    }
+                }
+                "ptr" => Err(AssemblerError::ParseError {
+                    line: self.lexer.current_line(),
+                    message: "raw heap pointers are not valid AVBC v3 constants".to_string(),
+                }),
+                "func" => {
+                    self.expect(Token::At)?;
+                    if let Token::Int(n) = self.advance()? {
+                        let index = u32::try_from(n - 1).map_err(|_| {
+                            AssemblerError::InvalidNumber(format!(
+                                "invalid nested function index: {n}"
+                            ))
+                        })?;
+                        if matches!(self.current, Token::String(_)) {
+                            self.advance()?;
+                        }
+                        Ok(Constant::NestedFunction(index))
+                    } else {
+                        Err(AssemblerError::Expected {
+                            expected: "function index".to_string(),
+                            got: format!("{:?}", self.current),
+                        })
+                    }
+                }
+                "null" => Ok(Constant::Null),
+                "native" => {
+                    if let Token::String(_) = self.advance()? {
+                        Ok(Constant::Null)
+                    } else {
+                        Ok(Constant::Null)
+                    }
+                }
+                _ => Err(AssemblerError::Expected {
+                    expected: "constant type".to_string(),
+                    got: type_name,
+                }),
+            },
             Token::Null => Ok(Constant::Null),
             t => Err(AssemblerError::Expected {
                 expected: "constant type".to_string(),
@@ -980,6 +975,24 @@ impl<'a> TypeDescriptorParser<'a> {
     }
 
     fn parse_descriptor(&mut self) -> std::result::Result<TypeDescriptor, String> {
+        if self.consume("fn(") {
+            let mut params = Vec::new();
+            if !self.consume(")") {
+                params.push(self.parse_descriptor()?);
+                while self.consume(",") {
+                    params.push(self.parse_descriptor()?);
+                }
+                self.expect(')')?;
+            }
+            if !self.consume(" -> ") {
+                return Err("function descriptor is missing its return separator".to_string());
+            }
+            let ret = self.parse_descriptor()?;
+            return Ok(TypeDescriptor::Function {
+                params: params.into_boxed_slice(),
+                ret: Box::new(ret),
+            });
+        }
         if self.consume("unit") {
             return Ok(TypeDescriptor::Unit);
         }

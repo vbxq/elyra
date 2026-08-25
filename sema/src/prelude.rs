@@ -1,4 +1,3 @@
-
 use crate::types::{InferType, TraitDef, TraitImplDef, TraitMethod, TypeTable};
 
 pub const DISPLAY_TRAIT: &str = "Display";

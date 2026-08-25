@@ -239,10 +239,17 @@ impl LocalConstantPropagator {
                 Self::collect_assigned_vars_expr(object, out);
                 Self::collect_assigned_vars_expr(value, out);
             }
-            TypedExprKind::ArrayLiteral { elements, .. }
-            | TypedExprKind::VecLiteral { elements, .. } => {
+            TypedExprKind::ArrayLiteral {
+                elements, repeat, ..
+            }
+            | TypedExprKind::VecLiteral {
+                elements, repeat, ..
+            } => {
                 for e in elements {
                     Self::collect_assigned_vars_expr(e, out);
+                }
+                if let Some(repeat) = repeat {
+                    Self::collect_assigned_vars_expr(repeat, out);
                 }
             }
             TypedExprKind::ArraySized { size, .. } => {
@@ -370,10 +377,17 @@ impl LocalConstantPropagator {
                 self.propagate_expr(value);
             }
 
-            TypedExprKind::ArrayLiteral { elements, .. }
-            | TypedExprKind::VecLiteral { elements, .. } => {
+            TypedExprKind::ArrayLiteral {
+                elements, repeat, ..
+            }
+            | TypedExprKind::VecLiteral {
+                elements, repeat, ..
+            } => {
                 for elem in elements.iter_mut() {
                     self.propagate_expr(elem);
+                }
+                if let Some(repeat) = repeat {
+                    self.propagate_expr(repeat);
                 }
             }
 

@@ -60,6 +60,42 @@ impl TypeInference {
         self.type_from_annotation_inner(ann)
     }
 
+    pub(super) fn annotation_has_invalid_generic_arity(&self, ann: &TypeAnnotation) -> bool {
+        if ann.is_function_type() {
+            return ann.fn_params.as_ref().is_some_and(|params| {
+                params
+                    .iter()
+                    .any(|param| self.annotation_has_invalid_generic_arity(param))
+            }) || ann
+                .fn_ret
+                .as_ref()
+                .is_some_and(|ret| self.annotation_has_invalid_generic_arity(ret));
+        }
+
+        let expected = match ann.name.to_lowercase().as_str() {
+            "array" | "vec" | "option" => Some(1),
+            "result" => Some(2),
+            name if KNOWN_TYPE_NAMES.contains(&name) => Some(0),
+            _ => self
+                .type_table
+                .get_struct(&ann.name)
+                .map(|def| def.type_params.len())
+                .or_else(|| {
+                    self.type_table
+                        .get_enum(&ann.name)
+                        .map(|def| def.type_params.len())
+                }),
+        };
+
+        expected.is_some_and(|expected| {
+            ann.type_params.len() != expected
+                || ann
+                    .type_params
+                    .iter()
+                    .any(|param| self.annotation_has_invalid_generic_arity(param))
+        })
+    }
+
     fn type_from_annotation_inner(&mut self, ann: &TypeAnnotation) -> InferType {
         if ann.is_function_type() {
             let params = ann
@@ -166,6 +202,17 @@ impl TypeInference {
     }
 
     fn check_type_annotation(&mut self, ann: &TypeAnnotation) {
+        if ann.is_function_type() {
+            if let Some(params) = &ann.fn_params {
+                for param in params {
+                    self.check_type_annotation(param);
+                }
+            }
+            if let Some(ret) = &ann.fn_ret {
+                self.check_type_annotation(ret);
+            }
+            return;
+        }
         if self.type_params_in_scope.iter().any(|tp| tp == &ann.name) {
             return;
         }
@@ -440,13 +487,23 @@ impl TypeInference {
         inf.validate_match_exhaustivity(&subst);
         inf.validate_sum_types(&subst);
 
-        let resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
+        let mut resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
+        inf.resolve_deferred_members(&mut resolved_stmts);
         let resolved_stmts = inf.monomorphize_program(resolved_stmts);
 
         inf.validate_unused_sum_bindings(&resolved_stmts);
         inf.validate_surface_type_boundaries(&resolved_stmts);
 
         let final_stmts = inf.finalize_stmts(resolved_stmts);
+
+        inf.errors.sort_by_key(|error| {
+            (
+                error_priority(&error.kind),
+                error.span.start,
+                error.span.end,
+                same_span_priority(&error.kind),
+            )
+        });
 
         if !inf.errors.is_empty() {
             return Err(inf.errors);
@@ -554,5 +611,21 @@ impl TypeInference {
             ExprKind::StructLiteral { name, .. } => InferType::Struct(name.clone()),
             _ => InferType::Poison,
         }
+    }
+}
+
+fn error_priority(kind: &TypeErrorKind) -> u8 {
+    match kind {
+        TypeErrorKind::PoisonedType
+        | TypeErrorKind::IgnoredResult
+        | TypeErrorKind::IgnoredOption => 1,
+        _ => 0,
+    }
+}
+
+fn same_span_priority(kind: &TypeErrorKind) -> u8 {
+    match kind {
+        TypeErrorKind::NonExhaustiveMatch { .. } | TypeErrorKind::NonExhaustiveStruct { .. } => 0,
+        _ => 1,
     }
 }

@@ -69,6 +69,10 @@ pub enum TypeDescriptor {
     Vec(Box<TypeDescriptor>),
     Struct(u32),
     Enum(u16),
+    Function {
+        params: Box<[TypeDescriptor]>,
+        ret: Box<TypeDescriptor>,
+    },
     Any,
     Error,
     Never,
@@ -89,6 +93,16 @@ impl fmt::Display for TypeDescriptor {
             Self::Vec(inner) => write!(formatter, "vec<{inner}>"),
             Self::Struct(schema_id) => write!(formatter, "struct:{schema_id}"),
             Self::Enum(schema_id) => write!(formatter, "enum:{schema_id}"),
+            Self::Function { params, ret } => {
+                formatter.write_str("fn(")?;
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 {
+                        formatter.write_str(",")?;
+                    }
+                    write!(formatter, "{param}")?;
+                }
+                write!(formatter, ") -> {ret}")
+            }
             Self::Any => formatter.write_str("any"),
             Self::Error => formatter.write_str("error"),
             Self::Never => formatter.write_str("never"),

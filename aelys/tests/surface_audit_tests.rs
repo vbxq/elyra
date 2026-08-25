@@ -28,6 +28,16 @@ fn unresolved_type_variable_in_an_impl_is_rejected_by_the_final_audit() {
 }
 
 #[test]
+fn inferred_struct_member_access_is_resolved_after_constraints() {
+    let value = run(
+        "struct Point { x: int }\nfn read(value) -> int { value.x }\nread(Point { x: 1 })",
+        "test.aelys",
+    )
+    .expect("member lookup must wait for the argument constraint");
+    assert_eq!(value.as_int(), Some(1));
+}
+
+#[test]
 fn generic_struct_declaration_is_audited_not_skipped() {
     let message = compile_message("struct Holder<T> { value: dynamic }\n1");
     assert!(

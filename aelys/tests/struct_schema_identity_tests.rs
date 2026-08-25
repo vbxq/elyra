@@ -183,6 +183,23 @@ let _ = text
     assert_ne!(instances[0].schema_id, instances[1].schema_id);
 }
 
+#[test]
+fn function_fields_have_a_concrete_schema_descriptor() {
+    let runtime = Runtime::new();
+    let module = runtime
+        .compile(
+            "struct Holder { callback: fn(int) -> int }\n0",
+            CompileOptions::default(),
+        )
+        .expect("function-typed fields should compile");
+    let function = deserialize(module.avbc()).expect("compiled module should deserialize");
+    let descriptor = &function.struct_schemas[0].fields[0].ty;
+    assert!(
+        matches!(descriptor, TypeDescriptor::Function { .. }),
+        "function field lowered to {descriptor}"
+    );
+}
+
 fn point_fields() -> Vec<StructFieldSchema> {
     vec![StructFieldSchema {
         offset: 0,

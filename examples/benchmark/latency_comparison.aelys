@@ -8,17 +8,16 @@ fn create_garbage() -> string {
     return b + b
 }
 
-@no_gc
-fn work(arr: int, len: int) -> int {
+fn work(mut arr: Vec<int>, len: int) -> int {
     let mut i = 0
     while i < len {
-        store(arr, i, i * i)
+        arr[i] = i * i
         i = i + 1
     }
     let mut sum = 0
     i = 0
     while i < len {
-        sum = sum + load(arr, i)
+        sum = sum + arr[i]
         i = i + 1
     }
     return sum
@@ -41,7 +40,7 @@ io::print("Max pause: " + convert::to_string(max1) + "us")
 
 io::print("")
 io::print("=== @no_gc version ===")
-let arr = alloc(1024)
+let arr: Vec<int> = vec![0; 1024]
 let t2 = time::timer()
 i = 0
 let mut max2 = 0.0
@@ -52,6 +51,5 @@ while i < 5000 {
     if p > max2 { max2 = p }
     i = i + 1
 }
-free(arr)
 io::print("Total: " + convert::to_string(time::elapsed_ms(t2)) + "ms")
 io::print("Max pause: " + convert::to_string(max2) + "us")

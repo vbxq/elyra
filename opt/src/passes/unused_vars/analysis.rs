@@ -1,4 +1,3 @@
-
 use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
 
@@ -143,10 +142,17 @@ fn collect_uses_in_expr(expr: &TypedExpr, used: &mut HashSet<String>) {
             collect_uses_in_expr(object, used);
             collect_uses_in_expr(value, used);
         }
-        TypedExprKind::ArrayLiteral { elements, .. }
-        | TypedExprKind::VecLiteral { elements, .. } => {
+        TypedExprKind::ArrayLiteral {
+            elements, repeat, ..
+        }
+        | TypedExprKind::VecLiteral {
+            elements, repeat, ..
+        } => {
             for elem in elements {
                 collect_uses_in_expr(elem, used);
+            }
+            if let Some(repeat) = repeat {
+                collect_uses_in_expr(repeat, used);
             }
         }
         TypedExprKind::ArraySized { size, .. } => {

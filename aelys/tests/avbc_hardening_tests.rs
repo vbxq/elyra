@@ -1,4 +1,3 @@
-
 use aelys_bytecode::asm::{BinaryError, MAX_REGISTERS, deserialize, disassemble_to_string};
 use aelys_common::{AelysError, CompileErrorKind, RuntimeErrorKind};
 use aelys_driver::run_file;

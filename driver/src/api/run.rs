@@ -37,6 +37,7 @@ pub fn run_with_config_and_opt(
     let src = Source::new(name, source);
     let tokens = Lexer::with_source(src.clone()).scan()?;
     let stmts = Parser::new_rust_collections(tokens, src.clone()).parse()?;
+    reject_unloadable_needs(&stmts, &src)?;
 
     let typed_program = TypeInference::infer_program(stmts, src.clone()).map_err(|errors| {
         if let Some(err) = errors.first() {
@@ -66,6 +67,29 @@ pub fn run_with_config_and_opt(
         VM::with_config_and_args(src, config, program_args).map_err(AelysError::Runtime)?;
     let func_ref = vm.alloc_function(function).map_err(AelysError::Runtime)?;
     Ok(vm.execute(func_ref)?)
+}
+
+fn reject_unloadable_needs(
+    statements: &[aelys_syntax::Stmt],
+    source: &std::sync::Arc<Source>,
+) -> Result<()> {
+    for statement in statements {
+        let aelys_syntax::StmtKind::Needs(needs) = &statement.kind else {
+            continue;
+        };
+        return Err(AelysError::Compile(CompileError::new(
+            CompileErrorKind::ModuleNotFound {
+                module_path: needs.path.join("."),
+                searched_paths: vec![
+                    "no module search root: use run_file or run_with_vm to load modules"
+                        .to_string(),
+                ],
+            },
+            needs.span,
+            source.clone(),
+        )));
+    }
+    Ok(())
 }
 
 pub fn run_source(source: &str, name: &str, opt_level: Option<OptimizationLevel>) -> Result<Value> {

@@ -56,6 +56,9 @@ pub enum TypeErrorKind {
     UntypedNativeValue {
         name: String,
     },
+    UntypedNativeBoundary {
+        name: String,
+    },
     UnmaterializedAppliedType {
         name: String,
     },
@@ -368,6 +371,11 @@ impl fmt::Display for TypeError {
             TypeErrorKind::UntypedNativeValue { name } => write!(
                 f,
                 "native value '{}' has no Aelys type; declare its signature before using it",
+                name
+            ),
+            TypeErrorKind::UntypedNativeBoundary { name } => write!(
+                f,
+                "native value '{}' crosses the typed Aelys boundary without a signature; declare its ABI signature before using it",
                 name
             ),
             TypeErrorKind::UnmaterializedAppliedType { name } => write!(
@@ -841,6 +849,7 @@ impl TypeErrorKind {
             Self::NullIsNotInSurface => 106,
             Self::DynamicIsNotInSurface => 347,
             Self::UntypedNativeValue { .. } => 348,
+            Self::UntypedNativeBoundary { .. } => 379,
             Self::UnmaterializedAppliedType { .. } => 349,
             Self::QuestionMarkOutsideResult => 305,
             Self::QuestionMarkTypeMismatch { .. } => 306,

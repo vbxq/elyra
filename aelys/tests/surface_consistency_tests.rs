@@ -1,4 +1,3 @@
-
 use aelys_opt::OptimizationLevel;
 use std::path::{Path, PathBuf};
 use std::process::Command;

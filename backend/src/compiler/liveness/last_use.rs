@@ -148,10 +148,17 @@ fn collect_all_uses_in_expr(expr: &TypedExpr, uses: &mut HashSet<String>) {
             collect_all_uses_in_expr(object, uses);
             collect_all_uses_in_expr(value, uses);
         }
-        TypedExprKind::ArrayLiteral { elements, .. }
-        | TypedExprKind::VecLiteral { elements, .. } => {
+        TypedExprKind::ArrayLiteral {
+            elements, repeat, ..
+        }
+        | TypedExprKind::VecLiteral {
+            elements, repeat, ..
+        } => {
             for elem in elements {
                 collect_all_uses_in_expr(elem, uses);
+            }
+            if let Some(repeat) = repeat {
+                collect_all_uses_in_expr(repeat, uses);
             }
         }
         TypedExprKind::ArraySized { size, .. } => {

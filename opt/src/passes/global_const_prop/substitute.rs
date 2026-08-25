@@ -54,10 +54,17 @@ impl GlobalConstantPropagator {
                 self.substitute_constants(object);
                 self.substitute_constants(value);
             }
-            TypedExprKind::ArrayLiteral { elements, .. }
-            | TypedExprKind::VecLiteral { elements, .. } => {
+            TypedExprKind::ArrayLiteral {
+                elements, repeat, ..
+            }
+            | TypedExprKind::VecLiteral {
+                elements, repeat, ..
+            } => {
                 for elem in elements {
                     self.substitute_constants(elem);
+                }
+                if let Some(repeat) = repeat {
+                    self.substitute_constants(repeat);
                 }
             }
             TypedExprKind::ArraySized { size, .. } => {

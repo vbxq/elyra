@@ -7,7 +7,6 @@ let WIDTH: int = 80
 let HEIGHT: int = 24
 let MAX_ITER: int = 100
 
-@no_gc
 fn mandelbrot(cr: float, ci: float) -> int {
     let mut zr: float = 0.0
     let mut zi: float = 0.0
@@ -29,8 +28,7 @@ fn mandelbrot(cr: float, ci: float) -> int {
     return 0
 }
 
-@no_gc
-fn render_frame(buf: int) {
+fn render_frame(mut buf: Vec<int>) -> Vec<int> {
     let x_min: float = -2.5
     let x_max: float = 1.0
     let y_min: float = -1.0
@@ -44,24 +42,22 @@ fn render_frame(buf: int) {
         for x in 0..WIDTH {
             let cr: float = x_min + convert::to_float(x) * x_step
             let iter = mandelbrot(cr, ci)
-            store(buf, y * WIDTH + x, iter)
+            buf[y * WIDTH + x] = iter
         }
     }
+    buf
 }
 
-@no_gc
 fn run_benchmark() {
-    let buf = alloc(WIDTH * HEIGHT)
+    let mut buf: Vec<int> = vec![0; WIDTH * HEIGHT]
 
     let t = time::timer()
     for frame in 0..10 {
-        render_frame(buf)
+        buf = render_frame(buf)
     }
     let elapsed = time::elapsed_ms(t)
 
-    free(buf)
-
-    io::print("10 frames rendered (@no_gc)")
+    io::print("10 frames rendered (Vec)")
     io::print("time: " + convert::to_string(elapsed) + "ms")
     io::print("fps: " + convert::to_string(10000 / elapsed))
 }

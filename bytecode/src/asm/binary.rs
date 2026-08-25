@@ -1,4 +1,3 @@
-
 use crate::bytecode::{
     Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth, Function,
     GlobalLayout, IntWidth, OpCode, StructFieldSchema, StructSchema, TypeDescriptor,
@@ -517,6 +516,20 @@ impl BinaryWriter {
                 self.write_u8(14);
                 self.write_u16(*schema_id);
             }
+            TypeDescriptor::Function { params, ret } => {
+                self.write_u8(15);
+                ensure_len(params.len(), MAX_STRUCT_FIELDS, "function parameter count")?;
+                self.write_u16(u16::try_from(params.len()).map_err(|_| {
+                    BinaryError::LimitExceeded {
+                        what: "function parameter count",
+                        limit: MAX_STRUCT_FIELDS,
+                    }
+                })?);
+                for param in params {
+                    self.write_descriptor(param)?;
+                }
+                self.write_descriptor(ret)?;
+            }
         }
         Ok(())
     }
@@ -940,9 +953,7 @@ impl<'a> BinaryReader<'a> {
                 let s = String::from_utf8(bytes).map_err(|_| BinaryError::InvalidUtf8)?;
                 Ok(Constant::String(s))
             }
-            5 => {
-                Ok(Constant::NestedFunction(self.read_u32()?))
-            }
+            5 => Ok(Constant::NestedFunction(self.read_u32()?)),
             _ => Err(BinaryError::InvalidConstantType(tag)),
         }
     }
@@ -1274,6 +1285,24 @@ impl<'a> BinaryReader<'a> {
             12 => TypeDescriptor::Error,
             13 => TypeDescriptor::Never,
             14 => TypeDescriptor::Enum(self.read_u16()?),
+            15 => {
+                let count = usize::from(self.read_u16()?);
+                if count > MAX_STRUCT_FIELDS {
+                    return Err(BinaryError::LimitExceeded {
+                        what: "function parameter count",
+                        limit: MAX_STRUCT_FIELDS,
+                    });
+                }
+                self.ensure_records(count, 1, "function parameter count")?;
+                let mut params = Vec::with_capacity(count);
+                for _ in 0..count {
+                    params.push(self.read_descriptor(depth + 1)?);
+                }
+                TypeDescriptor::Function {
+                    params: params.into_boxed_slice(),
+                    ret: Box::new(self.read_descriptor(depth + 1)?),
+                }
+            }
             tag => return Err(BinaryError::InvalidConstantType(tag)),
         })
     }
@@ -1612,6 +1641,15 @@ fn validate_descriptor_ids(
             validate_descriptor_ids(ok, struct_count, enum_ids, depth + 1)?;
             validate_descriptor_ids(err, struct_count, enum_ids, depth + 1)
         }
+        TypeDescriptor::Function { params, ret } => {
+            for param in params {
+                validate_descriptor_ids(param, struct_count, enum_ids, depth + 1)?;
+            }
+            validate_descriptor_ids(ret, struct_count, enum_ids, depth + 1)
+        }
+        TypeDescriptor::Any | TypeDescriptor::Never => Err(BinaryError::InvalidStructSchema(
+            "struct descriptors must be concrete".to_string(),
+        )),
         _ => Ok(()),
     }
 }
@@ -1643,6 +1681,12 @@ fn validate_enum_descriptor(
         TypeDescriptor::Result(ok, err) => {
             validate_enum_descriptor(ok, ids, depth + 1)?;
             validate_enum_descriptor(err, ids, depth + 1)
+        }
+        TypeDescriptor::Function { params, ret } => {
+            for param in params {
+                validate_enum_descriptor(param, ids, depth + 1)?;
+            }
+            validate_enum_descriptor(ret, ids, depth + 1)
         }
         _ => Ok(()),
     }

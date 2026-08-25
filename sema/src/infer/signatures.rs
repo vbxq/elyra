@@ -179,6 +179,7 @@ impl TypeInference {
             .is_some_and(|param| param.name == "self");
         let mut method_type_params = trait_type_params.to_vec();
         method_type_params.extend(method.type_params.iter().cloned());
+        method_type_params.push("Self".to_string());
         let saved_type_params =
             std::mem::replace(&mut self.type_params_in_scope, method_type_params);
         let params = method
@@ -539,6 +540,7 @@ impl TypeInference {
 
             let mut method_type_params = impl_type_params.to_vec();
             method_type_params.extend(method.type_params.iter().cloned());
+            method_type_params.push("Self".to_string());
             let saved_type_params =
                 std::mem::replace(&mut self.type_params_in_scope, method_type_params);
             let mut params = Vec::with_capacity(method.params.len());
@@ -554,11 +556,17 @@ impl TypeInference {
                 };
                 params.push(ty);
             }
-            let ret = method
+            let mut ret = method
                 .return_type
                 .as_ref()
                 .map(|ann| self.type_from_annotation(ann))
                 .unwrap_or_else(|| self.type_gen.fresh());
+            let self_substitution = HashMap::from([("Self".to_string(), target_ty.clone())]);
+            params = params
+                .into_iter()
+                .map(|param| param.substitute_params(&self_substitution))
+                .collect();
+            ret = ret.substitute_params(&self_substitution);
             let mut method_bounds = impl_bounds.clone();
             method_bounds.extend(self.bounds_from_where_clauses(&method.where_clauses));
             self.type_params_in_scope = saved_type_params;

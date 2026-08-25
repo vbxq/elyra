@@ -1,4 +1,3 @@
-
 mod atom;
 mod binary;
 mod call;
@@ -19,7 +18,15 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr> {
+        if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
+            return self.parse_expression_range(None);
+        }
+
         let expr = self.or_expr()?;
+
+        if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
+            return self.parse_expression_range(Some(expr));
+        }
 
         if self.match_token(&TokenKind::Eq) {
             let value = self.assignment()?;
@@ -152,6 +159,43 @@ impl Parser {
         }
 
         Ok(expr)
+    }
+
+    fn parse_expression_range(&mut self, start: Option<Expr>) -> Result<Expr> {
+        let range_start = start
+            .as_ref()
+            .map(|expr| expr.span)
+            .unwrap_or(self.peek().span);
+        let inclusive = self.match_token(&TokenKind::DotDotEq);
+        if !inclusive {
+            self.consume(&TokenKind::DotDot, "..")?;
+        }
+        let end = if matches!(
+            self.peek().kind,
+            TokenKind::Semicolon
+                | TokenKind::RBracket
+                | TokenKind::RParen
+                | TokenKind::RBrace
+                | TokenKind::Comma
+                | TokenKind::Eof
+                | TokenKind::Step
+        ) {
+            None
+        } else {
+            Some(Box::new(self.expression()?))
+        };
+        let end_span = end
+            .as_ref()
+            .map(|expr| expr.span)
+            .unwrap_or(self.previous().span);
+        Ok(Expr::new(
+            ExprKind::Range {
+                start: start.map(Box::new),
+                end,
+                inclusive,
+            },
+            range_start.merge(end_span),
+        ))
     }
 
     fn match_compound_assign(&mut self) -> Option<BinaryOp> {

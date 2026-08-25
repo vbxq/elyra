@@ -234,10 +234,17 @@ fn collect_calls_in_expr(expr: &TypedExpr, calls: &mut HashSet<String>) {
         }
         TypedExprKind::Assign { value, .. } => collect_calls_in_expr(value, calls),
         TypedExprKind::Member { object, .. } => collect_calls_in_expr(object, calls),
-        TypedExprKind::ArrayLiteral { elements, .. }
-        | TypedExprKind::VecLiteral { elements, .. } => {
+        TypedExprKind::ArrayLiteral {
+            elements, repeat, ..
+        }
+        | TypedExprKind::VecLiteral {
+            elements, repeat, ..
+        } => {
             for e in elements {
                 collect_calls_in_expr(e, calls);
+            }
+            if let Some(repeat) = repeat {
+                collect_calls_in_expr(repeat, calls);
             }
         }
         TypedExprKind::ArraySized { size, .. } => collect_calls_in_expr(size, calls),
@@ -361,10 +368,17 @@ fn count_calls_in_expr(expr: &TypedExpr, counts: &mut HashMap<String, usize>) {
         }
         TypedExprKind::Assign { value, .. } => count_calls_in_expr(value, counts),
         TypedExprKind::Member { object, .. } => count_calls_in_expr(object, counts),
-        TypedExprKind::ArrayLiteral { elements, .. }
-        | TypedExprKind::VecLiteral { elements, .. } => {
+        TypedExprKind::ArrayLiteral {
+            elements, repeat, ..
+        }
+        | TypedExprKind::VecLiteral {
+            elements, repeat, ..
+        } => {
             for e in elements {
                 count_calls_in_expr(e, counts);
+            }
+            if let Some(repeat) = repeat {
+                count_calls_in_expr(repeat, counts);
             }
         }
         TypedExprKind::ArraySized { size, .. } => count_calls_in_expr(size, counts),

@@ -48,10 +48,17 @@ impl DeadCodeEliminator {
                 self.eliminate_in_expr(object);
                 self.eliminate_in_expr(value);
             }
-            TypedExprKind::ArrayLiteral { elements, .. }
-            | TypedExprKind::VecLiteral { elements, .. } => {
+            TypedExprKind::ArrayLiteral {
+                elements, repeat, ..
+            }
+            | TypedExprKind::VecLiteral {
+                elements, repeat, ..
+            } => {
                 for elem in elements {
                     self.eliminate_in_expr(elem);
+                }
+                if let Some(repeat) = repeat {
+                    self.eliminate_in_expr(repeat);
                 }
             }
             TypedExprKind::ArraySized { size, .. } => {

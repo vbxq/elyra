@@ -50,9 +50,7 @@ impl Compiler {
                 body,
                 stmt.span,
             ),
-            StmtKind::ForEach { .. } => {
-                Ok(())
-            }
+            StmtKind::ForEach { .. } => Ok(()),
             StmtKind::Break => self.compile_break(stmt.span),
             StmtKind::Continue => self.compile_continue(stmt.span),
             StmtKind::Return(expr) => self.compile_return(expr.as_ref(), stmt.span),

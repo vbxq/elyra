@@ -40,7 +40,6 @@ impl Stage2Imported for Stage2Beacon {
 }
 "#;
 
-
 #[test]
 fn test_selective_trait_import_does_not_bring_an_unnamed_struct_into_scope() {
     let dir = create_module_env();
@@ -143,7 +142,6 @@ measure(Stage2Beacon { seed: 2 })
     );
 }
 
-
 #[test]
 fn test_the_named_type_is_usable() {
     let dir = create_module_env();
@@ -210,7 +208,6 @@ b.seed
     );
 }
 
-
 #[test]
 fn test_whole_module_form_still_imports_everything_public() {
     let dir = create_module_env();
@@ -233,7 +230,6 @@ b.imported_mark() + s
     let result = run_file(&main_path).expect("the whole-module form must import everything public");
     assert_eq!(result.as_int(), Some(121));
 }
-
 
 #[test]
 fn test_impl_is_withheld_when_only_the_self_type_is_imported() {
@@ -303,7 +299,6 @@ b.imported_mark()
     let result = run_file(&main_path).expect("an impl must travel when both its ends are in scope");
     assert_eq!(result.as_int(), Some(21));
 }
-
 
 #[test]
 fn test_inherent_impl_travels_with_a_selectively_imported_struct() {

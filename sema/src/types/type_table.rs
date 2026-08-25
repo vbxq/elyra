@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub struct StructField {
     pub name: String,
     pub ty: InferType,
+    pub is_pub: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +99,7 @@ pub struct TypeTable {
     enum_definition_ordinals: HashMap<String, u32>,
     nominal_instance_args: HashMap<String, Vec<InferType>>,
     nominal_instance_origins: HashMap<String, String>,
+    nominal_instances_by_key: HashMap<(String, String), String>,
     methods: HashMap<(String, String), StructMethod>,
     traits: HashMap<String, TraitDef>,
     trait_methods: HashMap<(String, String), Vec<TraitMethod>>,
@@ -206,16 +208,35 @@ impl TypeTable {
     }
 
     pub fn register_nominal_instance_args(&mut self, name: String, args: Vec<InferType>) {
-        self.nominal_instance_args.insert(name, args);
+        let args_key = type_args_key(&args);
+        self.nominal_instance_args.insert(name.clone(), args);
+        if let Some(origin) = self.nominal_instance_origins.get(&name).cloned() {
+            self.nominal_instances_by_key
+                .insert((origin, args_key), name);
+        }
     }
 
     pub fn nominal_instance_args(&self, name: &str) -> Option<&[InferType]> {
         self.nominal_instance_args.get(name).map(Vec::as_slice)
     }
 
+    pub fn nominal_instance_for(&self, origin: &str, args: &[InferType]) -> Option<&str> {
+        self.nominal_instances_by_key
+            .get(&(origin.to_string(), type_args_key(args)))
+            .map(String::as_str)
+    }
+
     pub fn register_nominal_instance_origin(&mut self, generated: String, origin: String) {
         self.nominal_instance_origins
             .insert(generated.clone(), origin.clone());
+        if let Some(args_key) = self
+            .nominal_instance_args
+            .get(&generated)
+            .map(|args| type_args_key(args))
+        {
+            self.nominal_instances_by_key
+                .insert((origin.clone(), args_key), generated.clone());
+        }
         if let Some(ordinal) = self.enum_definition_ordinals.get(&origin).copied() {
             self.enum_definition_ordinals
                 .insert(generated.clone(), ordinal);

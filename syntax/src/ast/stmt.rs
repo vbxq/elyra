@@ -105,6 +105,7 @@ pub enum StmtKind {
 pub struct StructFieldDecl {
     pub name: String,
     pub type_annotation: TypeAnnotation,
+    pub is_pub: bool,
     pub span: Span,
 }
 

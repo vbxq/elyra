@@ -1,4 +1,3 @@
-
 use aelys_bytecode::Register;
 use aelys_common::{RuntimeError, RuntimeErrorKind};
 use aelys_runtime::{
@@ -232,7 +231,6 @@ fn test_current_frame_methods() {
     vm.current_frame_mut().unwrap().set_ip(42);
     assert_eq!(vm.current_frame().unwrap().ip(), 42);
 }
-
 
 #[test]
 fn test_execute_simple_return() {

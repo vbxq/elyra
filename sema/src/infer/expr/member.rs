@@ -367,6 +367,17 @@ impl TypeInference {
             );
         }
 
+        if separator == MemberSeparator::Dot && matches!(typed_object.ty, InferType::Var(_)) {
+            return (
+                TypedExprKind::Member {
+                    object: Box::new(typed_object),
+                    member: member.to_string(),
+                    separator,
+                },
+                self.type_gen.fresh(),
+            );
+        }
+
         if option_none {
             let ty = InferType::Option(Box::new(self.type_gen.fresh()));
             self.record_sum_type("Option::None", ty.clone(), object.span.merge(_span));
@@ -1257,7 +1268,7 @@ fn root_binding_name(expr: &Expr) -> Option<&str> {
     }
 }
 
-fn nominal_parts(
+pub(crate) fn nominal_parts(
     ty: &InferType,
     type_table: &crate::types::TypeTable,
 ) -> Option<(String, HashMap<String, InferType>)> {

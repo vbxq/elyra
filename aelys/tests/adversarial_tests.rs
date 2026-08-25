@@ -3,7 +3,6 @@ use aelys_runtime::{Function, OpCode, VM, Value};
 use aelys_syntax::Source;
 use common::*;
 
-
 #[test]
 fn malicious_bytecode_invalid_opcode() {
     let mut vm = VM::new(Source::new("test.aelys", "")).unwrap();
@@ -80,7 +79,6 @@ match fs::join("/app", "..%2F..%2Fetc%2Fpasswd") { Ok(_) => 0, Err(_) => 1 }
     assert!(result.as_int().is_some(), "expected a handled Result");
 }
 
-
 #[test]
 fn type_confusion_null_as_int() {
     let code = r#"
@@ -110,7 +108,6 @@ x + 10
     let err = run_aelys_err(code);
     assert!(err.contains("type") || err.contains("Type"));
 }
-
 
 #[test]
 #[ignore]
@@ -160,7 +157,6 @@ while i < 100000 {
     let _ = run_aelys_result(code);
 }
 
-
 #[test]
 fn integer_overflow_checked() {
     let code = r#"
@@ -181,7 +177,6 @@ big * big
     assert!(error.contains("integer overflow"));
 }
 
-
 #[test]
 fn time_format_string_attack() {
     let code = r#"
@@ -189,7 +184,6 @@ format("%n%n%n%n%n")
 "#;
     let _ = run_aelys(code);
 }
-
 
 #[test]
 fn binary_oversized_function_count() {
@@ -237,7 +231,6 @@ fn binary_oversized_constants() {
     assert!(result.is_err());
 }
 
-
 #[test]
 fn unicode_bidi_override_attack() {
     let code = r#"
@@ -255,7 +248,6 @@ let х = 42
 "#;
     assert_aelys_int(code, 42);
 }
-
 
 #[test]
 fn division_by_zero_direct() {
@@ -278,8 +270,6 @@ fn modulo_by_zero() {
     assert_aelys_error_contains(code, "division");
 }
 
-
-
 #[test]
 fn gc_collection_during_critical_section() {
     let code = r#"
@@ -295,7 +285,6 @@ while i < 5000 {
     assert_aelys_int(code, 42);
 }
 
-
 #[test]
 fn function_modification_attempt() {
     let code = r#"
@@ -305,7 +294,6 @@ result
 "#;
     assert_aelys_int(code, 42);
 }
-
 
 #[test]
 fn null_function_call() {

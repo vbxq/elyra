@@ -141,10 +141,17 @@ impl FunctionInliner {
             }
             TypedExprKind::Assign { value, .. } => self.inline_in_expr(value, analysis),
             TypedExprKind::Member { object, .. } => self.inline_in_expr(object, analysis),
-            TypedExprKind::ArrayLiteral { elements, .. }
-            | TypedExprKind::VecLiteral { elements, .. } => {
+            TypedExprKind::ArrayLiteral {
+                elements, repeat, ..
+            }
+            | TypedExprKind::VecLiteral {
+                elements, repeat, ..
+            } => {
                 for e in elements.iter_mut() {
                     self.inline_in_expr(e, analysis);
+                }
+                if let Some(repeat) = repeat {
+                    self.inline_in_expr(repeat, analysis);
                 }
             }
             TypedExprKind::ArraySized { size, .. } => self.inline_in_expr(size, analysis),

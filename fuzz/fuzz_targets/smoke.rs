@@ -1,7 +1,7 @@
 #![no_main]
 
 use aelys::{CompileOptions, IsolateConfig, RunOptions, Runtime};
-use aelys_bytecode::asm::deserialize;
+use aelys_bytecode::asm::{deserialize, disassemble_to_string};
 use aelys_runtime::{ExecutionControl, VM};
 use aelys_syntax::Source;
 use libfuzzer_sys::fuzz_target;
@@ -24,7 +24,10 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(function) = deserialize(data)
         && let Ok(mut vm) = VM::new(Source::new("<fuzz-avbc>", ""))
     {
-        if let Ok(function_ref) = vm.alloc_function(function) {
+        let _ = disassemble_to_string(&function);
+        if aelys_runtime::vm::verify_function(&function, vm.heap(), 0).is_ok()
+            && let Ok(function_ref) = vm.alloc_function(function)
+        {
             vm.configure_execution(ExecutionControl {
                 max_instructions: Some(10_000),
                 ..ExecutionControl::default()

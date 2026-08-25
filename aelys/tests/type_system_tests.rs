@@ -604,6 +604,24 @@ fn generic_trait_impl_dispatches_for_a_concrete_instance() {
 }
 
 #[test]
+fn trait_self_is_usable_in_method_signatures() {
+    let result = run_ok(
+        r#"
+        trait Identity {
+            fn identity(self) -> Self;
+        }
+        struct Boxed { value: int }
+        impl Identity for Boxed {
+            fn identity(self) -> Self { self }
+        }
+        let boxed = Boxed { value: 7 }
+        boxed.identity().value
+        "#,
+    );
+    assert_eq!(result.as_int(), Some(7));
+}
+
+#[test]
 fn generic_trait_argument_substitutes_in_method_signature() {
     let result = run_ok(
         r#"
@@ -776,6 +794,52 @@ fn direct_generic_instantiation_rejects_type_growth() {
         error.contains("recursive") && error.contains("generic"),
         "{error}"
     );
+}
+
+#[test]
+fn generic_impl_instantiation_hits_the_named_limit() {
+    let error = run(
+        r#"
+        struct Box<T> { value: T }
+        impl<T> Box<T> {
+            fn recurse(self) -> int {
+                let next = Box { value: self }
+                next.recurse()
+            }
+        }
+        Box { value: 0 }.recurse()
+        "#,
+        "stage2_impl_monomorphization_limit.aelys",
+    )
+    .expect_err("recursive generic impl growth must be rejected")
+    .to_string();
+    assert!(
+        error.contains("monomorphization") && error.contains("limit"),
+        "expected the named monomorphization limit diagnostic, got: {error}"
+    );
+}
+
+#[test]
+fn deferred_enum_member_resolves_to_its_method() {
+    let result = run_ok(
+        r#"
+        enum Flag { On, Off }
+        impl Flag {
+            fn value(self) -> int {
+                match self {
+                    Flag::On => 1,
+                    Flag::Off => 0
+                }
+            }
+        }
+        fn identity<T>(value: T) -> T { value }
+        fn takes_flag(value: Flag) -> int { 1 }
+        let flag = identity(Flag::On)
+        takes_flag(flag)
+        flag.value()
+        "#,
+    );
+    assert_eq!(result.as_int(), Some(1));
 }
 
 #[test]

@@ -12,7 +12,15 @@ impl TypeInference {
     ) -> TypedStmt {
         match &stmt.kind {
             aelys_syntax::StmtKind::Expression(expr) => {
-                let typed_expr = self.infer_expr(expr);
+                let mut typed_expr = self.infer_expr(expr);
+
+                if let crate::typed_ast::TypedExprKind::Float(value) = &typed_expr.kind
+                    && *return_type == InferType::F32
+                    && value.is_finite()
+                    && value.abs() <= f32::MAX as f64
+                {
+                    typed_expr.ty = InferType::F32;
+                }
 
                 if matches!(return_type, InferType::Unit | InferType::Dynamic) {
                     self.record_must_use_value(&typed_expr);

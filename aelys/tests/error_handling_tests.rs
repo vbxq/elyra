@@ -40,7 +40,7 @@ fn infer_message(source_text: &str) -> String {
         };
     errors
         .into_iter()
-        .map(|error| error.to_string())
+        .map(|error| format!("E{:04} {}", error.diagnostic_code(), error))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -64,7 +64,7 @@ fn compile_untyped_native(source_text: &str) -> String {
     };
     errors
         .into_iter()
-        .map(|error| error.to_string())
+        .map(|error| format!("E{:04} {}", error.diagnostic_code(), error))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -87,7 +87,7 @@ fn compile_untyped_native_annotation(source_text: &str) -> String {
     };
     errors
         .into_iter()
-        .map(|error| error.to_string())
+        .map(|error| format!("E{:04} {}", error.diagnostic_code(), error))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -320,15 +320,35 @@ fn untyped_native_cannot_satisfy_a_sum_annotation() {
     let message = compile_untyped_native_annotation(
         "let value: Option<int> = custom::read()\nmatch value { Some(_) => 1, None => 0 }",
     );
-    assert!(message.contains("untyped native"), "{message}");
+    assert!(message.contains("E0379"), "{message}");
 }
 
 #[test]
 fn untyped_native_cannot_enter_a_binding_without_a_signature() {
     let message = compile_untyped_native("let value = custom::read()\nlet _ = value\n0");
     assert!(
-        message.contains("has no Aelys type"),
+        message.contains("E0379") && message.contains("signature"),
         "expected a named native-boundary diagnostic: {message}"
+    );
+}
+
+#[test]
+fn untyped_native_boundary_has_a_named_diagnostic() {
+    let message = compile_untyped_native("let value = custom::read()\nlet _ = value\n0");
+    assert!(message.contains("E0379"), "expected E0379: {message}");
+    assert!(
+        message.contains("custom::read") && message.contains("signature"),
+        "expected the native boundary repair: {message}"
+    );
+}
+
+#[test]
+fn untyped_native_cannot_drive_iteration() {
+    let message = compile_untyped_native("for value in custom::read() { value }\n0");
+    assert!(message.contains("E0379"), "expected E0379: {message}");
+    assert!(
+        message.contains("custom::read"),
+        "expected the native name: {message}"
     );
 }
 
@@ -418,7 +438,7 @@ fn dynamic_value_cannot_satisfy_a_sum_method_argument() {
 #[test]
 fn untyped_native_cannot_cross_a_typed_operator_boundary() {
     let message = compile_untyped_native("custom::read() == 1");
-    assert!(message.contains("untyped native"), "{message}");
+    assert!(message.contains("E0379"), "{message}");
 }
 
 #[test]
@@ -739,7 +759,7 @@ fn untyped_native_cannot_drive_a_guard() {
     let message = compile_untyped_native(
         "match Some(1) { Some(value) if custom::read() => value, None => 0 }",
     );
-    assert!(message.contains("untyped native"), "{message}");
+    assert!(message.contains("E0379"), "{message}");
 }
 
 #[test]

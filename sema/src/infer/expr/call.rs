@@ -139,16 +139,11 @@ impl TypeInference {
                         arg_index: 0,
                     };
                     if self.reject_dynamic(&arg.ty, param_ty, arg.span, reason.clone()) {
-                    } else if let InferType::UntypedNative(name) = &arg.ty
-                        && !matches!(param_ty, InferType::Dynamic)
-                    {
+                    } else if let InferType::UntypedNative(name) = &arg.ty {
                         self.errors.push(TypeError {
-                            kind: TypeErrorKind::UntypedNativeTypeMismatch {
-                                name: name.clone(),
-                                expected: param_ty.clone(),
-                            },
+                            kind: TypeErrorKind::UntypedNativeBoundary { name: name.clone() },
                             span: arg.span,
-                            reason,
+                            reason: reason.clone(),
                         });
                     }
                     if let TypedExprKind::Int(value) = &arg.kind
@@ -168,6 +163,22 @@ impl TypeInference {
                                     value: *value,
                                     target: param_ty.clone(),
                                 },
+                            });
+                        }
+                    }
+                    if let TypedExprKind::Float(value) = &arg.kind
+                        && *param_ty == InferType::F32
+                    {
+                        if value.is_finite() && value.abs() <= f32::MAX as f64 {
+                            arg.ty = InferType::F32;
+                        } else {
+                            self.errors.push(TypeError {
+                                kind: TypeErrorKind::Mismatch {
+                                    expected: InferType::F32,
+                                    found: InferType::F64,
+                                },
+                                span: arg.span,
+                                reason: reason.clone(),
                             });
                         }
                     }
@@ -738,14 +749,9 @@ impl TypeInference {
             if self.reject_dynamic(&arg.ty, expected, arg.span, reason.clone()) {
                 continue;
             }
-            if let InferType::UntypedNative(name) = &arg.ty
-                && !matches!(expected, InferType::Dynamic)
-            {
+            if let InferType::UntypedNative(name) = &arg.ty {
                 self.errors.push(TypeError {
-                    kind: TypeErrorKind::UntypedNativeTypeMismatch {
-                        name: name.clone(),
-                        expected: expected.clone(),
-                    },
+                    kind: TypeErrorKind::UntypedNativeBoundary { name: name.clone() },
                     span: arg.span,
                     reason,
                 });

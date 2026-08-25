@@ -248,6 +248,31 @@ impl TypeInference {
         let typed_object = self.infer_expr(object);
         let typed_index = self.infer_expr(index);
 
+        if matches!(typed_index.ty, InferType::Range) {
+            let result_ty = match &typed_object.ty {
+                InferType::Array(inner)
+                | InferType::FixedArray(inner, _)
+                | InferType::Vec(inner) => InferType::Vec(inner.clone()),
+                receiver => {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::InvalidIndex {
+                            receiver: receiver.clone(),
+                        },
+                        span: object.span,
+                        reason: ConstraintReason::ArrayIndex,
+                    });
+                    InferType::Poison
+                }
+            };
+            return (
+                TypedExprKind::Slice {
+                    object: Box::new(typed_object),
+                    range: Box::new(typed_index),
+                },
+                result_ty,
+            );
+        }
+
         if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,

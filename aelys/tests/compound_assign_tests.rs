@@ -1,7 +1,5 @@
-
 mod common;
 use common::*;
-
 
 #[test]
 fn test_plus_eq() {
@@ -63,7 +61,6 @@ x
     );
 }
 
-
 #[test]
 fn test_increment() {
     assert_aelys_int(
@@ -90,7 +87,6 @@ n
         8,
     );
 }
-
 
 #[test]
 fn test_plus_eq_in_for_loop() {
@@ -134,7 +130,6 @@ count
     );
 }
 
-
 #[test]
 fn test_plus_eq_on_array_index() {
     assert_aelys_int(
@@ -159,7 +154,6 @@ arr[2]
     );
 }
 
-
 #[test]
 fn test_plus_eq_float() {
     let result = run_aelys(
@@ -172,7 +166,6 @@ x
     assert_eq!(result.as_float(), Some(4.0));
 }
 
-
 #[test]
 fn test_plus_eq_string() {
     assert_aelys_str(
@@ -184,7 +177,6 @@ s
         "hello world",
     );
 }
-
 
 #[test]
 fn test_all_compound_ops_chained() {
@@ -202,7 +194,6 @@ x
     );
 }
 
-
 #[test]
 fn test_plus_eq_with_expression() {
     assert_aelys_int(
@@ -216,12 +207,10 @@ x
     );
 }
 
-
 #[test]
 fn test_double_negation_preserved() {
     assert_aelys_int("--42", 42);
 }
-
 
 #[test]
 fn test_increment_in_function() {
@@ -239,7 +228,6 @@ count_up(100)
         100,
     );
 }
-
 
 #[test]
 fn test_compound_assign_mut_param() {

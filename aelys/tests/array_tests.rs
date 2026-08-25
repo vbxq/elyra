@@ -443,7 +443,7 @@ fn test_e2e_array_oob_read() {
 
 #[test]
 fn test_e2e_array_oob_write() {
-    assert_aelys_error_contains("let arr = [1, 2, 3]; arr[5] = 10", "out of bounds");
+    assert_aelys_error_contains("let mut arr = [1, 2, 3]; arr[5] = 10", "out of bounds");
 }
 
 #[test]
@@ -808,7 +808,6 @@ fn test_e2e_vec_len_in_condition() {
     );
 }
 
-
 #[test]
 fn test_e2e_vec_push_string() {
     assert_aelys_str(
@@ -895,7 +894,6 @@ fn test_e2e_vec_push_in_untyped_fn() {
         3,
     );
 }
-
 
 #[test]
 fn test_e2e_2d_array_basic() {

@@ -90,7 +90,7 @@ pub(super) fn verify(
         OpCode::Cast => {
             verify_reg(a, num_regs, "Cast")?;
             verify_reg(b, num_regs, "Cast")?;
-            if CastTarget::from_u8(u8::try_from(c).expect("operand occupies one byte")).is_none() {
+            if CastTarget::from_u8(c as u8).is_none() {
                 return Err(format!("invalid cast target {c}"));
             }
         }

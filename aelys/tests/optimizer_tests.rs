@@ -601,3 +601,21 @@ fn test_local_const_prop_float() {
     let expected = std::f64::consts::PI * 2.0 * 2.0;
     assert!((result.as_float().unwrap() - expected).abs() < 0.0001);
 }
+
+#[test]
+fn optimizer_keeps_repeat_count_bindings_live() {
+    let result = run_with_opt(
+        "fn build() -> int { let size = 3; let values = vec![0; size]; values.len() } build()",
+        OptimizationLevel::Standard,
+    );
+    assert_eq!(result.as_int(), Some(3));
+}
+
+#[test]
+fn optimizer_keeps_computed_repeat_count_bindings_live() {
+    let result = run_with_opt(
+        "fn build(width: int, height: int) -> int { let size = width * height; let values = vec![0; size]; values.len() } build(2, 3)",
+        OptimizationLevel::Standard,
+    );
+    assert_eq!(result.as_int(), Some(6));
+}

@@ -592,6 +592,12 @@ impl VM {
                         self.value_satisfies_schema(*value, &field.ty, tables, depth + 1)
                     })
             }
+            TypeDescriptor::Function { .. } => self.is_object_kind(value, |kind| {
+                matches!(
+                    kind,
+                    ObjectKind::Function(_) | ObjectKind::Closure(_) | ObjectKind::Native(_)
+                )
+            }),
             TypeDescriptor::Any => !value.is_null() && value.as_nested_fn_marker().is_none(),
             TypeDescriptor::Error => self.sum_payload_if(value, SumTag::ErrorMessage).is_some(),
             TypeDescriptor::Never => false,

@@ -50,3 +50,4 @@ pub use native::{
     ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,
 };
 pub use roots::HostRoot;
+pub use verifier::verify_function;

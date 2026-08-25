@@ -11,7 +11,6 @@ use aelys_syntax::{Source, StmtKind};
 use std::path::Path;
 use std::sync::Arc;
 
-
 impl ModuleLoader {
     pub(crate) fn compile_module(
         &mut self,

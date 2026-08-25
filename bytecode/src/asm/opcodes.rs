@@ -1,4 +1,3 @@
-
 use super::assembler::{AasmParser, AssemblerError, Result};
 use super::lexer::Token;
 use crate::bytecode::OpCode;
