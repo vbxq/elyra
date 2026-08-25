@@ -32,3 +32,31 @@ impl AelysSum {
         Self { tag, payload }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct AelysEnum {
+    pub enum_id: u16,
+    pub variant_id: u16,
+    pub slot_count: u16,
+    pub slots: Box<[Value]>,
+}
+
+impl AelysEnum {
+    pub fn try_new(enum_id: u16, variant_id: u16, slots: Vec<Value>) -> Option<Self> {
+        let slot_count = u16::try_from(slots.len()).ok()?;
+        Some(Self {
+            enum_id,
+            variant_id,
+            slot_count,
+            slots: slots.into_boxed_slice(),
+        })
+    }
+
+    pub fn new(enum_id: u16, variant_id: u16, slots: Vec<Value>) -> Self {
+        Self::try_new(enum_id, variant_id, slots).expect("enum payload exceeds u16 slot limit")
+    }
+
+    pub fn size_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.slots.len() * std::mem::size_of::<Value>()
+    }
+}
