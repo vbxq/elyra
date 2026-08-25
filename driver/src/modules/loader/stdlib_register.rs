@@ -53,6 +53,7 @@ impl ModuleLoader {
                     function_signature(name).map(|signature| (name.clone(), signature))
                 })
                 .collect(),
+            exported_types: Default::default(),
         };
         self.loaded_modules
             .insert(module_path_str.clone(), module_info);
