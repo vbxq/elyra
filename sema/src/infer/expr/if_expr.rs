@@ -15,6 +15,10 @@ impl TypeInference {
         let typed_cond = self.infer_expr(condition);
         let typed_then = self.infer_expr(then_branch);
         let typed_else = self.infer_expr(else_branch);
+        let dynamic_result = matches!(typed_then.ty, InferType::Dynamic)
+            || matches!(typed_else.ty, InferType::Dynamic);
+        let poisoned_result = matches!(typed_then.ty, InferType::Poison)
+            || matches!(typed_else.ty, InferType::Poison);
 
         if !self.reject_dynamic(
             &typed_cond.ty,
@@ -69,7 +73,13 @@ impl TypeInference {
                 then_branch: Box::new(typed_then),
                 else_branch: Box::new(typed_else),
             },
-            result_type,
+            if poisoned_result {
+                InferType::Poison
+            } else if dynamic_result {
+                InferType::Dynamic
+            } else {
+                result_type
+            },
         )
     }
 }
