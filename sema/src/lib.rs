@@ -2,6 +2,7 @@ pub mod constraint;
 pub mod env;
 pub mod infer;
 pub mod native;
+pub mod prelude;
 pub mod typed_ast;
 pub mod types;
 pub mod unify;
@@ -14,6 +15,7 @@ pub use typed_ast::{
     TypedParam, TypedPattern, TypedPatternKind, TypedProgram, TypedStmt, TypedStmtKind,
 };
 pub use types::{
-    InferType, ResolvedType, StructDef, StructField, TypeTable, TypeVarGen, TypeVarId,
+    EnumDef, EnumVariantDef, EnumVariantFieldsDef, InferType, ResolvedType, StructDef, StructField,
+    TraitDef, TraitImplDef, TraitMethod, TypeTable, TypeVarGen, TypeVarId,
 };
 pub use unify::{Substitution, UnifyError};
