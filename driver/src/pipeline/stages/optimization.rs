@@ -37,8 +37,8 @@ impl Stage for OptimizationStage {
         };
 
         let mut optimizer = Optimizer::new(self.level);
-        let optimized = optimizer.optimize(typed_program);
+        let optimized = optimizer.optimize(*typed_program);
 
-        Ok(StageOutput::TypedAst(optimized, source))
+        Ok(StageOutput::TypedAst(Box::new(optimized), source))
     }
 }
