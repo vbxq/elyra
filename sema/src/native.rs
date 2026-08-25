@@ -1,10 +1,32 @@
+use crate::prelude::DISPLAY_TRAIT;
 use crate::types::InferType;
+
+const NATIVE_MODULES: [&str; 9] = [
+    "io", "convert", "sys", "time", "fs", "net", "math", "string", "bytes",
+];
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum NativeObligation {
+    Bound(&'static str),
+    OneOf(Vec<InferType>),
+}
 
 fn function(arity: usize, ret: InferType) -> InferType {
     InferType::Function {
-        params: vec![InferType::Dynamic; arity],
+        params: (0..arity).map(open_param).collect(),
         ret: Box::new(ret),
     }
+}
+
+fn open_param(index: usize) -> InferType {
+    InferType::Param(format!("T{index}"))
+}
+
+fn scalar_conversion_sources() -> Vec<InferType> {
+    let mut sources = InferType::all_numeric_types();
+    sources.push(InferType::Bool);
+    sources.push(InferType::String);
+    sources
 }
 
 fn function_with(params: Vec<InferType>, ret: InferType) -> InferType {
@@ -31,9 +53,7 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         return Some(signature);
     }
     if !path.contains("::") {
-        for module in [
-            "io", "convert", "sys", "time", "fs", "net", "math", "string", "bytes",
-        ] {
+        for module in NATIVE_MODULES {
             if let Some(signature) = function_signature(&format!("{module}::{path}")) {
                 return Some(signature);
             }
@@ -43,7 +63,7 @@ pub fn function_signature(path: &str) -> Option<InferType> {
     let (module, name) = path.split_once("::")?;
     let signature = match (module, name) {
         ("io", "print" | "println" | "eprint" | "eprintln" | "print_inline") => {
-            function_with(vec![InferType::Dynamic], InferType::Unit)
+            function(1, InferType::Unit)
         }
         ("io", "flush" | "eflush") => function(0, InferType::Unit),
         ("io", "readline" | "read_char") => function(0, option(InferType::String)),
@@ -66,9 +86,7 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ("convert", "parse_bool") => {
             function_with(vec![InferType::String], option(InferType::Bool))
         }
-        ("convert", "to_string" | "type_of") => {
-            function_with(vec![InferType::Dynamic], InferType::String)
-        }
+        ("convert", "to_string" | "type_of") => function(1, InferType::String),
         ("convert", "to_hex" | "to_binary" | "to_octal") => {
             function_with(vec![InferType::I64], InferType::String)
         }
@@ -413,8 +431,52 @@ pub fn function_signature(path: &str) -> Option<InferType> {
 
 pub fn builtin_signature(name: &str) -> Option<InferType> {
     match name {
-        "__tostring" | "type" => Some(function(1, InferType::String)),
+        "__tostring" => Some(function(1, InferType::String)),
         _ => None,
+    }
+}
+
+pub fn canonical_path(path: &str) -> Option<String> {
+    if builtin_signature(path).is_some() {
+        return Some(path.to_string());
+    }
+    if !path.contains("::") {
+        return NATIVE_MODULES.iter().find_map(|module| {
+            let candidate = format!("{module}::{path}");
+            function_signature(&candidate).map(|_| candidate)
+        });
+    }
+    function_signature(path).map(|_| path.to_string())
+}
+
+pub fn parameter_obligations(path: &str) -> Vec<Option<NativeObligation>> {
+    let bare = path.rsplit("::").next().unwrap_or(path);
+    if !matches!(
+        bare,
+        "print"
+            | "println"
+            | "eprint"
+            | "eprintln"
+            | "print_inline"
+            | "to_string"
+            | "__tostring"
+            | "to_int"
+            | "to_float"
+    ) {
+        return Vec::new();
+    }
+    let Some(canonical) = canonical_path(path) else {
+        return Vec::new();
+    };
+    match canonical.as_str() {
+        "__tostring" | "io::print" | "io::println" | "io::eprint" | "io::eprintln"
+        | "io::print_inline" | "convert::to_string" => {
+            vec![Some(NativeObligation::Bound(DISPLAY_TRAIT))]
+        }
+        "convert::to_int" | "convert::to_float" => {
+            vec![Some(NativeObligation::OneOf(scalar_conversion_sources()))]
+        }
+        _ => Vec::new(),
     }
 }
 
