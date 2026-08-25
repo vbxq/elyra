@@ -54,6 +54,13 @@ pub enum RuntimeErrorKind {
         max: usize,
     },
     InvalidBytecode(String),
+    InvalidEnumField {
+        expected_schema: u16,
+        actual_schema: u16,
+        expected_variant: u16,
+        actual_variant: u16,
+        field_offset: u16,
+    },
     NativeError {
         code: i32,
     },
@@ -138,6 +145,16 @@ impl RuntimeErrorKind {
                 format!("invalid register index: {} (max: {})", reg, max)
             }
             Self::InvalidBytecode(message) => format!("invalid bytecode: {}", message),
+            Self::InvalidEnumField {
+                expected_schema,
+                actual_schema,
+                expected_variant,
+                actual_variant,
+                field_offset,
+            } => format!(
+                "invalid enum field: expected schema {} variant {} at offset {}, got schema {} variant {}",
+                expected_schema, expected_variant, field_offset, actual_schema, actual_variant
+            ),
             Self::NativeError { code } => format!("native error: code {}", code),
             Self::NativeReturnedNull => {
                 "native function returned the forbidden null sentinel".to_string()
