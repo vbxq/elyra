@@ -1,4 +1,3 @@
-// recursive descent parser
 
 mod decl;
 mod expr;
@@ -17,6 +16,9 @@ pub struct Parser {
     current: usize,
     pub(crate) source: Arc<Source>,
     recursion_depth: usize,
+    type_depth: usize,
+    legacy_collections: bool,
+    no_brace_construction: bool,
 }
 
 impl Parser {
@@ -26,6 +28,25 @@ impl Parser {
             current: 0,
             source,
             recursion_depth: 0,
+            type_depth: 0,
+            legacy_collections: false,
+            no_brace_construction: false,
+        }
+    }
+
+    pub fn new_rust_collections(tokens: Vec<Token>, source: Arc<Source>) -> Self {
+        Self::new(tokens, source)
+    }
+
+    pub fn new_legacy(tokens: Vec<Token>, source: Arc<Source>) -> Self {
+        Self {
+            tokens,
+            current: 0,
+            source,
+            recursion_depth: 0,
+            type_depth: 0,
+            legacy_collections: true,
+            no_brace_construction: false,
         }
     }
 
@@ -59,6 +80,21 @@ impl Parser {
 
     pub(crate) fn exit_recursion(&mut self) {
         self.recursion_depth = self.recursion_depth.saturating_sub(1);
+    }
+
+    pub(crate) fn with_brace_construction<T>(
+        &mut self,
+        allowed: bool,
+        parse: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let saved = std::mem::replace(&mut self.no_brace_construction, !allowed);
+        let result = parse(self);
+        self.no_brace_construction = saved;
+        result
+    }
+
+    pub(crate) fn brace_construction_allowed(&self) -> bool {
+        !self.no_brace_construction
     }
 
     fn consume(&mut self, kind: &TokenKind, expected: &str) -> Result<()> {
