@@ -6,6 +6,140 @@ use aelys_sema::{InferType, ResolvedType, TypedExpr};
 use aelys_syntax::Span;
 
 impl Compiler {
+    pub(super) fn compile_typed_array_repeat(
+        &mut self,
+        expr_ty: &InferType,
+        value: &TypedExpr,
+        count: &TypedExpr,
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
+        let inner = match expr_ty {
+            InferType::Array(inner) | InferType::FixedArray(inner, _) => inner,
+            _ => {
+                return Err(CompileError::new(
+                    CompileErrorKind::TypeInferenceError(
+                        "array repeat has a non-array result type".to_string(),
+                    ),
+                    span,
+                    self.source.clone(),
+                )
+                .into());
+            }
+        };
+        let count_reg = self.alloc_register()?;
+        self.compile_typed_expr(count, count_reg)?;
+        let allocation_opcode = Self::select_typed_opcode(
+            inner,
+            OpCode::ArrayNewI,
+            OpCode::ArrayNewF,
+            OpCode::ArrayNewB,
+            OpCode::ArrayNewP,
+        );
+        self.emit_a(allocation_opcode, dest, count_reg, 0, span);
+
+        let value_reg = self.alloc_register()?;
+        self.compile_typed_expr(value, value_reg)?;
+        let loop_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        self.alloc_consecutive_from(loop_reg, 3)?;
+        let end_reg = loop_reg + 1;
+        let step_reg = loop_reg + 2;
+        self.emit_a(OpCode::Move, end_reg, count_reg, 0, span);
+        self.emit_b(OpCode::LoadI, loop_reg, 0, span);
+        self.emit_b(OpCode::LoadI, step_reg, 1, span);
+        self.emit_a(OpCode::Sub, loop_reg, loop_reg, step_reg, span);
+        let jump_to_loop = self.emit_jump(OpCode::Jump, span);
+        let body_start = self.current_offset();
+        let store_opcode = Self::select_typed_opcode(
+            inner,
+            OpCode::ArrayStoreI,
+            OpCode::ArrayStoreF,
+            OpCode::ArrayStoreB,
+            OpCode::ArrayStoreP,
+        );
+        self.emit_a(store_opcode, dest, loop_reg, value_reg, span);
+        self.patch_jump(jump_to_loop);
+        self.emit_loop_back(
+            OpCode::ForLoopI,
+            OpCode::ForLoopILong,
+            loop_reg,
+            body_start,
+            span,
+        );
+        self.free_register(step_reg);
+        self.free_register(end_reg);
+        self.free_register(loop_reg);
+        self.free_register(value_reg);
+        self.free_register(count_reg);
+        Ok(())
+    }
+
+    pub(super) fn compile_typed_vec_repeat(
+        &mut self,
+        expr_ty: &InferType,
+        value: &TypedExpr,
+        count: &TypedExpr,
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
+        let InferType::Vec(inner) = expr_ty else {
+            return Err(CompileError::new(
+                CompileErrorKind::TypeInferenceError(
+                    "vec repeat has a non-vector result type".to_string(),
+                ),
+                span,
+                self.source.clone(),
+            )
+            .into());
+        };
+        let count_reg = self.alloc_register()?;
+        self.compile_typed_expr(count, count_reg)?;
+        let allocation_opcode = Self::select_typed_opcode(
+            inner,
+            OpCode::VecNewI,
+            OpCode::VecNewF,
+            OpCode::VecNewB,
+            OpCode::VecNewP,
+        );
+        self.emit_a(allocation_opcode, dest, 0, 0, span);
+        self.emit_a(OpCode::VecReserve, dest, count_reg, 0, span);
+
+        let value_reg = self.alloc_register()?;
+        self.compile_typed_expr(value, value_reg)?;
+        let loop_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        self.alloc_consecutive_from(loop_reg, 3)?;
+        let end_reg = loop_reg + 1;
+        let step_reg = loop_reg + 2;
+        self.emit_a(OpCode::Move, end_reg, count_reg, 0, span);
+        self.emit_b(OpCode::LoadI, loop_reg, 0, span);
+        self.emit_b(OpCode::LoadI, step_reg, 1, span);
+        self.emit_a(OpCode::Sub, loop_reg, loop_reg, step_reg, span);
+        let jump_to_loop = self.emit_jump(OpCode::Jump, span);
+        let body_start = self.current_offset();
+        let push_opcode = Self::select_typed_opcode(
+            inner,
+            OpCode::VecPushI,
+            OpCode::VecPushF,
+            OpCode::VecPushB,
+            OpCode::VecPushP,
+        );
+        self.emit_a(push_opcode, dest, value_reg, 0, span);
+        self.patch_jump(jump_to_loop);
+        self.emit_loop_back(
+            OpCode::ForLoopI,
+            OpCode::ForLoopILong,
+            loop_reg,
+            body_start,
+            span,
+        );
+        self.free_register(step_reg);
+        self.free_register(end_reg);
+        self.free_register(loop_reg);
+        self.free_register(value_reg);
+        self.free_register(count_reg);
+        Ok(())
+    }
+
     pub(super) fn compile_typed_array_sized(
         &mut self,
         element_type: &Option<ResolvedType>,
@@ -13,11 +147,9 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        // Compile size expression
         let size_reg = self.alloc_register()?;
         self.compile_typed_expr(size, size_reg)?;
 
-        // Select opcode based on element type
         let opcode = match element_type {
             Some(t) if t.is_integer() => OpCode::ArrayNewI,
             Some(t) if t.is_float() => OpCode::ArrayNewF,
@@ -40,7 +172,8 @@ impl Compiler {
         let count = elements.len();
 
         if count == 0 {
-            let opcode = if let InferType::Array(inner) = expr_ty {
+            let opcode = if let InferType::Array(inner) | InferType::FixedArray(inner, _) = expr_ty
+            {
                 Self::select_typed_opcode(
                     inner,
                     OpCode::ArrayNewI,
@@ -167,7 +300,7 @@ impl Compiler {
                 OpCode::VecLoadB,
                 OpCode::VecLoadP,
             ),
-            InferType::Array(inner) => Self::select_typed_opcode(
+            InferType::Array(inner) | InferType::FixedArray(inner, _) => Self::select_typed_opcode(
                 inner,
                 OpCode::ArrayLoadI,
                 OpCode::ArrayLoadF,
@@ -211,7 +344,7 @@ impl Compiler {
                 OpCode::VecStoreB,
                 OpCode::VecStoreP,
             ),
-            InferType::Array(inner) => Self::select_typed_opcode(
+            InferType::Array(inner) | InferType::FixedArray(inner, _) => Self::select_typed_opcode(
                 inner,
                 OpCode::ArrayStoreI,
                 OpCode::ArrayStoreF,
@@ -242,7 +375,7 @@ impl Compiler {
         span: Span,
     ) -> Result<()> {
         let opcode = match &object.ty {
-            InferType::Array(_) => OpCode::ArraySlice,
+            InferType::Array(_) | InferType::FixedArray(_, _) => OpCode::ArraySlice,
             InferType::Vec(_) => OpCode::VecSlice,
             receiver => {
                 return Err(CompileError::new(
@@ -340,6 +473,27 @@ impl Compiler {
         Ok(())
     }
 
+    pub(super) fn compile_collection_is_empty(
+        &mut self,
+        object: &TypedExpr,
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
+        let len_reg = self.alloc_register()?;
+        match &object.ty {
+            InferType::Array(_) | InferType::FixedArray(_, _) => {
+                self.compile_array_len(object, len_reg, span)?;
+            }
+            _ => self.compile_vec_len(object, len_reg, span)?,
+        }
+        let zero_reg = self.alloc_register()?;
+        self.emit_b(OpCode::LoadI, zero_reg, 0, span);
+        self.emit_a(OpCode::Eq, dest, len_reg, zero_reg, span);
+        self.free_register(zero_reg);
+        self.free_register(len_reg);
+        Ok(())
+    }
+
     pub(super) fn compile_vec_push(
         &mut self,
         object: &TypedExpr,
@@ -405,7 +559,7 @@ impl Compiler {
         let idx_reg = self.alloc_register()?;
         self.compile_typed_expr(index, idx_reg)?;
         let opcode = match &object.ty {
-            InferType::Array(inner) => Self::select_typed_opcode(
+            InferType::Array(inner) | InferType::FixedArray(inner, _) => Self::select_typed_opcode(
                 inner,
                 OpCode::ArrayGetI,
                 OpCode::ArrayGetF,
