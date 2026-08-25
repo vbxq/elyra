@@ -108,7 +108,10 @@ fn translate_function(
     if register_count < usize::from(function.arity) || register_count > usize::from(u16::MAX) + 1 {
         return None;
     }
-    if contains_sum_opcode(function) {
+    if function.jit_unsupported_struct
+        || contains_schema_opcode(function)
+        || contains_sum_opcode(function)
+    {
         return None;
     }
     let decoded = decode(function)?;
@@ -626,11 +629,6 @@ fn translate_function(
                     if !is_native_global(function, global_index) {
                         return None;
                     }
-                    // A global call is dynamically typed. Only lower it when
-                    // the bytecode immediately gives its result a numeric or
-                    // boolean consumer; a bare `return helper()` must remain
-                    // interpreted because the helper may return any Aelys
-                    // value.
                     let result_type =
                         infer_call_result_type(function, &decoded, instruction.ip, instruction.a)?;
                     emit_value(
@@ -744,6 +742,23 @@ fn translate_function(
     };
     ir.verify().ok()?;
     Some(ir)
+}
+
+// eligibility is per function, so a nested function's schema opcodes must not
+fn contains_schema_opcode(function: &Function) -> bool {
+    function.bytecode.as_slice().iter().any(|word| {
+        matches!(
+            OpCode::from_u8((word >> 24) as u8),
+            Some(
+                OpCode::StructNew
+                    | OpCode::StructLoad
+                    | OpCode::StructStore
+                    | OpCode::EnumNew
+                    | OpCode::EnumTest
+                    | OpCode::EnumLoad
+            )
+        )
+    })
 }
 
 fn contains_sum_opcode(function: &Function) -> bool {
@@ -996,11 +1011,6 @@ fn output_type(
     })
 }
 
-/// Infer the representation required by a dynamically typed global call from
-/// its first use in the current straight-line region. A call whose result is
-/// returned or passed on without a numeric/boolean consumer is deliberately
-/// left to the interpreter: compiling it as an integer would change a valid
-/// dynamic result such as a string, array, or null into a runtime type error.
 fn infer_call_result_type(
     function: &Function,
     decoded: &[DecodedInstruction],
@@ -1134,9 +1144,6 @@ fn infer_call_result_type(
 }
 
 fn call_argument_start(instruction: DecodedInstruction) -> Option<usize> {
-    // All call frames place their first argument immediately after the
-    // destination register. `Call`'s B operand names the callee register,
-    // but the interpreter still builds the callee frame at A + 1.
     instruction.a.checked_add(1)
 }
 
