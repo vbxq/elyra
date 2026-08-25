@@ -1,4 +1,3 @@
-// disassembly for debugging bytecode
 
 use crate::cli::vm_config::parse_vm_args_or_error;
 use aelys_backend::Compiler;
@@ -123,7 +122,7 @@ fn compile_source(
     let tokens = Lexer::with_source(src.clone())
         .scan()
         .map_err(|err| err.to_string())?;
-    let stmts = Parser::new(tokens, src.clone())
+    let stmts = Parser::new_rust_collections(tokens, src.clone())
         .parse()
         .map_err(|err| err.to_string())?;
 
@@ -133,22 +132,32 @@ fn compile_source(
     let (imports, _loader) = load_modules_with_loader(&stmts, path, src.clone(), &mut vm)
         .map_err(|err| err.to_string())?;
 
-    let main_stmts: Vec<_> = stmts
-        .into_iter()
-        .filter(|stmt| !matches!(stmt.kind, StmtKind::Needs(_)))
+    let main_stmts: Vec<_> = imports
+        .imported_impl_stmts
+        .iter()
+        .cloned()
+        .chain(
+            stmts
+                .into_iter()
+                .filter(|stmt| !matches!(stmt.kind, StmtKind::Needs(_))),
+        )
         .collect();
 
     let mut all_known_globals = imports.known_globals.clone();
-    for builtin in ["alloc", "free", "load", "store", "type"] {
+    for builtin in ["alloc", "free", "load", "store"] {
         all_known_globals.insert(builtin.to_string());
     }
 
-    let typed_program = aelys_sema::TypeInference::infer_program_with_imports(
+    let typed_program = aelys_sema::TypeInference::infer_program_full_with_native_signatures(
         main_stmts,
         src.clone(),
         imports.module_aliases.clone(),
         all_known_globals,
+        imports.known_native_globals.clone(),
+        imports.native_signatures.clone(),
+        imports.imported_types.clone(),
     )
+    .map(|result| result.program)
     .map_err(|errors| {
         if let Some(err) = errors.first() {
             err.to_string()
