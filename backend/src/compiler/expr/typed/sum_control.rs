@@ -9,6 +9,7 @@ impl Compiler {
     pub(super) fn compile_typed_try(
         &mut self,
         inner: &aelys_sema::TypedExpr,
+        conversion: Option<&str>,
         dest: u16,
         span: Span,
     ) -> Result<()> {
@@ -40,49 +41,67 @@ impl Compiler {
         let end_jump = self.emit_jump(OpCode::Jump, span);
         self.patch_jump(failure_jump);
 
-        if is_option {
-            self.emit_return_from_try(source_reg, span);
-        } else {
-            let target_error = self.current_return_type.as_ref().and_then(|ty| match ty {
-                InferType::Result(_, error) => Some(error.as_ref()),
-                _ => None,
-            });
-            let source_error = match &inner.ty {
-                InferType::Result(_, error) => error.as_ref(),
-                _ => unreachable!(),
-            };
-            if matches!(source_error, InferType::String)
-                && matches!(target_error, Some(InferType::Error))
-            {
-                let payload_reg = self.alloc_register()?;
-                let error_reg = self.alloc_register()?;
-                let result_reg = self.alloc_register()?;
-                self.emit_a(OpCode::SumPayload, payload_reg, source_reg, 0, span);
-                self.emit_a(
-                    OpCode::MakeSum,
-                    error_reg,
-                    payload_reg,
-                    SumTag::ErrorMessage as u8,
-                    span,
-                );
-                self.emit_a(
-                    OpCode::MakeSum,
-                    result_reg,
-                    error_reg,
-                    SumTag::ResultErr as u8,
-                    span,
-                );
-                self.emit_return_from_try(result_reg, span);
-                self.free_register(result_reg);
-                self.free_register(error_reg);
-                self.free_register(payload_reg);
-            } else {
-                self.emit_return_from_try(source_reg, span);
+        match conversion.filter(|_| !is_option) {
+            Some(aelys_sema::prelude::STRING_TO_ERROR_SYMBOL) => {
+                self.compile_try_string_to_error(source_reg, span)?;
             }
+            Some(symbol) => {
+                self.compile_try_from_call(symbol, source_reg, span)?;
+            }
+            None => self.emit_return_from_try(source_reg, span),
         }
 
         self.patch_jump(end_jump);
         self.free_register(source_reg);
+        Ok(())
+    }
+
+    // the standard library conversion is inlined, so the failure path never calls out to convert
+    fn compile_try_string_to_error(&mut self, source_reg: u16, span: Span) -> Result<()> {
+        let payload_reg = self.alloc_register()?;
+        let error_reg = self.alloc_register()?;
+        let result_reg = self.alloc_register()?;
+        self.emit_a(OpCode::SumPayload, payload_reg, source_reg, 0, span);
+        self.emit_a(
+            OpCode::MakeSum,
+            error_reg,
+            payload_reg,
+            SumTag::ErrorMessage as u8,
+            span,
+        );
+        self.emit_a(
+            OpCode::MakeSum,
+            result_reg,
+            error_reg,
+            SumTag::ResultErr as u8,
+            span,
+        );
+        self.emit_return_from_try(result_reg, span);
+        self.free_register(result_reg);
+        self.free_register(error_reg);
+        self.free_register(payload_reg);
+        Ok(())
+    }
+
+    fn compile_try_from_call(&mut self, symbol: &str, source_reg: u16, span: Span) -> Result<()> {
+        let base = self.alloc_consecutive_registers_for_call(2, span)?;
+        self.alloc_consecutive_from(base, 2)?;
+        self.emit_a(OpCode::SumPayload, base + 1, source_reg, 0, span);
+        let global = self.get_or_create_global_index(symbol);
+        self.accessed_globals.insert(symbol.to_string());
+        self.emit_call_global_cached(base, global, 1, symbol, span);
+        let result_reg = self.alloc_register()?;
+        self.emit_a(
+            OpCode::MakeSum,
+            result_reg,
+            base,
+            SumTag::ResultErr as u8,
+            span,
+        );
+        self.emit_return_from_try(result_reg, span);
+        self.free_register(result_reg);
+        self.free_register(base + 1);
+        self.free_register(base);
         Ok(())
     }
 
@@ -115,8 +134,12 @@ impl Compiler {
             let mut binding_registers = HashMap::new();
             self.reserve_pattern_bindings(&arm.pattern, &mut binding_registers)?;
             let mut failure_jumps = Vec::new();
-            self.compile_pattern_tests(scrutinee_reg, &arm.pattern, &mut failure_jumps)?;
-            self.compile_pattern_bindings(scrutinee_reg, &arm.pattern, &binding_registers)?;
+            self.compile_pattern_tests_and_bindings(
+                scrutinee_reg,
+                &arm.pattern,
+                &binding_registers,
+                &mut failure_jumps,
+            )?;
 
             if let Some(guard) = &arm.guard {
                 let guard_reg = self.alloc_register()?;
@@ -176,14 +199,28 @@ impl Compiler {
         }
     }
 
-    fn compile_pattern_tests(
+    fn compile_pattern_tests_and_bindings(
         &mut self,
         source: u16,
         pattern: &TypedPattern,
+        registers: &HashMap<String, u16>,
         failures: &mut Vec<usize>,
     ) -> Result<()> {
         match &pattern.kind {
-            TypedPatternKind::Wildcard | TypedPatternKind::Binding(_) => Ok(()),
+            TypedPatternKind::Wildcard => Ok(()),
+            TypedPatternKind::Binding(name) => {
+                let register = registers.get(name).copied().ok_or_else(|| {
+                    aelys_common::error::CompileError::new(
+                        aelys_common::error::CompileErrorKind::TypeInferenceError(
+                            "pattern binding register is missing".to_string(),
+                        ),
+                        pattern.span,
+                        self.source.clone(),
+                    )
+                })?;
+                self.emit_a(OpCode::Move, register, source, 0, pattern.span);
+                Ok(())
+            }
             TypedPatternKind::Int(value) => {
                 let literal = self.alloc_register()?;
                 let condition = self.alloc_register()?;
@@ -214,7 +251,46 @@ impl Compiler {
                 self.free_register(literal);
                 Ok(())
             }
-            TypedPatternKind::Variant { path, fields } => {
+            TypedPatternKind::Variant {
+                path,
+                enum_schema_index,
+                enum_variant_index,
+                fields,
+                field_offsets,
+            } => {
+                if let (Some(schema_index), Some(variant_index)) =
+                    (*enum_schema_index, *enum_variant_index)
+                {
+                    let condition = self.alloc_register()?;
+                    self.emit_enum(
+                        OpCode::EnumTest,
+                        schema_index,
+                        condition,
+                        source,
+                        variant_index,
+                        0,
+                        pattern.span,
+                    );
+                    failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
+                    self.free_register(condition);
+                    for (field, offset) in fields.iter().zip(field_offsets.iter().copied()) {
+                        let field_reg = self.alloc_register()?;
+                        self.emit_enum(
+                            OpCode::EnumLoad,
+                            schema_index,
+                            field_reg,
+                            source,
+                            variant_index,
+                            offset,
+                            pattern.span,
+                        );
+                        self.compile_pattern_tests_and_bindings(
+                            field_reg, field, registers, failures,
+                        )?;
+                        self.free_register(field_reg);
+                    }
+                    return Ok(());
+                }
                 let tag = sum_tag(path).ok_or_else(|| {
                     aelys_common::error::CompileError::new(
                         aelys_common::error::CompileErrorKind::TypeInferenceError(
@@ -231,8 +307,28 @@ impl Compiler {
                 if let Some(field) = fields.first() {
                     let payload = self.alloc_register()?;
                     self.emit_a(OpCode::SumPayload, payload, source, 0, pattern.span);
-                    self.compile_pattern_tests(payload, field, failures)?;
+                    self.compile_pattern_tests_and_bindings(payload, field, registers, failures)?;
                     self.free_register(payload);
+                }
+                Ok(())
+            }
+            TypedPatternKind::Struct {
+                fields,
+                schema_index,
+                ..
+            } => {
+                for (_, field, offset) in fields {
+                    let field_reg = self.alloc_register()?;
+                    self.emit_struct(
+                        OpCode::StructLoad,
+                        *schema_index,
+                        field_reg,
+                        source,
+                        *offset,
+                        pattern.span,
+                    );
+                    self.compile_pattern_tests_and_bindings(field_reg, field, registers, failures)?;
+                    self.free_register(field_reg);
                 }
                 Ok(())
             }
@@ -245,7 +341,12 @@ impl Compiler {
                         self.patch_jump_to(jump, alternative_start);
                     }
                     let mut alternative_failures = Vec::new();
-                    self.compile_pattern_tests(source, alternative, &mut alternative_failures)?;
+                    self.compile_pattern_tests_and_bindings(
+                        source,
+                        alternative,
+                        registers,
+                        &mut alternative_failures,
+                    )?;
                     success_jumps.push(self.emit_jump(OpCode::Jump, alternative.span));
                     pending_failures = alternative_failures;
                 }
@@ -282,54 +383,17 @@ impl Compiler {
                     self.reserve_pattern_bindings(field, registers)?;
                 }
             }
+            TypedPatternKind::Struct { fields, .. } => {
+                for (_, field, _) in fields {
+                    self.reserve_pattern_bindings(field, registers)?;
+                }
+            }
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
             | TypedPatternKind::Bool(_) => {}
         }
         Ok(())
-    }
-
-    fn compile_pattern_bindings(
-        &mut self,
-        source: u16,
-        pattern: &TypedPattern,
-        registers: &HashMap<String, u16>,
-    ) -> Result<()> {
-        match &pattern.kind {
-            TypedPatternKind::Binding(name) => {
-                let register = registers.get(name).copied().ok_or_else(|| {
-                    aelys_common::error::CompileError::new(
-                        aelys_common::error::CompileErrorKind::TypeInferenceError(
-                            "pattern binding register is missing".to_string(),
-                        ),
-                        pattern.span,
-                        self.source.clone(),
-                    )
-                })?;
-                self.emit_a(OpCode::Move, register, source, 0, pattern.span);
-                Ok(())
-            }
-            TypedPatternKind::Variant { fields, .. } => {
-                if let Some(field) = fields.first() {
-                    let payload = self.alloc_register()?;
-                    self.emit_a(OpCode::SumPayload, payload, source, 0, pattern.span);
-                    self.compile_pattern_bindings(payload, field, registers)?;
-                    self.free_register(payload);
-                }
-                Ok(())
-            }
-            TypedPatternKind::Or(alternatives) => {
-                if let Some(first) = alternatives.first() {
-                    self.compile_pattern_bindings(source, first, registers)?;
-                }
-                Ok(())
-            }
-            TypedPatternKind::Wildcard
-            | TypedPatternKind::Int(_)
-            | TypedPatternKind::String(_)
-            | TypedPatternKind::Bool(_) => Ok(()),
-        }
     }
 }
 
