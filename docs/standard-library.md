@@ -269,7 +269,9 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 | `s.lines()` | Split into lines |
 | `s.line_count()` | Count lines |
 
-`split` and `join` use newline-separated strings as the "list" representation. This is awkward (I know), but arrays aren't first-class yet.
+`split` and `join` use newline-separated strings for compatibility with this API. Arrays
+and `Vec` are first-class collections; use their collection methods when you need typed
+elements or collection pipelines.
 
 ```rust
 let parts = "a,b,c".split(",")       // "a\nb\nc"
