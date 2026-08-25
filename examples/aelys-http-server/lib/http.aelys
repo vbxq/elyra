@@ -1,44 +1,43 @@
 needs std::net as net
-needs std::string as str
 needs std::convert as convert
 needs utils
 
 pub fn parse_method(request_line: string) -> string {
-    let trimmed = str::trim(request_line)
-    let space_idx = str::find(trimmed, " ")
+    let trimmed = request_line.trim()
+    let space_idx = trimmed.find(" ")
 
     if space_idx > 0 {
-        return str::substr(trimmed, 0, space_idx)
+        return trimmed.substr(0, space_idx)
     }
 
     return "GET"
 }
 
 pub fn parse_path(request_line: string) -> string {
-    let trimmed = str::trim(request_line)
-    let first_space = str::find(trimmed, " ")
+    let trimmed = request_line.trim()
+    let first_space = trimmed.find(" ")
 
     if first_space < 0 {
         return "/"
     }
 
-    let after_method = str::substr(trimmed, first_space + 1, str::len(trimmed) - first_space - 1)
-    let second_space = str::find(after_method, " ")
+    let after_method = trimmed.substr(first_space + 1, trimmed.len() - first_space - 1)
+    let second_space = after_method.find(" ")
 
     if second_space > 0 {
-        return str::substr(after_method, 0, second_space)
+        return after_method.substr(0, second_space)
     }
 
-    return str::trim(after_method)
+    return after_method.trim()
 }
 
 fn parse_version(request_line: string) -> string {
-    let trimmed = str::trim(request_line)
+    let trimmed = request_line.trim()
 
     let mut last_space = -1
     let mut i = 0
-    while i < str::len(trimmed) {
-        let char = str::substr(trimmed, i, 1)
+    while i < trimmed.len() {
+        let char = trimmed.substr(i, 1)
         if char == " " {
             last_space = i
         }
@@ -46,7 +45,7 @@ fn parse_version(request_line: string) -> string {
     }
 
     if last_space > 0 {
-        return str::trim(str::substr(trimmed, last_space + 1, str::len(trimmed) - last_space - 1))
+        return trimmed.substr(last_space + 1, trimmed.len() - last_space - 1).trim()
     }
 
     return "HTTP/1.1"
@@ -56,10 +55,10 @@ pub fn parse_headers(client: int) {
     let mut header_data = ""
 
     while true {
-        let line = net::recv_line(client)
-        let trimmed = str::trim(line)
+        let line = net::recv_line(client).unwrap_or("")
+        let trimmed = line.trim()
 
-        if str::len(trimmed) == 0 {
+        if trimmed.len() == 0 {
             break
         }
 
@@ -67,25 +66,25 @@ pub fn parse_headers(client: int) {
     }
 
     return fn(name: string) -> string {
-        let search = str::to_lower(name) + ":"
-        let mut lines = str::split(header_data, "\n")
+        let search = name.to_lower() + ":"
+        let mut lines = header_data.split("\n")
 
         let mut i = 0
         while i < 100 {
-            let line_end = str::find(lines, "\n")
+            let line_end = lines.find("\n")
             if line_end < 0 {
                 break
             }
 
-            let line = str::substr(lines, 0, line_end)
-            let lower_line = str::to_lower(line)
+            let line = lines.substr(0, line_end)
+            let lower_line = line.to_lower()
 
-            if str::starts_with(lower_line, search) {
-                let value_start = str::find(line, ":") + 1
-                return str::trim(str::substr(line, value_start, str::len(line) - value_start))
+            if lower_line.starts_with(search) {
+                let value_start = line.find(":") + 1
+                return line.substr(value_start, line.len() - value_start).trim()
             }
 
-            lines = str::substr(lines, line_end + 1, str::len(lines) - line_end - 1)
+            lines = lines.substr(line_end + 1, lines.len() - line_end - 1)
             i = i + 1
         }
 
@@ -96,23 +95,26 @@ pub fn parse_headers(client: int) {
 pub fn read_body(client: int, headers) -> string {
     let content_length_str = headers("Content-Length")
 
-    if str::len(content_length_str) == 0 {
+    if content_length_str.len() == 0 {
         return ""
     }
 
-    let content_length = convert::parse_int(content_length_str)
-    if content_length == null or content_length <= 0 {
-        return ""
+    match convert::parse_int(content_length_str) {
+        Some(content_length) => {
+            if content_length <= 0 {
+                return ""
+            }
+            return net::recv_bytes(client, content_length).unwrap_or("")
+        }
+        None => { return "" }
     }
-
-    return net::recv_bytes(client, content_length)
 }
 
 pub fn send_response(client: int, status: int, content_type: string, body: string) {
     let mut response = "HTTP/1.1 " + convert::to_string(status) + " " + utils::status_text(status) + "\r\n"
 
     response = response + "Content-Type: " + content_type + "\r\n"
-    response = response + "Content-Length: " + convert::to_string(str::len(body)) + "\r\n"
+    response = response + "Content-Length: " + convert::to_string(body.len()) + "\r\n"
     response = response + "Connection: close\r\n"
     response = response + "Server: Aelys-HTTP/0.1.0\r\n"
 
@@ -120,7 +122,7 @@ pub fn send_response(client: int, status: int, content_type: string, body: strin
 
     response = response + body
 
-    net::send(client, response)
+    let _ = net::send(client, response)
 }
 
 pub fn send_json(client: int, status: int, json_body: string) {
