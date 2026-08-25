@@ -40,9 +40,6 @@ fn make_ann(name: &str) -> aelys_syntax::TypeAnnotation {
     aelys_syntax::TypeAnnotation::new(name.to_string(), aelys_syntax::Span::new(0, 0, 1, 1))
 }
 
-// ---------------------------------------------------------------------------
-// InferType sized variants
-// ---------------------------------------------------------------------------
 
 #[test]
 fn infer_type_from_annotation_sized_integers() {
@@ -152,9 +149,6 @@ fn infer_type_display_sized() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// ResolvedType sized variants
-// ---------------------------------------------------------------------------
 
 #[test]
 fn resolved_type_is_integer() {
@@ -199,9 +193,6 @@ fn resolved_type_from_infer_type_sized() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// TypeTable
-// ---------------------------------------------------------------------------
 
 #[test]
 fn type_table_register_and_get() {
@@ -230,9 +221,6 @@ fn type_table_register_and_get() {
     assert_eq!(def.fields[1].ty, InferType::F64);
 }
 
-// ---------------------------------------------------------------------------
-// Parser: struct declarations
-// ---------------------------------------------------------------------------
 
 #[test]
 fn parse_struct_declaration() {
@@ -288,9 +276,6 @@ fn parse_struct_trailing_comma() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Parser: struct literals
-// ---------------------------------------------------------------------------
 
 #[test]
 fn parse_struct_literal() {
@@ -299,7 +284,7 @@ fn parse_struct_literal() {
 
     match &stmts[0].kind {
         aelys_syntax::StmtKind::Expression(expr) => match &expr.kind {
-            aelys_syntax::ExprKind::StructLiteral { name, fields } => {
+            aelys_syntax::ExprKind::StructLiteral { name, fields, .. } => {
                 assert_eq!(name, "Point");
                 assert_eq!(fields.len(), 2);
                 assert_eq!(fields[0].name, "x");
@@ -331,9 +316,6 @@ fn parse_uppercase_var_before_block_is_not_struct_literal() {
     assert!(matches!(stmts[0].kind, aelys_syntax::StmtKind::If { .. }));
 }
 
-// ---------------------------------------------------------------------------
-// Lexer: struct keyword
-// ---------------------------------------------------------------------------
 
 #[test]
 fn lexer_recognizes_struct_keyword() {
@@ -344,9 +326,6 @@ fn lexer_recognizes_struct_keyword() {
     assert!(matches!(tokens[0].kind, aelys_syntax::TokenKind::Struct));
 }
 
-// ---------------------------------------------------------------------------
-// Sema: type inference with sized types
-// ---------------------------------------------------------------------------
 
 #[test]
 fn infer_int_literal_as_i64() {
@@ -414,16 +393,13 @@ fn infer_struct_field_access_type() {
         aelys_sema::TypedStmtKind::Expression(expr) => {
             assert!(matches!(
                 &expr.kind,
-                aelys_sema::TypedExprKind::Member { .. }
+                aelys_sema::TypedExprKind::StructField { .. }
             ));
         }
         _ => panic!("expected Expression"),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Sema: unification with sized types
-// ---------------------------------------------------------------------------
 
 #[test]
 fn unify_same_sized_types() {
@@ -457,9 +433,6 @@ fn unify_struct_nominal_different_name_fails() {
     assert!(aelys_sema::unify::unify(&a, &b, &mut subst).is_err());
 }
 
-// ---------------------------------------------------------------------------
-// E2E: sized type annotations work through the VM
-// ---------------------------------------------------------------------------
 
 #[test]
 fn e2e_i64_annotation() {
