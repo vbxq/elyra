@@ -1,5 +1,3 @@
-// flat switch dispatch, hot state in locals
-// FIXME: computed goto would be faster but Rust doesn't support it
 
 use super::decode::{decode_abc, decode_aimm};
 use super::state::{DispatchControl, DispatchState};
@@ -55,9 +53,7 @@ impl VM {
         if self.registers.len() < required_registers {
             self.registers.resize(required_registers, Value::null());
         }
-        // SAFETY: Register stack is now fully allocated, pointers are stable
 
-        // Load frame state into local variables for faster access
         let frame_idx = self.frames.len() - 1;
         let frame = &self.frames[frame_idx];
         let mut ip = frame.ip;
@@ -90,14 +86,12 @@ impl VM {
         }
 
         loop {
-            // Check end of bytecode
             if ip >= bytecode_len {
                 self.pop_frame_with_jit_metadata();
                 if self.frames.is_empty() {
                     return Ok(Value::null());
                 }
                 let previous_gmap = global_mapping_id;
-                // Reload frame state
                 reload_frame_state!();
                 if global_mapping_id != 0 && global_mapping_id != previous_gmap {
                     global_mapping_id = self.prepare_globals_for_function(func_ref);
@@ -109,7 +103,6 @@ impl VM {
                 self.check_execution_control()?;
             }
 
-            // Fetch instruction
             let instr = unsafe { *bytecode_ptr.add(ip) };
             ip += 1;
 
@@ -119,11 +112,10 @@ impl VM {
                 self.execution_stats.last_instruction_pointer = Some(ip - 1);
             }
 
-            // Get registers pointer (may change after resize, but we refresh it for calls)
             let mut regs_ptr = self.registers.as_mut_ptr();
             let regs_len = self.registers.len();
 
-            // Bounds-checking macro - returns RuntimeError for out-of-bounds access
+            // bounds-checking macro - returns runtimeerror for out-of-bounds access
             macro_rules! check_reg {
                 ($idx:expr) => {{
                     let idx = $idx;
@@ -142,7 +134,7 @@ impl VM {
                 ($idx:expr) => {{
                     let idx = $idx;
                     check_reg!(idx);
-                    // SAFETY: bounds checked above
+                    // safety: bounds checked above
                     unsafe { *regs_ptr.add(idx) }
                 }};
             }
@@ -151,7 +143,7 @@ impl VM {
                 ($idx:expr) => {{
                     let idx = $idx;
                     check_reg!(idx);
-                    // SAFETY: bounds checked above
+                    // safety: bounds checked above
                     unsafe { &*regs_ptr.add(idx) }
                 }};
             }
@@ -160,7 +152,7 @@ impl VM {
                 ($idx:expr, $val:expr) => {{
                     let idx = $idx;
                     check_reg!(idx);
-                    // SAFETY: bounds checked above
+                    // safety: bounds checked above
                     unsafe {
                         *regs_ptr.add(idx) = $val;
                     }
@@ -178,10 +170,7 @@ impl VM {
                 }};
             }
 
-            // Semantic dispatch - opcodes grouped by functionality
             match opcode_byte {
-                // Load/Store operations: Move(0), LoadI(1), LoadK(2), LoadNull(3), LoadBool(4),
-                // GetGlobalIdx(75), SetGlobalIdx(76)
                 0..=4 | 75..=76 | 180 | 182..=183 => {
                     let state = DispatchState {
                         base,
@@ -227,6 +216,56 @@ impl VM {
                     }
                 }
 
+                196..=198 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_struct(
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => unreachable!(),
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!()
+                        }
+                    }
+                }
+
+                199..=201 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_enum(
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => unreachable!(),
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!()
+                        }
+                    }
+                }
+
                 39 => {
                     let (dest, source, global) = decode_abc(instr);
                     let left = self
@@ -241,9 +280,6 @@ impl VM {
                     reg_set!(base + usize::from(dest), result);
                 }
 
-                // Arithmetic operations: Add(5), Sub(6), Mul(7), Div(8), Mod(9), Neg(10),
-                // AddI(42), SubI(43), AddII(49)-ModII(53), AddFF(54)-ModFF(58),
-                // AddIIG(82)-ModIIG(86), AddFFG(87)-ModFFG(91)
                 5..=10 | 42..=43 | 49..=58 | 82..=91 => {
                     super::ops::arithmetic::execute_arithmetic!(
                         self,
@@ -259,9 +295,6 @@ impl VM {
                     );
                 }
 
-                // Comparison operations: Eq(11), Ne(12), Lt(13), Le(14), Gt(15), Ge(16),
-                // LtII(59)-NeII(64), LtFF(65)-NeFF(70), LtIImm(71)-GeIImm(74),
-                // LtIIG(92)-NeIIG(97), LtFFG(98)-NeFFG(103)
                 11..=16 | 59..=74 | 92..=103 => {
                     super::ops::comparison::execute_comparison!(
                         self,
@@ -276,9 +309,6 @@ impl VM {
                     );
                 }
 
-                // Control flow operations: Not(17), Jump(18), JumpIf(19), JumpIfNot(20),
-                // ForLoopI(40), ForLoopIInc(41), LtImm(44)-GeImm(47), WhileLoopLt(48),
-                // StringForLoop(177), VecForLoop(178), ArrayForLoop(179)
                 17..=20 | 26..=33 | 40..=41 | 44..=48 | 124..=125 | 127 | 177..=179 => {
                     let branch_origin = ip;
                     super::ops::control_flow::execute_control_flow!(
@@ -306,14 +336,9 @@ impl VM {
                     }
                 }
 
-                // Call operations: Call(21), Return(22), Return0(23), CallWide(34),
-                // CallGlobal(77), CallCached(79), CallUpval(80), TailCallUpval(81)
                 21..=23 | 34 | 77 | 79..=81 => {
-                    // Call operations: Call(21), Return(22), Return0(23), CallWide(34),
-                    // CallGlobal(77), CallCached(79), CallUpval(80), TailCallUpval(81)
 
                     match opcode_byte {
-                        // Call (21), CallWide (34)
                         21 | 34 => {
                             let mut dest: u16 = 0;
                             let mut func_reg: u16 = 0;
@@ -350,7 +375,6 @@ impl VM {
                             let _ = (dest, func_reg, nargs, callee_ref);
                             let _ = &call_data;
 
-                            // Part 0: Decode and get function value
                             {
                                 if opcode_byte == 34 {
                                     let first = unsafe { *bytecode_ptr.add(ip) };
@@ -369,10 +393,8 @@ impl VM {
                                     nargs = u16::from(nargs_tmp);
                                 }
 
-                                // Save IP before call
                                 self.frames[current_frame_idx].ip = ip;
 
-                                // Get function value
                                 let func_value = reg_get!(base + usize::from(func_reg));
                                 let func_ptr = match func_value.as_ptr() {
                                     Some(p) => p,
@@ -388,7 +410,6 @@ impl VM {
                                 callee_ref = GcRef::new(func_ptr);
                             }
 
-                            // Part 1: Determine call type
                             {
                                 call_data = match self.heap.get(callee_ref) {
                                     Some(obj) => match &obj.kind {
@@ -449,7 +470,6 @@ impl VM {
                                 };
                             }
 
-                            // Part 2: Execute call
                             {
                                 match call_data {
                                     CallData::Function {
@@ -646,7 +666,6 @@ impl VM {
                             }
                         }
 
-                        // Return (22)
                         22 => {
                             let (a, _, _) = decode_abc(instr);
                             let result = reg_get!(base + a as usize);
@@ -681,7 +700,6 @@ impl VM {
                             reg_set!(base + dest as usize, result);
                         }
 
-                        // Return0 (23)
                         23 => {
                             let dest = self.frames[current_frame_idx].return_dest();
                             let current_gmap = self.frames[current_frame_idx].global_mapping_id;
@@ -713,7 +731,6 @@ impl VM {
                             reg_set!(base + dest as usize, Value::unit());
                         }
 
-                        // CallGlobal (77)
                         77 => {
                             let mut dest: u8 = 0;
                             let mut nargs: u8 = 0;
@@ -750,7 +767,6 @@ impl VM {
                             let _ = (dest, nargs, current_func_ptr, callee_ref);
                             let _ = &call_data;
                             {
-                                // Part 0: Decode and get function value
                                 let (dest_tmp, global_idx, nargs_tmp) = decode_abc(instr);
                                 dest = dest_tmp;
                                 nargs = nargs_tmp;
@@ -758,7 +774,6 @@ impl VM {
 
                                 self.frames[current_frame_idx].ip = ip;
 
-                                // Get the current function value at this global index
                                 let func_value = if idx < self.globals_by_index.len() {
                                     self.globals_by_index[idx]
                                 } else {
@@ -774,7 +789,6 @@ impl VM {
                                     Some(p) => p,
                                     None => {
                                         if func_value.is_null() {
-                                            // Try to get the global name for a better error message
                                             let global_name =
                                                 self.heap.get(func_ref).and_then(|obj| match &obj
                                                     .kind
@@ -846,7 +860,6 @@ impl VM {
                                     }
                                 }
 
-                                // Part 1: Determine call type
                                 call_data = match self.heap.get(callee_ref) {
                                     Some(obj) => match &obj.kind {
                                         ObjectKind::Function(func) => {
@@ -922,7 +935,6 @@ impl VM {
                                     }
                                 };
 
-                                // Part 2: Execute the call
                                 match call_data {
                                     CallData::Function {
                                         arity,
@@ -1104,7 +1116,6 @@ impl VM {
                             }
                         }
 
-                        // CallCached (79) - Call with function in register
                         79 => {
                             let state = DispatchState {
                                 base,
@@ -1132,7 +1143,6 @@ impl VM {
                             }
                         }
 
-                        // CallUpval (80) - Call function from upvalue
                         80 => {
                             let state = DispatchState {
                                 base,
@@ -1160,7 +1170,6 @@ impl VM {
                             }
                         }
 
-                        // TailCallUpval (81) - Tail call function from upvalue
                         81 => {
                             let state = DispatchState {
                                 base,
@@ -1192,7 +1201,6 @@ impl VM {
                     }
                 }
 
-                // Global variable operations: GetGlobal(24), SetGlobal(25)
                 24..=25 => {
                     let state = DispatchState {
                         base,
@@ -1205,8 +1213,6 @@ impl VM {
                     super::ops::globals::execute(self, &state, ip, opcode_byte, instr)?;
                 }
 
-                // Closure operations: MakeClosure(35), GetUpval(36),
-                // SetUpval(37), CloseUpvals(38)
                 35..=38 | 126 | 181 => {
                     let state = DispatchState {
                         base,
@@ -1237,8 +1243,6 @@ impl VM {
                     }
                 }
 
-                // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),
-                // BitNot(110), ShlII(111)-XorII(115), NotI(116), ShlIImm(117)-XorIImm(121)
                 109 => {
                     super::ops::bitwise::execute_xor(
                         self,
@@ -1263,7 +1267,6 @@ impl VM {
                     )?;
                 }
 
-                // Array, Vec, and String operations: wide literals 122-123, compact 130-176
                 122..=123 | 130..=176 | 192..=195 => {
                     super::ops::arrays::execute_arrays!(
                         self,
