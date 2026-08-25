@@ -88,6 +88,8 @@ impl Heap {
                 ObjectKind::Vec(_) => "Vec",
                 ObjectKind::Range(_) => "Range",
                 ObjectKind::Sum(_) => "Sum",
+                ObjectKind::Enum(_) => "Enum",
+                ObjectKind::Struct(_) => "Struct",
             }
         } else {
             "Unknown"
@@ -100,6 +102,18 @@ impl Heap {
 
     pub fn bytes_allocated(&self) -> usize {
         self.bytes_allocated
+    }
+
+    pub fn account_reallocation(&mut self, previous_size: usize, current_size: usize) {
+        if current_size > previous_size {
+            self.bytes_allocated = self
+                .bytes_allocated
+                .saturating_add(current_size - previous_size);
+        } else {
+            self.bytes_allocated = self
+                .bytes_allocated
+                .saturating_sub(previous_size - current_size);
+        }
     }
 
     pub fn next_gc_threshold(&self) -> usize {
