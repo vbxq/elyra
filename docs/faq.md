@@ -33,7 +33,7 @@ Not yet but planned very soon. You can use `print` statements (sorry) or inspect
 
 Yes. The 0.22 API exposes a shared `Runtime`, immutable `CompiledModule`, and per-thread `Isolate`. Use `Runtime::compile`, `Runtime::new_isolate`, and `Isolate::execute`; configure fuel, deadlines, interruption, and reports through `RunOptions`. `CompiledModule::avbc()` can be persisted and restored with `Runtime::load_avbc()`.
 
-Source-level `fn main(...)` is not an implicit entry point: defining it does not call it. Top-level code runs on `execute`; resolve a named function and call it for an explicit entry point. Module members use dot syntax in Aelys (`math.sqrt(...)`), while Rust symbol-table names use `::`.
+Source-level `fn main(...)` is not an implicit entry point: defining it does not call it. Top-level code runs on `execute`; resolve a named function and call it for an explicit entry point. Module members use `::` in Aelys (`math::sqrt(...)`), while `.` selects values such as fields and methods.
 
 ### Are there tests?
 
