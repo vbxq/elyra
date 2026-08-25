@@ -59,9 +59,13 @@ fn test_from_annotation_generic_types() {
         InferType::Vec(Box::new(InferType::String))
     );
 
-    // Array<Int> (PascalCase should also work)
+    let fixed_array = TypeAnnotation::fixed_array(
+        TypeAnnotation::new("Int".to_string(), Span::new(0, 0, 1, 1)),
+        2,
+        Span::new(0, 0, 1, 1),
+    );
     assert_eq!(
-        InferType::from_annotation(&make_generic_ann("Array", "Int")),
-        InferType::Array(Box::new(InferType::I64))
+        InferType::from_annotation(&fixed_array),
+        InferType::FixedArray(Box::new(InferType::I64), 2)
     );
 }
