@@ -18,7 +18,7 @@ fn test_println_works() {
 fn test_for_each_vec_int() {
     assert_aelys_int(
         r#"
-        let v = Vec[1, 2, 3]
+        let mut v = vec![1, 2, 3]
         let mut sum = 0
         for item in v {
             sum += item
@@ -33,7 +33,7 @@ fn test_for_each_vec_int() {
 fn test_for_each_vec_string() {
     assert_aelys_int(
         r#"
-        let v = Vec[]
+        let mut v = vec![]
         v.push("a")
         v.push("b")
         v.push("c")
@@ -51,7 +51,7 @@ fn test_for_each_vec_string() {
 fn test_for_each_vec_float() {
     let result = run_aelys(
         r#"
-        let v = Vec[1.0, 2.0, 3.0]
+        let mut v = vec![1.0, 2.0, 3.0]
         let mut sum = 0.0
         for x in v {
             sum += x
@@ -73,7 +73,7 @@ fn test_for_each_vec_in_function() {
             }
             return total
         }
-        let nums = Vec[10, 20, 30]
+        let nums = vec![10, 20, 30]
         sum_vec(nums)
         "#,
         60,
@@ -82,10 +82,9 @@ fn test_for_each_vec_in_function() {
 
 #[test]
 fn test_for_each_vec_empty() {
-    // empty vec: loop body should not execute
     assert_aelys_int(
         r#"
-        let v = Vec[]
+        let mut v: Vec<int> = vec![]
         let mut count = 0
         for item in v {
             count++
@@ -100,7 +99,7 @@ fn test_for_each_vec_empty() {
 fn test_for_each_vec_break() {
     assert_aelys_int(
         r#"
-        let v = Vec[1, 2, 3, 4, 5]
+        let mut v = vec![1, 2, 3, 4, 5]
         let mut sum = 0
         for item in v {
             if item == 3 { break }
@@ -116,7 +115,7 @@ fn test_for_each_vec_break() {
 fn test_for_each_vec_continue() {
     assert_aelys_int(
         r#"
-        let v = Vec[1, 2, 3, 4, 5]
+        let mut v = vec![1, 2, 3, 4, 5]
         let mut sum = 0
         for item in v {
             if item == 3 { continue }
@@ -147,7 +146,7 @@ fn test_for_each_array_int() {
 fn test_for_each_array_empty() {
     assert_aelys_int(
         r#"
-        let arr = []
+        let arr: [int; 0] = []
         let mut count = 0
         for item in arr {
             count++
@@ -160,7 +159,6 @@ fn test_for_each_array_empty() {
 
 #[test]
 fn test_for_each_array_bool() {
-    // count true values
     assert_aelys_int(
         r#"
         let arr = [true, false, true, true, false]
@@ -209,7 +207,7 @@ fn test_for_each_array_float() {
 fn test_for_each_nested_vec() {
     assert_aelys_int(
         r#"
-        let rows = Vec[Vec[1, 2], Vec[3, 4], Vec[5, 6]]
+        let rows = vec![vec![1, 2], vec![3, 4], vec![5, 6]]
         let mut sum = 0
         for row in rows {
             for item in row {
@@ -337,7 +335,6 @@ fn test_string_method_on_variable() {
 
 #[test]
 fn test_string_method_chaining() {
-    // Chain: trim then to_upper
     assert_aelys_str(
         r#"
         let s = "  hello  "
