@@ -48,14 +48,14 @@ fn run() {
     let mut zoom = 0.4
 
     for frame in 0..250 {
-        let scale = 2.0 / zoom / H
-        let ox = cx - (W / 2) * scale
-        let oy = cy - (H / 2) * scale
+        let scale = 2.0 / zoom / convert::to_float(H)
+        let ox = cx - (convert::to_float(W) / 2.0) * scale
+        let oy = cy - (convert::to_float(H) / 2.0) * scale
 
         for py in 0..H {
-            let y0 = oy + py * scale
+            let y0 = oy + convert::to_float(py) * scale
             for px in 0..W {
-                let x0 = ox + px * scale
+                let x0 = ox + convert::to_float(px) * scale
                 let mut x = 0.0
                 let mut y = 0.0
                 let mut i = 0
