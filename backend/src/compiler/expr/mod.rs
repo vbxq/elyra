@@ -31,6 +31,15 @@ impl Compiler {
             ExprKind::And { left, right } => self.compile_and(left, right, dest, expr.span),
             ExprKind::Or { left, right } => self.compile_or(left, right, dest, expr.span),
             ExprKind::Call { callee, args } => self.compile_call(callee, args, dest, expr.span),
+            ExprKind::GenericApply { .. } => Err(aelys_common::error::AelysError::Compile(
+                aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TypeInferenceError(
+                        "generic path applications require typed compilation".to_string(),
+                    ),
+                    expr.span,
+                    self.source.clone(),
+                ),
+            )),
             ExprKind::Assign { name, value } => self.compile_assign(name, value, dest, expr.span),
             ExprKind::Grouping(inner) => self.compile_expr(inner, dest),
             ExprKind::If {
@@ -48,6 +57,15 @@ impl Compiler {
                 member,
                 separator,
             } => self.compile_member_access(object, member, *separator, dest, expr.span),
+            ExprKind::MemberAssign { .. } => Err(aelys_common::error::AelysError::Compile(
+                aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TypeInferenceError(
+                        "struct field assignment requires typed compilation".to_string(),
+                    ),
+                    expr.span,
+                    self.source.clone(),
+                ),
+            )),
             ExprKind::ArrayLiteral { elements, .. } => {
                 self.compile_array_literal(elements, dest, expr.span)
             }
@@ -80,7 +98,24 @@ impl Compiler {
                     self.source.clone(),
                 ),
             )),
-            // cast: sized types collapse in VM backend
+            ExprKind::EnumLiteral { .. } => Err(aelys_common::error::AelysError::Compile(
+                aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TypeInferenceError(
+                        "enum literals require typed compilation".to_string(),
+                    ),
+                    expr.span,
+                    self.source.clone(),
+                ),
+            )),
+            ExprKind::GenericEnumLiteral { .. } => Err(aelys_common::error::AelysError::Compile(
+                aelys_common::error::CompileError::new(
+                    aelys_common::error::CompileErrorKind::TypeInferenceError(
+                        "enum literals require typed compilation".to_string(),
+                    ),
+                    expr.span,
+                    self.source.clone(),
+                ),
+            )),
             ExprKind::Cast { expr: inner, .. } => self.compile_expr(inner, dest),
             ExprKind::Try(_) | ExprKind::Match { .. } => Err(
                 aelys_common::error::AelysError::Compile(aelys_common::error::CompileError::new(
