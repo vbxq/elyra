@@ -8,6 +8,8 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
     let t2 = subst.apply(t2);
 
     match (&t1, &t2) {
+        (InferType::Poison, _) | (_, InferType::Poison) => Err(UnifyError::Poisoned),
+
         (InferType::I8, InferType::I8)
         | (InferType::I16, InferType::I16)
         | (InferType::I32, InferType::I32)
@@ -40,12 +42,31 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
 
         (InferType::Struct(a), InferType::Struct(b)) if a == b => Ok(()),
 
-        (InferType::Dynamic, _) | (_, InferType::Dynamic) => Ok(()),
+        (
+            InferType::Applied {
+                name: a,
+                args: args_a,
+            },
+            InferType::Applied {
+                name: b,
+                args: args_b,
+            },
+        ) if a == b => {
+            if args_a.len() != args_b.len() {
+                return Err(UnifyError::ArityMismatch(args_a.len(), args_b.len()));
+            }
+            for (left, right) in args_a.iter().zip(args_b) {
+                unify(left, right, subst)?;
+            }
+            Ok(())
+        }
+
+        (InferType::Param(a), InferType::Param(b)) if a == b => Ok(()),
 
         (InferType::Var(id1), InferType::Var(id2)) if id1 == id2 => Ok(()),
 
         (InferType::Var(v), ty) => {
-            if *ty != InferType::Dynamic && occurs_check(*v, ty) {
+            if occurs_check(*v, ty) {
                 return Err(UnifyError::InfiniteType(*v, ty.clone()));
             }
             subst.bind(*v, ty.clone());
@@ -53,7 +74,7 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         }
 
         (ty, InferType::Var(v)) => {
-            if *ty != InferType::Dynamic && occurs_check(*v, ty) {
+            if occurs_check(*v, ty) {
                 return Err(UnifyError::InfiniteType(*v, ty.clone()));
             }
             subst.bind(*v, ty.clone());
@@ -82,6 +103,17 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         }
 
         (InferType::Array(inner1), InferType::Array(inner2)) => unify(inner1, inner2, subst),
+
+        (InferType::FixedArray(inner1, len1), InferType::FixedArray(inner2, len2))
+            if len1 == len2 =>
+        {
+            unify(inner1, inner2, subst)
+        }
+
+        (InferType::FixedArray(inner1, _), InferType::Array(inner2))
+        | (InferType::Array(inner1), InferType::FixedArray(inner2, _)) => {
+            unify(inner1, inner2, subst)
+        }
 
         (InferType::Vec(inner1), InferType::Vec(inner2)) => unify(inner1, inner2, subst),
 
