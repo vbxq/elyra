@@ -1,4 +1,3 @@
-// heap object types
 
 mod array;
 mod closure;
@@ -9,6 +8,7 @@ mod kinds;
 mod native;
 mod range;
 mod string;
+mod struct_object;
 mod sum;
 mod upvalue;
 mod vec;
@@ -22,6 +22,7 @@ pub use kinds::ObjectKind;
 pub use native::NativeFunction;
 pub use range::AelysRange;
 pub use string::AelysString;
-pub use sum::{AelysSum, SumTag};
+pub use struct_object::AelysStruct;
+pub use sum::{AelysEnum, AelysSum, SumTag};
 pub use upvalue::{AelysUpvalue, UpvalueLocation};
 pub use vec::AelysVec;
