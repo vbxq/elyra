@@ -22,12 +22,11 @@ use smallvec::SmallVec;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// A function resolved once and called many times. Re-exported here so an
-/// embedder holding a [`Runtime`] never has to depend on `aelys-driver`.
 pub use aelys_driver::CallableFunction;
 pub use aelys_runtime::InterruptHandle;
 
@@ -127,13 +126,6 @@ impl IsolateConfig {
     }
 }
 
-/// Options applied to one [`Isolate::execute`], [`Isolate::execute_instance`]
-/// or [`Isolate::call_with_options`] run.
-///
-/// Controls are installed for the selected run and a later plain
-/// [`Isolate::call`] restores an unrestricted frame path. `report` is
-/// telemetry only: requesting it no longer disables the JIT, although a hard
-/// instruction/deadline/interrupt control still requires the interpreter.
 #[derive(Clone, Debug)]
 pub struct RunOptions {
     pub max_instructions: Option<u64>,
@@ -183,6 +175,7 @@ pub enum StructuredValue {
 pub enum StructuredCloneError {
     InvalidHandle,
     Unsupported(&'static str),
+    StructValuesUnsupported,
     Cycle,
     MaximumDepth,
     Runtime(aelys_common::error::RuntimeError),
@@ -193,6 +186,9 @@ impl fmt::Display for StructuredCloneError {
         match self {
             Self::InvalidHandle => formatter.write_str("invalid or stale heap handle"),
             Self::Unsupported(kind) => write!(formatter, "{kind} cannot be structured-cloned"),
+            Self::StructValuesUnsupported => {
+                formatter.write_str("struct values are not supported by structured clone")
+            }
             Self::Cycle => formatter.write_str("cyclic values cannot be structured-cloned"),
             Self::MaximumDepth => formatter.write_str("structured clone depth limit exceeded"),
             Self::Runtime(error) => error.fmt(formatter),
@@ -202,11 +198,7 @@ impl fmt::Display for StructuredCloneError {
 
 impl std::error::Error for StructuredCloneError {}
 
-/// Telemetry for one run.
-///
 /// `allocations` is a monotone count since the beginning of the run;
-/// `allocated_bytes` is the live heap size at the end and can decrease after
-/// garbage collection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionReport {
     pub instructions: u64,
@@ -229,11 +221,11 @@ pub struct CompiledModule {
     function: Arc<aelys_bytecode::Function>,
     module_id: u64,
     source: Arc<Source>,
+    /// set when the module imported other modules, whose globals live in that one isolate
+    linked_isolate: Option<u64>,
 }
 
 impl CompiledModule {
-    /// Return portable AVBC bytes suitable for build-time or disk caching.
-    /// Recreate a module with [`Runtime::load_avbc`].
     pub fn avbc(&self) -> &[u8] {
         &self.avbc
     }
@@ -252,8 +244,41 @@ struct RuntimeInner {
     standard_symbols: OnceLock<Result<StandardSymbols, String>>,
 }
 
-/// Distinguishes compiled modules
 static NEXT_MODULE_ID: AtomicU64 = AtomicU64::new(1);
+
+type NativeSymbols = (HashSet<String>, HashSet<String>, HashMap<String, InferType>);
+
+impl RuntimeInner {
+    fn standard_module_symbols(&self) -> Result<StandardSymbols, AelysError> {
+        let cached = self
+            .standard_symbols
+            .get_or_init(|| build_standard_module_symbols().map_err(|error| error.to_string()));
+        match cached {
+            Ok(symbols) => Ok(symbols.clone()),
+            Err(message) => Err(AelysError::Runtime(RuntimeError::new(
+                RuntimeErrorKind::InvalidBytecode(message.clone()),
+                Vec::new(),
+                Source::new("<compile-context>", ""),
+            ))),
+        }
+    }
+
+    fn native_module_symbols(&self) -> NativeSymbols {
+        let modules = self
+            .native_modules
+            .lock()
+            .expect("native module registry poisoned");
+        let mut aliases = HashSet::new();
+        let mut natives = HashSet::new();
+        let mut signatures = HashMap::new();
+        for registration in modules.iter() {
+            aliases.insert(registration.alias.clone());
+            natives.extend(registration.qualified_names());
+            signatures.extend(registration.signatures.clone());
+        }
+        (aliases, natives, signatures)
+    }
+}
 
 impl Runtime {
     pub fn new() -> Self {
@@ -305,8 +330,6 @@ impl Runtime {
         self.inner.jit_mode
     }
 
-    /// Number of cached baseline/optimized functions. OSR entries are
-    /// included; this is not a root-entry-only metric.
     pub fn jit_cache_entries(&self) -> usize {
         self.inner
             .jit
@@ -332,28 +355,15 @@ impl Runtime {
     }
 
     fn standard_module_symbols(&self) -> Result<StandardSymbols, AelysError> {
-        let cached = self
-            .inner
-            .standard_symbols
-            .get_or_init(|| build_standard_module_symbols().map_err(|error| error.to_string()));
-        match cached {
-            Ok(symbols) => Ok(symbols.clone()),
-            Err(message) => Err(AelysError::Runtime(RuntimeError::new(
-                RuntimeErrorKind::InvalidBytecode(message.clone()),
-                Vec::new(),
-                Source::new("<compile-context>", ""),
-            ))),
-        }
+        self.inner.standard_module_symbols()
     }
 
-    /// Makes a statically linked native module visible to this runtime
     #[doc = "# Safety"]
     #[doc = "the module must refer to a valid static abi descriptor."]
     pub unsafe fn register_native_module(
         &self,
         module: &'static AelysModuleDescriptor,
     ) -> Result<(), AelysError> {
-        // SAFETY: forwarded to this function's own contract, which is the same one `validate` states.
         let validated = unsafe { NativeModuleRegistration::validate(module) }?;
         if is_standard_module_alias(validated.alias()) {
             return Err(invalid_module_reason(
@@ -364,8 +374,6 @@ impl Runtime {
         let alias = validated.alias().to_string();
         self.reserve_native_alias(&alias)?;
 
-        // The init callback runs without the registry lock so it may call
-        // back into the runtime. The pending reservation prevents a second
         // thread from initializing the same alias concurrently.
         let registration = match validated.initialize() {
             Ok(registration) => Arc::new(registration),
@@ -422,23 +430,8 @@ impl Runtime {
             .remove(alias);
     }
 
-    pub(crate) fn native_module_symbols(
-        &self,
-    ) -> (HashSet<String>, HashSet<String>, HashMap<String, InferType>) {
-        let modules = self
-            .inner
-            .native_modules
-            .lock()
-            .expect("native module registry poisoned");
-        let mut aliases = HashSet::new();
-        let mut natives = HashSet::new();
-        let mut signatures = HashMap::new();
-        for registration in modules.iter() {
-            aliases.insert(registration.alias.clone());
-            natives.extend(registration.qualified_names());
-            signatures.extend(registration.signatures.clone());
-        }
-        (aliases, natives, signatures)
+    pub(crate) fn native_module_symbols(&self) -> NativeSymbols {
+        self.inner.native_module_symbols()
     }
 
     pub fn compile(
@@ -448,13 +441,14 @@ impl Runtime {
     ) -> Result<CompiledModule, AelysError> {
         let source = Source::new(options.source_name, source);
         let tokens = Lexer::with_source(source.clone()).scan()?;
-        let statements = Parser::new(tokens, source.clone()).parse()?;
+        let statements = Parser::new_rust_collections(tokens, source.clone()).parse()?;
         let (mut module_aliases, mut known_globals, mut known_native_globals) =
             self.standard_module_symbols()?;
         let (native_aliases, native_globals, native_signatures) = self.native_module_symbols();
         module_aliases.extend(native_aliases);
         known_globals.extend(native_globals.iter().cloned());
         known_native_globals.extend(native_globals);
+        reject_unprovided_needs(&statements, &module_aliases, &source)?;
         let typed = TypeInference::infer_program_full_with_native_signatures(
             statements,
             source.clone(),
@@ -462,24 +456,9 @@ impl Runtime {
             known_globals.clone(),
             known_native_globals.clone(),
             native_signatures,
+            aelys_sema::infer::imports::ImportedTypes::default(),
         )
-        .map_err(|errors| {
-            let (message, span) = errors
-                .first()
-                .map(|error| (error.to_string(), error.span))
-                .unwrap_or_else(|| ("unknown type error".to_string(), Span::dummy()));
-            AelysError::Compile(CompileError::new(
-                CompileErrorKind::NamedTypeError {
-                    code: errors
-                        .first()
-                        .map(aelys_sema::TypeError::diagnostic_code)
-                        .unwrap_or(301),
-                    message,
-                },
-                span,
-                source.clone(),
-            ))
-        })?;
+        .map_err(|errors| type_inference_error(&errors, &source))?;
         let mut optimizer = Optimizer::new(options.optimization_level);
         let typed = optimizer.optimize(typed.program);
         let (function, _) = Compiler::with_modules(
@@ -505,15 +484,11 @@ impl Runtime {
             function: Arc::new(function),
             module_id,
             source,
+            linked_isolate: None,
         })
     }
 
-    /// Reconstruct a compiled module from AVBC produced by [`CompiledModule::avbc`].
-    ///
-    /// AVBC does not contain the original source text, so `source_name` is
-    /// used for diagnostics and reports. The module receives a fresh,
     /// process-wide id and is therefore safe to execute through any isolate
-    /// belonging to this runtime.
     pub fn load_avbc(
         &self,
         avbc: &[u8],
@@ -533,6 +508,7 @@ impl Runtime {
             function: Arc::new(function),
             module_id,
             source,
+            linked_isolate: None,
         })
     }
 
@@ -587,6 +563,70 @@ impl Runtime {
         }
         Ok(())
     }
+}
+
+fn type_inference_error(errors: &[aelys_sema::TypeError], source: &Arc<Source>) -> AelysError {
+    let (message, span) = errors
+        .first()
+        .map(|error| (error.to_string(), error.span))
+        .unwrap_or_else(|| ("unknown type error".to_string(), Span::dummy()));
+    AelysError::Compile(CompileError::new(
+        CompileErrorKind::NamedTypeError {
+            code: errors
+                .first()
+                .map(aelys_sema::TypeError::diagnostic_code)
+                .unwrap_or(301),
+            message,
+        },
+        span,
+        Arc::clone(source),
+    ))
+}
+
+const HOST_SEARCH_SURFACE: [&str; 3] = [
+    "<built-in modules>",
+    "<native modules registered on this runtime>",
+    "no module search root: use Isolate::compile_file or Isolate::compile_with_root to load modules from disk",
+];
+
+/// a `needs` the runtime cannot satisfy from its own modules is an error, not a silent no-op.
+fn reject_unprovided_needs(
+    statements: &[aelys_syntax::Stmt],
+    module_aliases: &HashSet<String>,
+    source: &Arc<Source>,
+) -> Result<(), AelysError> {
+    for statement in statements {
+        let aelys_syntax::StmtKind::Needs(needs) = &statement.kind else {
+            continue;
+        };
+        if is_runtime_provided(&needs.path, module_aliases) {
+            continue;
+        }
+        let module_path = needs.path.join(".");
+        let kind = if needs.path.first().is_some_and(|segment| segment == "std") {
+            CompileErrorKind::StdlibNotAvailable {
+                module: module_path,
+            }
+        } else {
+            CompileErrorKind::ModuleNotFound {
+                module_path,
+                searched_paths: HOST_SEARCH_SURFACE.iter().map(|s| s.to_string()).collect(),
+            }
+        };
+        return Err(AelysError::Compile(CompileError::new(
+            kind,
+            needs.span,
+            Arc::clone(source),
+        )));
+    }
+    Ok(())
+}
+
+fn is_runtime_provided(path: &[String], module_aliases: &HashSet<String>) -> bool {
+    if aelys_runtime::stdlib::is_std_module(path) {
+        return true;
+    }
+    path.len() == 1 && module_aliases.contains(&path[0])
 }
 
 fn duplicate_alias(alias: &str) -> AelysError {
@@ -696,7 +736,7 @@ impl Isolate {
         function: &aelys_bytecode::Function,
         options: &RunOptions,
     ) -> Result<RootJitResult, AelysError> {
-        if self.runtime.jit_mode == JitMode::Off {
+        if self.runtime.jit_mode == JitMode::Off || function.jit_unsupported_struct {
             return Ok(RootJitResult::Unsupported);
         }
         let Some(provider) = self.runtime.jit.as_ref() else {
@@ -760,11 +800,144 @@ impl Isolate {
         }
     }
 
+    /// `aelys run` does. imported modules are linked into this isolate, so the result runs here
+    pub fn compile_file(
+        &mut self,
+        entry_file: &Path,
+        options: CompileOptions,
+    ) -> Result<CompiledModule, AelysError> {
+        let name = entry_file.display().to_string();
+        let text = std::fs::read_to_string(entry_file).map_err(|_| {
+            AelysError::Compile(CompileError::new(
+                CompileErrorKind::ModuleNotFound {
+                    module_path: name.clone(),
+                    searched_paths: vec![name.clone()],
+                },
+                Span::dummy(),
+                Source::new(&name, ""),
+            ))
+        })?;
+        let module_root = entry_file
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let source = Source::new(&name, &text);
+        self.compile_rooted(source, module_root, options.optimization_level)
+    }
+
+    pub fn compile_with_root(
+        &mut self,
+        source: &str,
+        module_root: &Path,
+        options: CompileOptions,
+    ) -> Result<CompiledModule, AelysError> {
+        let optimization_level = options.optimization_level;
+        let source = Source::new(options.source_name, source);
+        self.compile_rooted(source, module_root, optimization_level)
+    }
+
+    fn compile_rooted(
+        &mut self,
+        source: Arc<Source>,
+        module_root: &Path,
+        optimization_level: OptimizationLevel,
+    ) -> Result<CompiledModule, AelysError> {
+        let tokens = Lexer::with_source(Arc::clone(&source)).scan()?;
+        let statements = Parser::new_rust_collections(tokens, Arc::clone(&source)).parse()?;
+
+        let (mut module_aliases, mut known_globals, mut known_native_globals) =
+            self.runtime.standard_module_symbols()?;
+        let (native_aliases, native_globals, mut native_signatures) =
+            self.runtime.native_module_symbols();
+        module_aliases.extend(native_aliases.iter().cloned());
+        known_globals.extend(native_globals.iter().cloned());
+        known_native_globals.extend(native_globals);
+
+        let before: HashSet<String> = self.vm.global_names().into_iter().collect();
+        // the host natives are passed as already provided so a file of the same name cannot
+        let imports = aelys_driver::modules::load_modules_in_dir(
+            &statements,
+            module_root,
+            native_aliases,
+            Arc::clone(&source),
+            &mut self.vm,
+        )?;
+        for name in self.vm.global_names() {
+            if !before.contains(&name) {
+                self.persistent_globals.insert(name);
+            }
+        }
+
+        module_aliases.extend(imports.module_aliases.iter().cloned());
+        module_aliases.extend(self.vm.repl_module_aliases().iter().cloned());
+        known_globals.extend(imports.known_globals.iter().cloned());
+        known_globals.extend(self.vm.repl_known_globals().iter().cloned());
+        known_native_globals.extend(imports.known_native_globals.iter().cloned());
+        known_native_globals.extend(self.vm.repl_known_native_globals().iter().cloned());
+        native_signatures.extend(imports.native_signatures.clone());
+
+        let mut symbol_origins = imports.symbol_origins.clone();
+        for (name, origin) in self.vm.repl_symbol_origins() {
+            symbol_origins
+                .entry(name.clone())
+                .or_insert_with(|| origin.clone());
+        }
+
+        let main_statements: Vec<_> =
+            imports
+                .imported_impl_stmts
+                .iter()
+                .cloned()
+                .chain(statements.into_iter().filter(|statement| {
+                    !matches!(statement.kind, aelys_syntax::StmtKind::Needs(_))
+                }))
+                .collect();
+
+        let typed = TypeInference::infer_program_full_with_native_signatures(
+            main_statements,
+            Arc::clone(&source),
+            module_aliases.clone(),
+            known_globals.clone(),
+            known_native_globals.clone(),
+            native_signatures,
+            imports.imported_types.clone(),
+        )
+        .map_err(|errors| type_inference_error(&errors, &source))?;
+
+        let mut optimizer = Optimizer::new(optimization_level);
+        let typed = optimizer.optimize(typed.program);
+        let (function, _) = Compiler::with_modules(
+            None,
+            Arc::clone(&source),
+            module_aliases,
+            known_globals,
+            known_native_globals,
+            symbol_origins,
+        )
+        .compile_typed(&typed)?;
+
+        let avbc = serialize(&function).map_err(|error| {
+            CompileError::new(
+                CompileErrorKind::CompilationLimitExceeded(error.to_string()),
+                Span::dummy(),
+                Arc::clone(&source),
+            )
+        })?;
+        Ok(CompiledModule {
+            avbc: Arc::from(avbc),
+            function: Arc::new(function),
+            module_id: NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed),
+            source,
+            linked_isolate: Some(self.id),
+        })
+    }
+
     pub fn execute(
         &mut self,
         module: &CompiledModule,
         options: RunOptions,
     ) -> Result<ExecutionOutcome, AelysError> {
+        self.reject_foreign_module(module)?;
         self.prepare_module_run();
         self.configure_run(&options);
         let jit_result = self.try_execute_jit(module.module_id, &module.function, &options)?;
@@ -777,6 +950,7 @@ impl Isolate {
     }
 
     pub fn instantiate(&mut self, module: &CompiledModule) -> Result<ModuleInstance, AelysError> {
+        self.reject_foreign_module(module)?;
         let function = self.deserialize_root(module.avbc())?;
         let global_layout = Arc::clone(&function.global_layout);
         self.vm.set_source(Arc::clone(&module.source));
@@ -793,7 +967,6 @@ impl Isolate {
         })
     }
 
-    /// Execute an already-instantiated module without deserializing it again.
     pub fn execute_instance(
         &mut self,
         instance: &ModuleInstance,
@@ -938,11 +1111,6 @@ impl Isolate {
         }
     }
 
-    /// Resolve and pin a callable for repeated calls on this isolate.
-    ///
-    /// The returned handle is owned by the host and must only be used with
-    /// this isolate; it remains safe across collections and module
-    /// re-execution.
     pub fn get_function(&self, name: &str) -> Result<CallableFunction, AelysError> {
         aelys_driver::get_function(&self.vm, name)
     }
@@ -955,10 +1123,7 @@ impl Isolate {
         self.call_with_options(function, args, RunOptions::default())
     }
 
-    /// Call a previously resolved function with controls scoped to this call.
-    /// A plain [`Self::call`] deliberately installs default options so a
     /// bounded or reporting module load cannot silently affect every later
-    /// frame.
     pub fn call_with_options(
         &mut self,
         function: &CallableFunction,
@@ -987,7 +1152,6 @@ impl Isolate {
         result
     }
 
-    /// Return the most recently requested report, if any.
     pub fn last_report(&self) -> Option<&ExecutionReport> {
         self.last_report.as_ref()
     }
@@ -1064,6 +1228,8 @@ impl Isolate {
                 ObjectKind::Upvalue(_) => Err(StructuredCloneError::Unsupported("upvalue")),
                 ObjectKind::Range(_) => Err(StructuredCloneError::Unsupported("range")),
                 ObjectKind::Sum(_) => Err(StructuredCloneError::Unsupported("sum")),
+                ObjectKind::Enum(_) => Err(StructuredCloneError::Unsupported("enum")),
+                ObjectKind::Struct(_) => Err(StructuredCloneError::StructValuesUnsupported),
             },
             None => Err(StructuredCloneError::InvalidHandle),
         };
@@ -1111,6 +1277,17 @@ impl Isolate {
                     .map_err(StructuredCloneError::Runtime)
             }
         }
+    }
+
+    fn reject_foreign_module(&self, module: &CompiledModule) -> Result<(), AelysError> {
+        if let Some(isolate) = module.linked_isolate
+            && isolate != self.id
+        {
+            return Err(self.invalid_bytecode_error(
+                "module was compiled for a different isolate".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn foreign_instance_error(&self) -> AelysError {
