@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::TypeError;
+use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::TypedExprKind;
 use crate::types::InferType;
 use aelys_syntax::Span;
@@ -22,6 +22,20 @@ impl TypeInference {
             .or_else(|| self.env.lookup_function_ref(name))
         {
             return (TypedExprKind::Identifier(name.to_string()), ty.clone());
+        }
+
+        if self.env.is_namespace(name) {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::NamespaceIsNotAValue {
+                    name: name.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("namespace used as a value".to_string()),
+            });
+            return (
+                TypedExprKind::Identifier(name.to_string()),
+                InferType::Poison,
+            );
         }
 
         if let Some(ty) = crate::native::builtin_signature(name) {
@@ -51,9 +65,21 @@ impl TypeInference {
             .then(|| InferType::UntypedNative(name.to_string()));
 
         let ty = ty.unwrap_or_else(|| {
-            self.errors
-                .push(TypeError::undefined_variable(name.to_string(), span));
-            InferType::Dynamic
+            let kind = if self.globals_without_signature.contains(name) {
+                TypeErrorKind::GlobalWithoutSignature {
+                    name: name.to_string(),
+                }
+            } else {
+                TypeErrorKind::UndefinedVariable {
+                    name: name.to_string(),
+                }
+            };
+            self.errors.push(TypeError {
+                kind,
+                span,
+                reason: ConstraintReason::Other("variable lookup".to_string()),
+            });
+            InferType::Poison
         });
 
         (TypedExprKind::Identifier(name.to_string()), ty)
