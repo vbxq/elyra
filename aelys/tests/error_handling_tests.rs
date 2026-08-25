@@ -1,4 +1,4 @@
-use aelys::{CompileOptions, Runtime};
+use aelys::{CompileOptions, Runtime, new_vm, run_with_vm};
 use aelys_frontend::{lexer::Lexer, parser::Parser};
 use aelys_sema::TypeInference;
 use aelys_syntax::Source;
@@ -15,6 +15,17 @@ fn compile_ok(source: &str) {
     Runtime::new()
         .compile(source, CompileOptions::default())
         .expect("the source should compile");
+}
+
+fn assert_dynamic_surface_error(message: &str) {
+    assert!(
+        message.contains("error[E0347]"),
+        "expected E0347: {message}"
+    );
+    assert!(
+        message.contains("dynamic is not part of Aelys"),
+        "expected the dynamic surface diagnostic: {message}"
+    );
 }
 
 fn infer_message(source_text: &str) -> String {
@@ -81,18 +92,21 @@ fn compile_untyped_native_annotation(source_text: &str) -> String {
         .join("\n")
 }
 
-fn compile_untyped_native_ok(source_text: &str) {
-    let source = Source::new("<native-boundary-ok>", source_text);
-    let tokens = Lexer::with_source(source.clone()).scan().unwrap();
-    let statements = Parser::new(tokens, source.clone()).parse().unwrap();
-    let mut aliases = HashSet::new();
-    aliases.insert("custom".to_string());
-    let mut globals = HashSet::new();
-    globals.insert("custom::read".to_string());
-    let mut natives = HashSet::new();
-    natives.insert("custom::read".to_string());
-    TypeInference::infer_program_full_with_natives(statements, source, aliases, globals, natives)
-        .expect("explicit dynamic must accept an untyped native value");
+#[test]
+fn runtime_type_discovery_is_not_a_surface_builtin() {
+    let message = compile_message("type(42)");
+    assert!(message.contains("error[E0301]"), "{message}");
+    assert!(message.contains("undefined variable: type"), "{message}");
+}
+
+#[test]
+fn public_repl_rejects_runtime_type_discovery() {
+    let mut vm = new_vm().expect("the test VM should initialize");
+    let message = run_with_vm(&mut vm, "type(42)", "<repl>")
+        .expect_err("the public REPL path must reject type discovery")
+        .to_string();
+    assert!(message.contains("error[E0301]"), "{message}");
+    assert!(message.contains("undefined variable: type"), "{message}");
 }
 
 #[test]
@@ -130,7 +144,7 @@ fn qualified_variant_from_the_wrong_sum_is_rejected() {
 
 #[test]
 fn or_patterns_must_bind_the_same_names() {
-    let message = compile_message("match Some(1) { Some(value) | None => value, Some(_) => 0 }");
+    let message = compile_message("match Some(1) { Some(value) | None => value }");
     assert!(message.contains("bind the same names"), "{message}");
 }
 
@@ -147,6 +161,30 @@ fn unused_result_binding_has_a_named_diagnostic() {
     let message =
         compile_message("fn read() -> Result<int, string> { Ok(1) }\nlet value = read()\n0");
     assert!(message.contains("unused Result"), "{message}");
+}
+
+#[test]
+fn widening_a_result_to_dynamic_cannot_discard_it() {
+    let message = compile_message(
+        "fn read() -> Result<int, string> { Ok(1) }\nlet value: dynamic = read()\n0",
+    );
+    assert_dynamic_surface_error(&message);
+}
+
+#[test]
+fn assigning_a_result_to_dynamic_cannot_discard_it() {
+    let message = compile_message(
+        "fn read() -> Result<int, string> { Ok(1) }\nlet mut value: dynamic = 0\nvalue = read()\n0",
+    );
+    assert_dynamic_surface_error(&message);
+}
+
+#[test]
+fn dynamic_implicit_return_cannot_erase_a_result() {
+    let message = compile_message(
+        "fn read() -> Result<int, string> { Ok(1) }\nfn pass() -> dynamic { read() }\npass()",
+    );
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -286,14 +324,27 @@ fn untyped_native_cannot_satisfy_a_sum_annotation() {
 }
 
 #[test]
-fn explicit_dynamic_is_the_native_escape_hatch() {
-    compile_untyped_native_ok("let value: dynamic = custom::read()\n0");
+fn untyped_native_cannot_enter_a_binding_without_a_signature() {
+    let message = compile_untyped_native("let value = custom::read()\nlet _ = value\n0");
+    assert!(
+        message.contains("has no Aelys type"),
+        "expected a named native-boundary diagnostic: {message}"
+    );
+}
+
+#[test]
+fn explicit_dynamic_is_rejected_at_the_native_boundary() {
+    let message = compile_untyped_native_annotation("let value: dynamic = custom::read()\n0");
+    assert!(
+        message.contains("dynamic is not part of Aelys"),
+        "{message}"
+    );
 }
 
 #[test]
 fn dynamic_value_cannot_satisfy_a_concrete_annotation() {
     let message = compile_message("let value: dynamic = \"text\"\nlet number: int = value\nnumber");
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -301,13 +352,37 @@ fn dynamic_payload_cannot_satisfy_a_concrete_sum_annotation() {
     let message = compile_message(
         "let value: dynamic = 1\nlet option: Option<int> = Some(value)\nmatch option { Some(number) => number, None => 0 }",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
-fn sized_object_arrays_are_rejected_before_they_can_expose_null() {
-    let message = compile_message("let values = Array<String>(1)\n0");
-    assert!(message.contains("sized array"), "{message}");
+fn legacy_sized_object_array_syntax_is_rejected_before_it_can_expose_null() {
+    let message = compile_message("let values = array<string>(1)\n0");
+    assert!(message.contains("legacy collection syntax"), "{message}");
+}
+
+#[test]
+fn negative_sized_arrays_are_rejected_before_allocation() {
+    let message = compile_message("let values = [0; -1]\n0");
+    assert!(
+        message.contains("array size cannot be negative"),
+        "{message}"
+    );
+}
+
+#[test]
+fn inferred_sum_parameters_are_checked_after_substitution() {
+    compile_ok(
+        "fn choose(value) -> int { match value { Some(number) => number, None => 0 } }\nchoose(Some(2))",
+    );
+}
+
+#[test]
+fn qualified_variant_family_mismatch_is_rejected_for_inferred_parameters() {
+    let message = compile_message(
+        "fn choose(value) -> int { match value { Result::Some(number) => number, Option::None => 0 } }\nchoose(Option::Some(2))",
+    );
+    assert!(message.contains("unknown variant"), "{message}");
 }
 
 #[test]
@@ -315,7 +390,7 @@ fn dynamic_callback_cannot_satisfy_a_concrete_map_result() {
     let message = compile_message(
         "fn convert(value: int) -> dynamic { \"bad\" }\nSome(1).map(convert).unwrap() + 1",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -323,10 +398,13 @@ fn dynamic_values_cannot_use_sum_methods_without_a_sum_type() {
     let message = compile_message(
         "fn read() -> Result<int, string> { Ok(1) }\nlet value: dynamic = read()\nvalue.unwrap()",
     );
-    assert!(
-        message.contains("dynamic value cannot use sum method"),
-        "{message}"
-    );
+    assert_dynamic_surface_error(&message);
+}
+
+#[test]
+fn scalar_values_cannot_use_sum_methods() {
+    let message = compile_message("let value = 1\nvalue.unwrap()");
+    assert!(message.contains("not available on"), "{message}");
 }
 
 #[test]
@@ -334,7 +412,7 @@ fn dynamic_value_cannot_satisfy_a_sum_method_argument() {
     let message = compile_message(
         "fn read() -> Option<int> { Some(1) }\nlet fallback: dynamic = 0\nread().unwrap_or(fallback)",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -360,7 +438,7 @@ fn dynamic_if_branch_cannot_satisfy_a_concrete_return() {
     let message = compile_message(
         "let value: dynamic = \"bad\"\nfn wrong() -> int { if true { value } else { 1 } }\nwrong()",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -368,29 +446,167 @@ fn dynamic_match_branch_cannot_satisfy_a_concrete_return() {
     let message = compile_message(
         "let value: dynamic = \"bad\"\nfn wrong() -> int { match true { true => value, false => 1 } }\nwrong()",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
+}
+
+#[test]
+fn dynamic_match_result_cannot_reach_a_numeric_operator() {
+    let message = compile_message(
+        "let value: dynamic = \"bad\"\n-(match true { true => value, false => value })",
+    );
+    assert!(message.contains("dynamic"), "{message}");
 }
 
 #[test]
 fn dynamic_array_element_cannot_satisfy_a_concrete_array() {
     let message = compile_message(
-        "let value: dynamic = \"bad\"\nlet numbers: Array<int> = [1, value]\nnumbers[1] + 1",
+        "let value: dynamic = \"bad\"\nlet numbers: [int; 2] = [1, value]\nnumbers[1] + 1",
     );
+    assert_dynamic_surface_error(&message);
+}
+
+#[test]
+fn dynamic_array_element_cannot_reach_a_numeric_operator() {
+    let message = compile_message("let values: [dynamic; 1] = [1]\nvalues[0] + 1");
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_sum_payload_cannot_reach_a_numeric_operator() {
+    let message = compile_message("let value: Option<dynamic> = Some(1)\nvalue.unwrap() + 1");
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_array_literal_element_cannot_reach_a_numeric_operator() {
+    let message = compile_message("let values: [dynamic; 1] = [\"bad\"]\n-values[0]");
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_match_binding_cannot_reach_a_numeric_operator() {
+    let message = compile_message(
+        "let value: Option<dynamic> = Some(\"bad\")\nmatch value { Some(item) => item + item, None => value.unwrap() }",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_match_block_local_cannot_reach_a_numeric_operator() {
+    let message = compile_message(
+        "let value = match true { true => { let inner: dynamic = \"bad\"\ninner }, false => { let other: dynamic = \"bad\"\nother } }\n-value",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_sum_return_cannot_reach_a_numeric_operator() {
+    let message =
+        compile_message("fn read() -> Option<dynamic> { Some(\"bad\") }\nread().unwrap() + 1");
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_sum_parameter_cannot_reach_a_numeric_operator() {
+    let message = compile_message(
+        "fn read(value: Option<dynamic>) -> int { value.unwrap() + 1 }\nread(Some(\"bad\"))",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn inferred_sum_parameter_cannot_reach_a_numeric_operator() {
+    let message =
+        compile_message("fn read(value) -> int { value.unwrap() + 1 }\nread(Some(\"bad\"))");
     assert!(message.contains("type mismatch"), "{message}");
+}
+
+#[test]
+fn inferred_sum_parameter_preserves_dynamic_payload_provenance() {
+    let message = compile_message(
+        "fn read(value) -> int { value.unwrap() + 1 }\nlet value: Option<dynamic> = Some(\"bad\")\nread(value)",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn inferred_sum_callback_preserves_dynamic_return_provenance() {
+    let message = compile_message(
+        "fn read(value, callback) -> int { value.map(callback).unwrap() }\nread(Some(1), fn(value: int) -> dynamic { value })",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_option_cannot_enter_a_concrete_map_callback() {
+    let message = compile_message(
+        "let value: Option<dynamic> = Some(\"bad\")\nvalue.map(fn(item: int) -> int { item + 1 }).unwrap() + 1",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_option_cannot_enter_a_concrete_and_then_callback() {
+    let message = compile_message(
+        "let value: Option<dynamic> = Some(\"bad\")\nvalue.and_then(fn(item: int) -> Option<int> { Some(item + 1) }).unwrap() + 1",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_result_error_cannot_enter_a_concrete_map_err_callback() {
+    let message = compile_message(
+        "let value: Result<int, dynamic> = Err(\"bad\")\nvalue.map_err(fn(error: int) -> int { error + 1 }).err().unwrap() + 1",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn dynamic_result_error_cannot_enter_a_concrete_or_else_callback() {
+    let message = compile_message(
+        "let value: Result<int, dynamic> = Err(\"bad\")\nvalue.or_else(fn(error: int) -> Result<int, string> { Ok(1) }).unwrap() + 1",
+    );
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn adjacent_generic_closing_angles_are_accepted() {
+    compile_ok("let value: Option<Option<int>> = Some(Some(1))\nlet _ = value\n0");
+}
+
+#[test]
+fn dynamic_function_value_return_cannot_reach_a_numeric_operator() {
+    let message =
+        compile_message("fn read() -> dynamic { \"bad\" }\nlet callback = read\ncallback() + 1");
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn inferred_dynamic_function_return_cannot_reach_a_numeric_operator() {
+    let message =
+        compile_message("fn read() { let value: dynamic = \"bad\"\nreturn value }\nread() + 1");
+    assert!(message.contains("dynamic"), "{message}");
+}
+
+#[test]
+fn inferred_dynamic_lambda_return_cannot_reach_a_numeric_operator() {
+    let message = compile_message(
+        "let read = fn() { let value: dynamic = \"bad\"\nreturn value }\nread() + 1",
+    );
+    assert!(message.contains("dynamic"), "{message}");
 }
 
 #[test]
 fn dynamic_arithmetic_cannot_satisfy_a_concrete_return() {
     let message =
         compile_message("let value: dynamic = \"bad\"\nfn wrong() -> int { value + 1 }\nwrong()");
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_arithmetic_is_rejected_before_execution() {
     let message = compile_message("let value: dynamic = \"bad\"\nvalue + 1");
-    assert!(message.contains("dynamic"), "{message}");
-    assert!(message.contains("binary operator '+'"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -400,28 +616,26 @@ fn dynamic_unary_numeric_operators_are_rejected_before_execution() {
         "let value: dynamic = \"bad\"\n~value",
     ] {
         let message = compile_message(source);
-        assert!(message.contains("dynamic"), "{message}");
-        assert!(message.contains("operator"), "{message}");
+        assert_dynamic_surface_error(&message);
     }
 }
 
 #[test]
 fn dynamic_equality_is_rejected_before_execution() {
     let message = compile_message("let value: dynamic = \"bad\"\nvalue == 1");
-    assert!(message.contains("dynamic"), "{message}");
-    assert!(message.contains("comparison"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_if_condition_is_a_compile_error() {
     let message = compile_message("let value: dynamic = \"bad\"\nif value { 1 } else { 0 }");
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_ordering_operand_is_a_compile_error() {
     let message = compile_message("let value: dynamic = \"bad\"\nvalue > 0");
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -435,31 +649,31 @@ fn dynamic_implicit_return_condition_is_a_compile_error() {
     let message = compile_message(
         "let value: dynamic = \"bad\"\nfn wrong() -> int { if value { 1 } else { 0 } }\nwrong()",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_index_cannot_satisfy_a_concrete_index() {
     let message = compile_message("let index: dynamic = 0\n[1][index]");
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_index_receiver_is_a_compile_error() {
     let message = compile_message("let value: dynamic = 1\nvalue[0]");
-    assert!(message.contains("cannot index"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_index_assignment_receiver_is_a_compile_error() {
     let message = compile_message("let value: dynamic = 1\nvalue[0] = 2\n0");
-    assert!(message.contains("cannot index"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_for_each_receiver_is_a_compile_error() {
     let message = compile_message("let values: dynamic = 1\nfor value in values { value }\n0");
-    assert!(message.contains("cannot iterate"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -477,14 +691,14 @@ fn scalar_collection_push_receiver_is_a_compile_error() {
 #[test]
 fn collection_diagnostics_hide_inference_variables() {
     let message = compile_message("fn push(value) { value.push(1) }\npush(1)");
-    assert!(message.contains("vector"), "{message}");
+    assert!(message.contains("collection operation"), "{message}");
     assert!(!message.contains("TypeVarId"), "{message}");
 }
 
 #[test]
 fn dynamic_string_method_receiver_is_a_compile_error() {
     let message = compile_message("let value: dynamic = \"bad\"\nvalue.to_upper()");
-    assert!(message.contains("string method"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -496,14 +710,14 @@ fn scalar_string_method_receiver_is_a_compile_error() {
 #[test]
 fn scalar_index_assignment_receiver_is_a_compile_error() {
     let message = compile_message("fn set(value) { value[0] = 1 }\nset(1)");
-    assert!(message.contains("not one of"), "{message}");
+    assert!(message.contains("index assignment"), "{message}");
 }
 
 #[test]
 fn dynamic_size_cannot_satisfy_a_concrete_array_size() {
     let message =
-        compile_message("let size: dynamic = 2\nlet values = Array<int>[; size]\nvalues.len()");
-    assert!(message.contains("type mismatch"), "{message}");
+        compile_message("let size: dynamic = 2\nlet values = vec![0; size]\nvalues.len()");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -511,13 +725,13 @@ fn dynamic_match_guard_cannot_satisfy_a_boolean_guard() {
     let message = compile_message(
         "let guard: dynamic = true\nmatch Some(1) { Some(value) if guard => value, None => 0, Some(_) => 0 }",
     );
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
 fn dynamic_error_message_cannot_satisfy_a_string_message() {
     let message = compile_message("let message: dynamic = 1\nError::Message(message)");
-    assert!(message.contains("type mismatch"), "{message}");
+    assert_dynamic_surface_error(&message);
 }
 
 #[test]
@@ -548,7 +762,7 @@ fn integer_iteration_is_rejected() {
 
 #[test]
 fn vector_assignment_checks_the_element_type() {
-    let message = compile_message("let values: Vec<int> = Vec[1]\nvalues[0] = true\n0");
+    let message = compile_message("let mut values: Vec<int> = vec![1]\nvalues[0] = true\n0");
     assert!(message.contains("type mismatch"), "{message}");
 }
 
@@ -557,6 +771,42 @@ fn constant_index_out_of_bounds_is_rejected() {
     let message = compile_message("[1, 2, 3][3]");
     assert!(
         message.contains("constant index 3 is out of bounds"),
+        "{message}"
+    );
+}
+
+#[test]
+fn constant_arithmetic_index_out_of_bounds_is_rejected() {
+    let message = compile_message("[1, 2][1 + 1]");
+    assert!(
+        message.contains("constant index 2 is out of bounds"),
+        "{message}"
+    );
+}
+
+#[test]
+fn constant_sized_array_index_out_of_bounds_is_rejected() {
+    let message = compile_message("[0; 1 + 1][2]");
+    assert!(
+        message.contains("constant index 2 is out of bounds"),
+        "{message}"
+    );
+}
+
+#[test]
+fn constant_grouped_sized_array_index_out_of_bounds_is_rejected() {
+    let message = compile_message("([0; 1 + 1])[2]");
+    assert!(
+        message.contains("constant index 2 is out of bounds"),
+        "{message}"
+    );
+}
+
+#[test]
+fn constant_grouped_array_index_out_of_bounds_is_rejected() {
+    let message = compile_message("([1, 2])[2]");
+    assert!(
+        message.contains("constant index 2 is out of bounds"),
         "{message}"
     );
 }
@@ -588,8 +838,7 @@ fn question_mark_rejects_dynamic_boundaries() {
         "fn read() -> Option<dynamic> { let value: Option<dynamic> = None; value }\nfn convert() -> Option<dynamic> { let _ = read()?; let value: Option<dynamic> = None; value }\nlet _ = convert()",
     ] {
         let message = compile_message(source);
-        assert!(message.contains("cannot propagate"), "{message}");
-        assert!(message.contains("dynamic"), "{message}");
+        assert_dynamic_surface_error(&message);
     }
 }
 
@@ -649,4 +898,33 @@ fn underscore_discard_does_not_bind_a_variable() {
 fn invalid_sum_variant_expression_is_rejected() {
     let message = compile_message("let value = Result::None\n0");
     assert!(message.contains("unknown variant"), "{message}");
+}
+
+#[test]
+fn a_generic_caller_must_prove_the_callee_trait_bound() {
+    let message = compile_message(
+        r#"
+trait Show { fn show(self) -> string; }
+struct Plain { v: int }
+fn render<T>(x: T) -> string where T: Show { x.show() }
+fn outer<U>(u: U) -> string { render(u) }
+fn probe() -> int { let s = outer(Plain { v: 1 }); 7 }
+probe()
+"#,
+    );
+    assert!(
+        message.contains("error[E0338]"),
+        "expected E0338: {message}"
+    );
+}
+
+#[test]
+fn turbofish_arity_is_reported_against_the_declaration() {
+    let message = compile_message(
+        "fn make<T>() -> int { 1 }\nfn probe() -> int { make::<int, string>() }\nprobe()",
+    );
+    assert!(
+        message.contains("expects 1 parameter(s), found 2"),
+        "expected declaration arity: {message}"
+    );
 }
