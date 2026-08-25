@@ -1,4 +1,3 @@
-//! Type environment for inference.
 
 mod captures;
 mod closure;
@@ -10,36 +9,55 @@ use crate::types::InferType;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-/// Type environment - maps names to types
 #[derive(Debug, Clone, Default)]
 pub struct TypeEnv {
-    /// Local variables in current scope (name -> type)
     locals: Vec<HashMap<String, InferType>>,
+
+    local_mutability: Vec<HashMap<String, bool>>,
+
+    read_only_bindings: Vec<HashSet<String>>,
+
+    known_collection_lengths: Vec<HashMap<String, usize>>,
 
     explicit_dynamic_locals: Vec<HashSet<String>>,
 
-    /// Captured variables from enclosing scopes (upvalues)
     captures: HashMap<String, InferType>,
+
+    capture_mutability: HashMap<String, bool>,
 
     explicit_dynamic_captures: HashSet<String>,
 
-    /// Known function signatures (name -> function type)
-    /// Uses Rc to avoid cloning function types during lookup
     functions: HashMap<String, Rc<InferType>>,
 
-    /// Current function name (for recursive calls)
     current_function: Option<String>,
+
+    // a namespace name is legal only as the root of a path, so it never gets a type
+    namespaces: HashSet<String>,
 }
 
 impl TypeEnv {
     pub fn new() -> Self {
         Self {
             locals: vec![HashMap::new()],
+            local_mutability: vec![HashMap::new()],
+            read_only_bindings: vec![HashSet::new()],
+            known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: HashMap::new(),
+            capture_mutability: HashMap::new(),
             explicit_dynamic_captures: HashSet::new(),
             functions: HashMap::new(),
             current_function: None,
+            namespaces: HashSet::new(),
         }
+    }
+
+    // a namespace carries no type because it is never a value, so it lives outside the type maps
+    pub fn define_namespace(&mut self, name: String) {
+        self.namespaces.insert(name);
+    }
+
+    pub fn is_namespace(&self, name: &str) -> bool {
+        self.namespaces.contains(name)
     }
 }
