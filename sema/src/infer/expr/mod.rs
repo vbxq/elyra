@@ -1,4 +1,4 @@
-mod array;
+pub(super) mod array;
 mod assign;
 mod binary;
 mod call;
@@ -14,7 +14,20 @@ use crate::types::InferType;
 use aelys_syntax::{Expr, ExprKind};
 
 impl TypeInference {
-    /// Infer type for an expression
+    pub(crate) fn require_display(&mut self, arg: &mut TypedExpr, reason: &str) {
+        let ty = arg.ty.clone();
+        let span = arg.span;
+        crate::infer::monomorphize::mark_display_argument(arg);
+        self.bound_residuals.push(crate::infer::BoundResidual {
+            ty,
+            trait_name: crate::prelude::DISPLAY_TRAIT.to_string(),
+            trait_args: Vec::new(),
+            span,
+            reason: ConstraintReason::Other(reason.to_string()),
+            nominal_only: true,
+        });
+    }
+
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
         self.depth += 1;
         if self.depth > super::MAX_INFERENCE_DEPTH {
@@ -22,7 +35,7 @@ impl TypeInference {
             self.depth -= 1;
             return TypedExpr {
                 kind: TypedExprKind::Null,
-                ty: InferType::Dynamic,
+                ty: InferType::Poison,
                 span: expr.span,
             };
         }
@@ -41,7 +54,9 @@ impl TypeInference {
                             TypedFmtStringPart::Literal(s.clone())
                         }
                         aelys_syntax::FmtStringPart::Expr(e) => {
-                            TypedFmtStringPart::Expr(Box::new(self.infer_expr(e)))
+                            let mut typed = self.infer_expr(e);
+                            self.require_display(&mut typed, "format string interpolation");
+                            TypedFmtStringPart::Expr(Box::new(typed))
                         }
                         aelys_syntax::FmtStringPart::Placeholder => TypedFmtStringPart::Placeholder,
                     })
@@ -84,7 +99,15 @@ impl TypeInference {
             ExprKind::And { left, right } => self.infer_logical_expr("and", left, right, expr),
             ExprKind::Or { left, right } => self.infer_logical_expr("or", left, right, expr),
             ExprKind::Call { callee, args } => self.infer_call_expr(callee, args, expr.span),
+            ExprKind::GenericApply { callee, type_args } => {
+                self.infer_generic_apply(callee, type_args, expr.span)
+            }
             ExprKind::Assign { name, value } => self.infer_assign_expr(name, value, expr.span),
+            ExprKind::MemberAssign {
+                object,
+                member,
+                value,
+            } => self.infer_member_assign_expr(object, member, value, expr.span),
             ExprKind::Grouping(inner) => {
                 let typed_inner = self.infer_expr(inner);
                 let ty = typed_inner.ty.clone();
@@ -108,14 +131,16 @@ impl TypeInference {
             ExprKind::ArrayLiteral {
                 element_type,
                 elements,
-            } => self.infer_array_literal(element_type, elements, expr.span),
+            } => {
+                self.infer_array_literal(element_type, elements, expr.repeat.as_deref(), expr.span)
+            }
             ExprKind::ArraySized { element_type, size } => {
                 self.infer_array_sized(element_type, size, expr.span)
             }
             ExprKind::VecLiteral {
                 element_type,
                 elements,
-            } => self.infer_vec_literal(element_type, elements, expr.span),
+            } => self.infer_vec_literal(element_type, elements, expr.repeat.as_deref(), expr.span),
             ExprKind::Index { object, index } => self.infer_index_expr(object, index, expr.span),
             ExprKind::IndexAssign {
                 object,
@@ -128,9 +153,19 @@ impl TypeInference {
                 inclusive,
             } => self.infer_range_expr(start, end, *inclusive, expr.span),
             ExprKind::Slice { object, range } => self.infer_slice_expr(object, range, expr.span),
-            ExprKind::StructLiteral { name, fields } => {
-                self.infer_struct_literal(name, fields, expr.span)
+            ExprKind::StructLiteral {
+                name,
+                type_args,
+                fields,
+            } => self.infer_struct_literal(name, type_args, fields, expr.span),
+            ExprKind::EnumLiteral { path, fields } => {
+                self.infer_enum_literal(path, &[], fields, expr.span)
             }
+            ExprKind::GenericEnumLiteral {
+                path,
+                type_args,
+                fields,
+            } => self.infer_enum_literal(path, type_args, fields, expr.span),
             ExprKind::Cast {
                 expr: inner,
                 target,
