@@ -17,7 +17,6 @@ impl InlineExpander {
         args: &[TypedExpr],
         call_span: Span,
     ) -> Option<TypedExpr> {
-        // don't inline if arity doesn't match
         if func.params.len() != args.len() {
             return None;
         }
@@ -38,7 +37,6 @@ impl InlineExpander {
         params: &HashMap<String, TypedExpr>,
         span: Span,
     ) -> Option<TypedExpr> {
-        // only inline truly trivial bodies: single return or expression with no let bindings
         if body.len() != 1 {
             return None;
         }
@@ -98,7 +96,6 @@ impl InlineExpander {
                     && self.expr_has_only_params_and_literals(then_branch, params)
                     && self.expr_has_only_params_and_literals(else_branch, params)
             }
-            // anything else (calls, arrays, etc.) - don't inline
             _ => false,
         }
     }
@@ -178,23 +175,31 @@ impl InlineExpander {
             TypedExprKind::ArrayLiteral {
                 element_type,
                 elements,
+                repeat,
             } => TypedExprKind::ArrayLiteral {
                 element_type: element_type.clone(),
                 elements: elements
                     .iter()
                     .map(|e| self.substitute_expr(e, params, span))
                     .collect(),
+                repeat: repeat
+                    .as_ref()
+                    .map(|count| Box::new(self.substitute_expr(count, params, span))),
             },
 
             TypedExprKind::VecLiteral {
                 element_type,
                 elements,
+                repeat,
             } => TypedExprKind::VecLiteral {
                 element_type: element_type.clone(),
                 elements: elements
                     .iter()
                     .map(|e| self.substitute_expr(e, params, span))
                     .collect(),
+                repeat: repeat
+                    .as_ref()
+                    .map(|count| Box::new(self.substitute_expr(count, params, span))),
             },
 
             TypedExprKind::ArraySized { element_type, size } => TypedExprKind::ArraySized {
@@ -236,7 +241,6 @@ impl InlineExpander {
                 range: Box::new(self.substitute_expr(range, params, span)),
             },
 
-            // lambdas need special care to avoid capturing the wrong variables
             TypedExprKind::Lambda(inner) => {
                 TypedExprKind::Lambda(Box::new(self.substitute_expr(inner, params, span)))
             }
@@ -247,7 +251,6 @@ impl InlineExpander {
                 body,
                 captures,
             } => {
-                // don't substitute params that shadow the outer ones
                 let mut filtered = params.clone();
                 for p in lparams {
                     filtered.remove(&p.name);
@@ -282,13 +285,75 @@ impl InlineExpander {
                     .collect(),
             ),
 
-            // literals pass through unchanged
-            TypedExprKind::StructLiteral { name, fields } => TypedExprKind::StructLiteral {
+            TypedExprKind::StructLiteral {
+                name,
+                schema_index,
+                fields,
+                field_offsets,
+            } => TypedExprKind::StructLiteral {
                 name: name.clone(),
+                schema_index: *schema_index,
                 fields: fields
                     .iter()
                     .map(|(n, v)| (n.clone(), Box::new(self.substitute_expr(v, params, span))))
                     .collect(),
+                field_offsets: field_offsets.clone(),
+            },
+            TypedExprKind::EnumConstruct {
+                enum_name,
+                variant,
+                schema_index,
+                variant_index,
+                fields,
+            } => TypedExprKind::EnumConstruct {
+                enum_name: enum_name.clone(),
+                variant: variant.clone(),
+                schema_index: *schema_index,
+                variant_index: *variant_index,
+                fields: fields
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.clone(),
+                            Box::new(self.substitute_expr(value, params, span)),
+                        )
+                    })
+                    .collect(),
+            },
+            TypedExprKind::StructField {
+                object,
+                member,
+                offset,
+                schema_index,
+            } => TypedExprKind::StructField {
+                object: Box::new(self.substitute_expr(object, params, span)),
+                member: member.clone(),
+                offset: *offset,
+                schema_index: *schema_index,
+            },
+            TypedExprKind::StructMethod {
+                object,
+                symbol,
+                method,
+                separator,
+            } => TypedExprKind::StructMethod {
+                object: Box::new(self.substitute_expr(object, params, span)),
+                symbol: symbol.clone(),
+                method: method.clone(),
+                separator: *separator,
+            },
+            TypedExprKind::MemberAssign {
+                object,
+                member,
+                offset,
+                schema_index,
+                value,
+            } => TypedExprKind::MemberAssign {
+                object: Box::new(self.substitute_expr(object, params, span)),
+                member: member.clone(),
+                offset: *offset,
+                schema_index: *schema_index,
+                value: Box::new(self.substitute_expr(value, params, span)),
             },
             TypedExprKind::Cast { expr, target } => TypedExprKind::Cast {
                 expr: Box::new(self.substitute_expr(expr, params, span)),
@@ -300,9 +365,13 @@ impl InlineExpander {
             TypedExprKind::String(s) => TypedExprKind::String(s.clone()),
             TypedExprKind::Unit => TypedExprKind::Unit,
             TypedExprKind::Null => TypedExprKind::Null,
-            TypedExprKind::Try(inner) => {
-                TypedExprKind::Try(Box::new(self.substitute_expr(inner, params, span)))
-            }
+            TypedExprKind::Try {
+                operand,
+                conversion,
+            } => TypedExprKind::Try {
+                operand: Box::new(self.substitute_expr(operand, params, span)),
+                conversion: conversion.clone(),
+            },
             TypedExprKind::Match { scrutinee, arms } => TypedExprKind::Match {
                 scrutinee: Box::new(self.substitute_expr(scrutinee, params, span)),
                 arms: arms.clone(),
@@ -379,11 +448,13 @@ impl InlineExpander {
                 iterator,
                 iterable,
                 elem_type,
+                read_only,
                 body,
             } => TypedStmtKind::ForEach {
                 iterator: iterator.clone(),
                 iterable: self.substitute_expr(iterable, params, span),
                 elem_type: elem_type.clone(),
+                read_only: *read_only,
                 body: Box::new(self.substitute_stmt(body, params, span)),
             },
             TypedStmtKind::Return(e) => {
