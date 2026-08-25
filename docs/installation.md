@@ -147,8 +147,8 @@ Modules are imported relative to the file that imports them. From `main.aelys`:
 
 ```rust
 needs config
-needs lib.utils
-needs lib.http
+needs lib::utils
+needs lib::http
 ```
 
 There's no package manager or dependency system for now, just files and directories.
