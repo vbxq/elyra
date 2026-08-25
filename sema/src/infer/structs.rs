@@ -1,9 +1,144 @@
 use super::TypeInference;
-use crate::types::{StructDef, StructField};
-use aelys_common::{Warning, WarningKind};
+use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
+use crate::types::{EnumDef, EnumVariantDef, EnumVariantFieldsDef, StructDef, StructField};
 use aelys_syntax::{Stmt, StmtKind};
+use std::collections::HashSet;
+
+const MAX_ENUM_LAYOUT_ENTRIES: usize = u16::MAX as usize;
 
 impl TypeInference {
+    pub(super) fn collect_enums(&mut self, stmts: &[Stmt]) {
+        let enum_count = stmts
+            .iter()
+            .filter(|stmt| matches!(&stmt.kind, StmtKind::EnumDecl { .. }))
+            .count();
+        if enum_count > MAX_ENUM_LAYOUT_ENTRIES
+            && let Some(stmt) = stmts
+                .iter()
+                .find(|stmt| matches!(&stmt.kind, StmtKind::EnumDecl { .. }))
+        {
+            let enum_name = match &stmt.kind {
+                StmtKind::EnumDecl { name, .. } => name.clone(),
+                _ => unreachable!(),
+            };
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::EnumLayoutTooLarge {
+                    enum_name,
+                    item: "schema table".to_string(),
+                    count: enum_count,
+                    limit: MAX_ENUM_LAYOUT_ENTRIES,
+                },
+                span: stmt.span,
+                reason: ConstraintReason::Other("enum schema table".to_string()),
+            });
+        }
+        let mut seen = HashSet::new();
+        let mut accepted = HashSet::new();
+        for stmt in stmts {
+            let StmtKind::EnumDecl {
+                name, type_params, ..
+            } = &stmt.kind
+            else {
+                continue;
+            };
+
+            if self.type_table.has_nominal(name) || !seen.insert(name.clone()) {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::DuplicateStruct { name: name.clone() },
+                    span: stmt.span,
+                    reason: ConstraintReason::Other("enum declaration".to_string()),
+                });
+                continue;
+            }
+
+            self.type_table.register_enum(EnumDef {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                variants: Vec::new(),
+            });
+            accepted.insert(name.clone());
+        }
+
+        for stmt in stmts {
+            let StmtKind::EnumDecl {
+                name,
+                type_params,
+                variants,
+                ..
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            if !accepted.remove(name) {
+                continue;
+            }
+
+            if variants.len() > MAX_ENUM_LAYOUT_ENTRIES {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::EnumLayoutTooLarge {
+                        enum_name: name.clone(),
+                        item: "variants".to_string(),
+                        count: variants.len(),
+                        limit: MAX_ENUM_LAYOUT_ENTRIES,
+                    },
+                    span: stmt.span,
+                    reason: ConstraintReason::Other("enum schema layout".to_string()),
+                });
+            }
+
+            let saved_type_params =
+                std::mem::replace(&mut self.type_params_in_scope, type_params.clone());
+            let mut typed_variants = Vec::with_capacity(variants.len());
+            for variant in variants {
+                let field_count = match &variant.fields {
+                    aelys_syntax::EnumVariantFields::Unit => 0,
+                    aelys_syntax::EnumVariantFields::Tuple(fields) => fields.len(),
+                    aelys_syntax::EnumVariantFields::Named(fields) => fields.len(),
+                };
+                if field_count > MAX_ENUM_LAYOUT_ENTRIES {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::EnumLayoutTooLarge {
+                            enum_name: name.clone(),
+                            item: format!("variant '{}' payload", variant.name),
+                            count: field_count,
+                            limit: MAX_ENUM_LAYOUT_ENTRIES,
+                        },
+                        span: variant.span,
+                        reason: ConstraintReason::Other("enum schema layout".to_string()),
+                    });
+                }
+                let fields = match &variant.fields {
+                    aelys_syntax::EnumVariantFields::Unit => EnumVariantFieldsDef::Unit,
+                    aelys_syntax::EnumVariantFields::Tuple(fields) => EnumVariantFieldsDef::Tuple(
+                        fields
+                            .iter()
+                            .map(|field| self.type_from_annotation(field))
+                            .collect(),
+                    ),
+                    aelys_syntax::EnumVariantFields::Named(fields) => EnumVariantFieldsDef::Named(
+                        fields
+                            .iter()
+                            .map(|field| StructField {
+                                name: field.name.clone(),
+                                ty: self.type_from_annotation(&field.type_annotation),
+                            })
+                            .collect(),
+                    ),
+                };
+                typed_variants.push(EnumVariantDef {
+                    name: variant.name.clone(),
+                    fields,
+                });
+            }
+            self.type_params_in_scope = saved_type_params;
+            self.type_table.register_enum(EnumDef {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                variants: typed_variants,
+            });
+        }
+    }
+
     pub(super) fn collect_structs(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             if let StmtKind::StructDecl {
@@ -13,19 +148,27 @@ impl TypeInference {
                 ..
             } = &stmt.kind
             {
-                if self.type_table.has_struct(name) {
-                    self.warnings.push(Warning::new(
-                        WarningKind::UnknownType {
-                            name: format!("duplicate struct '{}'", name),
-                        },
-                        stmt.span,
-                    ));
+                if self.type_table.has_nominal(name) {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::DuplicateStruct { name: name.clone() },
+                        span: stmt.span,
+                        reason: ConstraintReason::Other("struct declaration".to_string()),
+                    });
                     continue;
                 }
 
-                for type_param in type_params {
-                    let fresh_var = self.type_gen.fresh();
-                    self.env.define_local(type_param.clone(), fresh_var);
+                let mut field_names = HashSet::new();
+                for field in fields {
+                    if !field_names.insert(field.name.clone()) {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::DuplicateStructField {
+                                structure: name.clone(),
+                                field: field.name.clone(),
+                            },
+                            span: field.span,
+                            reason: ConstraintReason::Other("struct field declaration".to_string()),
+                        });
+                    }
                 }
 
                 let saved_type_params =
