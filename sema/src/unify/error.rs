@@ -1,17 +1,13 @@
 use crate::types::{InferType, TypeVarId};
 
-/// Result of unification
 pub type UnifyResult<T> = Result<T, UnifyError>;
 
-/// Error during unification
 #[derive(Debug, Clone)]
 pub enum UnifyError {
-    /// Types don't match
     Mismatch(InferType, InferType),
-    /// Infinite type detected
     InfiniteType(TypeVarId, InferType),
-    /// Function arity mismatch
     ArityMismatch(usize, usize),
+    Poisoned,
 }
 
 impl std::fmt::Display for UnifyError {
@@ -22,6 +18,7 @@ impl std::fmt::Display for UnifyError {
             UnifyError::ArityMismatch(expected, found) => {
                 write!(f, "arity mismatch: expected {}, found {}", expected, found)
             }
+            UnifyError::Poisoned => write!(f, "poisoned type cannot unify"),
         }
     }
 }
