@@ -3,7 +3,6 @@ use crate::types::{InferType, TypeVarId};
 use std::collections::HashSet;
 
 impl TypeEnv {
-    /// Get free type variables in the environment
     pub fn free_type_vars(&self) -> HashSet<TypeVarId> {
         let mut vars = HashSet::new();
 
@@ -19,6 +18,7 @@ impl TypeEnv {
                     collect_vars(ret, vars);
                 }
                 InferType::Array(inner) => collect_vars(inner, vars),
+                InferType::FixedArray(inner, _) => collect_vars(inner, vars),
                 InferType::Tuple(elems) => {
                     for e in elems {
                         collect_vars(e, vars);
