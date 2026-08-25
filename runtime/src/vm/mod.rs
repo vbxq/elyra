@@ -22,7 +22,6 @@ mod repl;
 mod resources;
 mod roots;
 
-// Implementation modules (extend VM with impl blocks)
 mod arithmetic;
 mod call_data;
 mod calls;
@@ -33,8 +32,8 @@ mod helpers;
 mod verifier;
 
 pub use aelys_bytecode::{
-    AelysClosure, AelysFunction, AelysString, AelysUpvalue, GcObject, GcRef, NativeFunction,
-    ObjectKind, UpvalueLocation,
+    AelysClosure, AelysFunction, AelysString, AelysStruct, AelysUpvalue, GcObject, GcRef,
+    NativeFunction, ObjectKind, UpvalueLocation,
 };
 pub use aelys_bytecode::{
     BytecodeBuffer, CastTarget, Function, GlobalLayout, Heap, InstructionFormat,
