@@ -5,12 +5,13 @@ use super::roots::HostRootSet;
 use super::{GcRef, Heap, NativeFunctionImpl, Value};
 use crate::native::NativeModule;
 use crate::stdlib::Resource;
+use aelys_bytecode::{SchemaId, StructSchema};
 use aelys_syntax::Source;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub const MAX_FRAMES: usize = 1024;
-pub const MAX_REGISTERS: usize = 65536;
+pub const MAX_REGISTERS: usize = aelys_bytecode::asm::MAX_REGISTERS as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct InlineCacheKey {
@@ -25,7 +26,6 @@ pub(crate) struct InlineCallCacheEntry {
     pub target: GcRef,
 }
 
-// windowed regs like Lua
 pub struct VM {
     pub(crate) heap: Heap,
     pub(crate) config: VmConfig,
@@ -42,6 +42,8 @@ pub struct VM {
     pub(crate) jit_function_keys: crate::jit::InlineMap<GcRef, crate::JitFunctionKey>,
     pub(crate) jit_call_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
     pub(crate) jit_backedge_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
+    pub(crate) schema_registry: HashMap<SchemaId, StructSchema>,
+    pub(crate) next_schema_id: u32,
     pub(crate) source: Arc<Source>,
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,
@@ -65,8 +67,7 @@ pub struct VM {
     pub(crate) repl_symbol_origins: HashMap<String, String>,
 }
 
-// SAFETY: moving an idle VM transfers exclusive ownership of its heap and frames;
-// cached pointers refer to allocations owned by that same VM and are never shared.
+// cached pointers refer to allocations owned by that same vm and are never shared.
 unsafe impl Send for VM {}
 
 #[derive(Debug)]
