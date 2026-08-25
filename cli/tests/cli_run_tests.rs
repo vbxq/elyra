@@ -24,7 +24,7 @@ fn run_accepts_aasm_file() {
     let aasm_path = dir.join("program.aasm");
     std::fs::write(
         &aasm_path,
-        ".version 2\n.function 0\n  .arity 0\n  .registers 1\n  .constants\n    0: int 2\n  .code\n    0000: LoadK r0, 0\n    0001: Return r0\n",
+        ".version 3\n.function 0\n  .arity 0\n  .registers 1\n  .constants\n    0: int 2\n  .code\n    0000: LoadK r0, 0\n    0001: Return r0\n",
     )
     .unwrap();
 
