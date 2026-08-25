@@ -6,7 +6,6 @@ mod logic;
 mod unary;
 
 impl ConstantFolder {
-    // peel off nested groupings to get at the actual value
     pub(super) fn unwrap_grouping(expr: &TypedExpr) -> &TypedExpr {
         match &expr.kind {
             TypedExprKind::Grouping(inner) => Self::unwrap_grouping(inner),
@@ -23,14 +22,13 @@ impl ConstantFolder {
             TypedExprKind::Grouping(inner) => self.try_fold(inner),
             TypedExprKind::And { left, right } => self.try_fold_and(left, right, expr),
             TypedExprKind::Or { left, right } => self.try_fold_or(left, right, expr),
-            // already a literal, nothing to fold
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
             | TypedExprKind::Unit
             | TypedExprKind::Null => None,
-            TypedExprKind::Try(_) | TypedExprKind::Match { .. } => None,
+            TypedExprKind::Try { .. } | TypedExprKind::Match { .. } => None,
             _ => None,
         }
     }
@@ -70,6 +68,12 @@ impl ConstantFolder {
                 }
             }
             TypedExprKind::Member { object, .. } => self.optimize_expr(object),
+            TypedExprKind::StructField { object, .. }
+            | TypedExprKind::StructMethod { object, .. } => self.optimize_expr(object),
+            TypedExprKind::MemberAssign { object, value, .. } => {
+                self.optimize_expr(object);
+                self.optimize_expr(value);
+            }
             TypedExprKind::ArrayLiteral { elements, .. }
             | TypedExprKind::VecLiteral { elements, .. } => {
                 for elem in elements {
@@ -116,10 +120,15 @@ impl ConstantFolder {
                     self.optimize_expr(value);
                 }
             }
+            TypedExprKind::EnumConstruct { fields, .. } => {
+                for (_, value) in fields {
+                    self.optimize_expr(value);
+                }
+            }
             TypedExprKind::Cast { expr, .. } => {
                 self.optimize_expr(expr);
             }
-            TypedExprKind::Try(inner) => self.optimize_expr(inner),
+            TypedExprKind::Try { operand, .. } => self.optimize_expr(operand),
             TypedExprKind::Match { scrutinee, arms } => {
                 self.optimize_expr(scrutinee);
                 for arm in arms {
