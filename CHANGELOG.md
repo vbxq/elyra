@@ -118,7 +118,7 @@ Language maturity: arrays, vecs, compound operators, dot-syntax string methods, 
 - now (`print()` and `io.print()` both work
 
 **0.19.1-a**
-- Added generic type syntax support in function parameters (`fn foo(arr: array<int>)`)
+- Added generic type syntax support in function parameters; collections now use `[T; N]` or `Vec<T>`
 
 **0.19.0-a**
 - Added array and vec implementations to the VM
