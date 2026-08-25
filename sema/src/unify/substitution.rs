@@ -4,12 +4,14 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Default)]
 pub struct Substitution {
     bindings: HashMap<TypeVarId, InferType>,
+    param_bindings: HashMap<String, InferType>,
 }
 
 impl Substitution {
     pub fn new() -> Self {
         Self {
             bindings: HashMap::new(),
+            param_bindings: HashMap::new(),
         }
     }
 
@@ -17,6 +19,10 @@ impl Substitution {
         if ty != InferType::Var(var) {
             self.bindings.insert(var, ty);
         }
+    }
+
+    pub fn bind_param(&mut self, name: impl Into<String>, ty: InferType) {
+        self.param_bindings.insert(name.into(), ty);
     }
 
     pub fn is_bound(&self, var: TypeVarId) -> bool {
@@ -36,11 +42,18 @@ impl Substitution {
                     ty.clone()
                 }
             }
+            InferType::Param(name) => self
+                .param_bindings
+                .get(name)
+                .map_or_else(|| ty.clone(), |bound| self.apply(bound)),
             InferType::Function { params, ret } => InferType::Function {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 ret: Box::new(self.apply(ret)),
             },
             InferType::Array(inner) => InferType::Array(Box::new(self.apply(inner))),
+            InferType::FixedArray(inner, length) => {
+                InferType::FixedArray(Box::new(self.apply(inner)), *length)
+            }
             InferType::Vec(inner) => InferType::Vec(Box::new(self.apply(inner))),
             InferType::Option(inner) => InferType::Option(Box::new(self.apply(inner))),
             InferType::Result(ok, err) => {
@@ -49,6 +62,10 @@ impl Substitution {
             InferType::Tuple(elems) => {
                 InferType::Tuple(elems.iter().map(|e| self.apply(e)).collect())
             }
+            InferType::Applied { name, args } => InferType::Applied {
+                name: name.clone(),
+                args: args.iter().map(|arg| self.apply(arg)).collect(),
+            },
             InferType::I8
             | InferType::I16
             | InferType::I32
@@ -69,7 +86,8 @@ impl Substitution {
             | InferType::UntypedNative(_)
             | InferType::Range
             | InferType::Struct(_)
-            | InferType::Dynamic => ty.clone(),
+            | InferType::Dynamic
+            | InferType::Poison => ty.clone(),
         }
     }
 
@@ -83,6 +101,16 @@ impl Substitution {
         for (var, ty) in &other.bindings {
             if !result.bindings.contains_key(var) {
                 result.bindings.insert(*var, ty.clone());
+            }
+        }
+
+        for (name, ty) in &self.param_bindings {
+            result.param_bindings.insert(name.clone(), other.apply(ty));
+        }
+
+        for (name, ty) in &other.param_bindings {
+            if !result.param_bindings.contains_key(name) {
+                result.param_bindings.insert(name.clone(), ty.clone());
             }
         }
 
