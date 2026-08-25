@@ -40,7 +40,7 @@ The `arrays/` directory has examples showing how to work with collections:
 ### More Examples
 
 - **[arrays/basics.aelys](arrays/basics.aelys)** - Array/Vec creation and modification
-- **[arrays/typed_arrays.aelys](arrays/typed_arrays.aelys)** - Array<Int>, Array<Float>, Array<Bool>
+- **[arrays/typed_arrays.aelys](arrays/typed_arrays.aelys)** - `[int; 5]`, `[float; 4]`, `[bool; 4]`
 - **[arrays/typed_vecs.aelys](arrays/typed_vecs.aelys)** - Vec<Int>, Vec<Float>, Vec<Bool>
 - **[arrays/vec_operations.aelys](arrays/vec_operations.aelys)** - push, pop, capacity, reserve
 - **[arrays/vec_stack.aelys](arrays/vec_stack.aelys)** - Using Vec as a stack
