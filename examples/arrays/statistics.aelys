@@ -11,8 +11,8 @@ fn average(numbers) -> float {
     return sum / convert::to_float(numbers.len())
 }
 
-fn min_max(numbers) {
-    if numbers.len() == 0 { return null }
+fn min_max(numbers) -> Option<[int; 2]> {
+    if numbers.len() == 0 { return None }
 
     let mut min_val = numbers[0]
     let mut max_val = numbers[0]
@@ -22,13 +22,13 @@ fn min_max(numbers) {
         if numbers[i] > max_val { max_val = numbers[i] }
     }
 
-    return Array[min_val, max_val]
+    return Some([min_val, max_val])
 }
 
 fn median(numbers) -> float {
     if numbers.len() == 0 { return 0.0 }
 
-    let sorted = Vec[]
+    let mut sorted = vec![]
     for i in 0..numbers.len() {
         sorted.push(numbers[i])
     }
@@ -59,7 +59,7 @@ io::print("Statistical Analysis")
 io::print("===================")
 io::print("")
 
-let data = Array[15, 23, 8, 42, 16, 4, 38, 27, 19, 31]
+let data = [15, 23, 8, 42, 16, 4, 38, 27, 19, 31]
 
 io::print("Data: [15, 23, 8, 42, 16, 4, 38, 27, 19, 31]")
 io::print("")
@@ -67,7 +67,10 @@ io::print("")
 let avg = average(data)
 io::print("Average: " + convert::to_string(avg))
 
-let mm = min_max(data)
+let mm = match min_max(data) {
+    Some(values) => values,
+    None => [0; 2],
+}
 io::print("Min: " + convert::to_string(mm[0]))
 io::print("Max: " + convert::to_string(mm[1]))
 
