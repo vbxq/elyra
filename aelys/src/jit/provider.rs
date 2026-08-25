@@ -122,6 +122,9 @@ impl JitProvider {
         profile: Option<&[Option<i64>]>,
         controlled: bool,
     ) -> Option<Arc<CompiledFunction>> {
+        if function.jit_unsupported_struct {
+            return None;
+        }
         let tier = self
             .tier2_call_threshold
             .filter(|threshold| calls >= *threshold)
@@ -252,6 +255,9 @@ impl JitProvider {
         controlled: bool,
         context: Option<&JitExecutionContext>,
     ) -> JitCallResult {
+        if function.jit_unsupported_struct {
+            return JitCallResult::Unsupported;
+        }
         let integer_arguments = arguments
             .iter()
             .map(|argument| match argument {
@@ -335,6 +341,9 @@ impl JitProvider {
         controlled: bool,
         context: Option<&JitExecutionContext>,
     ) -> JitCallResult {
+        if function.jit_unsupported_struct {
+            return JitCallResult::Unsupported;
+        }
         let cache_key =
             JitKey::for_osr_with_control(key.module(), key.shared_path(), bytecode_ip, controlled);
         let compiled = self.engine.cached(&cache_key).ok().flatten().or_else(|| {
