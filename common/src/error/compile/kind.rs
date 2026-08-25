@@ -1,6 +1,5 @@
 #[derive(Debug)]
 pub enum CompileErrorKind {
-    // Lexer errors
     UnterminatedString,
     InvalidCharacter(char),
     InvalidNumber(String),
@@ -8,7 +7,6 @@ pub enum CompileErrorKind {
     UnterminatedFmtExpr,
     UnmatchedCloseBrace,
 
-    // Parser errors
     UnexpectedToken {
         expected: String,
         found: String,
@@ -32,8 +30,22 @@ pub enum CompileErrorKind {
     CommentNestingTooDeep {
         max: usize,
     },
+    TypeNestingTooDeep {
+        max: usize,
+    },
 
-    // Compiler errors
+    BorrowingReceiverDeferred {
+        form: String,
+    },
+    AssociatedItemDeferred {
+        item: String,
+    },
+    TraitObjectDeferred {
+        trait_name: String,
+    },
+    NegativeImplDeferred,
+    SpecializationDeferred,
+
     UndefinedVariable(String),
     VariableAlreadyDefined(String),
     AssignToImmutable(String),
@@ -53,14 +65,12 @@ pub enum CompileErrorKind {
     },
     AssignToLoopVariable(String),
 
-    // 48-bit signed range for NaN-boxed ints
     IntegerOverflow {
         value: String,
         min: i64,
         max: i64,
     },
 
-    // Module errors
     ModuleNotFound {
         module_path: String,
         searched_paths: Vec<String>,
@@ -96,6 +106,11 @@ pub enum CompileErrorKind {
     SymbolConflict {
         symbol: String,
         modules: Vec<String>,
+    },
+    TypeNotExportable {
+        module: String,
+        name: String,
+        reason: String,
     },
     ModulePathSeparator {
         module: String,
