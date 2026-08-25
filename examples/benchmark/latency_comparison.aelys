@@ -27,7 +27,7 @@ fn work(arr: int, len: int) -> int {
 io::print("=== GC version ===")
 let t1 = time::timer()
 let mut i = 0
-let mut max1 = 0
+let mut max1 = 0.0
 while i < 20000 {
     let t0 = time::timer()
     let g1 = create_garbage()
@@ -44,7 +44,7 @@ io::print("=== @no_gc version ===")
 let arr = alloc(1024)
 let t2 = time::timer()
 i = 0
-let mut max2 = 0
+let mut max2 = 0.0
 while i < 5000 {
     let t0 = time::timer()
     let r = work(arr, 1024)
