@@ -4,10 +4,13 @@ use aelys_common::error::CompileErrorKind;
 use aelys_syntax::{Stmt, TokenKind};
 
 mod decorators;
+mod enum_decl;
 mod function;
+mod impl_decl;
 mod let_decl;
 mod needs;
 mod struct_decl;
+mod trait_decl;
 mod types;
 
 impl Parser {
@@ -29,6 +32,36 @@ impl Parser {
             return self.struct_declaration(is_pub);
         }
 
+        if self.check(&TokenKind::Enum) {
+            if !decorators.is_empty() {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "enum without decorator".to_string(),
+                    found: self.peek().kind.to_string(),
+                }));
+            }
+            return self.enum_declaration(is_pub);
+        }
+
+        if self.check(&TokenKind::Trait) {
+            if !decorators.is_empty() {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "trait without decorator".to_string(),
+                    found: self.peek().kind.to_string(),
+                }));
+            }
+            return self.trait_declaration(is_pub);
+        }
+
+        if self.check(&TokenKind::Impl) {
+            if is_pub || !decorators.is_empty() {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "impl block without pub or decorator".to_string(),
+                    found: self.peek().kind.to_string(),
+                }));
+            }
+            return self.impl_declaration();
+        }
+
         if self.check(&TokenKind::Fn) {
             return self.function_declaration(decorators, is_pub);
         }
@@ -46,7 +79,7 @@ impl Parser {
 
         if is_pub {
             return Err(self.error(CompileErrorKind::UnexpectedToken {
-                expected: "fn, let, or struct after pub".to_string(),
+                expected: "fn, let, struct, enum, or trait after pub".to_string(),
                 found: self.peek().kind.to_string(),
             }));
         }
