@@ -5,7 +5,6 @@ use crate::types::InferType;
 use aelys_syntax::Stmt;
 
 impl TypeInference {
-    /// Infer statement with implicit return handling
     pub(crate) fn infer_stmt_with_implicit_return(
         &mut self,
         stmt: &Stmt,
@@ -15,7 +14,7 @@ impl TypeInference {
             aelys_syntax::StmtKind::Expression(expr) => {
                 let typed_expr = self.infer_expr(expr);
 
-                if matches!(return_type, InferType::Unit) {
+                if matches!(return_type, InferType::Unit | InferType::Dynamic) {
                     self.record_must_use_value(&typed_expr);
                 } else if !self.reject_dynamic(
                     &typed_expr.ty,
