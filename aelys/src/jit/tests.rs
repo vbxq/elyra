@@ -96,6 +96,74 @@ fn sum_bytecode_never_enters_the_jit_cache() {
     }
 }
 
+#[test]
+fn struct_taint_never_enters_translation() {
+    let mut function = Function::new(Some("struct-tainted".to_string()), 0);
+    function.num_registers = 1;
+    function.jit_unsupported_struct = true;
+    function.emit_b(OpCode::LoadI, 0, 42, 1);
+    function.emit_a(OpCode::Return, 0, 0, 0, 1);
+    function.finalize_bytecode();
+
+    assert!(translate_integer_function(&function).is_none());
+    assert!(translate_controlled_integer_function(&function).is_none());
+    assert!(translate_optimized_integer_function(&function).is_none());
+    assert!(translate_integer_osr(&function, 0).is_none());
+    assert!(translate_controlled_integer_osr(&function, 0).is_none());
+}
+
+#[test]
+fn enum_bytecode_without_the_compiler_flag_never_translates() {
+    for opcode in [OpCode::EnumNew, OpCode::EnumTest, OpCode::EnumLoad] {
+        for after_return in [false, true] {
+            let function = enum_guarded_function(opcode, after_return);
+            assert!(!function.jit_unsupported_struct);
+            assert!(translate_integer_function(&function).is_none());
+            assert!(translate_controlled_integer_function(&function).is_none());
+            assert!(translate_optimized_integer_function(&function).is_none());
+            assert!(translate_integer_osr(&function, 0).is_none());
+            assert!(translate_controlled_integer_osr(&function, 0).is_none());
+        }
+    }
+}
+
+#[test]
+fn a_struct_using_nested_function_does_not_disqualify_its_caller() {
+    let mut nested = Function::new(Some("builder".to_string()), 1);
+    nested.num_registers = 4;
+    nested.emit_struct(OpCode::StructNew, 0, 1, 0, 1, 1);
+    nested.emit_a(OpCode::Return, 1, 0, 0, 1);
+    nested.finalize_bytecode();
+    nested.jit_unsupported_struct = true;
+
+    let mut caller = Function::new(Some("caller".to_string()), 1);
+    caller.num_registers = 3;
+    caller.add_constant_function(nested);
+    caller.emit_b(OpCode::LoadI, 1, 1, 1);
+    caller.emit_a(OpCode::AddII, 2, 0, 1, 1);
+    caller.emit_a(OpCode::Return, 2, 0, 0, 1);
+    caller.finalize_bytecode();
+
+    assert!(!caller.jit_unsupported_struct);
+    assert!(translate_integer_function(&caller).is_some());
+    assert!(translate_controlled_integer_function(&caller).is_some());
+    assert!(translate_optimized_integer_function(&caller).is_some());
+}
+
+fn enum_guarded_function(opcode: OpCode, after_return: bool) -> Function {
+    let mut function = Function::new(Some("enum-guarded".to_string()), 0);
+    function.emit_b(OpCode::LoadI, 0, 42, 1);
+    if after_return {
+        function.emit_a(OpCode::Return, 0, 0, 0, 1);
+        function.emit_enum(opcode, 0, 1, 0, 0, 0, 1);
+    } else {
+        function.emit_enum(opcode, 0, 1, 0, 0, 0, 1);
+        function.emit_a(OpCode::Return, 0, 0, 0, 1);
+    }
+    function.finalize_bytecode();
+    function
+}
+
 fn sum_guarded_function(opcode: OpCode, wide: bool) -> Function {
     let mut function = Function::new(Some("sum-guarded".to_string()), 0);
     function.emit_b(OpCode::LoadI, 0, 42, 1);
