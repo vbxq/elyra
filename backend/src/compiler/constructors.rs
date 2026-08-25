@@ -32,6 +32,8 @@ impl Compiler {
             accessed_globals: HashSet::new(),
             function_depth: 0,
             current_return_type: None,
+            struct_schemas: Rc::new(Vec::new()),
+            enum_schemas: Rc::new(Vec::new()),
         }
     }
 
@@ -78,6 +80,8 @@ impl Compiler {
             accessed_globals: HashSet::new(),
             function_depth: 1,
             current_return_type: None,
+            struct_schemas: Rc::new(Vec::new()),
+            enum_schemas: Rc::new(Vec::new()),
         }
     }
 
@@ -114,10 +118,11 @@ impl Compiler {
             accessed_globals: HashSet::new(),
             function_depth: 0,
             current_return_type: None,
+            struct_schemas: Rc::new(Vec::new()),
+            enum_schemas: Rc::new(Vec::new()),
         }
     }
 
-    // REPL + modules
     pub fn with_modules_and_globals(
         name: Option<String>,
         source: Arc<Source>,
@@ -152,6 +157,8 @@ impl Compiler {
             accessed_globals: HashSet::new(),
             function_depth: 0,
             current_return_type: None,
+            struct_schemas: Rc::new(Vec::new()),
+            enum_schemas: Rc::new(Vec::new()),
         }
     }
 }
