@@ -6,12 +6,11 @@ use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::Optimizer;
 use aelys_runtime::VM;
-use aelys_sema::{InferType, TypeInference};
+use aelys_sema::{InferType, TypeInference, TypedStmtKind};
 use aelys_syntax::{Source, StmtKind};
 use std::path::Path;
 use std::sync::Arc;
 
-// TODO: parallel compilation for independent modules would be nice
 
 impl ModuleLoader {
     pub(crate) fn compile_module(
@@ -34,7 +33,7 @@ impl ModuleLoader {
 
         let module_source = Source::new(file_path.display().to_string(), &content);
         let tokens = Lexer::with_source(module_source.clone()).scan()?;
-        let stmts = Parser::new(tokens, module_source.clone()).parse()?;
+        let stmts = Parser::new_rust_collections(tokens, module_source.clone()).parse()?;
 
         let exports = self.collect_exports(&stmts, module_path_str)?;
 
@@ -74,13 +73,14 @@ impl ModuleLoader {
             export_signatures.insert(format!("{}::{}", module_name, func.name), signature);
         }
         let module_info = ModuleInfo {
-            name: module_name,
+            name: module_name.clone(),
             path: module_path_str.to_string(),
             file_path: file_path.to_path_buf(),
             version: None,
             exports: exports.clone(),
             native_functions: Vec::new(),
             native_signatures: export_signatures,
+            exported_types: super::exported_types::ExportedTypes::default(),
         };
         self.loaded_modules
             .insert(module_path_str.to_string(), module_info);
@@ -100,6 +100,8 @@ impl ModuleLoader {
         let mut known_globals = std::collections::HashSet::new();
         let mut known_native_globals = std::collections::HashSet::new();
         let mut native_signatures = std::collections::HashMap::new();
+        let mut imported_types = aelys_sema::infer::imports::ImportedTypes::default();
+        let mut imported_impl_stmts: Vec<aelys_syntax::Stmt> = Vec::new();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -120,6 +122,20 @@ impl ModuleLoader {
                         known_native_globals.insert(native_name.clone());
                     }
                     native_signatures.extend(module_info.native_signatures.clone());
+                    let nominal_scope = match &nested_needs.kind {
+                        aelys_syntax::ImportKind::Symbols(symbols) => {
+                            super::exported_types::NominalScope::Only(symbols)
+                        }
+                        _ => super::exported_types::NominalScope::All,
+                    };
+                    let (selected, selected_impls) =
+                        super::exported_types::select_exported_nominals(
+                            &module_info.exported_types,
+                            &nested_module_path,
+                            nominal_scope,
+                        );
+                    imported_types.extend(selected);
+                    imported_impl_stmts.extend(selected_impls);
 
                     match &nested_needs.kind {
                         aelys_syntax::ImportKind::Module { alias: None }
@@ -158,18 +174,37 @@ impl ModuleLoader {
         self.base_dir = original_base_dir;
         self.base_root = original_base_root;
 
-        let main_stmts: Vec<_> = stmts
-            .into_iter()
-            .filter(|s| !matches!(s.kind, StmtKind::Needs(_)))
+        let declaration_stmts: Vec<_> = stmts
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.kind,
+                    StmtKind::EnumDecl { .. }
+                        | StmtKind::StructDecl { .. }
+                        | StmtKind::TraitDecl { .. }
+                        | StmtKind::ImplDecl { .. }
+                )
+            })
+            .cloned()
             .collect();
 
-        let typed_program = TypeInference::infer_program_full_with_native_signatures(
+        let main_stmts: Vec<_> = imported_impl_stmts
+            .into_iter()
+            .chain(
+                stmts
+                    .into_iter()
+                    .filter(|s| !matches!(s.kind, StmtKind::Needs(_))),
+            )
+            .collect();
+
+        let inference_result = TypeInference::infer_program_full_with_native_signatures(
             main_stmts,
             module_source.clone(),
             module_aliases.clone(),
             known_globals.clone(),
             known_native_globals.clone(),
             native_signatures,
+            imported_types,
         )
         .map_err(|errors| {
             if let Some(err) = errors.first() {
@@ -188,8 +223,54 @@ impl ModuleLoader {
                     module_source.clone(),
                 ))
             }
-        })?
-        .program;
+        })?;
+        let typed_program = inference_result.program;
+
+        let mut inferred_export_signatures = std::collections::HashMap::new();
+        for stmt in &typed_program.stmts {
+            match &stmt.kind {
+                TypedStmtKind::Function(function) if function.is_pub => {
+                    let signature = InferType::Function {
+                        params: function
+                            .params
+                            .iter()
+                            .map(|param| param.ty.clone())
+                            .collect(),
+                        ret: Box::new(function.return_type.clone()),
+                    };
+                    inferred_export_signatures.insert(function.name.clone(), signature.clone());
+                    inferred_export_signatures
+                        .insert(format!("{}::{}", module_name, function.name), signature);
+                }
+                TypedStmtKind::Let {
+                    name,
+                    is_pub: true,
+                    var_type,
+                    ..
+                } => {
+                    inferred_export_signatures.insert(name.clone(), var_type.clone());
+                    inferred_export_signatures
+                        .insert(format!("{}::{}", module_name, name), var_type.clone());
+                }
+                _ => {}
+            }
+        }
+        super::exported_types::reject_nominal_boundary_signatures(
+            &typed_program.stmts,
+            &inference_result.type_table,
+            module_path_str,
+            &module_source,
+        )?;
+        let exported_types = super::exported_types::collect_exported_types(
+            &declaration_stmts,
+            &inference_result.type_table,
+            module_path_str,
+            module_source.clone(),
+        )?;
+        if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
+            module_info.native_signatures = inferred_export_signatures;
+            module_info.exported_types = exported_types;
+        }
 
         let mut optimizer = Optimizer::new(aelys_opt::OptimizationLevel::Standard);
         let typed_program = optimizer.optimize(typed_program);
