@@ -8,6 +8,10 @@ impl Compiler {
     pub fn compile_typed_function(&mut self, func: &aelys_sema::TypedFunction) -> Result<()> {
         let setup = setup_typed_function(self, func)?;
         let mut nested_compiler = setup.nested_compiler;
+        nested_compiler.struct_schemas = self.struct_schemas.clone();
+        nested_compiler.current.struct_schemas = nested_compiler.struct_schemas.as_ref().clone();
+        nested_compiler.enum_schemas = self.enum_schemas.clone();
+        nested_compiler.current.enum_schemas = nested_compiler.enum_schemas.as_ref().clone();
 
         compile_typed_body(&mut nested_compiler, func)?;
 
