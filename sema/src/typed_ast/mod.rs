@@ -1,4 +1,3 @@
-// AST with type annotations for codegen
 
 use std::sync::Arc;
 
@@ -7,7 +6,7 @@ use aelys_syntax::Span;
 use aelys_syntax::{BinaryOp, Decorator, MemberSeparator, NeedsStmt, UnaryOp};
 
 use crate::types::InferType;
-use crate::types::TypeTable;
+use crate::types::{EnumVariantDef, TypeTable};
 
 #[derive(Debug, Clone)]
 pub struct TypedProgram {
@@ -16,14 +15,12 @@ pub struct TypedProgram {
     pub type_table: TypeTable,
 }
 
-/// A typed statement
 #[derive(Debug, Clone)]
 pub struct TypedStmt {
     pub kind: TypedStmtKind,
     pub span: Span,
 }
 
-/// Typed statement kinds
 #[derive(Debug, Clone)]
 pub enum TypedStmtKind {
     Expression(TypedExpr),
@@ -62,6 +59,7 @@ pub enum TypedStmtKind {
         iterator: String,
         iterable: TypedExpr,
         elem_type: InferType,
+        read_only: bool,
         body: Box<TypedStmt>,
     },
 
@@ -72,6 +70,20 @@ pub enum TypedStmtKind {
 
     Function(TypedFunction),
 
+    ImplDecl {
+        target: String,
+        trait_name: Option<String>,
+        type_params: Vec<String>,
+        target_type: InferType,
+        trait_args: Vec<InferType>,
+        methods: Vec<TypedFunction>,
+    },
+
+    TraitDecl {
+        name: String,
+        type_params: Vec<String>,
+    },
+
     Needs(NeedsStmt),
 
     StructDecl {
@@ -79,9 +91,14 @@ pub enum TypedStmtKind {
         type_params: Vec<String>,
         fields: Vec<(String, InferType)>,
     },
+
+    EnumDecl {
+        name: String,
+        type_params: Vec<String>,
+        variants: Vec<EnumVariantDef>,
+    },
 }
 
-/// A typed function
 #[derive(Debug, Clone)]
 pub struct TypedFunction {
     pub name: String,
@@ -92,11 +109,9 @@ pub struct TypedFunction {
     pub decorators: Vec<Decorator>,
     pub is_pub: bool,
     pub span: Span,
-    /// Captured variables from enclosing scopes (for closures)
     pub captures: Vec<(String, InferType)>,
 }
 
-/// A typed parameter
 #[derive(Debug, Clone)]
 pub struct TypedParam {
     pub name: String,
@@ -105,7 +120,6 @@ pub struct TypedParam {
     pub span: Span,
 }
 
-/// A typed expression
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
     pub kind: TypedExprKind,
@@ -113,7 +127,6 @@ pub struct TypedExpr {
     pub span: Span,
 }
 
-/// Part of a typed format string
 #[derive(Debug, Clone)]
 pub enum TypedFmtStringPart {
     Literal(String),
@@ -121,7 +134,6 @@ pub enum TypedFmtStringPart {
     Placeholder,
 }
 
-/// Typed expression kinds
 #[derive(Debug, Clone)]
 pub enum TypedExprKind {
     Int(i64),
@@ -173,7 +185,10 @@ pub enum TypedExprKind {
         else_branch: Box<TypedExpr>,
     },
 
-    Try(Box<TypedExpr>),
+    Try {
+        operand: Box<TypedExpr>,
+        conversion: Option<String>,
+    },
 
     Match {
         scrutinee: Box<TypedExpr>,
@@ -182,7 +197,6 @@ pub enum TypedExprKind {
 
     Lambda(Box<TypedExpr>),
 
-    /// Inner lambda structure (params + body + captures)
     LambdaInner {
         params: Vec<TypedParam>,
         return_type: InferType,
@@ -196,9 +210,32 @@ pub enum TypedExprKind {
         separator: MemberSeparator,
     },
 
+    StructField {
+        object: Box<TypedExpr>,
+        member: String,
+        offset: u16,
+        schema_index: u16,
+    },
+
+    StructMethod {
+        object: Box<TypedExpr>,
+        symbol: String,
+        method: String,
+        separator: MemberSeparator,
+    },
+
+    MemberAssign {
+        object: Box<TypedExpr>,
+        member: String,
+        offset: u16,
+        schema_index: u16,
+        value: Box<TypedExpr>,
+    },
+
     ArrayLiteral {
         element_type: Option<crate::types::ResolvedType>,
         elements: Vec<TypedExpr>,
+        repeat: Option<Box<TypedExpr>>,
     },
 
     ArraySized {
@@ -209,6 +246,7 @@ pub enum TypedExprKind {
     VecLiteral {
         element_type: Option<crate::types::ResolvedType>,
         elements: Vec<TypedExpr>,
+        repeat: Option<Box<TypedExpr>>,
     },
 
     Index {
@@ -235,7 +273,17 @@ pub enum TypedExprKind {
 
     StructLiteral {
         name: String,
+        schema_index: u16,
         fields: Vec<(String, Box<TypedExpr>)>,
+        field_offsets: Vec<u16>,
+    },
+
+    EnumConstruct {
+        enum_name: String,
+        variant: String,
+        schema_index: u16,
+        variant_index: u16,
+        fields: Vec<(Option<String>, Box<TypedExpr>)>,
     },
 
     Cast {
@@ -249,6 +297,7 @@ pub struct TypedMatchArm {
     pub pattern: TypedPattern,
     pub guard: Option<TypedExpr>,
     pub body: TypedMatchArmBody,
+    pub explicit_dynamic: bool,
     pub span: Span,
 }
 
@@ -274,18 +323,25 @@ pub enum TypedPatternKind {
     Bool(bool),
     Variant {
         path: Vec<String>,
+        enum_schema_index: Option<u16>,
+        enum_variant_index: Option<u16>,
         fields: Vec<TypedPattern>,
+        field_offsets: Vec<u16>,
+    },
+    Struct {
+        name: String,
+        schema_index: u16,
+        fields: Vec<(String, TypedPattern, u16)>,
+        has_rest: bool,
     },
     Or(Vec<TypedPattern>),
 }
 
 impl TypedExpr {
-    /// Create a new typed expression
     pub fn new(kind: TypedExprKind, ty: InferType, span: Span) -> Self {
         Self { kind, ty, span }
     }
 
-    /// Check if this expression has a known concrete type
     pub fn has_concrete_type(&self) -> bool {
         !matches!(self.ty, InferType::Var(_) | InferType::Dynamic)
     }
