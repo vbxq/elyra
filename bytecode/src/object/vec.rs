@@ -94,69 +94,99 @@ impl VecData {
 #[derive(Debug, Clone)]
 pub struct AelysVec {
     pub data: VecData,
+    accounted_capacity: usize,
 }
 
 impl AelysVec {
     pub fn new_ints() -> Self {
         Self {
             data: VecData::Ints(Vec::new()),
+            accounted_capacity: 0,
         }
     }
     pub fn new_floats() -> Self {
         Self {
             data: VecData::Floats(Vec::new()),
+            accounted_capacity: 0,
         }
     }
     pub fn new_bools() -> Self {
         Self {
             data: VecData::Bools(Vec::new()),
+            accounted_capacity: 0,
         }
     }
     pub fn new_objects() -> Self {
         Self {
             data: VecData::Objects(Vec::new()),
+            accounted_capacity: 0,
         }
     }
 
     pub fn with_capacity_ints(cap: usize) -> Self {
         Self {
             data: VecData::Ints(Vec::with_capacity(cap)),
+            accounted_capacity: cap,
         }
     }
     pub fn with_capacity_floats(cap: usize) -> Self {
         Self {
             data: VecData::Floats(Vec::with_capacity(cap)),
+            accounted_capacity: cap,
         }
     }
     pub fn with_capacity_bools(cap: usize) -> Self {
         Self {
             data: VecData::Bools(Vec::with_capacity(cap)),
+            accounted_capacity: cap,
         }
     }
     pub fn with_capacity_objects(cap: usize) -> Self {
         Self {
             data: VecData::Objects(Vec::with_capacity(cap)),
+            accounted_capacity: cap,
         }
     }
 
     pub fn from_ints(data: Vec<i64>) -> Self {
+        let accounted_capacity = data.len();
         Self {
             data: VecData::Ints(data),
+            accounted_capacity,
         }
     }
     pub fn from_floats(data: Vec<f64>) -> Self {
+        let accounted_capacity = data.len();
         Self {
             data: VecData::Floats(data),
+            accounted_capacity,
         }
     }
     pub fn from_bools(data: Vec<bool>) -> Self {
+        let data: Vec<u8> = data.iter().copied().map(u8::from).collect();
+        let accounted_capacity = data.len();
         Self {
-            data: VecData::Bools(data.iter().copied().map(u8::from).collect()),
+            data: VecData::Bools(data),
+            accounted_capacity,
         }
     }
     pub fn from_objects(data: Vec<Value>) -> Self {
+        let accounted_capacity = data.len();
         Self {
             data: VecData::Objects(data),
+            accounted_capacity,
+        }
+    }
+
+    pub fn from_array(array: &AelysArray) -> Self {
+        match &array.data {
+            ArrayData::Ints(values) => Self::from_ints(values.to_vec()),
+            ArrayData::Floats(values) => Self::from_floats(values.to_vec()),
+            ArrayData::Bools(values) => Self {
+                data: VecData::Bools(values.to_vec()),
+                accounted_capacity: values.len(),
+            },
+            ArrayData::Objects(values) => Self::from_objects(values.to_vec()),
         }
     }
 
@@ -174,11 +204,29 @@ impl AelysVec {
             VecData::Bools(values) => VecData::Bools(values[start..end].to_vec()),
             VecData::Objects(values) => VecData::Objects(values[start..end].to_vec()),
         };
-        Self { data }
+        let accounted_capacity = match &data {
+            VecData::Ints(values) => values.len(),
+            VecData::Floats(values) => values.len(),
+            VecData::Bools(values) => values.len(),
+            VecData::Objects(values) => values.len(),
+        };
+        Self {
+            data,
+            accounted_capacity,
+        }
     }
 
     pub fn capacity(&self) -> usize {
         self.data.capacity()
+    }
+
+    pub fn accepts(&self, value: Value) -> bool {
+        match &self.data {
+            VecData::Ints(_) => value.as_int().is_some(),
+            VecData::Floats(_) => value.as_float().is_some(),
+            VecData::Bools(_) => value.as_bool().is_some(),
+            VecData::Objects(_) => true,
+        }
     }
     pub fn type_tag(&self) -> TypeTag {
         self.data.type_tag()
@@ -233,7 +281,7 @@ impl AelysVec {
     }
 
     pub fn push(&mut self, value: Value) -> bool {
-        match &mut self.data {
+        let pushed = match &mut self.data {
             VecData::Ints(v) => {
                 if let Some(val) = value.as_int() {
                     v.push(val);
@@ -262,7 +310,11 @@ impl AelysVec {
                 v.push(value);
                 true
             }
+        };
+        if pushed {
+            self.accounted_capacity = self.accounted_capacity.max(self.len());
         }
+        pushed
     }
 
     pub fn pop(&mut self) -> Option<Value> {
@@ -275,12 +327,37 @@ impl AelysVec {
     }
 
     pub fn reserve(&mut self, additional: usize) {
-        match &mut self.data {
-            VecData::Ints(v) => v.reserve(additional),
-            VecData::Floats(v) => v.reserve(additional),
-            VecData::Bools(v) => v.reserve(additional),
-            VecData::Objects(v) => v.reserve(additional),
+        let _ = self.try_reserve(additional);
+    }
+
+    pub fn try_reserve(&mut self, additional: usize) -> bool {
+        let target = self.len().checked_add(additional);
+        let reserved = match &mut self.data {
+            VecData::Ints(v) => v.try_reserve(additional).is_ok(),
+            VecData::Floats(v) => v.try_reserve(additional).is_ok(),
+            VecData::Bools(v) => v.try_reserve(additional).is_ok(),
+            VecData::Objects(v) => v.try_reserve(additional).is_ok(),
+        };
+        if reserved && let Some(target) = target {
+            self.accounted_capacity = self.accounted_capacity.max(target);
         }
+        reserved
+    }
+
+    pub fn try_reserve_exact(&mut self, additional: usize) -> bool {
+        let Some(target) = self.len().checked_add(additional) else {
+            return false;
+        };
+        let reserved = match &mut self.data {
+            VecData::Ints(v) => v.try_reserve_exact(additional).is_ok(),
+            VecData::Floats(v) => v.try_reserve_exact(additional).is_ok(),
+            VecData::Bools(v) => v.try_reserve_exact(additional).is_ok(),
+            VecData::Objects(v) => v.try_reserve_exact(additional).is_ok(),
+        };
+        if reserved {
+            self.accounted_capacity = self.accounted_capacity.max(target);
+        }
+        reserved
     }
 
     pub fn clear(&mut self) {
@@ -299,6 +376,7 @@ impl AelysVec {
             VecData::Bools(v) => v.shrink_to_fit(),
             VecData::Objects(v) => v.shrink_to_fit(),
         }
+        self.accounted_capacity = self.capacity();
     }
 
     pub fn to_array(&self) -> AelysArray {
@@ -319,13 +397,19 @@ impl AelysVec {
         }
     }
 
+    pub fn size_bytes_for(type_tag: TypeTag, capacity: usize) -> Option<usize> {
+        let element_size = match type_tag {
+            TypeTag::Int | TypeTag::Float | TypeTag::Object => 8,
+            TypeTag::Bool => 1,
+        };
+        std::mem::size_of::<Self>().checked_add(capacity.checked_mul(element_size)?)
+    }
+
+    pub fn try_size_bytes(&self) -> Option<usize> {
+        Self::size_bytes_for(self.type_tag(), self.accounted_capacity)
+    }
+
     pub fn size_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + match &self.data {
-                VecData::Ints(v) => v.capacity() * 8,
-                VecData::Floats(v) => v.capacity() * 8,
-                VecData::Bools(v) => v.capacity(),
-                VecData::Objects(v) => v.capacity() * 8,
-            }
+        self.try_size_bytes().unwrap_or(usize::MAX)
     }
 }
