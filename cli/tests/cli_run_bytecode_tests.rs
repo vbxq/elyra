@@ -52,3 +52,75 @@ fn run_bytecode_registers_stdlib_globals() {
 
     assert!(result.is_ok());
 }
+
+fn compile_and_run_capturing_stdout(name: &str, source: &str) -> (String, String, Option<i32>) {
+    let dir = std::env::temp_dir().join(format!("aelys_cli_avbc_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src_path = dir.join(format!("{name}.aelys"));
+    std::fs::write(&src_path, source).unwrap();
+
+    let bytecode_path =
+        aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::Standard)
+            .unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+        .arg("run")
+        .arg(&bytecode_path)
+        .output()
+        .unwrap();
+
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        output.status.code(),
+    )
+}
+
+#[test]
+fn compiled_bytecode_calls_a_string_stdlib_helper_twice() {
+    let (stdout, stderr, code) = compile_and_run_capturing_stdout(
+        "string_helper_twice",
+        "needs std::io\nneeds std::convert\nfn f(t: string) -> int { t.len() }\n\
+         io::println(convert::to_string(f(\"abcd\")))\nio::println(convert::to_string(f(\"ab\")))\n",
+    );
+
+    assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let printed: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        printed.first(),
+        Some(&"4"),
+        "first call printed the wrong value; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        printed.get(1),
+        Some(&"2"),
+        "second call to the same helper failed; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("undefined variable"),
+        "a global layout name was lost:\n{stderr}"
+    );
+}
+
+#[test]
+fn compiled_bytecode_calls_a_math_stdlib_helper_twice() {
+    let (stdout, stderr, code) = compile_and_run_capturing_stdout(
+        "math_helper_twice",
+        "needs std::io\nneeds std::convert\nneeds std::math\nfn g(n: int) -> int { math::abs(n) }\n\
+         io::println(convert::to_string(g(-4)))\nio::println(convert::to_string(g(-2)))\n",
+    );
+
+    assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let printed: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        printed.first(),
+        Some(&"4"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        printed.get(1),
+        Some(&"2"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
