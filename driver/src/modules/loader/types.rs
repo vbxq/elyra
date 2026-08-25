@@ -16,6 +16,7 @@ pub struct ModuleInfo {
     pub exports: HashMap<String, ExportInfo>,
     pub native_functions: Vec<String>,
     pub native_signatures: HashMap<String, InferType>,
+    pub exported_types: super::exported_types::ExportedTypes,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,8 @@ pub struct ModuleImports {
     pub known_native_globals: HashSet<String>, // native funcs for codegen opt
     pub native_signatures: HashMap<String, InferType>,
     pub symbol_origins: HashMap<String, String>, // symbol -> module_path
+    pub imported_types: aelys_sema::infer::imports::ImportedTypes,
+    pub imported_impl_stmts: Vec<aelys_syntax::Stmt>,
 }
 
 pub enum LoadResult {
@@ -52,6 +55,7 @@ pub struct ModuleLoader {
     pub(crate) native_fingerprints: HashMap<String, FileFingerprint>,
     pub(crate) manifest: Option<Manifest>,
     pub(crate) loaded_native_modules: HashMap<String, LoadedNativeInfo>,
+    pub(crate) host_modules: HashSet<String>,
 }
 
 pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
