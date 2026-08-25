@@ -1,9 +1,7 @@
-//! Tests for compound assignment (+=, -=, *=, /=, %=) and increment/decrement (++, --)
 
 mod common;
 use common::*;
 
-// === Compound assignment on variables ===
 
 #[test]
 fn test_plus_eq() {
@@ -65,7 +63,6 @@ x
     );
 }
 
-// === Increment / Decrement ===
 
 #[test]
 fn test_increment() {
@@ -94,7 +91,6 @@ n
     );
 }
 
-// === Compound assignment in loops ===
 
 #[test]
 fn test_plus_eq_in_for_loop() {
@@ -138,13 +134,12 @@ count
     );
 }
 
-// === Compound assignment on array/vec index ===
 
 #[test]
 fn test_plus_eq_on_array_index() {
     assert_aelys_int(
         r#"
-let arr = Array[10, 20, 30]
+let mut arr = [10, 20, 30]
 arr[1] += 5
 arr[1]
 "#,
@@ -156,7 +151,7 @@ arr[1]
 fn test_minus_eq_on_array_index() {
     assert_aelys_int(
         r#"
-let arr = Array[100, 200, 300]
+let mut arr = [100, 200, 300]
 arr[2] -= 50
 arr[2]
 "#,
@@ -164,7 +159,6 @@ arr[2]
     );
 }
 
-// === Compound assignment with floats ===
 
 #[test]
 fn test_plus_eq_float() {
@@ -178,7 +172,6 @@ x
     assert_eq!(result.as_float(), Some(4.0));
 }
 
-// === String concatenation with += ===
 
 #[test]
 fn test_plus_eq_string() {
@@ -192,7 +185,6 @@ s
     );
 }
 
-// === Chained compound assignments ===
 
 #[test]
 fn test_all_compound_ops_chained() {
@@ -210,7 +202,6 @@ x
     );
 }
 
-// === Compound assignment with expressions ===
 
 #[test]
 fn test_plus_eq_with_expression() {
@@ -225,14 +216,12 @@ x
     );
 }
 
-// === Double negation still works ===
 
 #[test]
 fn test_double_negation_preserved() {
     assert_aelys_int("--42", 42);
 }
 
-// === Increment in function ===
 
 #[test]
 fn test_increment_in_function() {
@@ -251,7 +240,6 @@ count_up(100)
     );
 }
 
-// === Compound assign with mut param ===
 
 #[test]
 fn test_compound_assign_mut_param() {
