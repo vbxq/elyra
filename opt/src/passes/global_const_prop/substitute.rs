@@ -48,6 +48,12 @@ impl GlobalConstantPropagator {
                 }
             }
             TypedExprKind::Member { object, .. } => self.substitute_constants(object),
+            TypedExprKind::StructField { object, .. }
+            | TypedExprKind::StructMethod { object, .. } => self.substitute_constants(object),
+            TypedExprKind::MemberAssign { object, value, .. } => {
+                self.substitute_constants(object);
+                self.substitute_constants(value);
+            }
             TypedExprKind::ArrayLiteral { elements, .. }
             | TypedExprKind::VecLiteral { elements, .. } => {
                 for elem in elements {
@@ -94,10 +100,15 @@ impl GlobalConstantPropagator {
                     self.substitute_constants(value);
                 }
             }
+            TypedExprKind::EnumConstruct { fields, .. } => {
+                for (_, value) in fields {
+                    self.substitute_constants(value);
+                }
+            }
             TypedExprKind::Cast { expr, .. } => {
                 self.substitute_constants(expr);
             }
-            TypedExprKind::Try(inner) => self.substitute_constants(inner),
+            TypedExprKind::Try { operand, .. } => self.substitute_constants(operand),
             TypedExprKind::Match { scrutinee, arms } => {
                 self.substitute_constants(scrutinee);
                 for arm in arms {
@@ -169,11 +180,18 @@ impl GlobalConstantPropagator {
             }
             TypedStmtKind::Return(Some(expr)) => self.substitute_constants(expr),
             TypedStmtKind::Function(func) => self.substitute_in_function(func),
+            TypedStmtKind::ImplDecl { methods, .. } => {
+                for method in methods {
+                    self.substitute_in_function(method);
+                }
+            }
             TypedStmtKind::Return(None)
             | TypedStmtKind::Break
             | TypedStmtKind::Continue
             | TypedStmtKind::Needs(_)
-            | TypedStmtKind::StructDecl { .. } => {}
+            | TypedStmtKind::StructDecl { .. }
+            | TypedStmtKind::TraitDecl { .. }
+            | TypedStmtKind::EnumDecl { .. } => {}
         }
     }
 
