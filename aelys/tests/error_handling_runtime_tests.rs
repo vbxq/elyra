@@ -1,5 +1,8 @@
 mod common;
 
+use aelys::run_with_config_and_opt;
+use aelys_opt::OptimizationLevel;
+use aelys_runtime::VmConfig;
 use common::{assert_aelys_int, run_aelys, run_aelys_err};
 
 #[test]
@@ -107,7 +110,7 @@ fn unit_functions_do_not_return_null() {
 #[test]
 fn empty_vec_pop_returns_option_none() {
     assert_aelys_int(
-        "let value: Vec<int> = Vec<int>[]\nmatch value.pop() { Some(_) => 0, None => 1 }",
+        "let mut value: Vec<int> = vec![]\nmatch value.pop() { Some(_) => 0, None => 1 }",
         1,
     );
 }
@@ -119,15 +122,56 @@ fn slicing_executes_without_reaching_the_backend_panic() {
 
 #[test]
 fn vector_slicing_supports_inclusive_and_open_bounds() {
-    assert_aelys_int("Vec<int>[1, 2, 3][1..=2].len()", 2);
-    assert_aelys_int("Vec<int>[1, 2, 3][..].len()", 3);
-    assert_aelys_int("Vec<int>[1, 2, 3][1..].len()", 2);
+    assert_aelys_int("vec![1, 2, 3][1..=2].len()", 2);
+    assert_aelys_int("vec![1, 2, 3][..].len()", 3);
+    assert_aelys_int("vec![1, 2, 3][1..].len()", 2);
 }
 
 #[test]
 fn invalid_slice_bounds_raise_a_runtime_error() {
     let error = run_aelys_err("[1, 2, 3][2..1]");
     assert!(error.contains("out of bounds"), "{error}");
+}
+
+#[test]
+fn negative_vec_reserve_is_a_runtime_error() {
+    let error = run_aelys_err("let mut value: Vec<int> = vec![1]\nvalue.reserve(-1)\n0");
+    assert!(error.contains("non-negative"), "{error}");
+}
+
+#[test]
+fn oversized_vec_reserve_is_rejected_before_backing_storage_allocation() {
+    let error =
+        run_aelys_err("let mut value: Vec<int> = vec![1]\nvalue.reserve(140737488355327)\n0");
+    assert!(error.contains("out of memory"), "{error}");
+}
+
+#[test]
+fn vec_reserve_obeys_the_vm_heap_limit_before_growing() {
+    let config = VmConfig::new(VmConfig::MIN_HEAP_BYTES).unwrap();
+    let error = run_with_config_and_opt(
+        "let mut value: Vec<int> = vec![1]\nvalue.reserve(200000)\n0",
+        "<limited-vec-reserve>",
+        config,
+        Vec::new(),
+        OptimizationLevel::Standard,
+    )
+    .expect_err("reserve must obey the VM heap limit");
+    assert!(error.to_string().contains("out of memory"), "{error}");
+}
+
+#[test]
+fn oversized_array_is_rejected_before_backing_storage_allocation() {
+    let config = VmConfig::default();
+    let error = run_with_config_and_opt(
+        "vec![0; 140737488355327]",
+        "<oversized-vec-repeat>",
+        config,
+        Vec::new(),
+        OptimizationLevel::Standard,
+    )
+    .expect_err("the allocation must fail");
+    assert!(error.to_string().contains("out of memory"), "{error}");
 }
 
 #[test]
