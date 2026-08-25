@@ -2,7 +2,7 @@ use aelys::{CompileOptions, ExecutionOutcome, IsolateConfig, RunOptions, Runtime
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize, serialize};
 use aelys_bytecode::{Function, OpCode, Register};
-use aelys_common::{AelysError, CompileErrorKind};
+use aelys_common::{AelysError, CompileErrorKind, RuntimeErrorKind};
 use aelys_runtime::{VM, Value};
 use aelys_syntax::Source;
 
@@ -173,7 +173,7 @@ fn array_and_vec_literals_with_256_elements_execute_with_wide_counts() {
             "ArrayLitWide",
         ),
         (
-            format!("let value = Vec[{elements}]\nvalue[255]"),
+            format!("let value = vec![{elements}]\nvalue[255]"),
             "VecLitWide",
         ),
     ] {
@@ -529,6 +529,198 @@ fn wide_collection_management_operations_roundtrip_and_execute() {
 }
 
 #[test]
+fn wide_range_and_slice_operations_roundtrip_and_execute() {
+    let mut array_function = Function::new(None, 0);
+    array_function.emit_b(OpCode::LoadI, 0, 1, 1);
+    array_function.emit_b(OpCode::LoadI, 1, 3, 1);
+    array_function.emit_register_abc(
+        OpCode::ArrayNewI,
+        Register::new(256),
+        Register::new(1),
+        Register::new(0),
+        1,
+    );
+    array_function.emit_register_abc(
+        OpCode::RangeNew,
+        Register::new(257),
+        Register::new(0),
+        Register::new(1),
+        1,
+    );
+    array_function.emit_register_abc(
+        OpCode::ArraySlice,
+        Register::new(258),
+        Register::new(256),
+        Register::new(257),
+        1,
+    );
+    array_function.emit_register_abc(
+        OpCode::ArrayLen,
+        Register::new(259),
+        Register::new(258),
+        Register::new(0),
+        1,
+    );
+    array_function.emit_register_abc(
+        OpCode::Return,
+        Register::new(259),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    array_function.finalize_bytecode();
+    let array_assembly = aelys_bytecode::asm::disassemble(&array_function);
+    assert!(array_assembly.contains(&format!("Wide {}", u8::from(OpCode::RangeNew))));
+    assert!(array_assembly.contains(&format!("Wide {}", u8::from(OpCode::ArraySlice))));
+    let array_function = aelys_bytecode::asm::assemble(&array_assembly)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut vm = VM::new(Source::new("wide-array-slice.aelys", "")).unwrap();
+    let array_ref = vm.alloc_function(array_function).unwrap();
+    assert_eq!(vm.execute(array_ref).unwrap().as_int(), Some(2));
+
+    let mut vec_function = Function::new(None, 0);
+    vec_function.emit_b(OpCode::LoadI, 0, 1, 1);
+    vec_function.emit_b(OpCode::LoadI, 1, 2, 1);
+    vec_function.emit_b(OpCode::LoadI, 2, 0, 1);
+    vec_function.emit_register_abc(
+        OpCode::VecNewI,
+        Register::new(256),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    for _ in 0..3 {
+        vec_function.emit_register_abc(
+            OpCode::VecPushI,
+            Register::new(256),
+            Register::new(2),
+            Register::new(0),
+            1,
+        );
+    }
+    vec_function.emit_register_abc(
+        OpCode::RangeNewInclusive,
+        Register::new(257),
+        Register::new(0),
+        Register::new(1),
+        1,
+    );
+    vec_function.emit_register_abc(
+        OpCode::VecSlice,
+        Register::new(258),
+        Register::new(256),
+        Register::new(257),
+        1,
+    );
+    vec_function.emit_register_abc(
+        OpCode::VecLen,
+        Register::new(259),
+        Register::new(258),
+        Register::new(0),
+        1,
+    );
+    vec_function.emit_register_abc(
+        OpCode::Return,
+        Register::new(259),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    vec_function.finalize_bytecode();
+    let vec_assembly = aelys_bytecode::asm::disassemble(&vec_function);
+    assert!(vec_assembly.contains(&format!("Wide {}", u8::from(OpCode::RangeNewInclusive))));
+    assert!(vec_assembly.contains(&format!("Wide {}", u8::from(OpCode::VecSlice))));
+    let vec_function = aelys_bytecode::asm::assemble(&vec_assembly)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut vm = VM::new(Source::new("wide-vec-slice.aelys", "")).unwrap();
+    let vec_ref = vm.alloc_function(vec_function).unwrap();
+    assert_eq!(vm.execute(vec_ref).unwrap().as_int(), Some(2));
+}
+
+#[test]
+fn wide_negative_array_size_is_a_runtime_error() {
+    let mut function = Function::new(None, 0);
+    function.emit_b(OpCode::LoadI, 0, -1, 1);
+    function.emit_register_abc(
+        OpCode::ArrayNewI,
+        Register::new(256),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    function.emit_a(OpCode::Return0, 0, 0, 0, 1);
+    function.finalize_bytecode();
+
+    let mut vm = VM::new(Source::new("wide-negative-array.aelys", "")).unwrap();
+    let function_ref = vm.alloc_function(function).unwrap();
+    let error = vm.execute(function_ref).unwrap_err();
+    assert!(matches!(error.kind, RuntimeErrorKind::TypeError { .. }));
+}
+
+#[test]
+fn wide_oversized_array_is_rejected_before_backing_storage_allocation() {
+    let mut function = Function::new(None, 0);
+    function
+        .constants
+        .push(aelys_bytecode::Constant::Int(140737488355327));
+    function.emit_a(OpCode::LoadK, 0, 0, 0, 1);
+    function.emit_register_abc(
+        OpCode::ArrayNewI,
+        Register::new(256),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    function.emit_a(OpCode::Return0, 0, 0, 0, 1);
+    function.finalize_bytecode();
+
+    let mut vm = VM::new(Source::new("wide-oversized-array.aelys", "")).unwrap();
+    let function_ref = vm.alloc_function(function).unwrap();
+    let error = vm.execute(function_ref).unwrap_err();
+    assert!(matches!(error.kind, RuntimeErrorKind::OutOfMemory { .. }));
+}
+
+#[test]
+fn wide_negative_vec_reserve_is_a_runtime_error() {
+    let mut function = Function::new(None, 0);
+    function.emit_b(OpCode::LoadI, 0, -1, 1);
+    function.emit_register_abc(
+        OpCode::VecNewI,
+        Register::new(256),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    function.emit_register_abc(
+        OpCode::Move,
+        Register::new(257),
+        Register::new(0),
+        Register::new(0),
+        1,
+    );
+    function.emit_register_abc(
+        OpCode::VecReserve,
+        Register::new(256),
+        Register::new(257),
+        Register::new(0),
+        1,
+    );
+    function.emit_a(OpCode::Return0, 0, 0, 0, 1);
+    function.finalize_bytecode();
+
+    let mut vm = VM::new(Source::new("wide-negative-vec-reserve", "")).unwrap();
+    let function_ref = vm.alloc_function(function).unwrap();
+    let error = vm.execute(function_ref).unwrap_err();
+    assert!(matches!(error.kind, RuntimeErrorKind::TypeError { .. }));
+}
+
+#[test]
 fn wide_string_character_load_roundtrips_and_executes() {
     let mut function = Function::new(None, 0);
     function
@@ -793,8 +985,9 @@ fn consecutive_wide_literals_keep_distinct_local_values() {
         .map(|index| index.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let source =
-        format!("let items = [{elements}]\nlet values = Vec[{elements}]\nitems[255] + values[255]");
+    let source = format!(
+        "let items = [{elements}]\nlet values = vec![{elements}]\nitems[255] + values[255]"
+    );
     let runtime = Runtime::new();
     let module = runtime
         .compile(
