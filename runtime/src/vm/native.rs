@@ -171,7 +171,6 @@ impl NativeFunctionImpl {
     }
 }
 
-/// C callback for native modules to read string values from the VM.
 extern "C" fn native_read_string_callback(
     context: *mut aelys_native::NativeContext,
     value: AelysValue,
@@ -207,7 +206,7 @@ extern "C" fn native_alloc_string_callback(
     length: usize,
     out: *mut AelysValue,
 ) -> i32 {
-    if context.is_null() || out.is_null() || (bytes.is_null() && length != 0) {
+    if context.is_null() || out.is_null() || bytes.is_null() {
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     }
     let context = unsafe { &mut *(context as *mut RuntimeNativeContext) };
@@ -228,7 +227,6 @@ extern "C" fn native_alloc_string_callback(
     0
 }
 
-// VM API struct to pass to native modules during init
 pub fn build_native_vm_api() -> AelysVmApi {
     AelysVmApi {
         api_version: aelys_native::AELYS_API_VERSION,
@@ -442,6 +440,22 @@ mod tests {
         assert_eq!(
             native_read_string_callback(context, value, &mut pointer, std::ptr::null_mut()),
             1
+        );
+    }
+
+    #[test]
+    fn alloc_string_callback_rejects_null_input_even_when_empty() {
+        let mut vm = VM::new(Source::new("native-null-input", "")).unwrap();
+        let mut context = RuntimeNativeContext {
+            magic: NATIVE_CONTEXT_MAGIC,
+            vm: &mut vm,
+        };
+        let context = (&mut context as *mut RuntimeNativeContext).cast();
+        let mut output = aelys_native::value_null();
+
+        assert_eq!(
+            native_alloc_string_callback(context, std::ptr::null(), 0, &mut output),
+            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
         );
     }
 
