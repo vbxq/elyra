@@ -3,8 +3,7 @@ use crate::typed_ast::{TypedFunction, TypedParam};
 use crate::unify::Substitution;
 
 impl TypeInference {
-    /// Apply substitution to function
-    pub(super) fn apply_substitution_func(
+    pub(crate) fn apply_substitution_func(
         &self,
         func: &TypedFunction,
         subst: &Substitution,
