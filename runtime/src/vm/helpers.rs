@@ -16,7 +16,6 @@ impl VM {
         value.to_string()
     }
 
-    /// Get a constant value from a function's constant table.
     pub fn get_constant(&self, func_ref: GcRef, k: u16) -> Result<Value, RuntimeError> {
         let obj = self.heap.get(func_ref).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::TypeError {
@@ -43,7 +42,6 @@ impl VM {
         }
     }
 
-    /// Get a nested function from a parent function's nested_functions table.
     pub fn get_nested_function(
         &self,
         func_ref: GcRef,
@@ -78,7 +76,6 @@ impl VM {
         }
     }
 
-    /// Get a string constant from a function's constant table.
     pub fn get_constant_string(&self, func_ref: GcRef, k: u8) -> Result<String, RuntimeError> {
         let obj = self.heap.get(func_ref).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::TypeError {
@@ -125,7 +122,6 @@ impl VM {
         }
     }
 
-    /// Get the type name of a value for error messages.
     pub fn value_type_name(&self, value: Value) -> &'static str {
         if value.is_int() {
             return "int";
@@ -166,6 +162,8 @@ fn object_type_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Vec(_) => "vec",
         ObjectKind::Range(_) => "range",
         ObjectKind::Sum(_) => "sum",
+        ObjectKind::Enum(_) => "enum",
+        ObjectKind::Struct(_) => "struct",
     }
 }
 
@@ -223,6 +221,23 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
                 aelys_bytecode::object::SumTag::ErrorMessage => "Error",
             };
             format!("{name}({})", vm.value_to_string(sum.payload))
+        }
+        ObjectKind::Enum(value) => {
+            let fields = value
+                .slots
+                .iter()
+                .map(|slot| vm.value_to_string(*slot))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("enum#{}::{}({fields})", value.enum_id, value.variant_id)
+        }
+        ObjectKind::Struct(structure) => {
+            let fields: Vec<String> = structure
+                .slots
+                .iter()
+                .map(|value| vm.value_to_string(*value))
+                .collect();
+            format!("struct#{} {{{}}}", structure.schema_id, fields.join(", "))
         }
     }
 }
