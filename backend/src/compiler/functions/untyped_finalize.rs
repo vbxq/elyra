@@ -15,6 +15,7 @@ pub(super) fn finalize_untyped_function(
     func_compiler.current.global_layout = build_untyped_global_layout(&func_compiler);
     func_compiler.current.compute_global_layout_hash();
     func_compiler.current.finalize_bytecode();
+    func_compiler.update_jit_eligibility();
 
     parent.mark_captures_from_nested(&func_compiler);
     parent.fix_transitive_captures(&mut func_compiler.upvalues);
