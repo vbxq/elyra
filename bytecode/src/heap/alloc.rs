@@ -1,7 +1,8 @@
 use super::Heap;
 use crate::Function;
 use crate::object::{
-    AelysFunction, AelysString, AelysSum, GcObject, GcRef, NativeFunction, ObjectKind, SumTag,
+    AelysEnum, AelysFunction, AelysString, AelysStruct, AelysSum, GcObject, GcRef, NativeFunction,
+    ObjectKind, SumTag,
 };
 
 impl Heap {
@@ -12,7 +13,6 @@ impl Heap {
             obj.marked = true;
         }
 
-        // reuse free slots when possible
         if let Some(idx) = self.free_list.pop() {
             let slot = self.objects[idx as usize].as_mut();
             slot.object = Some(obj);
@@ -41,9 +41,9 @@ impl Heap {
             .iter()
             .map(|constant| constant.materialize(self))
             .collect();
-        self.alloc(GcObject::new(ObjectKind::Function(
+        self.alloc(GcObject::new(ObjectKind::Function(Box::new(
             AelysFunction::with_constants(func, constants),
-        )))
+        ))))
     }
 
     pub fn alloc_native(&mut self, name: &str, arity: u16) -> GcRef {
@@ -52,12 +52,23 @@ impl Heap {
         ))))
     }
 
-    // same as alloc_native, just different name for clarity in calling code
     pub fn alloc_foreign(&mut self, name: &str, arity: u16) -> GcRef {
         self.alloc_native(name, arity)
     }
 
     pub fn alloc_sum(&mut self, tag: SumTag, payload: crate::Value) -> GcRef {
         self.alloc(GcObject::new(ObjectKind::Sum(AelysSum::new(tag, payload))))
+    }
+
+    pub fn alloc_enum(&mut self, enum_id: u16, variant_id: u16, slots: Vec<crate::Value>) -> GcRef {
+        self.alloc(GcObject::new(ObjectKind::Enum(AelysEnum::new(
+            enum_id, variant_id, slots,
+        ))))
+    }
+
+    pub fn alloc_struct(&mut self, schema_id: crate::SchemaId, slots: Vec<crate::Value>) -> GcRef {
+        self.alloc(GcObject::new(ObjectKind::Struct(Box::new(
+            AelysStruct::new(schema_id, slots),
+        ))))
     }
 }
