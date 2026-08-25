@@ -15,6 +15,8 @@ impl TypeInference {
         is_pub: bool,
     ) -> TypedStmtKind {
         let mut typed_init = self.infer_expr(initializer);
+        let read_only_alias = collection_binding_name(initializer)
+            .is_some_and(|source| self.env.is_read_only(source));
 
         let declared_type = type_annotation
             .as_ref()
@@ -76,16 +78,46 @@ impl TypeInference {
             typed_init.ty.clone()
         };
 
+        if mutable
+            && is_collection_type(&var_type)
+            && collection_binding_name(initializer).is_some()
+            && !read_only_alias
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MutableCollectionAlias,
+                span: initializer.span,
+                reason: ConstraintReason::Other("mutable collection alias".to_string()),
+            });
+        }
+
         if name != "_" {
-            if type_annotation
-                .as_ref()
-                .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
-                || self.is_explicit_dynamic_expr(&typed_init)
+            let explicit_dynamic_annotation =
+                type_annotation.is_some() && var_type.contains_dynamic();
+            let known_length = super::super::expr::array::constant_collection_length(initializer)
+                .filter(|_| {
+                    matches!(
+                        &var_type,
+                        InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_)
+                    )
+                });
+            if let Some(length) = known_length
+                && !explicit_dynamic_annotation
+                && !self.is_explicit_dynamic_expr(&typed_init)
             {
+                self.env.define_local_with_collection_length(
+                    name.to_string(),
+                    var_type.clone(),
+                    length,
+                );
+            } else if explicit_dynamic_annotation || self.is_explicit_dynamic_expr(&typed_init) {
                 self.env
                     .define_explicit_dynamic_local(name.to_string(), var_type.clone());
             } else {
                 self.env.define_local(name.to_string(), var_type.clone());
+            }
+            self.env.set_mutable(name, mutable);
+            if read_only_alias {
+                self.env.mark_read_only(name);
             }
         }
 
@@ -97,4 +129,20 @@ impl TypeInference {
             is_pub,
         }
     }
+}
+
+fn collection_binding_name(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Identifier(name) => Some(name.as_str()),
+        aelys_syntax::ExprKind::Grouping(inner) => collection_binding_name(inner),
+        aelys_syntax::ExprKind::Index { object, .. } => collection_binding_name(object),
+        _ => None,
+    }
+}
+
+fn is_collection_type(ty: &InferType) -> bool {
+    matches!(
+        ty,
+        InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_)
+    )
 }
