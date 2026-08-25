@@ -2,7 +2,6 @@ use crate::pipeline::types::{PipelineError, Stage, StageInput, StageOutput};
 use aelys_sema::TypeInference;
 use std::collections::HashSet;
 
-// AST -> Typed AST
 pub struct TypeInferenceStage {
     module_aliases: HashSet<String>,
     known_globals: HashSet<String>,
@@ -78,6 +77,6 @@ impl Stage for TypeInferenceStage {
             }
         })?;
 
-        Ok(StageOutput::TypedAst(typed_program, source))
+        Ok(StageOutput::TypedAst(Box::new(typed_program), source))
     }
 }
