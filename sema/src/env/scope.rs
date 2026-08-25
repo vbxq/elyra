@@ -2,24 +2,104 @@ use super::TypeEnv;
 use crate::types::InferType;
 
 impl TypeEnv {
-    /// Enter a new scope
     pub fn push_scope(&mut self) {
         self.locals.push(std::collections::HashMap::new());
+        self.local_mutability.push(std::collections::HashMap::new());
+        self.read_only_bindings
+            .push(std::collections::HashSet::new());
+        self.known_collection_lengths
+            .push(std::collections::HashMap::new());
         self.explicit_dynamic_locals
             .push(std::collections::HashSet::new());
     }
 
-    /// Exit the current scope
     pub fn pop_scope(&mut self) {
         if self.locals.len() > 1 {
             self.locals.pop();
+            self.local_mutability.pop();
+            self.read_only_bindings.pop();
+            self.known_collection_lengths.pop();
             self.explicit_dynamic_locals.pop();
         }
     }
 
-    /// Define a local variable in the current scope
     pub fn define_local(&mut self, name: String, ty: InferType) {
         self.define_local_with_dynamic_origin(name, ty, false);
+    }
+
+    pub fn set_mutable(&mut self, name: &str, mutable: bool) {
+        for scope in self.locals.iter().rev() {
+            if scope.contains_key(name) {
+                if let Some(mutability) = self
+                    .local_mutability
+                    .iter_mut()
+                    .rev()
+                    .find(|scope| scope.contains_key(name))
+                {
+                    mutability.insert(name.to_string(), mutable);
+                }
+                return;
+            }
+        }
+        if self.captures.contains_key(name)
+            && let Some(value) = self.capture_mutability.get_mut(name)
+        {
+            *value = mutable;
+        }
+    }
+
+    pub fn is_mutable(&self, name: &str) -> bool {
+        for (scope, mutability) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.local_mutability.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return mutability.get(name).copied().unwrap_or(false);
+            }
+        }
+        self.capture_mutability.get(name).copied().unwrap_or(false)
+    }
+
+    pub fn define_local_with_collection_length(
+        &mut self,
+        name: String,
+        ty: InferType,
+        length: usize,
+    ) {
+        self.define_local(name.clone(), ty);
+        if let Some(scope) = self.known_collection_lengths.last_mut() {
+            scope.insert(name, length);
+        }
+    }
+
+    pub fn collection_length(&self, name: &str) -> Option<usize> {
+        self.known_collection_lengths
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+    }
+
+    pub fn invalidate_collection_length(&mut self, name: &str) {
+        for scope in self.known_collection_lengths.iter_mut().rev() {
+            if scope.remove(name).is_some() {
+                break;
+            }
+        }
+    }
+
+    pub fn mark_read_only(&mut self, name: &str) {
+        if let Some(scope) = self.read_only_bindings.last_mut() {
+            scope.insert(name.to_string());
+        }
+    }
+
+    pub fn is_read_only(&self, name: &str) -> bool {
+        self.read_only_bindings
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
     }
 
     pub fn define_explicit_dynamic_local(&mut self, name: String, ty: InferType) {
@@ -34,6 +114,12 @@ impl TypeEnv {
     ) {
         if let Some(scope) = self.locals.last_mut() {
             scope.insert(name.clone(), ty);
+            if let Some(mutability) = self.local_mutability.last_mut() {
+                mutability.insert(name.clone(), false);
+            }
+            if let Some(lengths) = self.known_collection_lengths.last_mut() {
+                lengths.remove(&name);
+            }
             if let Some(origins) = self.explicit_dynamic_locals.last_mut() {
                 if explicit_dynamic {
                     origins.insert(name);
@@ -58,7 +144,6 @@ impl TypeEnv {
         self.captures.contains_key(name) && self.explicit_dynamic_captures.contains(name)
     }
 
-    /// Look up a variable (searches from innermost to outermost scope)
     pub fn lookup(&self, name: &str) -> Option<&InferType> {
         for scope in self.locals.iter().rev() {
             if let Some(ty) = scope.get(name) {
@@ -77,12 +162,10 @@ impl TypeEnv {
         None
     }
 
-    /// Check if a variable exists
     pub fn contains(&self, name: &str) -> bool {
         self.lookup(name).is_some()
     }
 
-    /// Current scope depth
     pub fn depth(&self) -> usize {
         self.locals.len()
     }
