@@ -39,7 +39,7 @@ fn allocations() {
 
 #[library_benchmark]
 fn gc() {
-    execute("let mut n = 0; for i in 0..2000 { let v = Vec[i, i + 1, i + 2]; n += v[1] } n");
+    execute("let mut n = 0; for i in 0..2000 { let v = vec![i, i + 1, i + 2]; n += v[1] } n");
 }
 
 #[library_benchmark]
