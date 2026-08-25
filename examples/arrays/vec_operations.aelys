@@ -1,7 +1,7 @@
 needs std::io
 needs std::convert
 
-let v = Vec[1, 2, 3]
+let mut v = vec![1, 2, 3]
 io::print("Initial Vec: [1, 2, 3]")
 io::print("Length: " + convert::to_string(v.len()))
 
@@ -9,7 +9,7 @@ v.push(4)
 v.push(5)
 io::print("After push(4), push(5): len = " + convert::to_string(v.len()))
 
-let popped = v.pop()
+let popped = v.pop().unwrap_or(0)
 io::print("Popped: " + convert::to_string(popped))
 io::print("Length after pop: " + convert::to_string(v.len()))
 
