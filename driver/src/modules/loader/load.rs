@@ -24,6 +24,10 @@ impl ModuleLoader {
             return self.load_std_module(needs, vm);
         }
 
+        if self.host_modules.contains(&module_path_str) {
+            return Ok(self.get_load_result(needs));
+        }
+
         if self.loading_stack.contains(&module_path_str) {
             let mut chain = self.loading_stack.clone();
             chain.push(module_path_str.clone());
@@ -72,14 +76,8 @@ impl ModuleLoader {
                 ImportKind::Symbols(symbols) => {
                     for symbol in symbols {
                         if !module_info.exports.contains_key(symbol) {
-                            return Err(AelysError::Compile(CompileError::new(
-                                CompileErrorKind::SymbolNotFound {
-                                    symbol: symbol.clone(),
-                                    module: module_path_str.clone(),
-                                },
-                                needs.span,
-                                self.source.clone(),
-                            )));
+                            self.reject_unimportable_symbol(&module_path_str, symbol, needs.span)?;
+                            continue;
                         }
 
                         let value = vm.get_global(symbol).ok_or_else(|| {
@@ -139,8 +137,11 @@ impl ModuleLoader {
         let actual_path_str = actual_path.join(".");
 
         if let Some(sym) = symbol.as_ref()
-            && self.loaded_modules.contains_key(&actual_path_str)
+            && let Some(module_info) = self.loaded_modules.get(&actual_path_str)
         {
+            if !module_info.exports.contains_key(sym) {
+                self.reject_unimportable_symbol(&actual_path_str, sym, needs.span)?;
+            }
             return Ok(LoadResult::Symbol(sym.clone()));
         }
 
