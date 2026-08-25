@@ -65,6 +65,16 @@ fn collect_all_uses_in_stmt(stmt: &TypedStmt, uses: &mut HashSet<String>) {
                 uses.insert(name.clone());
             }
         }
+        TypedStmtKind::ImplDecl { methods, .. } => {
+            for method in methods {
+                for (name, _) in &method.captures {
+                    uses.insert(name.clone());
+                }
+                for nested in &method.body {
+                    collect_all_uses_in_stmt(nested, uses);
+                }
+            }
+        }
         TypedStmtKind::ForEach { iterable, body, .. } => {
             collect_all_uses_in_expr(iterable, uses);
             collect_all_uses_in_stmt(body, uses);
@@ -73,7 +83,9 @@ fn collect_all_uses_in_stmt(stmt: &TypedStmt, uses: &mut HashSet<String>) {
         | TypedStmtKind::Break
         | TypedStmtKind::Continue
         | TypedStmtKind::Needs(_)
-        | TypedStmtKind::StructDecl { .. } => {}
+        | TypedStmtKind::StructDecl { .. }
+        | TypedStmtKind::TraitDecl { .. }
+        | TypedStmtKind::EnumDecl { .. } => {}
     }
 }
 
@@ -129,6 +141,13 @@ fn collect_all_uses_in_expr(expr: &TypedExpr, uses: &mut HashSet<String>) {
         TypedExprKind::Member { object, .. } => {
             collect_all_uses_in_expr(object, uses);
         }
+        TypedExprKind::StructField { object, .. } | TypedExprKind::StructMethod { object, .. } => {
+            collect_all_uses_in_expr(object, uses);
+        }
+        TypedExprKind::MemberAssign { object, value, .. } => {
+            collect_all_uses_in_expr(object, uses);
+            collect_all_uses_in_expr(value, uses);
+        }
         TypedExprKind::ArrayLiteral { elements, .. }
         | TypedExprKind::VecLiteral { elements, .. } => {
             for elem in elements {
@@ -175,10 +194,15 @@ fn collect_all_uses_in_expr(expr: &TypedExpr, uses: &mut HashSet<String>) {
                 collect_all_uses_in_expr(value, uses);
             }
         }
+        TypedExprKind::EnumConstruct { fields, .. } => {
+            for (_, value) in fields {
+                collect_all_uses_in_expr(value, uses);
+            }
+        }
         TypedExprKind::Cast { expr, .. } => {
             collect_all_uses_in_expr(expr, uses);
         }
-        TypedExprKind::Try(inner) => collect_all_uses_in_expr(inner, uses),
+        TypedExprKind::Try { operand, .. } => collect_all_uses_in_expr(operand, uses),
         TypedExprKind::Match { scrutinee, arms } => {
             collect_all_uses_in_expr(scrutinee, uses);
             for arm in arms {
