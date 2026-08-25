@@ -5,12 +5,10 @@ use tempfile::TempDir;
 
 use aelys_driver::run_file;
 
-/// Helper to create a benchmarks directory with module files
 fn create_module_env() -> TempDir {
     tempfile::tempdir().expect("Failed to create temp dir")
 }
 
-/// Helper to write a file in the temp directory
 fn write_file(dir: &TempDir, path: &str, content: &str) -> PathBuf {
     let file_path = dir.path().join(path);
     if let Some(parent) = file_path.parent() {
@@ -21,7 +19,6 @@ fn write_file(dir: &TempDir, path: &str, content: &str) -> PathBuf {
     file_path
 }
 
-// ==Basic Module Import Tests==
 
 #[test]
 fn test_basic_module_import() {
@@ -119,7 +116,7 @@ fn test_wildcard_import() {
         &dir,
         "math.aelys",
         r#"
-pub fn square(x) { x * x }
+pub fn square(x: int) -> int { x * x }
 pub let PI = 3
 "#,
     );
@@ -145,8 +142,8 @@ fn test_specific_symbol_import() {
         &dir,
         "funcs.aelys",
         r#"
-pub fn add(a, b) { a + b }
-pub fn sub(a, b) { a - b }
+pub fn add(a: int, b: int) -> int { a + b }
+pub fn sub(a: int, b: int) -> int { a - b }
 "#,
     );
 
@@ -163,7 +160,6 @@ add(10, 5)
     assert_eq!(result.as_int(), Some(15));
 }
 
-// ==Nested Module Tests==
 
 #[test]
 fn test_nested_module_path() {
@@ -173,7 +169,7 @@ fn test_nested_module_path() {
         &dir,
         "helpers/math.aelys",
         r#"
-pub fn cube(x) { x * x * x }
+pub fn cube(x: int) -> int { x * x * x }
 "#,
     );
 
@@ -198,7 +194,7 @@ fn test_module_path_uses_double_colon() {
         &dir,
         "helpers/math.aelys",
         r#"
-pub fn cube(x) { x * x * x }
+pub fn cube(x: int) -> int { x * x * x }
 "#,
     );
 
@@ -229,6 +225,10 @@ sys.arch()
 
     let error = run_file(&main_path).expect_err("dot module access must be rejected");
     let message = error.to_string();
+    assert!(
+        message.contains("error[E0411]"),
+        "the module path separator diagnostic must render a single code, got: {message}"
+    );
     assert!(message.contains("module members are reached with '::'; write 'sys::arch'"));
 }
 
@@ -257,7 +257,6 @@ utils::helper()
     assert_eq!(result.as_int(), Some(100));
 }
 
-// ==Visibility Tests==
 
 #[test]
 fn test_private_function_not_exported() {
@@ -281,7 +280,6 @@ private_mod::public()
 "#,
     );
 
-    // Public function that calls private should work
     let result = run_file(&main_path).expect("Public function should succeed");
     assert_eq!(result.as_int(), Some(42));
 }
@@ -342,7 +340,6 @@ private_mod::public
     assert_eq!(result.as_int(), Some(200));
 }
 
-// ==Circular Dependency Tests==
 
 #[test]
 fn test_circular_dependency_detected() {
@@ -417,7 +414,6 @@ self_import::foo()
     );
 }
 
-// ==Module Not Found Tests==
 
 #[test]
 fn test_module_not_found() {
@@ -473,7 +469,6 @@ nonexistent()
     );
 }
 
-// ==Multiple Imports Tests==
 
 #[test]
 fn test_multiple_module_imports() {
@@ -543,7 +538,6 @@ derived::derived_func()
     assert_eq!(result.as_int(), Some(10));
 }
 
-// ==Edge Cases==
 
 #[test]
 fn test_empty_module() {
@@ -553,7 +547,6 @@ fn test_empty_module() {
         &dir,
         "empty.aelys",
         r#"
-// Empty module - no exports
 "#,
     );
 
@@ -610,12 +603,10 @@ mod_a::get_counter() + mod_b::get_counter_too()
 "#,
     );
 
-    // Same module should only be loaded once (cached)
     let result = run_file(&main_path).expect("Diamond dependency should work");
     assert_eq!(result.as_int(), Some(2));
 }
 
-// ==Direct Import Tests==
 
 #[test]
 fn test_std_direct_import() {
@@ -653,9 +644,7 @@ sin(0) + math::cos(0)
 
 #[test]
 fn test_alias_with_auto_registered_globals() {
-    // Auto-registered stdlib functions are always available, even when
-    // the module is also imported with an alias. Both `sin(0)` and
-    // `m.sin(0)` should work.
+    // the module is also imported with an alias. both `sin(0)` and
     let dir = create_module_env();
 
     let main_path = write_file(
@@ -839,4 +828,67 @@ a::shared() + b::shared()
 
     let result = run_file(&main_path).expect("Both aliased should work");
     assert_eq!(result.as_int(), Some(3));
+}
+
+
+#[test]
+fn test_symbol_path_import_does_not_pull_in_the_rest_of_the_module() {
+    let dir = create_module_env();
+
+    write_file(
+        &dir,
+        "a/b.aelys",
+        r#"
+pub fn wanted() -> int { 1 }
+pub fn other() -> int { 99 }
+"#,
+    );
+
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        r#"
+needs a::b::wanted
+other()
+"#,
+    );
+
+    let error = run_file(&main_path).expect_err("only the named symbol may be imported");
+    assert!(
+        error.to_string().contains("undefined variable: other"),
+        "unexpected diagnostic: {}",
+        error
+    );
+}
+
+#[test]
+fn test_symbol_path_typo_is_reported_when_the_parent_is_already_loaded() {
+    let dir = create_module_env();
+
+    write_file(
+        &dir,
+        "a/b.aelys",
+        r#"
+pub fn wanted() -> int { 1 }
+"#,
+    );
+
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        r#"
+needs a::b
+needs a::b::typo
+1
+"#,
+    );
+
+    let error = run_file(&main_path).expect_err("a mistyped symbol must be reported");
+    assert!(
+        error
+            .to_string()
+            .contains("symbol 'typo' not found in module 'a.b'"),
+        "unexpected diagnostic: {}",
+        error
+    );
 }
