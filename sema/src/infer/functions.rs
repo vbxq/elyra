@@ -2,10 +2,44 @@ use super::TypeInference;
 use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedFunction, TypedParam};
 use crate::types::InferType;
-use aelys_syntax::{Function, Stmt, StmtKind};
+use aelys_syntax::{Function, Stmt, StmtKind, TypeAnnotation};
+
+pub(crate) fn struct_method_symbol(structure: &str, method: &str) -> String {
+    format!(
+        "__aelys_struct::{:08x}:{}{:08x}:{}",
+        structure.len(),
+        structure,
+        method.len(),
+        method
+    )
+}
+
+pub(crate) fn trait_method_symbol(
+    trait_name: &str,
+    structure: &str,
+    method: &str,
+    trait_args: &[InferType],
+) -> String {
+    let mut symbol = format!(
+        "__aelys_trait::{:08x}:{}{:08x}:{}{:08x}:{}",
+        trait_name.len(),
+        trait_name,
+        structure.len(),
+        structure,
+        method.len(),
+        method
+    );
+    if !trait_args.is_empty() {
+        use std::fmt::Write;
+        for argument in trait_args {
+            let rendered = argument.to_string();
+            let _ = write!(symbol, "{:08x}:{}", rendered.len(), rendered);
+        }
+    }
+    symbol
+}
 
 impl TypeInference {
-    /// Infer function type
     pub(super) fn infer_function(&mut self, func: &Function) -> TypedFunction {
         let fn_signature = self.env.lookup_function(&func.name).cloned();
 
@@ -58,19 +92,27 @@ impl TypeInference {
                 }
             });
 
+        if func.return_type.is_none() && !body_yields_value(&func.body) {
+            self.constraints.push(crate::constraint::Constraint::equal(
+                return_type.clone(),
+                InferType::Unit,
+                func.span,
+                ConstraintReason::Return {
+                    func_name: func.name.clone(),
+                },
+            ));
+        }
+
         let mut func_env = self.env.for_closure();
         func_env.set_current_function(Some(func.name.clone()));
 
-        for (param, syntax_param) in typed_params.iter().zip(&func.params) {
-            if syntax_param
-                .type_annotation
-                .as_ref()
-                .is_some_and(|annotation| annotation.name.eq_ignore_ascii_case("dynamic"))
-            {
+        for (param, _syntax_param) in typed_params.iter().zip(&func.params) {
+            if param.ty.contains_dynamic() {
                 func_env.define_explicit_dynamic_local(param.name.clone(), param.ty.clone());
             } else {
                 func_env.define_local(param.name.clone(), param.ty.clone());
             }
+            func_env.set_mutable(&param.name, param.mutable);
         }
 
         let saved_env = std::mem::replace(&mut self.env, func_env);
@@ -127,6 +169,75 @@ impl TypeInference {
             captures,
         }
     }
+
+    pub(super) fn infer_impl_decl(
+        &mut self,
+        self_type: &TypeAnnotation,
+        impl_type_params: &[String],
+        methods: &[Function],
+        trait_path: Option<&TypeAnnotation>,
+    ) -> crate::typed_ast::TypedStmtKind {
+        let target = self_type
+            .path
+            .last()
+            .cloned()
+            .unwrap_or_else(|| self_type.name.clone());
+        let trait_name = trait_path.map(|path| path.path.join("::"));
+        let trait_args = self.impl_trait_args(trait_path, impl_type_params);
+        let effective_methods = self.effective_impl_methods(methods, trait_name.as_deref());
+        let mut typed_methods = Vec::with_capacity(effective_methods.len());
+        for method in &effective_methods {
+            let mut normalized = method.clone();
+            normalized.type_params = impl_type_params
+                .iter()
+                .cloned()
+                .chain(method.type_params.iter().cloned())
+                .collect();
+            normalized.name = trait_name
+                .as_deref()
+                .map(|name| trait_method_symbol(name, &target, &method.name, &trait_args))
+                .unwrap_or_else(|| struct_method_symbol(&target, &method.name));
+            if let Some(first) = normalized.params.first_mut()
+                && first.name == "self"
+                && first.type_annotation.is_none()
+            {
+                first.type_annotation = Some(self_type.clone());
+            }
+            typed_methods.push(self.infer_function(&normalized));
+        }
+        crate::typed_ast::TypedStmtKind::ImplDecl {
+            target,
+            trait_name,
+            type_params: impl_type_params.to_vec(),
+            target_type: {
+                let saved =
+                    std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
+                let ty = self.type_from_annotation(self_type);
+                self.type_params_in_scope = saved;
+                ty
+            },
+            trait_args,
+            methods: typed_methods,
+        }
+    }
+
+    fn impl_trait_args(
+        &mut self,
+        trait_path: Option<&TypeAnnotation>,
+        impl_type_params: &[String],
+    ) -> Vec<InferType> {
+        let Some(path) = trait_path else {
+            return Vec::new();
+        };
+        let saved = std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
+        let args = path
+            .type_params
+            .iter()
+            .map(|argument| self.type_from_annotation(argument))
+            .collect();
+        self.type_params_in_scope = saved;
+        args
+    }
 }
 
 pub(super) fn body_always_returns(stmts: &[Stmt], implicit_tail: bool) -> bool {
@@ -141,6 +252,44 @@ pub(super) fn body_always_returns(stmts: &[Stmt], implicit_tail: bool) -> bool {
     }
 
     stmt_always_returns(last, implicit_tail)
+}
+
+fn body_yields_value(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_returns_value) || stmts.last().is_some_and(tail_yields_value)
+}
+
+fn stmt_returns_value(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(value) => value.is_some(),
+        StmtKind::Block(stmts) => stmts.iter().any(stmt_returns_value),
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            stmt_returns_value(then_branch)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|branch| stmt_returns_value(branch))
+        }
+        StmtKind::While { body, .. }
+        | StmtKind::For { body, .. }
+        | StmtKind::ForEach { body, .. } => stmt_returns_value(body),
+        _ => false,
+    }
+}
+
+fn tail_yields_value(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Expression(_) => true,
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => tail_yields_value(then_branch) || tail_yields_value(else_branch),
+        StmtKind::Block(stmts) => stmts.last().is_some_and(tail_yields_value),
+        _ => false,
+    }
 }
 
 fn stmt_always_returns(stmt: &Stmt, implicit_tail: bool) -> bool {
