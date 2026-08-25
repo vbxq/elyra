@@ -23,7 +23,7 @@ fn test_disassemble_empty_function() {
 #[test]
 fn test_basic_assembly() {
     let source = r#"
-.version 2
+.version 3
 
 .function 0
   .name "main"
