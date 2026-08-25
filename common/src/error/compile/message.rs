@@ -36,6 +36,26 @@ impl CompileErrorKind {
             Self::CommentNestingTooDeep { max } => {
                 format!("block comment nesting too deep (max {} levels)", max)
             }
+            Self::TypeNestingTooDeep { max } => {
+                format!("type annotation nesting too deep (max {} levels)", max)
+            }
+            Self::BorrowingReceiverDeferred { form } => format!(
+                "borrowing receiver '{form}' is deferred to Stage 3\n   = help: Stage 2 methods take the receiver by value; write 'self'"
+            ),
+            Self::AssociatedItemDeferred { item } => format!(
+                "associated {item} is deferred to Stage 3\n   = help: a Stage 2 trait or impl body holds only 'fn' items"
+            ),
+            Self::TraitObjectDeferred { trait_name } => format!(
+                "trait object 'dyn {trait_name}' is deferred to Stage 3\n   = help: take a generic type parameter bound by {trait_name} instead"
+            ),
+            Self::NegativeImplDeferred => "negative impl is deferred to Stage 3\n   \
+                 = help: Stage 2 cannot state that a type does not implement a trait"
+                .to_string(),
+            Self::SpecializationDeferred => {
+                "specialization with 'default fn' is deferred to Stage 3\n   \
+                 = help: write one plain 'fn' per impl"
+                    .to_string()
+            }
             Self::UndefinedVariable(name) => format!("undefined variable '{}'", name),
             Self::VariableAlreadyDefined(name) => {
                 format!("variable '{}' already defined in this scope", name)
@@ -128,6 +148,14 @@ impl CompileErrorKind {
                     modules.join(", ")
                 )
             }
+            Self::TypeNotExportable {
+                module,
+                name,
+                reason,
+            } => format!(
+                "'{}' cannot be exported from module '{}': {}",
+                name, module, reason
+            ),
             Self::ModulePathSeparator { module, member } => format!(
                 "module members are reached with '::'; write '{}::{}'",
                 module, member
