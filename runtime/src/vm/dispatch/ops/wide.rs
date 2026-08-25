@@ -284,18 +284,7 @@ impl VM {
             | OpCode::NeFFG => {
                 let left = reg_get!(base + b);
                 let right = reg_get!(base + c);
-                let mut equal = left == right;
-                if !equal
-                    && let (Some(left), Some(right)) = (left.as_ptr(), right.as_ptr())
-                    && let (Some(left), Some(right)) = (
-                        self.heap.get(GcRef::new(left)),
-                        self.heap.get(GcRef::new(right)),
-                    )
-                    && let (ObjectKind::String(left), ObjectKind::String(right)) =
-                        (&left.kind, &right.kind)
-                {
-                    equal = left == right;
-                }
+                let mut equal = self.values_equal(left, right);
                 if matches!(
                     inner_opcode,
                     OpCode::Ne | OpCode::NeII | OpCode::NeFF | OpCode::NeIIG | OpCode::NeFFG
@@ -516,7 +505,27 @@ impl VM {
             }
             OpCode::ArrayNewI | OpCode::ArrayNewF | OpCode::ArrayNewB | OpCode::ArrayNewP => {
                 let count = reg_get!(base + b).as_int().unwrap_or(0);
-                let count = usize::try_from(count).unwrap_or(0);
+                if count < 0 {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a non-negative size",
+                        got: count.to_string(),
+                    }));
+                }
+                let count = usize::try_from(count).map_err(|_| {
+                    self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "array allocation",
+                        expected: "a representable size",
+                        got: count.to_string(),
+                    })
+                })?;
+                let type_tag = match inner_opcode {
+                    OpCode::ArrayNewI => aelys_bytecode::object::TypeTag::Int,
+                    OpCode::ArrayNewF => aelys_bytecode::object::TypeTag::Float,
+                    OpCode::ArrayNewB => aelys_bytecode::object::TypeTag::Bool,
+                    _ => aelys_bytecode::object::TypeTag::Object,
+                };
+                self.ensure_array_capacity(type_tag, count)?;
                 let array = match inner_opcode {
                     OpCode::ArrayNewI => AelysArray::new_ints(count),
                     OpCode::ArrayNewF => AelysArray::new_floats(count),
@@ -580,29 +589,7 @@ impl VM {
                 let vector_value = reg_get!(base + a);
                 let value = reg_get!(base + b);
                 let vector_ref = GcRef::new(vector_value.as_ptr().unwrap_or(0));
-                match self.heap.get_mut(vector_ref) {
-                    Some(object) => match &mut object.kind {
-                        ObjectKind::Vec(vector) => {
-                            if !vector.push(value) {
-                                return Err(self.runtime_error(RuntimeErrorKind::TypeError {
-                                    operation: "vec push",
-                                    expected: "matching element type",
-                                    got: "incompatible type".to_string(),
-                                }));
-                            }
-                        }
-                        _ => {
-                            return Err(self.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec push",
-                                expected: "vec",
-                                got: "non-vec object".to_string(),
-                            }));
-                        }
-                    },
-                    None => {
-                        return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                    }
-                }
+                self.push_vec_value(vector_ref, value)?;
             }
             OpCode::VecPopI | OpCode::VecPopF | OpCode::VecPopB | OpCode::VecPopP => {
                 let vector_value = reg_get!(base + b);
@@ -660,23 +647,22 @@ impl VM {
             OpCode::VecReserve => {
                 let vector_value = reg_get!(base + a);
                 let additional = reg_get!(base + b).as_int().unwrap_or(0);
-                let additional = usize::try_from(additional).unwrap_or(0);
-                let vector_ref = GcRef::new(vector_value.as_ptr().unwrap_or(0));
-                match self.heap.get_mut(vector_ref) {
-                    Some(object) => match &mut object.kind {
-                        ObjectKind::Vec(vector) => vector.reserve(additional),
-                        _ => {
-                            return Err(self.runtime_error(RuntimeErrorKind::TypeError {
-                                operation: "vec reserve",
-                                expected: "vec",
-                                got: "non-vec object".to_string(),
-                            }));
-                        }
-                    },
-                    None => {
-                        return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                    }
+                if additional < 0 {
+                    return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec reserve",
+                        expected: "a non-negative amount",
+                        got: additional.to_string(),
+                    }));
                 }
+                let additional = usize::try_from(additional).map_err(|_| {
+                    self.runtime_error(RuntimeErrorKind::TypeError {
+                        operation: "vec reserve",
+                        expected: "a representable amount",
+                        got: additional.to_string(),
+                    })
+                })?;
+                let vector_ref = GcRef::new(vector_value.as_ptr().unwrap_or(0));
+                self.reserve_vec(vector_ref, additional)?;
             }
             OpCode::VecLoadI | OpCode::VecLoadF | OpCode::VecLoadB | OpCode::VecLoadP => {
                 enum LoadedValue {
