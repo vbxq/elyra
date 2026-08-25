@@ -33,6 +33,9 @@ impl Lexer {
             "in" => TokenKind::In,
             "step" => TokenKind::Step,
             "struct" => TokenKind::Struct,
+            "enum" => TokenKind::Enum,
+            "trait" => TokenKind::Trait,
+            "impl" => TokenKind::Impl,
             "match" => TokenKind::Match,
             _ => TokenKind::Identifier(text),
         };
