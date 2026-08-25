@@ -1,4 +1,3 @@
-//! Opcode parsing for the assembler
 
 use super::assembler::{AasmParser, AssemblerError, Result};
 use super::lexer::Token;
@@ -118,6 +117,28 @@ impl<'a> AasmParser<'a> {
             "RangeNewInclusive" => self.parse_ternary_reg(OpCode::RangeNewInclusive)?,
             "ArraySlice" => self.parse_ternary_reg(OpCode::ArraySlice)?,
             "VecSlice" => self.parse_ternary_reg(OpCode::VecSlice)?,
+            "StructNew" | "StructLoad" | "StructStore" | "EnumNew" | "EnumTest" | "EnumLoad" => {
+                let op = match opcode_name.as_str() {
+                    "StructNew" => OpCode::StructNew,
+                    "StructLoad" => OpCode::StructLoad,
+                    "StructStore" => OpCode::StructStore,
+                    "EnumNew" => OpCode::EnumNew,
+                    "EnumTest" => OpCode::EnumTest,
+                    _ => OpCode::EnumLoad,
+                };
+                let schema = self.parse_u16()?;
+                self.skip_comma()?;
+                let a = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let b = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let c = self.parse_u16()?;
+                self.skip_comma()?;
+                let d = self.parse_u16()?;
+                extension_words.push((u32::from(a) << 16) | u32::from(b));
+                extension_words.push((u32::from(c) << 16) | u32::from(d));
+                encode_a(op, 0, 0, 0) | u32::from(schema)
+            }
             "Neg" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -386,7 +407,6 @@ impl<'a> AasmParser<'a> {
             "MakeClosure" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
-                // Handle 'kN' format (e.g., k0, k1) where N is the constant index
                 let k = if let Token::Ident(s) = &self.current {
                     if let Some(num_str) = s.strip_prefix('k') {
                         let k = num_str.parse::<u8>().map_err(|_| {
@@ -426,12 +446,10 @@ impl<'a> AasmParser<'a> {
             "GetUpval" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
-                // Parse 'upval[N]' format
                 let idx = self.parse_upval_index()?;
                 encode_a(OpCode::GetUpval, a, idx, 0)
             }
             "SetUpval" => {
-                // Parse 'upval[N]' format
                 let idx = self.parse_upval_index()?;
                 self.skip_comma()?;
                 let src = self.parse_register()?;
@@ -445,7 +463,6 @@ impl<'a> AasmParser<'a> {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
                 let offset = self.parse_i16()?;
-                // Skip any trailing comment (iter+=step; ...)
                 while self.current != Token::Newline && self.current != Token::Eof {
                     self.advance()?;
                 }
@@ -455,13 +472,11 @@ impl<'a> AasmParser<'a> {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
                 let offset = self.parse_i16()?;
-                // Skip any trailing comment
                 while self.current != Token::Newline && self.current != Token::Eof {
                     self.advance()?;
                 }
                 encode_b(OpCode::ForLoopIInc, a, offset)
             }
-            // New immediate opcodes
             "AddI" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -506,13 +521,11 @@ impl<'a> AasmParser<'a> {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
                 let offset = self.parse_i16()?;
-                // Skip any trailing comment
                 while self.current != Token::Newline && self.current != Token::Eof {
                     self.advance()?;
                 }
                 encode_b(OpCode::WhileLoopLt, a, offset)
             }
-            // Type-specialized integer opcodes
             "AddII" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -553,7 +566,6 @@ impl<'a> AasmParser<'a> {
                 let c = self.parse_register()?;
                 encode_a(OpCode::ModII, a, b, c)
             }
-            // Type-specialized float opcodes
             "AddFF" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -594,7 +606,6 @@ impl<'a> AasmParser<'a> {
                 let c = self.parse_register()?;
                 encode_a(OpCode::ModFF, a, b, c)
             }
-            // Integer comparisons
             "LtII" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -643,7 +654,6 @@ impl<'a> AasmParser<'a> {
                 let c = self.parse_register()?;
                 encode_a(OpCode::NeII, a, b, c)
             }
-            // Float comparisons
             "LtFF" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -692,7 +702,6 @@ impl<'a> AasmParser<'a> {
                 let c = self.parse_register()?;
                 encode_a(OpCode::NeFF, a, b, c)
             }
-            // Integer immediate comparisons
             "LtIImm" => {
                 let a = self.parse_register()?;
                 self.skip_comma()?;
@@ -742,7 +751,6 @@ impl<'a> AasmParser<'a> {
                 encode_a(OpCode::CallGlobal, dest, global_idx, nargs)
             }
             "CallUpval" => {
-                // Format: CallUpval r<dest>, upval[N], <nargs>
                 let dest = self.parse_register()?;
                 self.skip_comma()?;
                 let upval_idx = self.parse_upval_index()?;
@@ -751,7 +759,6 @@ impl<'a> AasmParser<'a> {
                 encode_a(OpCode::CallUpval, dest, upval_idx, nargs)
             }
             "TailCallUpval" => {
-                // Format: TailCallUpval r<dest>, upval[N], <nargs>
                 let dest = self.parse_register()?;
                 self.skip_comma()?;
                 let upval_idx = self.parse_upval_index()?;
@@ -990,9 +997,7 @@ impl<'a> AasmParser<'a> {
         }
     }
 
-    /// Parse 'upval[N]' format and return N
     pub(super) fn parse_upval_index(&mut self) -> Result<u8> {
-        // Expect 'upval' identifier
         if let Token::Ident(s) = &self.current {
             if s != "upval" {
                 return Err(AssemblerError::Expected {
@@ -1008,7 +1013,6 @@ impl<'a> AasmParser<'a> {
             });
         }
 
-        // Expect '['
         if self.current != Token::LBracket {
             return Err(AssemblerError::Expected {
                 expected: "[".to_string(),
@@ -1017,10 +1021,8 @@ impl<'a> AasmParser<'a> {
         }
         self.advance()?;
 
-        // Parse the index
         let idx = self.parse_u8()?;
 
-        // Expect ']'
         if self.current != Token::RBracket {
             return Err(AssemblerError::Expected {
                 expected: "]".to_string(),
@@ -1033,12 +1035,10 @@ impl<'a> AasmParser<'a> {
     }
 }
 
-/// Encode a Format A instruction
 pub(super) fn encode_a(op: OpCode, a: u8, b: u8, c: u8) -> u32 {
     (u32::from(u8::from(op)) << 24) | (u32::from(a) << 16) | (u32::from(b) << 8) | u32::from(c)
 }
 
-/// Encode a Format B instruction
 pub(super) fn encode_b(op: OpCode, a: u8, imm: i16) -> u32 {
     let immediate = u16::from_ne_bytes(imm.to_ne_bytes());
     (u32::from(u8::from(op)) << 24) | (u32::from(a) << 16) | u32::from(immediate)
