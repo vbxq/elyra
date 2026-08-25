@@ -1,4 +1,3 @@
-// collects all variable reads in the program
 
 use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
@@ -19,7 +18,6 @@ fn collect_uses_in_stmt(stmt: &TypedStmt, used: &mut HashSet<String>) {
     match &stmt.kind {
         TypedStmtKind::Expression(expr) => collect_uses_in_expr(expr, used),
         TypedStmtKind::Let { initializer, .. } => {
-            // initializer might use other vars, but name itself is a def not a use
             collect_uses_in_expr(initializer, used);
         }
         TypedStmtKind::Block(stmts) => {
@@ -70,11 +68,18 @@ fn collect_uses_in_stmt(stmt: &TypedStmt, used: &mut HashSet<String>) {
         }
         TypedStmtKind::Return(Some(expr)) => collect_uses_in_expr(expr, used),
         TypedStmtKind::Function(func) => collect_uses_in_function(func, used),
+        TypedStmtKind::ImplDecl { methods, .. } => {
+            for method in methods {
+                collect_uses_in_function(method, used);
+            }
+        }
         TypedStmtKind::Return(None)
         | TypedStmtKind::Break
         | TypedStmtKind::Continue
         | TypedStmtKind::Needs(_)
-        | TypedStmtKind::StructDecl { .. } => {}
+        | TypedStmtKind::StructDecl { .. }
+        | TypedStmtKind::TraitDecl { .. }
+        | TypedStmtKind::EnumDecl { .. } => {}
     }
 }
 
@@ -131,6 +136,13 @@ fn collect_uses_in_expr(expr: &TypedExpr, used: &mut HashSet<String>) {
             }
         }
         TypedExprKind::Member { object, .. } => collect_uses_in_expr(object, used),
+        TypedExprKind::StructField { object, .. } | TypedExprKind::StructMethod { object, .. } => {
+            collect_uses_in_expr(object, used)
+        }
+        TypedExprKind::MemberAssign { object, value, .. } => {
+            collect_uses_in_expr(object, used);
+            collect_uses_in_expr(value, used);
+        }
         TypedExprKind::ArrayLiteral { elements, .. }
         | TypedExprKind::VecLiteral { elements, .. } => {
             for elem in elements {
@@ -177,10 +189,15 @@ fn collect_uses_in_expr(expr: &TypedExpr, used: &mut HashSet<String>) {
                 collect_uses_in_expr(value, used);
             }
         }
+        TypedExprKind::EnumConstruct { fields, .. } => {
+            for (_, value) in fields {
+                collect_uses_in_expr(value, used);
+            }
+        }
         TypedExprKind::Cast { expr, .. } => {
             collect_uses_in_expr(expr, used);
         }
-        TypedExprKind::Try(inner) => collect_uses_in_expr(inner, used),
+        TypedExprKind::Try { operand, .. } => collect_uses_in_expr(operand, used),
         TypedExprKind::Match { scrutinee, arms } => {
             collect_uses_in_expr(scrutinee, used);
             for arm in arms {
