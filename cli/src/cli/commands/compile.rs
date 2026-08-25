@@ -1,7 +1,7 @@
-// source -> avbc compiler
 
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::NativeBundle;
+use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_common::{Warning, WarningConfig};
 use aelys_driver::modules::{LoadedNativeInfo, load_modules_with_loader};
 use aelys_frontend::lexer::Lexer;
@@ -13,7 +13,7 @@ use aelys_syntax::{Source, StmtKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const BUILTIN_NAMES: &[&str] = &["alloc", "free", "load", "store", "type"];
+const BUILTIN_NAMES: &[&str] = &["alloc", "free", "load", "store"];
 
 #[allow(dead_code)]
 pub fn compile_to_avbc(path: &Path, opt_level: OptimizationLevel) -> Result<PathBuf, String> {
@@ -54,7 +54,7 @@ pub fn compile_to_avbc_with_output(
     let tokens = Lexer::with_source(src.clone())
         .scan()
         .map_err(|err| err.to_string())?;
-    let stmts = Parser::new(tokens, src.clone())
+    let stmts = Parser::new_rust_collections(tokens, src.clone())
         .parse()
         .map_err(|err| err.to_string())?;
 
@@ -69,27 +69,57 @@ pub fn compile_to_avbc_with_output(
     let (imports, loader) = load_modules_with_loader(&stmts, path, src.clone(), &mut vm)
         .map_err(|err| err.to_string())?;
 
-    let main_stmts: Vec<_> = stmts
-        .into_iter()
-        .filter(|stmt| !matches!(stmt.kind, StmtKind::Needs(_)))
+    let main_stmts: Vec<_> = imports
+        .imported_impl_stmts
+        .iter()
+        .cloned()
+        .chain(
+            stmts
+                .into_iter()
+                .filter(|stmt| !matches!(stmt.kind, StmtKind::Needs(_))),
+        )
         .collect();
 
     let mut all_known_globals = imports.known_globals.clone();
     for builtin in BUILTIN_NAMES {
         all_known_globals.insert(builtin.to_string());
     }
+    all_known_globals.extend(vm.repl_known_globals().iter().cloned());
 
-    let typed_program = aelys_sema::TypeInference::infer_program_with_imports(
+    let mut all_module_aliases = imports.module_aliases.clone();
+    all_module_aliases.extend(vm.repl_module_aliases().iter().cloned());
+
+    let mut all_known_native_globals = imports.known_native_globals.clone();
+    all_known_native_globals.extend(vm.repl_known_native_globals().iter().cloned());
+
+    let typed_program = aelys_sema::TypeInference::infer_program_full_with_native_signatures(
         main_stmts,
         src.clone(),
-        imports.module_aliases.clone(),
-        all_known_globals,
+        all_module_aliases.clone(),
+        all_known_globals.clone(),
+        all_known_native_globals.clone(),
+        imports.native_signatures.clone(),
+        imports.imported_types.clone(),
     )
+    .map(|result| result.program)
     .map_err(|errors| {
         if let Some(err) = errors.first() {
-            err.to_string()
+            CompileError::new(
+                CompileErrorKind::NamedTypeError {
+                    code: err.diagnostic_code(),
+                    message: format!("{}", err),
+                },
+                err.span,
+                src.clone(),
+            )
+            .to_string()
         } else {
-            "Unknown type error".to_string()
+            CompileError::new(
+                CompileErrorKind::TypeInferenceError("Unknown type error".to_string()),
+                aelys_syntax::Span::dummy(),
+                src.clone(),
+            )
+            .to_string()
         }
     })?;
 
@@ -107,18 +137,24 @@ pub fn compile_to_avbc_with_output(
         })
         .collect();
 
+    let mut all_symbol_origins = imports.symbol_origins;
+    for (name, origin) in vm.repl_symbol_origins() {
+        all_symbol_origins
+            .entry(name.clone())
+            .or_insert_with(|| origin.clone());
+    }
+
     let (mut function, _globals) = Compiler::with_modules(
         None,
         src.clone(),
-        imports.module_aliases,
-        imports.known_globals,
-        imports.known_native_globals,
-        imports.symbol_origins,
+        all_module_aliases,
+        all_known_globals,
+        all_known_native_globals,
+        all_symbol_origins,
     )
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;
 
-    // strip debug info (function names, variable names, line info) for release builds
     if opt_level != OptimizationLevel::None {
         function.strip_debug_info();
     }
@@ -141,7 +177,7 @@ pub fn compile_to_avbc_with_output(
     } else {
         aelys_bytecode::asm::serialize(&function)
     }
-    .map_err(|err| format!("failed to serialize AVBC v2: {err}"))?;
+    .map_err(|err| format!("failed to serialize AVBC v3: {err}"))?;
 
     let output_path = output.unwrap_or_else(|| output_path_for(path));
     std::fs::write(&output_path, bytes)
@@ -222,7 +258,7 @@ fn assemble_to_avbc(path: &Path, output: Option<PathBuf>) -> Result<PathBuf, Str
     }
     let function = reconstruct_function_hierarchy(functions);
     let bytes = aelys_bytecode::asm::serialize(&function)
-        .map_err(|err| format!("failed to serialize AVBC v2: {err}"))?;
+        .map_err(|err| format!("failed to serialize AVBC v3: {err}"))?;
     let output_path = output.unwrap_or_else(|| output_path_for(path));
     std::fs::write(&output_path, bytes)
         .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
@@ -244,7 +280,6 @@ fn reconstruct_function_hierarchy(
     main_func
 }
 
-// bundle native modules into the .avbc for distribution
 fn build_native_bundles(
     modules: &std::collections::HashMap<String, LoadedNativeInfo>,
 ) -> Result<Vec<NativeBundle>, String> {
