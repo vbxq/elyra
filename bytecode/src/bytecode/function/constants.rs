@@ -3,7 +3,6 @@ use crate::bytecode::Constant;
 use crate::value::Value;
 
 impl Function {
-    /// Compute and set the global_layout_hash from global layout names
     pub fn compute_global_layout_hash(&mut self) {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -17,7 +16,6 @@ impl Function {
         }
     }
 
-    /// Add a constant and return its index
     pub fn add_constant(&mut self, value: Value) -> u32 {
         self.add_structural_constant(Constant::from(value))
     }
@@ -25,28 +23,26 @@ impl Function {
     pub fn add_structural_constant(&mut self, value: Constant) -> u32 {
         for (i, existing) in self.constants.iter().enumerate() {
             if *existing == value {
-                return u32::try_from(i).expect("constant index exceeds AVBC v2 range");
+                return u32::try_from(i).expect("constant index exceeds AVBC v3 range");
             }
         }
 
         let idx =
-            u32::try_from(self.constants.len()).expect("constant index exceeds AVBC v2 range");
+            u32::try_from(self.constants.len()).expect("constant index exceeds AVBC v3 range");
         self.constants.push(value);
         idx
     }
 
-    /// Add a nested function and return a special constant index for it
     pub fn add_constant_function(&mut self, func: Function) -> u32 {
         let func_idx = self.nested_functions.len();
         self.nested_functions.push(func);
 
-        // Use dedicated tag to avoid collision with heap pointers
         let marker = Constant::NestedFunction(
-            u32::try_from(func_idx).expect("nested function index exceeds AVBC v2 range"),
+            u32::try_from(func_idx).expect("nested function index exceeds AVBC v3 range"),
         );
 
         let idx =
-            u32::try_from(self.constants.len()).expect("constant index exceeds AVBC v2 range");
+            u32::try_from(self.constants.len()).expect("constant index exceeds AVBC v3 range");
         self.constants.push(marker);
         idx
     }
