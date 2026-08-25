@@ -11,15 +11,14 @@ fn test_register_builtins() {
     let mut vm = make_test_vm();
     register_builtins(&mut vm).unwrap();
 
-    // Verify core built-ins are registered as globals
-    assert!(vm.get_global("type").is_some());
+    assert!(vm.get_global("type").is_none());
+    assert!(vm.get_global("__tostring").is_some());
 }
 
 #[test]
 fn test_builtin_type() {
     let mut vm = make_test_vm();
 
-    // Test type() with different value types
     let result = builtin_type(&mut vm, &[Value::int(42)]).unwrap();
     assert!(result.is_ptr()); // Returns a string
 
