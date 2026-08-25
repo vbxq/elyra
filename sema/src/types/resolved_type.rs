@@ -1,8 +1,6 @@
-use super::InferType;
+use super::{InferType, TypeVarId};
 use std::fmt;
 
-// resolved type, after inference all veriable are resolved
-// this is what the compiler uses for opcode selection
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResolvedType {
     I8,
@@ -32,20 +30,39 @@ pub enum ResolvedType {
     },
 
     Array(Box<ResolvedType>),
+    FixedArray(Box<ResolvedType>, usize),
     Vec(Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     Range,
 
     Struct(std::string::String),
 
+    Applied {
+        name: String,
+        args: Vec<ResolvedType>,
+    },
+
+    TypeParam(String),
+    TypeVar(TypeVarId),
+
     Dynamic,
+
+    // mirror of infertype::poison: it only exists so a poisoned type never looks certain
+    Poison,
 
     Uncertain(Box<ResolvedType>),
 }
 
 impl ResolvedType {
     pub fn is_certain(&self) -> bool {
-        !matches!(self, ResolvedType::Dynamic | ResolvedType::Uncertain(_))
+        !matches!(
+            self,
+            ResolvedType::Dynamic
+                | ResolvedType::Poison
+                | ResolvedType::Uncertain(_)
+                | ResolvedType::TypeParam(_)
+                | ResolvedType::TypeVar(_)
+        )
     }
 
     pub fn is_integer(&self) -> bool {
@@ -122,7 +139,7 @@ impl ResolvedType {
             ),
             InferType::Error => ResolvedType::Error,
             InferType::Never => ResolvedType::Never,
-            InferType::Numeric => ResolvedType::Dynamic,
+            InferType::Numeric => ResolvedType::I64,
             InferType::UntypedNative(name) => ResolvedType::UntypedNative(name.clone()),
             InferType::Function { params, ret } => ResolvedType::Function {
                 params: params.iter().map(ResolvedType::from_infer_type).collect(),
@@ -130,6 +147,9 @@ impl ResolvedType {
             },
             InferType::Array(inner) => {
                 ResolvedType::Array(Box::new(ResolvedType::from_infer_type(inner)))
+            }
+            InferType::FixedArray(inner, length) => {
+                ResolvedType::FixedArray(Box::new(ResolvedType::from_infer_type(inner)), *length)
             }
             InferType::Vec(inner) => {
                 ResolvedType::Vec(Box::new(ResolvedType::from_infer_type(inner)))
@@ -139,8 +159,14 @@ impl ResolvedType {
             }
             InferType::Range => ResolvedType::Range,
             InferType::Struct(name) => ResolvedType::Struct(name.clone()),
-            InferType::Var(_) => ResolvedType::Dynamic,
+            InferType::Applied { name, args } => ResolvedType::Applied {
+                name: name.clone(),
+                args: args.iter().map(Self::from_infer_type).collect(),
+            },
+            InferType::Param(name) => ResolvedType::TypeParam(name.clone()),
+            InferType::Var(id) => ResolvedType::TypeVar(*id),
             InferType::Dynamic => ResolvedType::Dynamic,
+            InferType::Poison => ResolvedType::Poison,
         }
     }
 }
@@ -178,6 +204,7 @@ impl fmt::Display for ResolvedType {
                 write!(f, ") -> {}", ret)
             }
             ResolvedType::Array(inner) => write!(f, "[{}]", inner),
+            ResolvedType::FixedArray(inner, length) => write!(f, "[{}; {}]", inner, length),
             ResolvedType::Vec(inner) => write!(f, "vec[{}]", inner),
             ResolvedType::Tuple(elems) => {
                 write!(f, "(")?;
@@ -191,7 +218,20 @@ impl fmt::Display for ResolvedType {
             }
             ResolvedType::Range => write!(f, "range"),
             ResolvedType::Struct(name) => write!(f, "{}", name),
+            ResolvedType::Applied { name, args } => {
+                write!(f, "{name}<")?;
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ">")
+            }
+            ResolvedType::TypeParam(name) => write!(f, "{name}"),
+            ResolvedType::TypeVar(id) => write!(f, "?{id}"),
             ResolvedType::Dynamic => write!(f, "dynamic"),
+            ResolvedType::Poison => write!(f, "poisoned type"),
             ResolvedType::Uncertain(inner) => write!(f, "?{}", inner),
         }
     }
