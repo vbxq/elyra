@@ -13,6 +13,7 @@ struct Binding {
     span: Span,
     is_pub: bool,
     used: bool,
+    dynamic: bool,
 }
 
 struct Scope {
@@ -73,6 +74,18 @@ impl Analyzer {
     }
 
     fn define(&mut self, name: &str, ty: InferType, span: Span, is_pub: bool) {
+        let dynamic = ty == InferType::Dynamic;
+        self.define_with_dynamic(name, ty, span, is_pub, dynamic);
+    }
+
+    fn define_with_dynamic(
+        &mut self,
+        name: &str,
+        ty: InferType,
+        span: Span,
+        is_pub: bool,
+        dynamic: bool,
+    ) {
         if name == "_" {
             return;
         }
@@ -82,6 +95,7 @@ impl Analyzer {
             span,
             is_pub,
             used: false,
+            dynamic,
         });
         let scope = self
             .scopes
@@ -100,11 +114,15 @@ impl Analyzer {
         }
     }
 
-    fn mark_assigned(&mut self, name: &str, span: Span) {
+    fn mark_assigned(&mut self, name: &str, span: Span, value_ty: &InferType) {
         for scope in self.scopes.iter().rev() {
             if let Some(binding_id) = scope.names.get(name) {
-                self.bindings[*binding_id].used = false;
-                self.bindings[*binding_id].span = span;
+                let binding = &mut self.bindings[*binding_id];
+                if binding.dynamic {
+                    binding.ty = value_ty.clone();
+                }
+                binding.used = false;
+                binding.span = span;
                 return;
             }
         }
@@ -131,7 +149,18 @@ impl Analyzer {
                 } else {
                     self.visit_consuming_expr(initializer);
                 }
-                self.define(name, var_type.clone(), stmt.span, *is_pub);
+                let binding_type = if *var_type == InferType::Dynamic {
+                    initializer.ty.clone()
+                } else {
+                    var_type.clone()
+                };
+                self.define_with_dynamic(
+                    name,
+                    binding_type,
+                    stmt.span,
+                    *is_pub,
+                    *var_type == InferType::Dynamic,
+                );
             }
             TypedStmtKind::Block(stmts) => {
                 self.push_scope();
@@ -176,6 +205,7 @@ impl Analyzer {
                 iterable,
                 elem_type,
                 body,
+                ..
             } => {
                 self.visit_expr(iterable);
                 self.push_scope();
@@ -189,10 +219,17 @@ impl Analyzer {
                 }
             }
             TypedStmtKind::Function(function) => self.visit_function(function),
+            TypedStmtKind::ImplDecl { methods, .. } => {
+                for method in methods {
+                    self.visit_function(method);
+                }
+            }
             TypedStmtKind::Break
             | TypedStmtKind::Continue
             | TypedStmtKind::Needs(_)
-            | TypedStmtKind::StructDecl { .. } => {}
+            | TypedStmtKind::StructDecl { .. }
+            | TypedStmtKind::EnumDecl { .. }
+            | TypedStmtKind::TraitDecl { .. } => {}
         }
     }
 
@@ -214,7 +251,7 @@ impl Analyzer {
                 self.visit_consuming_expr(left);
                 self.visit_consuming_expr(right);
             }
-            TypedExprKind::Unary { operand, .. } | TypedExprKind::Try(operand) => {
+            TypedExprKind::Unary { operand, .. } | TypedExprKind::Try { operand, .. } => {
                 self.visit_consuming_expr(operand)
             }
             TypedExprKind::Grouping(operand) => self.visit_expr(operand),
@@ -228,7 +265,7 @@ impl Analyzer {
             }
             TypedExprKind::Assign { name, value } => {
                 self.visit_expr(value);
-                self.mark_assigned(name, expr.span);
+                self.mark_assigned(name, expr.span, &value.ty);
             }
             TypedExprKind::If {
                 condition,
@@ -260,6 +297,12 @@ impl Analyzer {
                 if let Some(name) = assignment {
                     self.mark_used(&name);
                 }
+            }
+            TypedExprKind::StructField { object, .. }
+            | TypedExprKind::StructMethod { object, .. } => self.visit_expr(object),
+            TypedExprKind::MemberAssign { object, value, .. } => {
+                self.visit_consuming_expr(object);
+                self.visit_consuming_expr(value);
             }
             TypedExprKind::Slice { object, range } => {
                 self.visit_consuming_expr(object);
@@ -294,6 +337,11 @@ impl Analyzer {
                 }
             }
             TypedExprKind::StructLiteral { fields, .. } => {
+                for (_, value) in fields {
+                    self.visit_consuming_expr(value);
+                }
+            }
+            TypedExprKind::EnumConstruct { fields, .. } => {
                 for (_, value) in fields {
                     self.visit_consuming_expr(value);
                 }
@@ -337,6 +385,11 @@ impl Analyzer {
             }
             TypedPatternKind::Variant { fields, .. } => {
                 for field in fields {
+                    self.define_pattern(field);
+                }
+            }
+            TypedPatternKind::Struct { fields, .. } => {
+                for (_, field, _) in fields {
                     self.define_pattern(field);
                 }
             }
