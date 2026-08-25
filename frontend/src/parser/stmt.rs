@@ -45,7 +45,7 @@ impl Parser {
 
     fn if_statement(&mut self) -> Result<Stmt> {
         let start_span = self.previous().span;
-        let condition = self.expression()?;
+        let condition = self.with_brace_construction(false, Parser::expression)?;
         self.consume(&TokenKind::LBrace, "{")?;
         let then_branch = self.block_statement()?;
 
@@ -74,7 +74,7 @@ impl Parser {
 
     fn while_statement(&mut self) -> Result<Stmt> {
         let start_span = self.previous().span;
-        let condition = self.expression()?;
+        let condition = self.with_brace_construction(false, Parser::expression)?;
         self.consume(&TokenKind::LBrace, "{")?;
         let body = self.block_statement()?;
         let end_span = self.previous().span;
@@ -92,21 +92,21 @@ impl Parser {
         let start_span = self.previous().span;
         let iterator = self.consume_identifier("loop variable")?;
         self.consume(&TokenKind::In, "in")?;
+        let read_only = self.match_token(&TokenKind::Ampersand);
 
-        let first_expr = self.expression()?;
+        let first_expr = self.with_brace_construction(false, Parser::expression)?;
 
         if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
-            // Range-based for: for i in start..end { }
             let inclusive = if self.match_token(&TokenKind::DotDotEq) {
                 true
             } else {
                 self.consume(&TokenKind::DotDot, "..")?;
                 false
             };
-            let end = self.expression()?;
+            let end = self.with_brace_construction(false, Parser::expression)?;
 
             let step = if self.match_token(&TokenKind::Step) {
-                Some(self.expression()?)
+                Some(self.with_brace_construction(false, Parser::expression)?)
             } else {
                 None
             };
@@ -127,19 +127,29 @@ impl Parser {
                 start_span.merge(end_span),
             ))
         } else {
-            // ForEach: for item in collection { }
             self.consume(&TokenKind::LBrace, "{")?;
             let body = self.block_statement()?;
             let end_span = self.previous().span;
 
-            Ok(Stmt::new(
-                StmtKind::ForEach {
-                    iterator,
-                    iterable: first_expr,
-                    body: Box::new(body),
-                },
-                start_span.merge(end_span),
-            ))
+            Ok(if read_only {
+                Stmt::read_only(
+                    StmtKind::ForEach {
+                        iterator,
+                        iterable: first_expr,
+                        body: Box::new(body),
+                    },
+                    start_span.merge(end_span),
+                )
+            } else {
+                Stmt::new(
+                    StmtKind::ForEach {
+                        iterator,
+                        iterable: first_expr,
+                        body: Box::new(body),
+                    },
+                    start_span.merge(end_span),
+                )
+            })
         }
     }
 
@@ -179,17 +189,19 @@ impl Parser {
     }
 
     pub(crate) fn block_statements(&mut self) -> Result<Vec<Stmt>> {
-        let mut stmts = Vec::new();
+        self.with_brace_construction(true, |parser| {
+            let mut stmts = Vec::new();
 
-        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-            if self.match_token(&TokenKind::Semicolon) {
-                continue;
+            while !parser.check(&TokenKind::RBrace) && !parser.is_at_end() {
+                if parser.match_token(&TokenKind::Semicolon) {
+                    continue;
+                }
+                stmts.push(parser.declaration()?);
             }
-            stmts.push(self.declaration()?);
-        }
 
-        self.consume(&TokenKind::RBrace, "}")?;
-        Ok(stmts)
+            parser.consume(&TokenKind::RBrace, "}")?;
+            Ok(stmts)
+        })
     }
 
     pub(crate) fn consume_semicolon(&mut self) -> Result<()> {
