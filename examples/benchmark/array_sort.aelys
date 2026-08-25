@@ -3,7 +3,7 @@ needs std::convert
 needs std::time
 
 fn fill_descending(n: int) {
-    let arr = Vec[]
+    let mut arr = vec![]
     let mut i = n
     while i > 0 {
         arr.push(i)
@@ -12,7 +12,7 @@ fn fill_descending(n: int) {
     return arr
 }
 
-fn bubble_sort(arr) {
+fn bubble_sort(mut arr) {
     let n = arr.len()
     let mut i = 0
     while i < n - 1 {
@@ -32,7 +32,7 @@ fn bubble_sort(arr) {
 let n = 5000
 io::print("Bubble sort benchmark (n=" + convert::to_string(n) + ")")
 
-let arr = fill_descending(n)
+let mut arr = fill_descending(n)
 io::print("Array filled (worst case: descending)")
 
 let t = time::timer()
