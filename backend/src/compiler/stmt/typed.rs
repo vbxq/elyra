@@ -70,14 +70,23 @@ impl Compiler {
                 iterator,
                 iterable,
                 elem_type,
+                read_only: _,
                 body,
             } => self.compile_typed_for_each(iterator, iterable, elem_type, body, stmt.span),
             TypedStmtKind::Return(expr) => self.compile_typed_return(expr.as_ref(), stmt.span),
             TypedStmtKind::Break => self.compile_break(stmt.span),
             TypedStmtKind::Continue => self.compile_continue(stmt.span),
             TypedStmtKind::Function(func) => self.compile_typed_function(func),
+            TypedStmtKind::ImplDecl { methods, .. } => {
+                for method in methods {
+                    self.compile_typed_function(method)?;
+                }
+                Ok(())
+            }
             TypedStmtKind::Needs(_needs) => Ok(()),
-            TypedStmtKind::StructDecl { .. } => Ok(()),
+            TypedStmtKind::StructDecl { .. }
+            | TypedStmtKind::TraitDecl { .. }
+            | TypedStmtKind::EnumDecl { .. } => Ok(()),
         }
     }
 }
