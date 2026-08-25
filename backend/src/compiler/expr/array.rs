@@ -12,8 +12,6 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        // For now, compile as ArrayNewP with size from register
-        // TODO: Use ArrayFill opcode when added
         let size_reg = self.alloc_register()?;
         self.compile_expr(size, size_reg)?;
         self.emit_a(OpCode::ArrayNewP, dest, size_reg, 0, span);
@@ -166,7 +164,15 @@ impl Compiler {
         _dest: u16,
         _span: Span,
     ) -> Result<()> {
-        todo!("slice")
+        Err(aelys_common::error::AelysError::Compile(
+            aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TypeInferenceError(
+                    "slices require typed compilation".to_string(),
+                ),
+                _span,
+                self.source.clone(),
+            ),
+        ))
     }
 
     pub fn compile_range(
@@ -177,6 +183,14 @@ impl Compiler {
         _dest: u16,
         _span: Span,
     ) -> Result<()> {
-        todo!("range")
+        Err(aelys_common::error::AelysError::Compile(
+            aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TypeInferenceError(
+                    "ranges require typed compilation".to_string(),
+                ),
+                _span,
+                self.source.clone(),
+            ),
+        ))
     }
 }
