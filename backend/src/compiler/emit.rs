@@ -33,15 +33,29 @@ impl CompilerOperand for i32 {
     }
 }
 
-// bytecode emission wrappers - add line info for debug
 
 impl Compiler {
+    pub(super) fn update_jit_eligibility(&mut self) {
+        self.current.jit_unsupported_struct = self.current.bytecode.as_slice().iter().any(|word| {
+            matches!(
+                OpCode::from_u8((word >> 24) as u8),
+                Some(
+                    OpCode::StructNew
+                        | OpCode::StructLoad
+                        | OpCode::StructStore
+                        | OpCode::EnumNew
+                        | OpCode::EnumTest
+                        | OpCode::EnumLoad
+                )
+            )
+        });
+    }
+
     #[inline]
     pub fn current_line(&self, span: Span) -> u32 {
         span.line
     }
 
-    // format A: op | a | b | c (3 regs)
     pub fn emit_a(
         &mut self,
         op: OpCode,
@@ -59,7 +73,6 @@ impl Compiler {
         );
     }
 
-    // format B: op | a | imm16
     pub fn emit_b(&mut self, op: OpCode, a: u16, imm: i16, span: Span) {
         let line = self.current_line(span);
         if let Ok(a) = u8::try_from(a) {
@@ -119,6 +132,41 @@ impl Compiler {
             wide_op,
             Register::new(dest),
             Register::new(start),
+            count,
+            self.current_line(span),
+        );
+    }
+
+    pub fn emit_struct(
+        &mut self,
+        op: OpCode,
+        schema_index: u16,
+        a: u16,
+        b: u16,
+        c: u16,
+        span: Span,
+    ) {
+        self.current
+            .emit_struct(op, schema_index, a, b, c, self.current_line(span));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn emit_enum(
+        &mut self,
+        op: OpCode,
+        schema_index: u16,
+        a: u16,
+        b: u16,
+        variant_or_field: u16,
+        count: u16,
+        span: Span,
+    ) {
+        self.current.emit_enum(
+            op,
+            schema_index,
+            a,
+            b,
+            variant_or_field,
             count,
             self.current_line(span),
         );
