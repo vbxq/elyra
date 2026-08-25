@@ -11,7 +11,6 @@ use aelys_syntax::NeedsStmt;
 use semver::{Version, VersionReq};
 use std::path::Path;
 
-// FIXME: the transmute for native functions is scary - maybe use typed wrappers?
 
 impl ModuleLoader {
     pub(crate) fn load_native_module(
@@ -78,7 +77,6 @@ impl ModuleLoader {
             }
         }
 
-        // call the module's init function if present passing the VM API
         if !native_module.descriptor.is_null() {
             let descriptor = unsafe { &*native_module.descriptor };
             if let Some(init_fn) = descriptor.init() {
@@ -192,6 +190,7 @@ impl ModuleLoader {
             exports,
             native_functions,
             native_signatures,
+            exported_types: Default::default(),
         };
 
         self.loaded_modules
