@@ -3,11 +3,10 @@ needs std::sys as sys
 
 fn get_public_dir() -> string {
     let script_dir = sys::script_dir()
-    if script_dir == null {
-        return "./public"
+    match script_dir {
+        Some(path) => fs::join(path, "public").unwrap_or("./public"),
+        None => "./public",
     }
-
-    return fs::join(script_dir, "public")
 }
 
 pub let HOST = "127.0.0.1"
