@@ -263,11 +263,9 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 }
             }
 
-            // Array operations - dest, count
             OpCode::ArrayNewI | OpCode::ArrayNewF | OpCode::ArrayNewB | OpCode::ArrayNewP => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            // Array literal - dest, start, count (uses regs start..start+count)
             OpCode::ArrayLit | OpCode::VecLit => {
                 let count = c as usize;
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
@@ -281,7 +279,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     );
                 }
             }
-            // Array load/get/store - all use 3 registers
             OpCode::ArrayLoadI
             | OpCode::ArrayLoadF
             | OpCode::ArrayLoadB
@@ -302,28 +299,22 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(c as usize),
                 );
             }
-            // Array/Vec length - dest, arr
             OpCode::ArrayLen | OpCode::VecLen | OpCode::VecCap => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
 
-            // Vec operations - dest, cap
             OpCode::VecNewI | OpCode::VecNewF | OpCode::VecNewB | OpCode::VecNewP => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            // Vec push - vec, val
             OpCode::VecPushI | OpCode::VecPushF | OpCode::VecPushB | OpCode::VecPushP => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            // Vec pop - dest, vec
             OpCode::VecPopI | OpCode::VecPopF | OpCode::VecPopB | OpCode::VecPopP => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            // Vec reserve - vec, cap
             OpCode::VecReserve => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            // Vec load - dest, vec, idx (3 registers)
             OpCode::VecLoadI | OpCode::VecLoadF | OpCode::VecLoadB | OpCode::VecLoadP => {
                 update_max_reg(
                     &mut max_reg,
@@ -333,7 +324,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(c as usize),
                 );
             }
-            // Vec get (safe) - dest, vec, idx (3 registers)
             OpCode::VecGetI | OpCode::VecGetF | OpCode::VecGetB | OpCode::VecGetP => {
                 update_max_reg(
                     &mut max_reg,
@@ -343,7 +333,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(c as usize),
                 );
             }
-            // Vec store - vec, idx, val (3 registers)
             OpCode::VecStoreI | OpCode::VecStoreF | OpCode::VecStoreB | OpCode::VecStoreP => {
                 update_max_reg(
                     &mut max_reg,
@@ -353,7 +342,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(c as usize),
                 );
             }
-            // String load char - dest, string, index (3 registers)
             OpCode::StringLoadChar => {
                 update_max_reg(
                     &mut max_reg,
@@ -381,7 +369,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
             OpCode::SumPayload => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
             }
-            // String for loop - uses consecutive regs [char_result(a), byte_offset(a+1), string_ptr(a+2)]
             OpCode::StringForLoop | OpCode::StringForLoopLong => {
                 update_max_reg(
                     &mut max_reg,
@@ -391,7 +378,6 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     Some(a as usize),
                 );
             }
-            // Vec/Array for loop - uses consecutive regs [element(a), index(a+1), collection_ptr(a+2)]
             OpCode::VecForLoop
             | OpCode::ArrayForLoop
             | OpCode::VecForLoopLong
@@ -435,6 +421,35 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                         update_max_reg(&mut max_reg, &mut used, wide_a, Some(wide_b), Some(wide_c))
                     }
                     None => {}
+                }
+            }
+            OpCode::StructNew
+            | OpCode::StructLoad
+            | OpCode::StructStore
+            | OpCode::EnumNew
+            | OpCode::EnumTest
+            | OpCode::EnumLoad => {
+                let Some(first) = bytecode.get(ip + 1) else {
+                    break;
+                };
+                let Some(second) = bytecode.get(ip + 2) else {
+                    break;
+                };
+                let wide_a = (first >> 16) as usize;
+                let wide_b = (first & 0xffff) as usize;
+                let wide_c = (second >> 16) as usize;
+                update_max_reg(&mut max_reg, &mut used, wide_a, Some(wide_b), None);
+                if matches!(op, OpCode::StructNew | OpCode::EnumNew)
+                    && let Some(last) = wide_b.checked_add(
+                        (if op == OpCode::EnumNew {
+                            (second & 0xffff) as usize
+                        } else {
+                            wide_c
+                        })
+                        .saturating_sub(1),
+                    )
+                {
+                    update_max_reg(&mut max_reg, &mut used, last, None, None);
                 }
             }
         }
