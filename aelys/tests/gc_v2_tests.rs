@@ -1,5 +1,6 @@
 use aelys_bytecode::{
-    AelysVec, GcObject, Heap, HeapGeneration, MajorSliceResult, ObjectKind, SumTag, Value,
+    AelysEnum, AelysVec, GcObject, Heap, HeapGeneration, MajorSliceResult, ObjectKind, SumTag,
+    Value,
 };
 use aelys_runtime::VM;
 use aelys_syntax::Source;
@@ -237,4 +238,35 @@ fn sum_payload_survives_collection() {
     };
     assert_eq!(value.tag, SumTag::ResultErr);
     assert_eq!(value.payload.as_ptr(), Some(payload.index()));
+}
+
+#[test]
+fn enum_slots_survive_collection_and_count_in_heap_size() {
+    let mut heap = Heap::new();
+    let first = heap.alloc_string("first");
+    let second = heap.alloc_string("second");
+    let object = GcObject::new(ObjectKind::Enum(AelysEnum::new(
+        7,
+        3,
+        vec![Value::ptr(first.index()), Value::ptr(second.index())],
+    )));
+    let expected_size = Heap::estimate_object_size(&object);
+    let before = heap.bytes_allocated();
+    let value = heap.alloc(object);
+
+    assert_eq!(heap.bytes_allocated().saturating_sub(before), expected_size);
+
+    assert!(heap.begin_major_collection(vec![value]));
+    while heap.major_collection_active() {
+        heap.major_collection_slice(Duration::ZERO);
+    }
+
+    assert!(heap.get(first).is_some());
+    assert!(heap.get(second).is_some());
+    let ObjectKind::Enum(value) = &heap.get(value).unwrap().kind else {
+        panic!("enum root was reclaimed or changed");
+    };
+    assert_eq!(value.enum_id, 7);
+    assert_eq!(value.variant_id, 3);
+    assert_eq!(value.slots.len(), 2);
 }
