@@ -5,7 +5,7 @@ needs std::time
 let n = 1000000
 io::print("Vec push/pop benchmark (n=" + convert::to_string(n) + ")")
 
-let v = Vec[]
+let mut v = vec![]
 
 let t1 = time::timer()
 let mut i = 0
@@ -19,7 +19,7 @@ io::print("Final len: " + convert::to_string(v.len()))
 
 let t2 = time::timer()
 while v.len() > 0 {
-    v.pop()
+    let _ = v.pop()
 }
 let pop_time = time::elapsed_ms(t2)
 io::print("Pop time: " + convert::to_string(pop_time) + "ms")
