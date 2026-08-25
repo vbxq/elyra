@@ -12,7 +12,7 @@ let HEIGHT: int = 40
 let R1: float = 1.0      // Radius of the tube
 let R2: float = 2.0      // Distance from center to tube center
 let K2: float = 5.0      // Distance from viewer to donut
-let K1 = WIDTH * K2 * 3.0 / (8.0 * (R1 + R2))  // Scaling factor
+let K1: float = convert::to_float(WIDTH) * K2 * 3.0 / (8.0 * (R1 + R2))  // Scaling factor
 
 // Luminance characters (from dark to bright)
 let CHARS: string = ".,-~:;=!*#$@"
@@ -33,8 +33,8 @@ fn fb_free(fb: int) {
 
 @no_gc
 fn fb_clear(fb: int) {
-    let width: int = load(fb, 0)
-    let height: int = load(fb, 1)
+    let width: int = convert::to_int(load(fb, 0))
+    let height: int = convert::to_int(load(fb, 1))
     let size = width * height
     for i in 0..size {
         store(fb, 2 + i, 32)  // Space character
@@ -43,16 +43,16 @@ fn fb_clear(fb: int) {
 
 @no_gc
 fn fb_set(fb: int, x: int, y: int, char_code: int) {
-    let width: int = load(fb, 0)
+    let width: int = convert::to_int(load(fb, 0))
     let idx = 2 + y * width + x
     store(fb, idx, char_code)
 }
 
 @no_gc
 fn fb_get(fb: int, x: int, y: int) -> int {
-    let width: int = load(fb, 0)
+    let width: int = convert::to_int(load(fb, 0))
     let idx = 2 + y * width + x
-    load(fb, idx)
+    convert::to_int(load(fb, idx))
 }
 
 @no_gc
@@ -71,8 +71,8 @@ fn zbuf_free(zb: int) {
 
 @no_gc
 fn zbuf_clear(zb: int) {
-    let width: int = load(zb, 0)
-    let height: int = load(zb, 1)
+    let width: int = convert::to_int(load(zb, 0))
+    let height: int = convert::to_int(load(zb, 1))
     let size = width * height
     for i in 0..size {
         store(zb, 2 + i, 0.0)
@@ -81,14 +81,14 @@ fn zbuf_clear(zb: int) {
 
 @no_gc
 fn zbuf_get(zb: int, x: int, y: int) -> float {
-    let width: int = load(zb, 0)
+    let width: int = convert::to_int(load(zb, 0))
     let idx = 2 + y * width + x
-    load(zb, idx)
+    convert::to_float(load(zb, idx))
 }
 
 @no_gc
 fn zbuf_set(zb: int, x: int, y: int, z: float) {
-    let width: int = load(zb, 0)
+    let width: int = convert::to_int(load(zb, 0))
     let idx = 2 + y * width + x
     store(zb, idx, z)
 }
@@ -182,8 +182,8 @@ fn render_frame(fb: int, zbuf: int, A: float, B: float) {
 }
 
 fn display_frame(fb: int) {
-    let width: int = load(fb, 0)
-    let height: int = load(fb, 1)
+    let width: int = convert::to_int(load(fb, 0))
+    let height: int = convert::to_int(load(fb, 1))
 
     for y in 0..height {
         let mut row: string = ""
@@ -191,14 +191,14 @@ fn display_frame(fb: int) {
             let code = fb_get(fb, x, y)
             row = row + code_to_char(code)
         }
-        println(row)
+        io::println(row)
     }
 }
 
 fn main() {
-    println("Initializing 3D Donut Renderer...")
-    println("Screen: " + convert::to_string(WIDTH) + "x" + convert::to_string(HEIGHT))
-    println("")
+    io::println("Initializing 3D Donut Renderer...")
+    io::println("Screen: " + convert::to_string(WIDTH) + "x" + convert::to_string(HEIGHT))
+    io::println("")
 
     let fb = fb_new(WIDTH, HEIGHT)
     let zbuf = zbuf_new(WIDTH, HEIGHT)
@@ -208,7 +208,7 @@ fn main() {
     let num_frames: int = 500
     let frame_delay: int = 15
 
-    println("Rendering " + convert::to_string(num_frames) + " frames...")
+    io::println("Rendering " + convert::to_string(num_frames) + " frames...")
     time::sleep(1000)
 
     io::hide_cursor()
@@ -219,8 +219,8 @@ fn main() {
         render_frame(fb, zbuf, A, B)
         display_frame(fb)
 
-        println("")
-        println("Frame " + convert::to_string(frame + 1) + "/" + convert::to_string(num_frames) + " | A=" + convert::to_string(math::floor(A * 100.0) / 100.0) + " B=" + convert::to_string(math::floor(B * 100.0) / 100.0))
+        io::println("")
+        io::println("Frame " + convert::to_string(frame + 1) + "/" + convert::to_string(num_frames) + " | A=" + convert::to_string(math::floor(A * 100.0) / 100.0) + " B=" + convert::to_string(math::floor(B * 100.0) / 100.0))
 
         A = A + 0.07
         B = B + 0.03
