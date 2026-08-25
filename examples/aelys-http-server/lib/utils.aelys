@@ -1,13 +1,12 @@
 needs print from std::io
 needs to_string from std::convert
-needs std::string as str
 needs std::time
 
 pub fn mime_type(extension: string) -> string {
-    let mut ext = str::to_lower(extension)
+    let mut ext: string = extension.to_lower()
 
-    if str::starts_with(ext, ".") {
-        ext = str::substr(ext, 1, str::len(ext) - 1)
+    if ext.starts_with(".") {
+        ext = ext.substr(1, ext.len() - 1)
     }
 
     if ext == "html" { return "text/html; charset=utf-8" }
@@ -73,13 +72,13 @@ pub fn log_success(message: string) {
 }
 
 pub fn is_safe_path(path: string) -> bool {
-    if str::contains(path, "..") {
+    if path.contains("..") {
         return false
     }
-    if str::contains(path, "//") {
+    if path.contains("//") {
         return false
     }
-    if str::contains(path, "\\") {
+    if path.contains("\\") {
         return false
     }
     return true
@@ -88,8 +87,8 @@ pub fn is_safe_path(path: string) -> bool {
 pub fn normalize_path(path: string) -> string {
     let mut normalized = path
 
-    if str::len(normalized) > 1 and str::ends_with(normalized, "/") {
-        normalized = str::substr(normalized, 0, str::len(normalized) - 1)
+    if normalized.len() > 1 and normalized.ends_with("/") {
+        normalized = normalized.substr(0, normalized.len() - 1)
     }
 
     return normalized
