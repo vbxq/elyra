@@ -197,6 +197,12 @@ pub enum OpCode {
     RangeNewInclusive,
     ArraySlice,
     VecSlice,
+    StructNew = 196,
+    StructLoad,
+    StructStore,
+    EnumNew,
+    EnumTest,
+    EnumLoad,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,6 +235,7 @@ pub enum InstructionFormat {
     RegisterIndex32Aux,
     WideRegisterOffset32,
     WideAbc,
+    Struct,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,7 +258,7 @@ impl OpCode {
         if byte <= 77
             || (79..=103).contains(&byte)
             || (105..=127).contains(&byte)
-            || (130..=195).contains(&byte)
+            || (130..=201).contains(&byte)
         {
             Some(unsafe { std::mem::transmute::<u8, OpCode>(byte) })
         } else {
@@ -295,6 +302,12 @@ impl OpCode {
             Self::MakeClosureRegisterWide => InstructionFormat::RegisterIndex32Aux,
             Self::LoopWideLong => InstructionFormat::WideRegisterOffset32,
             Self::Wide => InstructionFormat::WideAbc,
+            Self::StructNew
+            | Self::StructLoad
+            | Self::StructStore
+            | Self::EnumNew
+            | Self::EnumTest
+            | Self::EnumLoad => InstructionFormat::Struct,
             _ => InstructionFormat::Abc,
         }
     }
@@ -307,6 +320,7 @@ impl OpCode {
             | InstructionFormat::RegisterIndex32Aux
             | InstructionFormat::WideRegisterOffset32
             | InstructionFormat::WideAbc => 2,
+            InstructionFormat::Struct => 2,
             InstructionFormat::Abc | InstructionFormat::AImm16 => 0,
         }
     }
