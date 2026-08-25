@@ -14,6 +14,7 @@ impl TypeInference {
         let typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {
+            self.env.invalidate_collection_length(name);
             let reason = ConstraintReason::Assignment {
                 var_name: name.to_string(),
             };
@@ -41,7 +42,7 @@ impl TypeInference {
                     name: name.to_string(),
                     value: Box::new(typed_value),
                 },
-                InferType::Dynamic,
+                InferType::Poison,
             )
         }
     }
