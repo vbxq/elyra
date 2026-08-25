@@ -2,7 +2,7 @@
 
 These benchmarks were run on Linux x86_64. Results vary by hardware. The Fibonacci and cross-language figures below are historical interpreter measurements; use the repository's Criterion suite for current comparisons.
 
-## Runtime v2 tiering reference
+## Runtime v3 tiering reference
 
 The final 0.22 local gate used 30 samples, a 1 second warmup, a 2 second measurement window, and a fixed CPU. Representative medians were:
 
@@ -70,7 +70,7 @@ Memory usage is dominated by the Rust runtime and stdlib. Aelys's own data struc
 
 ## Tiering and remaining fallbacks
 
-- **Portable targets**: unsupported JIT targets execute the AVBC v2 interpreter.
+- **Portable targets**: unsupported JIT targets execute the AVBC v3 interpreter.
 - **Unsupported machine-code shapes**: closures, native/resource operations, and dynamic shapes fall back to the interpreter.
 - **Cold code**: tiering deliberately avoids compilation before the hotness thresholds.
 - **Allocation-heavy code**: the generational GC bounds incremental old-generation slices, but allocation and collection costs still need workload-specific measurement.
@@ -101,9 +101,9 @@ Aelys wins on mutations (push/pop) and compute-heavy loops. Python wins on simpl
 ### Why it's fast
 
 The VM uses specialized storage for each type:
-- `Array<Int>` and `Vec<Int>` → `Box<[i64]>` (8 bytes/element, no boxing overhead)
-- `Array<Float>` → `Box<[f64]>` (8 bytes/element)
-- `Array<Bool>` → `Box<[u8]>` (1 byte/element, 8x more compact than boxing each bool)
+- `[int; N]` and `Vec<int>` → specialized storage (8 bytes/element, no boxing overhead)
+- `[float; N]` → specialized storage (8 bytes/element)
+- `[bool; N]` → specialized storage (1 byte/element, 8x more compact than boxing each bool)
 
 The compiler emits type-specific opcodes too. `arr[i]` compiles to `ArrayLoadI` for Int, `ArrayLoadF` for Float, etc. No runtime type checking.
 
@@ -115,7 +115,7 @@ Vecs double in capacity when they run out of space:
 - Use `reserve(n)` to pre-allocate if you know the final size
 
 ```rust
-let v = Vec[]
+let mut v = vec![]
 v.reserve(1000)  // one allocation instead of multiple
 for i in 0..1000 {
     v.push(i)
@@ -126,13 +126,13 @@ for i in 0..1000 {
 
 1. **Pre-allocate when you know the size**
    ```rust
-   let v = Vec[]
+   let mut v = vec![]
    v.reserve(10000)
    ```
 
 2. **Use Array for fixed-size data**
    ```rust
-   let coords = Array[x, y, z]  // simpler than Vec
+   let coords = [x, y, z]  // simpler than Vec
    ```
 
 3. **Batch operations**
