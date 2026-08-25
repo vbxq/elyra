@@ -1,6 +1,7 @@
 use super::buffer::BytecodeBuffer;
 use super::global_layout::GlobalLayout;
 use super::opcode::OpCode;
+use super::schema::{EnumSchema, SchemaId, StructSchema};
 use super::upvalue::UpvalueDescriptor;
 use crate::bytecode::Constant;
 use std::sync::Arc;
@@ -26,6 +27,10 @@ pub struct Function {
     pub lines: Vec<(u16, u32)>,
     pub global_layout: Arc<GlobalLayout>,
     pub global_layout_hash: u64,
+    pub struct_schemas: Vec<StructSchema>,
+    pub enum_schemas: Vec<EnumSchema>,
+    pub schema_ids: Vec<SchemaId>,
+    pub jit_unsupported_struct: bool,
 }
 
 impl Function {
@@ -44,6 +49,10 @@ impl Function {
             lines: Vec::new(),
             global_layout: GlobalLayout::empty(),
             global_layout_hash: 0,
+            struct_schemas: Vec::new(),
+            enum_schemas: Vec::new(),
+            schema_ids: Vec::new(),
+            jit_unsupported_struct: false,
         }
     }
 
@@ -71,7 +80,6 @@ impl Function {
         if !self.bytecode_builder.is_empty() {
             self.bytecode = BytecodeBuffer::from_vec(std::mem::take(&mut self.bytecode_builder));
         }
-        // make sure we have enough registers for the bytecode
         let needed = registers::required_registers(self.bytecode.as_slice());
         if needed > self.num_registers as usize {
             self.num_registers = u32::try_from(needed).unwrap_or(u32::MAX);
@@ -81,7 +89,6 @@ impl Function {
         }
     }
 
-    // format A: op|a|b|c (3 regs)
     pub fn emit_a(&mut self, op: OpCode, a: u8, b: u8, c: u8, line: u32) {
         self.emit_raw(
             (u32::from(u8::from(op)) << 24)
@@ -92,7 +99,6 @@ impl Function {
         );
     }
 
-    // format B: op|a|imm16
     pub fn emit_b(&mut self, op: OpCode, a: u8, imm: i16, line: u32) {
         self.emit_raw(
             (u32::from(u8::from(op)) << 24)
@@ -102,7 +108,6 @@ impl Function {
         );
     }
 
-    // format C: same layout as A but semantics are dest|func|nargs
     pub fn emit_c(&mut self, op: OpCode, dest: u8, func: u8, nargs: u8, line: u32) {
         self.emit_a(op, dest, func, nargs, line);
     }
@@ -221,6 +226,52 @@ impl Function {
         self.emit_a(op, a8, b8, c8, line);
     }
 
+    pub fn emit_struct(
+        &mut self,
+        op: OpCode,
+        schema_index: u16,
+        a: u16,
+        b: u16,
+        c: u16,
+        line: u32,
+    ) {
+        debug_assert!(matches!(
+            op,
+            OpCode::StructNew | OpCode::StructLoad | OpCode::StructStore
+        ));
+        self.emit_raw(
+            (u32::from(u8::from(op)) << 24) | u32::from(schema_index),
+            line,
+        );
+        self.push_raw((u32::from(a) << 16) | u32::from(b));
+        self.push_raw(u32::from(c) << 16);
+        self.record_lines(2, line);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn emit_enum(
+        &mut self,
+        op: OpCode,
+        schema_index: u16,
+        a: u16,
+        b: u16,
+        variant_or_field: u16,
+        count: u16,
+        line: u32,
+    ) {
+        debug_assert!(matches!(
+            op,
+            OpCode::EnumNew | OpCode::EnumTest | OpCode::EnumLoad
+        ));
+        self.emit_raw(
+            (u32::from(u8::from(op)) << 24) | u32::from(schema_index),
+            line,
+        );
+        self.push_raw((u32::from(a) << 16) | u32::from(b));
+        self.push_raw((u32::from(variant_or_field) << 16) | u32::from(count));
+        self.record_lines(2, line);
+    }
+
     fn emit_wide_or_record_error(
         &mut self,
         op: OpCode,
@@ -241,24 +292,10 @@ impl Function {
         self.add_line(line);
     }
 
-    /// Strip debug information for release builds.
     pub fn strip_debug_info(&mut self) {
         self.name = None;
         self.lines.clear();
-        let names = self.global_layout.names();
-        if !names.is_empty() {
-            let stripped: Vec<String> = names
-                .iter()
-                .map(|name| {
-                    if name.contains("::") {
-                        name.clone()
-                    } else {
-                        String::new()
-                    }
-                })
-                .collect();
-            self.global_layout = GlobalLayout::new(stripped);
-        }
+        // global layout names are load bearing, the vm re-resolves each slot by name whenever the
         for nested in &mut self.nested_functions {
             nested.strip_debug_info();
         }
