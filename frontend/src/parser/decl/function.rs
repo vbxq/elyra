@@ -11,21 +11,13 @@ impl Parser {
         let start_span = self.peek().span;
         self.advance();
 
-        let name = self.consume_identifier("function name")?;
-
-        let type_params = if self.match_token(&TokenKind::Lt) {
-            let mut params = Vec::new();
-            loop {
-                params.push(self.consume_identifier("type parameter")?);
-                if !self.match_token(&TokenKind::Comma) {
-                    break;
-                }
-            }
-            self.consume(&TokenKind::Gt, ">")?;
-            params
+        let name = if self.match_token(&TokenKind::From) {
+            "from".to_string()
         } else {
-            Vec::new()
+            self.consume_identifier("function name")?
         };
+
+        let (type_params, mut where_clauses) = self.parse_type_params_with_bounds()?;
 
         self.consume(&TokenKind::LParen, "(")?;
 
@@ -47,6 +39,8 @@ impl Parser {
             None
         };
 
+        where_clauses.extend(self.parse_where_clauses()?);
+
         self.consume(&TokenKind::LBrace, "{")?;
 
         let body = self.block_statements()?;
@@ -55,6 +49,7 @@ impl Parser {
         let function = Function {
             name: name.clone(),
             type_params,
+            where_clauses,
             params,
             return_type,
             body,
