@@ -51,15 +51,17 @@ impl Compiler {
                 stmt.span,
             ),
             StmtKind::ForEach { .. } => {
-                // ForEach is handled through typed compilation path only
                 Ok(())
             }
             StmtKind::Break => self.compile_break(stmt.span),
             StmtKind::Continue => self.compile_continue(stmt.span),
             StmtKind::Return(expr) => self.compile_return(expr.as_ref(), stmt.span),
             StmtKind::Function(func) => self.compile_function(func),
+            StmtKind::ImplDecl { .. } => Ok(()),
             StmtKind::Needs(needs) => self.compile_needs(needs, stmt.span),
-            StmtKind::StructDecl { .. } => Ok(()),
+            StmtKind::StructDecl { .. }
+            | StmtKind::TraitDecl { .. }
+            | StmtKind::EnumDecl { .. } => Ok(()),
         }
     }
 
@@ -72,7 +74,6 @@ impl Compiler {
         Ok(())
     }
 
-    // imports are resolved earlier, nothing to emit here
     pub fn compile_needs(&mut self, _: &aelys_syntax::ast::NeedsStmt, _: Span) -> Result<()> {
         Ok(())
     }
