@@ -249,6 +249,7 @@ fn collect_uses_expr(
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Null => {}
     }
 }

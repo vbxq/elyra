@@ -14,6 +14,18 @@ impl Compiler {
             }
             TypedExprKind::Bool(b) => self.compile_literal_bool(*b, dest, expr.span),
             TypedExprKind::Unit => self.compile_literal_unit(dest, expr.span),
+            TypedExprKind::AssociatedConst {
+                param,
+                trait_name,
+                item,
+            } => Err(aelys_common::error::CompileError::new(
+                aelys_common::error::CompileErrorKind::TypeInferenceError(format!(
+                    "associated constant '{param}::{item}' of trait '{trait_name}' reached code generation unresolved"
+                )),
+                expr.span,
+                self.source.clone(),
+            )
+            .into()),
             TypedExprKind::Null => self.compile_literal_null(dest, expr.span),
             TypedExprKind::Identifier(name) => self.compile_typed_identifier(name, dest, expr.span),
             TypedExprKind::Binary { left, op, right } => {
@@ -251,6 +263,7 @@ impl Compiler {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Null
             | TypedExprKind::Identifier(_) => false,
         }

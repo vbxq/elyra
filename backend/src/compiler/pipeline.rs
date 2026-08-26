@@ -7,7 +7,6 @@ use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
 use std::collections::HashMap;
-use std::path::{Component, Path};
 use std::sync::Arc;
 
 impl Compiler {
@@ -15,11 +14,11 @@ impl Compiler {
         mut self,
         program: &TypedProgram,
     ) -> Result<(Function, HashMap<String, bool>)> {
-        let module_id = canonical_module_id(&self.source.name);
         let struct_schemas = program
             .type_table
             .structs_in_declaration_order()
             .map(|def| {
+                let module_id = def.owner.to_string();
                 let schema_id = u32::from(program.type_table.schema_index(&def.name)?);
                 let origin = program
                     .type_table
@@ -60,6 +59,7 @@ impl Compiler {
             .type_table
             .enums_in_declaration_order()
             .map(|def| {
+                let module_id = def.owner.to_string();
                 let schema_id = program.type_table.enum_schema_index(&def.name)?;
                 let name = format!("{module_id}::{}", def.name);
                 let origin = program
@@ -276,10 +276,21 @@ fn poisoned_schema_error(source: &Arc<aelys_syntax::Source>) -> aelys_common::Ae
     .into()
 }
 
+/// escaped cycle a `none` (a hard compile error here) rather than a stack
+const MAX_PROJECTION_HOPS: usize = 64;
+
 // returns none for the poison marker so a poisoned type can never reach the bytecode schema
 fn type_descriptor(
     ty: &aelys_sema::InferType,
     type_table: &aelys_sema::TypeTable,
+) -> Option<TypeDescriptor> {
+    type_descriptor_bounded(ty, type_table, 0)
+}
+
+fn type_descriptor_bounded(
+    ty: &aelys_sema::InferType,
+    type_table: &aelys_sema::TypeTable,
+    projection_hops: usize,
 ) -> Option<TypeDescriptor> {
     use aelys_sema::InferType;
     let descriptor = match ty {
@@ -308,6 +319,13 @@ fn type_descriptor(
             }
         }
         InferType::Dynamic | InferType::Var(_) | InferType::Param(_) => return None,
+        InferType::Projection { .. } => {
+            if projection_hops >= MAX_PROJECTION_HOPS {
+                return None;
+            }
+            let resolved = type_table.resolve_projection(ty)?;
+            return type_descriptor_bounded(&resolved, type_table, projection_hops + 1);
+        }
         InferType::Error => TypeDescriptor::Error,
         InferType::Struct(name) if type_table.has_enum(name) => {
             TypeDescriptor::Enum(enum_schema_id(name, type_table)?)
@@ -316,29 +334,37 @@ fn type_descriptor(
             TypeDescriptor::Struct(struct_schema_id(name, type_table)?)
         }
         InferType::Struct(_) => return None,
-        InferType::Option(inner) => {
-            TypeDescriptor::Option(Box::new(type_descriptor(inner, type_table)?))
-        }
+        InferType::Option(inner) => TypeDescriptor::Option(Box::new(type_descriptor_bounded(
+            inner,
+            type_table,
+            projection_hops,
+        )?)),
         InferType::Result(ok, err) => TypeDescriptor::Result(
-            Box::new(type_descriptor(ok, type_table)?),
-            Box::new(type_descriptor(err, type_table)?),
+            Box::new(type_descriptor_bounded(ok, type_table, projection_hops)?),
+            Box::new(type_descriptor_bounded(err, type_table, projection_hops)?),
         ),
-        InferType::Array(inner) => {
-            TypeDescriptor::Array(Box::new(type_descriptor(inner, type_table)?))
-        }
+        InferType::Array(inner) => TypeDescriptor::Array(Box::new(type_descriptor_bounded(
+            inner,
+            type_table,
+            projection_hops,
+        )?)),
         InferType::FixedArray(inner, len) => TypeDescriptor::FixedArray(
-            Box::new(type_descriptor(inner, type_table)?),
+            Box::new(type_descriptor_bounded(inner, type_table, projection_hops)?),
             u32::try_from(*len).unwrap_or(u32::MAX),
         ),
-        InferType::Vec(inner) => TypeDescriptor::Vec(Box::new(type_descriptor(inner, type_table)?)),
+        InferType::Vec(inner) => TypeDescriptor::Vec(Box::new(type_descriptor_bounded(
+            inner,
+            type_table,
+            projection_hops,
+        )?)),
         InferType::Tuple(_) | InferType::Never => return None,
         InferType::Function { params, ret } => TypeDescriptor::Function {
             params: params
                 .iter()
-                .map(|param| type_descriptor(param, type_table))
+                .map(|param| type_descriptor_bounded(param, type_table, projection_hops))
                 .collect::<Option<Vec<_>>>()?
                 .into_boxed_slice(),
-            ret: Box::new(type_descriptor(ret, type_table)?),
+            ret: Box::new(type_descriptor_bounded(ret, type_table, projection_hops)?),
         },
         InferType::UntypedNative(_) | InferType::Range => return None,
         InferType::Poison => return None,
@@ -359,36 +385,4 @@ fn struct_schema_id(name: &str, type_table: &aelys_sema::TypeTable) -> Option<u3
         .schema_index(name)
         .or_else(|| type_table.schema_index(short_name))
         .map(u32::from)
-}
-
-fn canonical_module_id(source_name: &str) -> String {
-    if source_name.starts_with('<') {
-        return source_name.to_string();
-    }
-    let path = Path::new(source_name);
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| Path::new(".").to_path_buf())
-            .join(path)
-    };
-    let mut components = Vec::new();
-    for component in absolute.components() {
-        match component {
-            Component::RootDir => {}
-            Component::CurDir => {}
-            Component::ParentDir => {
-                components.pop();
-            }
-            other => components.push(other.as_os_str().to_string_lossy().into_owned()),
-        }
-    }
-    if components.is_empty() {
-        "/".to_string()
-    } else if absolute.is_absolute() {
-        format!("/{}", components.join("/"))
-    } else {
-        components.join("/")
-    }
 }

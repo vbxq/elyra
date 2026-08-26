@@ -28,6 +28,7 @@ impl Compiler {
                 self.compile_binary(left, *op, right, dest, expr.span)
             }
             ExprKind::Unary { op, operand } => self.compile_unary(*op, operand, dest, expr.span),
+            ExprKind::Borrow { operand, .. } => self.compile_expr(operand, dest),
             ExprKind::And { left, right } => self.compile_and(left, right, dest, expr.span),
             ExprKind::Or { left, right } => self.compile_or(left, right, dest, expr.span),
             ExprKind::Call { callee, args } => self.compile_call(callee, args, dest, expr.span),
