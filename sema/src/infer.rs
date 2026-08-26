@@ -1,3 +1,4 @@
+mod borrows;
 mod captures;
 mod constraints;
 pub mod entry;
@@ -19,9 +20,34 @@ use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::env::TypeEnv;
 use crate::types::{InferType, TypeTable, TypeVarGen};
 use aelys_common::Warning;
+use aelys_syntax::{ModuleId, ReferenceKind};
 use std::collections::{HashMap, HashSet};
 
 const MAX_INFERENCE_DEPTH: usize = 200;
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ConstResolution {
+    Value(i64),
+    Missing,
+    Ambiguous(Vec<String>),
+    Cyclic,
+    /// checked arithmetic refused: overflow, or division/modulo by zero.
+    NotComputable,
+    NotConstant,
+}
+
+pub(crate) struct ConstEvalState {
+    visiting: Vec<(String, String)>,
+    cache: HashMap<(String, String), ConstResolution>,
+}
+
+impl ConstEvalState {
+    fn new(root: (String, String)) -> Self {
+        Self {
+            visiting: vec![root],
+            cache: HashMap::new(),
+        }
+    }
+}
 
 const KNOWN_TYPE_NAMES: &[&str] = &[
     "int", "i8", "i16", "i32", "i64", "int8", "int16", "int32", "int64", "u8", "u16", "u32", "u64",
@@ -42,6 +68,11 @@ pub struct TypeInference {
     trait_defaults: HashMap<(String, String), aelys_syntax::Function>,
     generic_function_bounds: HashMap<String, Vec<(String, String, Vec<InferType>)>>,
     function_type_params: HashMap<String, Vec<String>>,
+    function_reference_modes: HashMap<String, Vec<Option<ReferenceKind>>>,
+    allow_reference_annotation: bool,
+    allow_direct_borrow: bool,
+    borrow_call_scopes: Vec<Vec<borrows::ActiveLoan>>,
+    forwarded_mutable_borrows: HashSet<String>,
     try_residuals: Vec<expr_sum::TryResidual>,
     try_conversions: HashMap<(usize, usize), String>,
     must_use_values: Vec<expr_sum::MustUseResidual>,
@@ -57,9 +88,38 @@ pub struct TypeInference {
     globals_without_signature: HashSet<String>,
     known_native_globals: HashSet<String>,
     known_native_signatures: HashMap<String, InferType>,
+    pub(crate) current_module: ModuleId,
     collection_iter_allowed: bool,
     withheld_nominals: std::collections::BTreeMap<String, String>,
     pub(crate) monomorphization_active: Vec<(String, Vec<InferType>)>,
+    current_trait_name: Option<String>,
+    current_trait_associated_items: Vec<String>,
+    /// bounds of the function currently being collected, for `t::item` projections.
+    current_function_bounds: Vec<(String, String, Vec<InferType>)>,
+    current_function_bindings: Vec<(String, String, Vec<(String, InferType)>)>,
+    /// associated bindings per (function, subject param): `item = int` bounds.
+    generic_function_bindings: HashMap<String, Vec<(String, String, Vec<(String, InferType)>)>>,
+    /// deeply nested typed tree cannot overflow the stack.
+    substitution_depth: std::cell::Cell<usize>,
+    associated_type_definitions: Vec<AssociatedTypeDefinition>,
+    /// memo for `associated_const_table`, which the monomorphizer asks for at
+    associated_const_table_cache: std::cell::RefCell<Option<HashMap<(String, String), i64>>>,
+    trait_qualified_items: HashMap<(String, String), Vec<String>>,
+    /// demand, after every impl is registered, so the result cannot depend on
+    associated_const_exprs: HashMap<(String, String), (String, aelys_syntax::Expr)>,
+    defer_projection_resolution: bool,
+    current_impl_self: Option<InferType>,
+    /// reject, so the compile reports it instead of yielding a poisoned type.
+    projection_cycle_escaped: std::cell::Cell<bool>,
+    /// compile reports a recursion-limit error instead of silently emitting a
+    substitution_overflowed: std::cell::Cell<Option<aelys_syntax::Span>>,
+}
+
+struct AssociatedTypeDefinition {
+    receiver: String,
+    item: String,
+    edges: Vec<(String, String)>,
+    span: aelys_syntax::Span,
 }
 
 struct DynamicResidual {

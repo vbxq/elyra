@@ -96,6 +96,9 @@ impl TypeInference {
                     result_type,
                 )
             }
+            ExprKind::Borrow { mutable, operand } => {
+                self.infer_borrow_expr(*mutable, operand, expr.span)
+            }
             ExprKind::And { left, right } => self.infer_logical_expr("and", left, right, expr),
             ExprKind::Or { left, right } => self.infer_logical_expr("or", left, right, expr),
             ExprKind::Call { callee, args } => self.infer_call_expr(callee, args, expr.span),

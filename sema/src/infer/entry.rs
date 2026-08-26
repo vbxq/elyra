@@ -1,9 +1,10 @@
+use super::{ConstEvalState, ConstResolution};
 use super::{KNOWN_TYPE_NAMES, TypeInference};
-use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
+use crate::constraint::{ConstraintReason, ProjectionFailure, TypeError, TypeErrorKind};
 use crate::typed_ast::TypedProgram;
 use crate::types::{InferType, TypeTable};
 use aelys_common::Warning;
-use aelys_syntax::{Expr, ExprKind, Source, Stmt, StmtKind, TypeAnnotation};
+use aelys_syntax::{Expr, ExprKind, ModuleId, Source, Stmt, StmtKind, TypeAnnotation};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -28,6 +29,11 @@ impl Default for TypeInference {
             trait_defaults: HashMap::new(),
             generic_function_bounds: HashMap::new(),
             function_type_params: HashMap::new(),
+            function_reference_modes: HashMap::new(),
+            allow_reference_annotation: false,
+            allow_direct_borrow: false,
+            borrow_call_scopes: Vec::new(),
+            forwarded_mutable_borrows: HashSet::new(),
             try_residuals: Vec::new(),
             try_conversions: HashMap::new(),
             must_use_values: Vec::new(),
@@ -43,9 +49,24 @@ impl Default for TypeInference {
             globals_without_signature: HashSet::new(),
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),
+            current_module: ModuleId::new("<unknown>"),
             collection_iter_allowed: false,
             withheld_nominals: std::collections::BTreeMap::new(),
             monomorphization_active: Vec::new(),
+            current_trait_name: None,
+            current_trait_associated_items: Vec::new(),
+            current_function_bounds: Vec::new(),
+            current_function_bindings: Vec::new(),
+            generic_function_bindings: HashMap::new(),
+            associated_type_definitions: Vec::new(),
+            associated_const_table_cache: std::cell::RefCell::new(None),
+            trait_qualified_items: HashMap::new(),
+            associated_const_exprs: HashMap::new(),
+            defer_projection_resolution: false,
+            current_impl_self: None,
+            projection_cycle_escaped: std::cell::Cell::new(false),
+            substitution_depth: std::cell::Cell::new(0),
+            substitution_overflowed: std::cell::Cell::new(None),
         }
     }
 }
@@ -56,6 +77,7 @@ impl TypeInference {
     }
 
     pub fn type_from_annotation(&mut self, ann: &TypeAnnotation) -> InferType {
+        self.validate_reference_annotation(ann, self.allow_reference_annotation);
         self.check_type_annotation(ann);
         self.type_from_annotation_inner(ann)
     }
@@ -129,6 +151,85 @@ impl TypeInference {
             return InferType::Param(ann.name.clone());
         }
 
+        if ann.path.len() >= 2 && ann.type_params.is_empty() {
+            let self_segment = &ann.path[0];
+            let item = ann.path.last().cloned().unwrap_or_default();
+            let self_ty = if self_segment == "Self" {
+                self.current_impl_self
+                    .clone()
+                    .unwrap_or_else(|| InferType::Param("Self".to_string()))
+            } else if self
+                .type_params_in_scope
+                .iter()
+                .any(|param| param == self_segment)
+            {
+                InferType::Param(self_segment.clone())
+            } else if self.type_table.has_nominal(self_segment) {
+                InferType::Struct(self_segment.clone())
+            } else if self.type_table.get_trait(self_segment).is_some() {
+                let item_name = ann.path.last().cloned().unwrap_or_default();
+                return self.resolve_trait_qualified_projection(self_segment, &item_name, ann.span);
+            } else {
+                return InferType::Poison;
+            };
+            let trait_name = if self_segment == "Self" {
+                self.current_trait_name.clone()
+            } else {
+                None
+            };
+            let projection = InferType::Projection {
+                trait_name: trait_name.clone(),
+                item,
+                self_ty: Box::new(self_ty),
+            };
+            if !self.defer_projection_resolution
+                && let Some(resolved) = self.resolve_associated_projection(&projection)
+            {
+                return resolved;
+            }
+            let item_name = projection.item_name().to_string();
+            let failure_reason = ConstraintReason::UnknownType {
+                name: format!("{self_segment}::{item_name}"),
+            };
+            if matches!(projection.self_ty(), InferType::Param(_)) {
+                if self.projection_declaring_trait(&projection).is_none() {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                            receiver: self_segment.clone(),
+                            item: item_name,
+                            cause: ProjectionFailure::Unbound,
+                        },
+                        span: ann.span,
+                        reason: failure_reason,
+                    });
+                    return InferType::Poison;
+                }
+                return projection;
+            }
+            // projection left to leak into a later mismatch.
+            let candidates = self.associated_projection_candidates(
+                trait_name.as_deref(),
+                &item_name,
+                projection.self_ty(),
+            );
+            if candidates.len() > 1 {
+                let mut traits: Vec<String> =
+                    candidates.into_iter().map(|(name, _)| name).collect();
+                traits.sort();
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                        receiver: self_segment.clone(),
+                        item: item_name,
+                        cause: ProjectionFailure::Ambiguous { traits },
+                    },
+                    span: ann.span,
+                    reason: failure_reason,
+                });
+                return InferType::Poison;
+            }
+            return projection;
+        }
+
         let name_lower = ann.name.to_lowercase();
         match name_lower.as_str() {
             "int" | "i64" | "int64" => InferType::I64,
@@ -151,9 +252,21 @@ impl TypeInference {
                     .first()
                     .map(|param| self.type_from_annotation_inner(param))
                     .unwrap_or(InferType::Poison);
-                match ann.array_length {
-                    Some(length) => InferType::FixedArray(Box::new(inner), length as usize),
-                    None => InferType::Array(Box::new(inner)),
+                if let Some(length) = ann.array_length {
+                    return InferType::FixedArray(Box::new(inner), length as usize);
+                }
+                if let Some(path) = &ann.array_length_path {
+                    // `[t; bounds::limit]` resolve the associated constant.
+                    match self.resolve_array_length_path(path, ann.span) {
+                        Some(length) => InferType::FixedArray(Box::new(inner), length),
+                        None => {
+                            let path = path.clone();
+                            self.report_unresolved_array_length(&path, ann.span);
+                            InferType::Poison
+                        }
+                    }
+                } else {
+                    InferType::Array(Box::new(inner))
                 }
             }
             "vec" => InferType::Vec(Box::new(
@@ -214,6 +327,36 @@ impl TypeInference {
             return;
         }
         if self.type_params_in_scope.iter().any(|tp| tp == &ann.name) {
+            return;
+        }
+
+        // standalone type, so the nominal fallback below must not fire.
+        if ann.path.len() >= 2 && ann.type_params.is_empty() {
+            let self_segment = &ann.path[0];
+            if self_segment != "Self"
+                && !self
+                    .type_params_in_scope
+                    .iter()
+                    .any(|tp| tp == self_segment)
+                && !self.type_table.has_nominal(self_segment)
+                && self.type_table.get_trait(self_segment).is_none()
+            {
+                self.errors.push(TypeError {
+                    kind: self.nominal_error_kind(
+                        self_segment,
+                        TypeErrorKind::UnknownTypeName {
+                            name: self_segment.clone(),
+                        },
+                    ),
+                    span: ann.span,
+                    reason: ConstraintReason::UnknownType {
+                        name: self_segment.clone(),
+                    },
+                });
+            }
+            for param in &ann.type_params {
+                self.check_type_annotation(param);
+            }
             return;
         }
 
@@ -391,6 +534,440 @@ impl TypeInference {
         Ok(result.program)
     }
 
+    /// projection. the chain is followed directly, never through composite
+    pub(super) fn resolve_associated_projection(
+        &self,
+        projection: &InferType,
+    ) -> Option<InferType> {
+        let mut resolved = self.resolve_associated_projection_once(projection)?;
+        let mut visited = vec![projection.clone()];
+        while matches!(resolved, InferType::Projection { .. }) {
+            if visited.contains(&resolved) {
+                return None;
+            }
+            visited.push(resolved.clone());
+            match self.resolve_associated_projection_once(&resolved) {
+                Some(next) => resolved = next,
+                None => return Some(resolved),
+            }
+        }
+        Some(resolved)
+    }
+
+    fn resolve_associated_projection_once(&self, projection: &InferType) -> Option<InferType> {
+        let InferType::Projection {
+            trait_name,
+            item,
+            self_ty,
+        } = projection
+        else {
+            return None;
+        };
+        if let InferType::Param(param) = self_ty.as_ref() {
+            for (bound_param, _trait_name, items) in &self.current_function_bindings {
+                if bound_param != param {
+                    continue;
+                }
+                if let Some((_, ty)) = items.iter().find(|(name, _)| name == item) {
+                    return Some(ty.clone());
+                }
+            }
+            return None;
+        }
+        if !self_ty.is_concrete() {
+            return None;
+        }
+        let mut found = self.associated_projection_candidates(trait_name.as_deref(), item, self_ty);
+        if found.len() == 1 {
+            Some(found.swap_remove(0).1)
+        } else {
+            None
+        }
+    }
+
+    fn resolve_trait_qualified_projection(
+        &mut self,
+        trait_name: &str,
+        item: &str,
+        span: aelys_syntax::Span,
+    ) -> InferType {
+        let targets = self
+            .trait_qualified_items
+            .get(&(trait_name.to_string(), item.to_string()))
+            .cloned()
+            .unwrap_or_default();
+        if targets.len() == 1 {
+            let target = InferType::Struct(targets[0].clone());
+            let projection = InferType::Projection {
+                trait_name: Some(trait_name.to_string()),
+                item: item.to_string(),
+                self_ty: Box::new(target),
+            };
+            if let Some(resolved) = self.resolve_associated_projection(&projection) {
+                return resolved;
+            }
+            return projection;
+        }
+        let cause = if targets.is_empty() {
+            ProjectionFailure::NoImpl
+        } else {
+            let mut traits = targets;
+            traits.sort();
+            traits.dedup();
+            ProjectionFailure::Ambiguous { traits }
+        };
+        self.errors.push(TypeError {
+            kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                receiver: trait_name.to_string(),
+                item: item.to_string(),
+                cause,
+            },
+            span,
+            reason: ConstraintReason::UnknownType {
+                name: format!("{trait_name}::{item}"),
+            },
+        });
+        InferType::Poison
+    }
+
+    pub(super) fn associated_projection_candidates(
+        &self,
+        trait_name: Option<&str>,
+        item: &str,
+        self_ty: &InferType,
+    ) -> Vec<(String, InferType)> {
+        let mut found = Vec::new();
+        for implementation in self.type_table.trait_impl_defs() {
+            if trait_name.is_some_and(|name| implementation.trait_name != *name) {
+                continue;
+            }
+            if !self
+                .type_table
+                .types_match(&implementation.self_type, self_ty)
+            {
+                continue;
+            }
+            if let Some((_, ty)) = implementation
+                .associated_types
+                .iter()
+                .find(|(name, _)| name == item)
+            {
+                found.push((implementation.trait_name.clone(), ty.clone()));
+            }
+        }
+        found
+    }
+
+    /// resolves a symbolic fixed-array length `[t; bounds::limit]` by looking
+    fn resolve_array_length_path(
+        &self,
+        path: &[String],
+        span: aelys_syntax::Span,
+    ) -> Option<usize> {
+        if path.len() != 2 {
+            return None;
+        }
+        debug_assert!(span.end >= span.start);
+        match self.resolve_constant(&path[0], &path[1]) {
+            ConstResolution::Value(value) => usize::try_from(value).ok(),
+            _ => None,
+        }
+    }
+
+    fn report_unresolved_array_length(&mut self, path: &[String], span: aelys_syntax::Span) {
+        let (receiver, item) = match path {
+            [receiver, item] => (receiver.clone(), item.clone()),
+            _ => (path.join("::"), String::new()),
+        };
+        if self
+            .type_params_in_scope
+            .iter()
+            .any(|name| *name == receiver)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                    receiver: receiver.clone(),
+                    item: item.clone(),
+                    cause: ProjectionFailure::LengthFromTypeParameter,
+                },
+                span,
+                reason: ConstraintReason::UnknownType {
+                    name: format!("{receiver}::{item}"),
+                },
+            });
+            return;
+        }
+        let cause = match self.resolve_constant(&receiver, &item) {
+            ConstResolution::Value(_) => ProjectionFailure::InvalidLength,
+            ConstResolution::Ambiguous(traits) => ProjectionFailure::Ambiguous { traits },
+            ConstResolution::NotComputable => ProjectionFailure::NotComputable,
+            ConstResolution::NotConstant => ProjectionFailure::NotConstant,
+            ConstResolution::Cyclic => ProjectionFailure::Cyclic {
+                path: vec![format!("{receiver}::{item}")],
+            },
+            ConstResolution::Missing => ProjectionFailure::NoImpl,
+        };
+        self.errors.push(TypeError {
+            kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                receiver: receiver.clone(),
+                item: item.clone(),
+                cause,
+            },
+            span,
+            reason: ConstraintReason::UnknownType {
+                name: format!("{receiver}::{item}"),
+            },
+        });
+    }
+
+    pub(super) fn resolve_constant(&self, receiver: &str, item: &str) -> ConstResolution {
+        if receiver == "Self" {
+            let Some(target) = self.current_impl_self.as_ref() else {
+                return ConstResolution::Missing;
+            };
+            return self.resolve_associated_const_value(&target.to_string(), item);
+        }
+        if self
+            .associated_const_exprs
+            .contains_key(&(receiver.to_string(), item.to_string()))
+            || self.type_table.has_nominal(receiver)
+        {
+            return self.resolve_associated_const_value(receiver, item);
+        }
+        if self.type_table.get_trait(receiver).is_some() {
+            let mut targets = self
+                .trait_qualified_items
+                .get(&(receiver.to_string(), item.to_string()))
+                .cloned()
+                .unwrap_or_default();
+            targets.sort();
+            targets.dedup();
+            return match targets.as_slice() {
+                [] => ConstResolution::Missing,
+                [only] => self.resolve_associated_const_value(only, item),
+                _ => ConstResolution::Ambiguous(targets),
+            };
+        }
+        ConstResolution::Missing
+    }
+
+    pub(super) fn resolve_associated_const_value(
+        &self,
+        self_name: &str,
+        item: &str,
+    ) -> ConstResolution {
+        let mut candidates = self.associated_const_candidates(self_name, item);
+        if candidates.len() > 1 {
+            let mut traits: Vec<String> = candidates.into_iter().map(|(name, _)| name).collect();
+            traits.sort();
+            return ConstResolution::Ambiguous(traits);
+        }
+        if candidates.is_empty() {
+            let key = (self_name.to_string(), item.to_string());
+            let Some((owner, expr)) = self.associated_const_exprs.get(&key).cloned() else {
+                return ConstResolution::Missing;
+            };
+            let mut state = ConstEvalState::new(key);
+            return self.eval_const_expr_value(&expr, &owner, &mut state);
+        }
+        if let Some(value) = candidates.swap_remove(0).1 {
+            return ConstResolution::Value(value);
+        }
+        let key = (self_name.to_string(), item.to_string());
+        let Some((owner, expr)) = self.associated_const_exprs.get(&key).cloned() else {
+            return ConstResolution::Missing;
+        };
+        let mut state = ConstEvalState::new(key);
+        self.eval_const_expr_value(&expr, &owner, &mut state)
+    }
+
+    /// budget on this path rejected legitimate programs at 256. recursion is
+    pub(super) fn eval_const_expr_value(
+        &self,
+        expr: &aelys_syntax::Expr,
+        owner: &str,
+        state: &mut ConstEvalState,
+    ) -> ConstResolution {
+        let mut stack = Vec::new();
+        collect_const_references(expr, owner, &mut stack);
+        while let Some(key) = stack.last().cloned() {
+            if state.cache.contains_key(&key) {
+                stack.pop();
+                state.visiting.retain(|entry| *entry != key);
+                continue;
+            }
+            let Some((next_owner, value)) = self.associated_const_exprs.get(&key).cloned() else {
+                state.cache.insert(key, ConstResolution::Missing);
+                stack.pop();
+                continue;
+            };
+            let mut dependencies = Vec::new();
+            collect_const_references(&value, &next_owner, &mut dependencies);
+            let unresolved: Vec<(String, String)> = dependencies
+                .into_iter()
+                .filter(|dependency| !state.cache.contains_key(dependency))
+                .collect();
+            if unresolved.is_empty() {
+                let resolved = self.eval_const_shape(&value, &next_owner, state);
+                state.cache.insert(key.clone(), resolved);
+                state.visiting.retain(|entry| *entry != key);
+                stack.pop();
+                continue;
+            }
+            if state.visiting.contains(&key) {
+                state.cache.insert(key.clone(), ConstResolution::Cyclic);
+                state.visiting.retain(|entry| *entry != key);
+                stack.pop();
+                continue;
+            }
+            state.visiting.push(key);
+            for dependency in unresolved {
+                stack.push(dependency);
+            }
+        }
+        self.eval_const_shape(expr, owner, state)
+    }
+
+    fn eval_const_shape(
+        &self,
+        expr: &aelys_syntax::Expr,
+        owner: &str,
+        state: &ConstEvalState,
+    ) -> ConstResolution {
+        use aelys_syntax::{BinaryOp, ExprKind, UnaryOp};
+        match &expr.kind {
+            ExprKind::Int(value) => ConstResolution::Value(*value),
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => match self.eval_const_shape(operand, owner, state) {
+                ConstResolution::Value(value) => value
+                    .checked_neg()
+                    .map_or(ConstResolution::NotComputable, ConstResolution::Value),
+                other => other,
+            },
+            ExprKind::Grouping(inner) => self.eval_const_shape(inner, owner, state),
+            ExprKind::Binary { left, op, right } => {
+                let left = match self.eval_const_shape(left, owner, state) {
+                    ConstResolution::Value(value) => value,
+                    other => return other,
+                };
+                let right = match self.eval_const_shape(right, owner, state) {
+                    ConstResolution::Value(value) => value,
+                    other => return other,
+                };
+                let computed = match op {
+                    BinaryOp::Add => left.checked_add(right),
+                    BinaryOp::Sub => left.checked_sub(right),
+                    BinaryOp::Mul => left.checked_mul(right),
+                    BinaryOp::Div => left.checked_div(right),
+                    BinaryOp::Mod => left.checked_rem(right),
+                    _ => return ConstResolution::NotConstant,
+                };
+                computed.map_or(ConstResolution::NotComputable, ConstResolution::Value)
+            }
+            ExprKind::Member {
+                object,
+                member,
+                separator,
+            } if matches!(separator, aelys_syntax::MemberSeparator::Path) => {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    return ConstResolution::NotConstant;
+                };
+                let receiver = if name == "Self" {
+                    owner.to_string()
+                } else {
+                    name.clone()
+                };
+                state
+                    .cache
+                    .get(&(receiver, member.clone()))
+                    .cloned()
+                    .unwrap_or(ConstResolution::Missing)
+            }
+            _ => ConstResolution::NotConstant,
+        }
+    }
+
+    /// item. built once so the monomorphizer can resolve `t::limit` nodes
+    pub(super) fn associated_const_table(&self) -> HashMap<(String, String), i64> {
+        if let Some(cached) = self.associated_const_table_cache.borrow().as_ref() {
+            return cached.clone();
+        }
+        let mut table = HashMap::new();
+        for (receiver, item) in self.associated_const_exprs.keys() {
+            if let ConstResolution::Value(value) =
+                self.resolve_associated_const_value(receiver, item)
+            {
+                table.insert((receiver.clone(), item.clone()), value);
+            }
+        }
+        *self.associated_const_table_cache.borrow_mut() = Some(table.clone());
+        table
+    }
+
+    pub(super) fn associated_const_candidates(
+        &self,
+        self_name: &str,
+        item: &str,
+    ) -> Vec<(String, Option<i64>)> {
+        let self_ty = InferType::Struct(self_name.to_string());
+        let mut found = Vec::new();
+        for implementation in self.type_table.trait_impl_defs() {
+            if !self
+                .type_table
+                .types_match(&implementation.self_type, &self_ty)
+            {
+                continue;
+            }
+            if let Some((_, _, _, value)) = implementation
+                .associated_consts
+                .iter()
+                .find(|(name, _, _, _)| name == item)
+            {
+                found.push((implementation.trait_name.clone(), *value));
+            }
+        }
+        found
+    }
+
+    fn projection_declaring_trait(&self, projection: &InferType) -> Option<String> {
+        let InferType::Projection {
+            trait_name,
+            item,
+            self_ty,
+        } = projection
+        else {
+            return None;
+        };
+        if let Some(trait_name) = trait_name {
+            if self.current_trait_associated_items.contains(item) {
+                return Some(trait_name.clone());
+            }
+            return None;
+        }
+        let InferType::Param(param) = self_ty.as_ref() else {
+            return None;
+        };
+        for (bound_param, bound_trait, _) in &self.current_function_bounds {
+            if bound_param != param {
+                continue;
+            }
+            let Some(trait_def) = self.type_table.get_trait(bound_trait) else {
+                continue;
+            };
+            if trait_def.associated_types.contains(item)
+                || trait_def
+                    .associated_consts
+                    .iter()
+                    .any(|(name, _)| name == item)
+            {
+                return Some(bound_trait.clone());
+            }
+        }
+        None
+    }
+
     pub fn infer_program_full(
         stmts: Vec<Stmt>,
         source: Arc<Source>,
@@ -433,7 +1010,31 @@ impl TypeInference {
         known_native_signatures: HashMap<String, InferType>,
         imported_types: crate::infer::imports::ImportedTypes,
     ) -> Result<InferenceResult, Vec<crate::constraint::TypeError>> {
+        let current_module = ModuleId::new(source.name.clone());
+        Self::infer_program_full_with_native_signatures_in_module(
+            stmts,
+            source,
+            module_aliases,
+            known_globals,
+            known_native_globals,
+            known_native_signatures,
+            imported_types,
+            current_module,
+        )
+    }
+
+    pub fn infer_program_full_with_native_signatures_in_module(
+        stmts: Vec<Stmt>,
+        source: Arc<Source>,
+        module_aliases: HashSet<String>,
+        known_globals: HashSet<String>,
+        known_native_globals: HashSet<String>,
+        known_native_signatures: HashMap<String, InferType>,
+        imported_types: crate::infer::imports::ImportedTypes,
+        current_module: ModuleId,
+    ) -> Result<InferenceResult, Vec<crate::constraint::TypeError>> {
         let mut inf = TypeInference::new();
+        inf.current_module = current_module;
         inf.module_aliases = module_aliases.clone();
         inf.known_globals = known_globals.clone();
         inf.known_native_globals = known_native_globals;
@@ -468,10 +1069,14 @@ impl TypeInference {
 
         inf.install_imported_types(imported_types);
         inf.collect_enums(&stmts);
+        // `[int; bounds::limit]`, so which impl defines which associated item
+        inf.collect_trait_qualified_items(&stmts);
         inf.collect_structs(&stmts);
         inf.type_table.finalize_schema_indices();
+        // before any signature is collected, so `source::item` never depends on
         inf.collect_traits(&stmts);
         inf.collect_signatures(&stmts, "");
+        inf.validate_associated_type_cycles();
         inf.collect_global_bindings(&stmts);
 
         let typed_stmts = inf.infer_stmts(&stmts);
@@ -495,6 +1100,20 @@ impl TypeInference {
         inf.validate_surface_type_boundaries(&resolved_stmts);
 
         let final_stmts = inf.finalize_stmts(resolved_stmts);
+
+        if inf.projection_cycle_escaped.get() && inf.errors.is_empty() {
+            // escaped, and a poisoned type must never pass for a valid one.
+            inf.errors.push(TypeError {
+                kind: TypeErrorKind::PoisonedType,
+                span: aelys_syntax::Span::dummy(),
+                reason: ConstraintReason::Other(
+                    "associated projection cycle escaped collection".to_string(),
+                ),
+            });
+        }
+        if let Some(span) = inf.substitution_overflowed.get() {
+            inf.errors.push(TypeError::recursion_limit(span));
+        }
 
         inf.errors.sort_by_key(|error| {
             (
@@ -627,5 +1246,36 @@ fn same_span_priority(kind: &TypeErrorKind) -> u8 {
     match kind {
         TypeErrorKind::NonExhaustiveMatch { .. } | TypeErrorKind::NonExhaustiveStruct { .. } => 0,
         _ => 1,
+    }
+}
+
+fn collect_const_references(
+    expr: &aelys_syntax::Expr,
+    owner: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    use aelys_syntax::ExprKind;
+    match &expr.kind {
+        ExprKind::Member {
+            object,
+            member,
+            separator,
+        } if matches!(separator, aelys_syntax::MemberSeparator::Path) => {
+            if let ExprKind::Identifier(name) = &object.kind {
+                let receiver = if name == "Self" {
+                    owner.to_string()
+                } else {
+                    name.clone()
+                };
+                out.push((receiver, member.clone()));
+            }
+        }
+        ExprKind::Unary { operand, .. } => collect_const_references(operand, owner, out),
+        ExprKind::Grouping(inner) => collect_const_references(inner, owner, out),
+        ExprKind::Binary { left, right, .. } => {
+            collect_const_references(left, owner, out);
+            collect_const_references(right, owner, out);
+        }
+        _ => {}
     }
 }

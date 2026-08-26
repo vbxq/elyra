@@ -358,8 +358,9 @@ impl TypeInference {
         object: &Expr,
         index: &Expr,
         value: &Expr,
-        _span: Span,
+        span: Span,
     ) -> (TypedExprKind, InferType) {
+        self.check_write_access(object, span, "index assignment");
         self.reject_constant_index(object, index);
         let binding = mutable_collection_binding(object);
         let binding_type = binding
@@ -374,7 +375,9 @@ impl TypeInference {
                 span: object.span,
                 reason: ConstraintReason::Other("read-only collection receiver".to_string()),
             });
-        } else if binding.is_none_or(|name| !self.env.is_mutable(name)) {
+        } else if binding
+            .is_none_or(|name| self.env.borrow_kind(name).is_none() && !self.env.is_mutable(name))
+        {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MutableCollectionRequired {
                     method: "index assignment".to_string(),

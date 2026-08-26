@@ -1858,12 +1858,23 @@ impl TypeInference {
                             });
                         }
                     }
-                    for (offset, expected_field) in expected.iter().enumerate() {
+                    for expected_field in expected {
                         let Some(field) = fields
                             .iter()
                             .find(|candidate| candidate.name == expected_field.name)
                         else {
                             if !*has_rest {
+                                if !self.check_field_visibility(
+                                    &format!("{}::{}", enum_name, variant.name),
+                                    &expected_field.name,
+                                    expected_field.is_pub,
+                                    &enum_def.owner,
+                                    pattern.span,
+                                    "an enum pattern",
+                                    true,
+                                ) {
+                                    continue;
+                                }
                                 self.errors.push(TypeError {
                                     kind: TypeErrorKind::MissingField {
                                         structure: format!("{}::{}", enum_name, variant.name),
@@ -1877,8 +1888,19 @@ impl TypeInference {
                             }
                             continue;
                         };
+                        if !self.check_field_visibility(
+                            &format!("{}::{}", enum_name, variant.name),
+                            &expected_field.name,
+                            expected_field.is_pub,
+                            &enum_def.owner,
+                            field.span,
+                            "an enum pattern",
+                            true,
+                        ) {
+                            continue;
+                        }
                         typed_fields.push(self.infer_pattern(&field.pattern, &expected_field.ty));
-                        field_offsets.push(u16::try_from(offset).unwrap_or(u16::MAX));
+                        field_offsets.push(expected_field.ordinal);
                     }
                     return TypedPattern {
                         kind: TypedPatternKind::Variant {
@@ -1957,24 +1979,54 @@ impl TypeInference {
                         });
                         continue;
                     };
+                    if !self.check_field_visibility(
+                        &name,
+                        &field.name,
+                        field_def.is_pub,
+                        &def.owner,
+                        field.span,
+                        "a struct pattern",
+                        true,
+                    ) {
+                        continue;
+                    }
                     typed_fields.push((
                         field.name.clone(),
                         self.infer_pattern(&field.pattern, &field_def.ty),
-                        def.fields
-                            .iter()
-                            .position(|candidate| candidate.name == field.name)
-                            .and_then(|offset| u16::try_from(offset).ok())
-                            .unwrap_or(0),
+                        field_def.ordinal,
                     ));
                 }
-                if !*has_rest && typed_fields.len() != def.fields.len() {
-                    self.errors.push(TypeError {
-                        kind: TypeErrorKind::NonExhaustiveStruct {
-                            structure: name.clone(),
-                        },
-                        span: pattern.span,
-                        reason: ConstraintReason::Other("struct pattern fields".to_string()),
-                    });
+                if !*has_rest {
+                    for field in &def.fields {
+                        if fields.iter().any(|candidate| candidate.name == field.name) {
+                            continue;
+                        }
+                        self.check_field_visibility(
+                            &name,
+                            &field.name,
+                            field.is_pub,
+                            &def.owner,
+                            pattern.span,
+                            "a struct pattern",
+                            true,
+                        );
+                    }
+                    let required_fields = def
+                        .fields
+                        .iter()
+                        .filter(|field| {
+                            field.is_pub || self.current_module.is_same_or_descendant_of(&def.owner)
+                        })
+                        .count();
+                    if typed_fields.len() != required_fields {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::NonExhaustiveStruct {
+                                structure: name.clone(),
+                            },
+                            span: pattern.span,
+                            reason: ConstraintReason::Other("struct pattern fields".to_string()),
+                        });
+                    }
                 }
                 TypedPatternKind::Struct {
                     name,

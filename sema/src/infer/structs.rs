@@ -36,7 +36,10 @@ impl TypeInference {
         let mut accepted = HashSet::new();
         for stmt in stmts {
             let StmtKind::EnumDecl {
-                name, type_params, ..
+                name,
+                type_params,
+                is_pub,
+                ..
             } = &stmt.kind
             else {
                 continue;
@@ -55,6 +58,8 @@ impl TypeInference {
                 name: name.clone(),
                 type_params: type_params.clone(),
                 variants: Vec::new(),
+                owner: self.current_module.clone(),
+                is_pub: *is_pub,
             });
             accepted.insert(name.clone());
         }
@@ -64,6 +69,7 @@ impl TypeInference {
                 name,
                 type_params,
                 variants,
+                is_pub,
                 ..
             } = &stmt.kind
             else {
@@ -118,10 +124,12 @@ impl TypeInference {
                     aelys_syntax::EnumVariantFields::Named(fields) => EnumVariantFieldsDef::Named(
                         fields
                             .iter()
-                            .map(|field| StructField {
+                            .enumerate()
+                            .map(|(ordinal, field)| StructField {
                                 name: field.name.clone(),
                                 ty: self.type_from_annotation(&field.type_annotation),
                                 is_pub: field.is_pub,
+                                ordinal: u16::try_from(ordinal).unwrap_or(u16::MAX),
                             })
                             .collect(),
                     ),
@@ -136,6 +144,8 @@ impl TypeInference {
                 name: name.clone(),
                 type_params: type_params.clone(),
                 variants: typed_variants,
+                owner: self.current_module.clone(),
+                is_pub: *is_pub,
             });
         }
     }
@@ -146,7 +156,7 @@ impl TypeInference {
                 name,
                 type_params,
                 fields,
-                ..
+                is_pub,
             } = &stmt.kind
             {
                 if self.type_table.has_nominal(name) {
@@ -176,10 +186,12 @@ impl TypeInference {
                     std::mem::replace(&mut self.type_params_in_scope, type_params.clone());
                 let struct_fields: Vec<StructField> = fields
                     .iter()
-                    .map(|f| StructField {
+                    .enumerate()
+                    .map(|(ordinal, f)| StructField {
                         name: f.name.clone(),
                         ty: self.type_from_annotation(&f.type_annotation),
                         is_pub: f.is_pub,
+                        ordinal: u16::try_from(ordinal).unwrap_or(u16::MAX),
                     })
                     .collect();
                 self.type_params_in_scope = saved_type_params;
@@ -188,6 +200,8 @@ impl TypeInference {
                     name: name.clone(),
                     type_params: type_params.clone(),
                     fields: struct_fields,
+                    owner: self.current_module.clone(),
+                    is_pub: *is_pub,
                 });
             }
         }

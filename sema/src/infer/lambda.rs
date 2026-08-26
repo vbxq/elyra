@@ -17,7 +17,7 @@ impl TypeInference {
         let mut typed_params = Vec::with_capacity(params.len());
         for p in params {
             let ty = match &p.type_annotation {
-                Some(ann) => self.type_from_annotation(ann),
+                Some(ann) => self.type_from_parameter_annotation(ann),
                 None => self.type_gen.fresh(),
             };
             typed_params.push(TypedParam {
@@ -35,8 +35,9 @@ impl TypeInference {
         };
 
         let saved_env = std::mem::replace(&mut self.env, closure_env);
+        let saved_forwarded_borrows = std::mem::take(&mut self.forwarded_mutable_borrows);
 
-        for (param, _syntax_param) in typed_params.iter().zip(params) {
+        for (param, syntax_param) in typed_params.iter().zip(params) {
             if param.ty.contains_dynamic() {
                 self.env
                     .define_explicit_dynamic_local(param.name.clone(), param.ty.clone());
@@ -44,6 +45,10 @@ impl TypeInference {
                 self.env.define_local(param.name.clone(), param.ty.clone());
             }
             self.env.set_mutable(&param.name, param.mutable);
+            if let Some(reference) = syntax_param.reference {
+                self.env
+                    .define_borrow_binding(param.name.clone(), reference);
+            }
         }
 
         self.push_return_type(return_type.clone());
@@ -82,6 +87,7 @@ impl TypeInference {
 
         self.pop_return_type();
         self.env = saved_env;
+        self.forwarded_mutable_borrows = saved_forwarded_borrows;
 
         let param_types: Vec<InferType> = typed_params.iter().map(|p| p.ty.clone()).collect();
         let fn_type = InferType::Function {

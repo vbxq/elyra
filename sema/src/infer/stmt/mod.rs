@@ -15,6 +15,10 @@ impl TypeInference {
     }
 
     pub(super) fn infer_stmt(&mut self, stmt: &Stmt) -> TypedStmt {
+        let previous_module = self.current_module.clone();
+        if let Some(definition_module) = &stmt.definition_module {
+            self.current_module = definition_module.clone();
+        }
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
                 let typed_expr = self.infer_expr(expr);
@@ -115,6 +119,7 @@ impl TypeInference {
                     .unwrap_or_default(),
             },
         };
+        self.current_module = previous_module;
 
         TypedStmt {
             kind,

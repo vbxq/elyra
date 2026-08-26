@@ -11,6 +11,7 @@ impl TypeInference {
         value: &Expr,
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        self.check_write_binding(name, span, "assignment");
         let typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {

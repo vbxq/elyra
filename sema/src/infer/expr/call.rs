@@ -72,6 +72,15 @@ impl TypeInference {
         args: &[Expr],
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        self.with_borrow_call_scope(|this| this.infer_call_expr_inner(callee, args, span))
+    }
+
+    fn infer_call_expr_inner(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        span: Span,
+    ) -> (TypedExprKind, InferType) {
         // a '.' on a namespace has its own diagnostic, so the speculative method handlers must not run
         let dot_on_namespace = matches!(
             &callee.kind,
@@ -112,7 +121,28 @@ impl TypeInference {
         let native_obligations = self.native_obligations_for(callee, &inferred_callee.ty);
         let typed_callee = self.instantiate_generic_signature(inferred_callee);
         let typed_callee = self.specialize_numeric_signature(typed_callee);
-        let mut typed_args: Vec<TypedExpr> = args.iter().map(|a| self.infer_expr(a)).collect();
+        let reference_modes = self.reference_modes_for_call(callee, &typed_callee);
+        if let ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Dot,
+            ..
+        } = &callee.kind
+            && let Some(reference) = reference_modes.first().copied().flatten()
+        {
+            self.register_receiver_borrow(object, reference, callee.span);
+        }
+        let mut typed_args: Vec<TypedExpr> = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                let expected = if matches!(&typed_callee.kind, TypedExprKind::StructMethod { .. }) {
+                    reference_modes.get(index + 1).copied().flatten()
+                } else {
+                    reference_modes.get(index).copied().flatten()
+                };
+                self.infer_call_argument(arg, expected)
+            })
+            .collect();
         let argument_indices = effective_argument_indices(&typed_args);
         self.record_native_obligations(
             &native_obligations,
@@ -1168,6 +1198,15 @@ fn substitute_generic_params(
                 .iter()
                 .map(|arg| substitute_generic_params(arg, substitutions))
                 .collect(),
+        },
+        InferType::Projection {
+            trait_name,
+            item,
+            self_ty,
+        } => InferType::Projection {
+            trait_name: trait_name.clone(),
+            item: item.clone(),
+            self_ty: Box::new(substitute_generic_params(self_ty, substitutions)),
         },
         _ => ty.clone(),
     }

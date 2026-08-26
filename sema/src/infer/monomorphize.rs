@@ -122,6 +122,16 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
             push_len_prefixed(result, "param");
             push_len_prefixed(result, name);
         }
+        InferType::Projection {
+            trait_name,
+            item,
+            self_ty,
+        } => {
+            push_len_prefixed(result, "projection");
+            push_len_prefixed(result, trait_name.as_deref().unwrap_or(""));
+            push_len_prefixed(result, item);
+            encode_type_key(self_ty, result);
+        }
         InferType::Var(id) => {
             push_len_prefixed(result, "var");
             push_len_prefixed(result, &id.0.to_string());
@@ -248,6 +258,9 @@ fn collect_nominal_applications(
             for arg in args {
                 collect_nominal_applications(arg, type_table, applications);
             }
+        }
+        InferType::Projection { self_ty, .. } => {
+            collect_nominal_applications(self_ty, type_table, applications);
         }
         InferType::Function { params, ret } => {
             for param in params {
@@ -645,6 +658,7 @@ fn rewrite_nominal_expr(
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Identifier(_) => {}
     }
 }
@@ -1000,6 +1014,7 @@ fn collect_expr_types(expr: &TypedExpr, types: &mut Vec<(InferType, Span)>) {
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Identifier(_) => {}
     }
 }
@@ -1052,6 +1067,7 @@ fn collect_type(ty: &InferType, span: Span, types: &mut Vec<(InferType, Span)>) 
                 collect_type(arg, span, types);
             }
         }
+        InferType::Projection { self_ty, .. } => collect_type(self_ty, span, types),
         _ => {}
     }
 }
@@ -1074,6 +1090,7 @@ fn contains_open_generic_type(ty: &InferType) -> bool {
         }
         InferType::Tuple(elements) => elements.iter().any(contains_open_generic_type),
         InferType::Applied { args, .. } => args.iter().any(contains_open_generic_type),
+        InferType::Projection { self_ty, .. } => contains_open_generic_type(self_ty),
         _ => false,
     }
 }
@@ -1249,6 +1266,15 @@ impl TypeInference {
         let mut function = self.apply_substitution_func(template, &substitution);
         function.name = symbol;
         function.type_params.clear();
+        {
+            let constants = self.associated_const_table();
+            let substitution = &substitution;
+            for stmt in &mut function.body {
+                visit_exprs_stmt(stmt, &mut |expr| {
+                    resolve_associated_const_node(expr, substitution, &constants, errors);
+                });
+            }
+        }
         {
             let type_table = &self.type_table;
             let mut marker_errors = Vec::new();
@@ -1592,6 +1618,7 @@ impl TypeInference {
                                 &replacements,
                             ),
                             is_pub: field.is_pub,
+                            ordinal: field.ordinal,
                         })
                         .collect();
                     return Some((
@@ -1600,6 +1627,8 @@ impl TypeInference {
                             name: generated.clone(),
                             type_params: Vec::new(),
                             fields,
+                            owner: definition.owner.clone(),
+                            is_pub: definition.is_pub,
                         }),
                     ));
                 }
@@ -1649,6 +1678,7 @@ impl TypeInference {
                                                     &replacements,
                                                 ),
                                                 is_pub: field.is_pub,
+                                                ordinal: field.ordinal,
                                             })
                                             .collect(),
                                     )
@@ -1662,6 +1692,8 @@ impl TypeInference {
                             name: generated.clone(),
                             type_params: Vec::new(),
                             variants,
+                            owner: definition.owner.clone(),
+                            is_pub: definition.is_pub,
                         }),
                     ));
                 }
@@ -1940,6 +1972,7 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<(String, InferType)
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Identifier(_) => {}
     }
 }
@@ -2132,6 +2165,7 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Identifier(_) => {}
     }
 }
@@ -2175,6 +2209,45 @@ fn rewrite_impl_call_symbol(
             .find(|(expected, _)| *expected == receiver)
     {
         *symbol = replacement.clone();
+    }
+}
+
+fn resolve_associated_const_node(
+    expr: &mut TypedExpr,
+    substitution: &crate::unify::Substitution,
+    constants: &std::collections::HashMap<(String, String), i64>,
+    errors: &mut Vec<TypeError>,
+) {
+    let TypedExprKind::AssociatedConst {
+        param,
+        trait_name,
+        item,
+    } = &expr.kind
+    else {
+        return;
+    };
+    let concrete = substitution.apply(&InferType::Param(param.clone()));
+    let receiver = match &concrete {
+        InferType::Struct(name) => name.clone(),
+        InferType::Applied { name, .. } => name.clone(),
+        other => other.to_string(),
+    };
+    match constants.get(&(receiver.clone(), item.clone())) {
+        Some(value) => {
+            expr.kind = TypedExprKind::Int(*value);
+            expr.ty = InferType::I64;
+        }
+        None => errors.push(TypeError {
+            kind: crate::constraint::TypeErrorKind::AmbiguousAssociatedProjection {
+                receiver,
+                item: item.clone(),
+                cause: crate::constraint::ProjectionFailure::NoImpl,
+            },
+            span: expr.span,
+            reason: crate::constraint::ConstraintReason::Other(format!(
+                "associated constant of trait '{trait_name}'"
+            )),
+        }),
     }
 }
 
@@ -2270,12 +2343,7 @@ fn resolve_deferred_member(
                 )),
             ),
             member: member.clone(),
-            offset: definition
-                .fields
-                .iter()
-                .position(|candidate| candidate.name == *member)
-                .and_then(|index| u16::try_from(index).ok())
-                .unwrap_or(0),
+            offset: field.ordinal,
             schema_index: type_table.schema_index(&name).unwrap_or(0),
         };
         expr.ty = field_ty;
@@ -3161,6 +3229,7 @@ fn rewrite_expr(
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Identifier(_) => {}
     }
 }
@@ -3308,6 +3377,7 @@ fn check_instance_trait_bounds(
     errors: &mut Vec<TypeError>,
 ) {
     let Some(bounds) = inference.generic_function_bounds.get(name) else {
+        check_instance_trait_bindings(inference, name, template, args, span, errors);
         return;
     };
     let mut substitution = Substitution::new();
@@ -3342,6 +3412,72 @@ fn check_instance_trait_bounds(
                 span,
                 reason: ConstraintReason::Other("generic trait bound".to_string()),
             });
+        }
+    }
+    check_instance_trait_bindings(inference, name, template, args, span, errors);
+}
+
+fn check_instance_trait_bindings(
+    inference: &TypeInference,
+    name: &str,
+    template: &TypedFunction,
+    args: &[InferType],
+    span: aelys_syntax::Span,
+    errors: &mut Vec<TypeError>,
+) {
+    let Some(bindings) = inference.generic_function_bindings.get(name) else {
+        return;
+    };
+    let mut substitution = Substitution::new();
+    for (param, arg) in template.type_params.iter().zip(args) {
+        substitution.bind_param(param.clone(), arg.clone());
+    }
+    for (subject, trait_name, items) in bindings {
+        let actual = match template
+            .type_params
+            .iter()
+            .position(|param| param == subject)
+        {
+            Some(index) => match args.get(index) {
+                Some(actual) => actual.clone(),
+                None => continue,
+            },
+            None => InferType::Struct(subject.clone()),
+        };
+        for (item, requested) in items {
+            let requested = substitution.apply(requested);
+            let projection = InferType::Projection {
+                trait_name: Some(trait_name.clone()),
+                item: item.clone(),
+                self_ty: Box::new(actual.clone()),
+            };
+            match inference.type_table.resolve_projection(&projection) {
+                Some(found) if inference.type_table.types_match(&requested, &found) => {}
+                Some(found) => {
+                    errors.push(TypeError {
+                        kind: TypeErrorKind::AssociatedBindingMismatch {
+                            trait_name: trait_name.clone(),
+                            item: item.clone(),
+                            requested,
+                            found,
+                        },
+                        span,
+                        reason: ConstraintReason::Other("generic associated binding".to_string()),
+                    });
+                }
+                None => {
+                    errors.push(TypeError {
+                        kind: TypeErrorKind::AssociatedBindingMismatch {
+                            trait_name: trait_name.clone(),
+                            item: item.clone(),
+                            requested,
+                            found: InferType::Poison,
+                        },
+                        span,
+                        reason: ConstraintReason::Other("generic associated binding".to_string()),
+                    });
+                }
+            }
         }
     }
 }
@@ -3414,6 +3550,18 @@ fn match_types(
             match_types(formal_err, actual_err, mapping)
         }
         (
+            InferType::Projection {
+                item: formal_item,
+                self_ty: formal_self,
+                ..
+            },
+            InferType::Projection {
+                item: actual_item,
+                self_ty: actual_self,
+                ..
+            },
+        ) if formal_item == actual_item => match_types(formal_self, actual_self, mapping),
+        (
             InferType::Applied {
                 name: formal_name,
                 args: formal_args,
@@ -3428,6 +3576,7 @@ fn match_types(
             }
             Some(())
         }
+        (InferType::Projection { .. }, _) => Some(()),
         _ if formal == actual || matches!(formal, InferType::Var(_)) => Some(()),
         _ => None,
     }

@@ -53,6 +53,23 @@ impl TypeInference {
         let saved_type_params =
             std::mem::replace(&mut self.type_params_in_scope, func.type_params.clone());
 
+        // bounds of this function, kept for the whole body so a `t::limit`
+        let saved_function_bounds = std::mem::replace(
+            &mut self.current_function_bounds,
+            self.generic_function_bounds
+                .get(&func.name)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let saved_function_bindings = std::mem::replace(&mut self.current_function_bindings, {
+            let bindings = self
+                .generic_function_bindings
+                .get(&func.name)
+                .cloned()
+                .unwrap_or_default();
+            bindings
+        });
+
         for type_param in &func.type_params {
             let fresh_var = self.type_gen.fresh();
             self.env.define_local(type_param.clone(), fresh_var);
@@ -66,7 +83,7 @@ impl TypeInference {
                 .or_else(|| {
                     p.type_annotation
                         .as_ref()
-                        .map(|ann| self.type_from_annotation(ann))
+                        .map(|ann| self.type_from_parameter_annotation(ann))
                 })
                 .unwrap_or_else(|| self.type_gen.fresh());
 
@@ -103,16 +120,20 @@ impl TypeInference {
             ));
         }
 
+        let saved_forwarded_borrows = std::mem::take(&mut self.forwarded_mutable_borrows);
         let mut func_env = self.env.for_closure();
         func_env.set_current_function(Some(func.name.clone()));
 
-        for (param, _syntax_param) in typed_params.iter().zip(&func.params) {
+        for (param, syntax_param) in typed_params.iter().zip(&func.params) {
             if param.ty.contains_dynamic() {
                 func_env.define_explicit_dynamic_local(param.name.clone(), param.ty.clone());
             } else {
                 func_env.define_local(param.name.clone(), param.ty.clone());
             }
             func_env.set_mutable(&param.name, param.mutable);
+            if let Some(reference) = syntax_param.reference {
+                func_env.define_borrow_binding(param.name.clone(), reference);
+            }
         }
 
         let saved_env = std::mem::replace(&mut self.env, func_env);
@@ -156,6 +177,9 @@ impl TypeInference {
         self.pop_return_type();
         self.env = saved_env;
         self.type_params_in_scope = saved_type_params;
+        self.current_function_bindings = saved_function_bindings;
+        self.current_function_bounds = saved_function_bounds;
+        self.forwarded_mutable_borrows = saved_forwarded_borrows;
 
         TypedFunction {
             name: func.name.clone(),
@@ -185,6 +209,9 @@ impl TypeInference {
         let trait_name = trait_path.map(|path| path.path.join("::"));
         let trait_args = self.impl_trait_args(trait_path, impl_type_params);
         let effective_methods = self.effective_impl_methods(methods, trait_name.as_deref());
+        let saved_impl_self = self
+            .current_impl_self
+            .replace(InferType::Struct(target.clone()));
         let mut typed_methods = Vec::with_capacity(effective_methods.len());
         for method in &effective_methods {
             let mut normalized = method.clone();
@@ -205,6 +232,7 @@ impl TypeInference {
             }
             typed_methods.push(self.infer_function(&normalized));
         }
+        self.current_impl_self = saved_impl_self;
         crate::typed_ast::TypedStmtKind::ImplDecl {
             target,
             trait_name,

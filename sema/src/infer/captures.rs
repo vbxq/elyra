@@ -262,6 +262,7 @@ impl TypeInference {
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
             | TypedExprKind::Unit
+            | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Null => {}
         }
     }

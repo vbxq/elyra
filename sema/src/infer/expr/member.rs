@@ -2,10 +2,48 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind};
 use crate::types::InferType;
-use aelys_syntax::{Expr, MemberSeparator, Span, StructFieldInit};
+use aelys_syntax::{Expr, MemberSeparator, ModuleId, Span, StructFieldInit};
 use std::collections::HashMap;
 
 impl TypeInference {
+    pub(crate) fn check_field_visibility(
+        &mut self,
+        structure: &str,
+        field: &str,
+        is_pub: bool,
+        owner: &ModuleId,
+        span: Span,
+        operation: &str,
+        construction: bool,
+    ) -> bool {
+        if is_pub || self.current_module.is_same_or_descendant_of(owner) {
+            return true;
+        }
+        let kind = if construction {
+            TypeErrorKind::PrivateFieldConstruction {
+                structure: structure.to_string(),
+                field: field.to_string(),
+                owner: owner.clone(),
+                current: self.current_module.clone(),
+                operation: operation.to_string(),
+            }
+        } else {
+            TypeErrorKind::PrivateFieldAccess {
+                structure: structure.to_string(),
+                field: field.to_string(),
+                owner: owner.clone(),
+                current: self.current_module.clone(),
+                operation: operation.to_string(),
+            }
+        };
+        self.errors.push(TypeError {
+            kind,
+            span,
+            reason: ConstraintReason::Other(format!("private field {operation}")),
+        });
+        false
+    }
+
     fn report_no_such_member(
         &mut self,
         receiver: &InferType,
@@ -101,6 +139,93 @@ impl TypeInference {
                 },
                 InferType::Poison,
             );
+        }
+
+        // emitted and the monomorphizer replaces it with the literal.
+        if separator == MemberSeparator::Path
+            && let Some(param) = source_path_name(object)
+            && self.type_params_in_scope.iter().any(|name| *name == param)
+        {
+            // a lambda body is a different "current function", so the bounds of
+            let mut bounds = self.param_bounds_in_scope(&param);
+            if bounds.is_empty() {
+                bounds = self
+                    .current_function_bounds
+                    .iter()
+                    .filter(|(subject, _, _)| *subject == param)
+                    .map(|(_, trait_name, args)| (trait_name.clone(), args.clone()))
+                    .collect();
+            }
+            let declaring = bounds.into_iter().find(|(name, _)| {
+                self.type_table.get_trait(name).is_some_and(|definition| {
+                    definition
+                        .associated_consts
+                        .iter()
+                        .any(|(const_name, _)| const_name == member)
+                })
+            });
+            let Some((trait_name, _)) = declaring else {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                        receiver: param.clone(),
+                        item: member.to_string(),
+                        cause: crate::constraint::ProjectionFailure::Unbound,
+                    },
+                    span: _span,
+                    reason: ConstraintReason::UnknownType {
+                        name: format!("{param}::{member}"),
+                    },
+                });
+                return (TypedExprKind::Null, InferType::Poison);
+            };
+            let declared = self
+                .type_table
+                .get_trait(&trait_name)
+                .and_then(|definition| {
+                    definition
+                        .associated_consts
+                        .iter()
+                        .find(|(const_name, _)| const_name == member)
+                        .map(|(_, ty)| ty.clone())
+                })
+                .unwrap_or(InferType::I64);
+            return (
+                TypedExprKind::AssociatedConst {
+                    param,
+                    trait_name,
+                    item: member.to_string(),
+                },
+                declared,
+            );
+        }
+
+        // `bounds::limit`, `source::limit` or `self::limit` one branch for
+        if separator == MemberSeparator::Path
+            && let Some(receiver) = source_path_name(object)
+            && (receiver == "Self"
+                || self.type_table.has_nominal(&receiver)
+                || self.type_table.get_trait(&receiver).is_some())
+        {
+            match self.resolve_constant(&receiver, member) {
+                crate::infer::ConstResolution::Value(value) => {
+                    return (TypedExprKind::Int(value), InferType::I64);
+                }
+                crate::infer::ConstResolution::Missing => {}
+                failure => {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                            receiver: receiver.clone(),
+                            item: member.to_string(),
+                            cause: projection_failure_for(&failure, &receiver, member),
+                        },
+                        span: _span,
+                        reason: ConstraintReason::UnknownType {
+                            name: format!("{receiver}::{member}"),
+                        },
+                    });
+                    return (TypedExprKind::Null, InferType::Poison);
+                }
+            }
         }
 
         if separator == MemberSeparator::Path
@@ -602,14 +727,27 @@ impl TypeInference {
 
         let ty = match nominal_parts(&typed_object.ty, &self.type_table) {
             Some((name, substitutions)) => {
-                if let Some(def) = self.type_table.get_struct(&name) {
+                if let Some(def) = self.type_table.get_struct(&name).cloned() {
                     if let Some(field) = def.fields.iter().find(|f| f.name == member) {
-                        let offset = def
-                            .fields
-                            .iter()
-                            .position(|candidate| candidate.name == member)
-                            .and_then(|index| u16::try_from(index).ok())
-                            .unwrap_or(0);
+                        if !self.check_field_visibility(
+                            &name,
+                            member,
+                            field.is_pub,
+                            &def.owner,
+                            _span,
+                            "read",
+                            false,
+                        ) {
+                            return (
+                                TypedExprKind::Member {
+                                    object: Box::new(typed_object),
+                                    member: member.to_string(),
+                                    separator,
+                                },
+                                InferType::Poison,
+                            );
+                        }
+                        let offset = field.ordinal;
                         let schema_index = self.type_table.schema_index(&name).unwrap_or(0);
                         return (
                             TypedExprKind::StructField {
@@ -729,10 +867,11 @@ impl TypeInference {
             InferType::Poison
         };
         let mut seen = std::collections::HashSet::new();
+        let mut field_visibility_error = false;
         let mut field_offsets = Vec::with_capacity(fields.len());
         let typed_fields: Vec<(String, Box<TypedExpr>)> = fields
             .iter()
-            .map(|f| {
+            .filter_map(|f| {
                 let typed_value = self.infer_expr(&f.value);
 
                 if !seen.insert(f.name.clone()) {
@@ -748,13 +887,20 @@ impl TypeInference {
 
                 if let Some(def) = &def {
                     if let Some(field_def) = def.fields.iter().find(|df| df.name == f.name) {
-                        field_offsets.push(
-                            def.fields
-                                .iter()
-                                .position(|candidate| candidate.name == f.name)
-                                .and_then(|index| u16::try_from(index).ok())
-                                .unwrap_or(0),
+                        let visible = self.check_field_visibility(
+                            name,
+                            &f.name,
+                            field_def.is_pub,
+                            &def.owner,
+                            f.span,
+                            "a struct literal",
+                            true,
                         );
+                        if !visible {
+                            field_visibility_error = true;
+                            return None;
+                        }
+                        field_offsets.push(field_def.ordinal);
                         let field_ty = field_def.ty.substitute_params(&substitutions);
                         let reason = ConstraintReason::TypeAnnotation {
                             var_name: format!("{}.{}", name, f.name),
@@ -791,13 +937,24 @@ impl TypeInference {
                     field_offsets.push(0);
                 }
 
-                (f.name.clone(), Box::new(typed_value))
+                Some((f.name.clone(), Box::new(typed_value)))
             })
             .collect();
 
         if let Some(def) = &def {
             for field in &def.fields {
                 if !fields.iter().any(|value| value.name == field.name) {
+                    if !self.check_field_visibility(
+                        name,
+                        &field.name,
+                        field.is_pub,
+                        &def.owner,
+                        _span,
+                        "a struct literal",
+                        true,
+                    ) {
+                        continue;
+                    }
                     self.errors.push(TypeError {
                         kind: TypeErrorKind::MissingField {
                             structure: name.to_string(),
@@ -808,6 +965,18 @@ impl TypeInference {
                     });
                 }
             }
+        }
+
+        if field_visibility_error {
+            return (
+                TypedExprKind::StructLiteral {
+                    name: name.to_string(),
+                    schema_index: self.type_table.schema_index(name).unwrap_or(0),
+                    fields: typed_fields,
+                    field_offsets,
+                },
+                InferType::Poison,
+            );
         }
 
         let schema_index = self.type_table.schema_index(name).unwrap_or(0);
@@ -850,7 +1019,8 @@ impl TypeInference {
                 InferType::Poison,
             );
         };
-        if !self.env.is_mutable(root) {
+        self.check_write_access(object, span, "mutation");
+        if self.env.borrow_kind(&root).is_none() && !self.env.is_mutable(&root) {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {
                     field: member.to_string(),
@@ -862,6 +1032,30 @@ impl TypeInference {
         let (offset, schema_index, field_ty) =
             match nominal_parts(&typed_object.ty, &self.type_table) {
                 Some((name, substitutions)) => {
+                    if let Some(definition) = self.type_table.get_struct(&name).cloned()
+                        && let Some(field) =
+                            definition.fields.iter().find(|field| field.name == member)
+                        && !self.check_field_visibility(
+                            &name,
+                            member,
+                            field.is_pub,
+                            &definition.owner,
+                            span,
+                            "write",
+                            false,
+                        )
+                    {
+                        return (
+                            TypedExprKind::MemberAssign {
+                                object: Box::new(typed_object),
+                                member: member.to_string(),
+                                offset: 0,
+                                schema_index: 0,
+                                value: Box::new(typed_value),
+                            },
+                            InferType::Poison,
+                        );
+                    }
                     let offset = self.type_table.field_offset(&name, member);
                     let field_ty = self
                         .type_table
@@ -1064,6 +1258,7 @@ impl TypeInference {
         };
 
         let mut seen = std::collections::HashSet::new();
+        let mut field_visibility_error = false;
         let mut typed_by_name = std::collections::HashMap::new();
         for field in fields {
             let typed_value = self.infer_expr(&field.value);
@@ -1078,6 +1273,19 @@ impl TypeInference {
                 });
             }
             if let Some(expected) = expected_fields.iter().find(|f| f.name == field.name) {
+                let visible = self.check_field_visibility(
+                    &format!("{}::{}", enum_name, variant_name),
+                    &field.name,
+                    expected.is_pub,
+                    &def.owner,
+                    field.span,
+                    "an enum literal",
+                    true,
+                );
+                if !visible {
+                    field_visibility_error = true;
+                    continue;
+                }
                 let reason = ConstraintReason::TypeAnnotation {
                     var_name: format!("{}::{}.{}", enum_name, variant_name, field.name),
                 };
@@ -1116,6 +1324,18 @@ impl TypeInference {
             if let Some(value) = typed_by_name.remove(&expected.name) {
                 typed_fields.push((Some(expected.name.clone()), value));
             } else {
+                if !self.check_field_visibility(
+                    &format!("{}::{}", enum_name, variant_name),
+                    &expected.name,
+                    expected.is_pub,
+                    &def.owner,
+                    span,
+                    "an enum literal",
+                    true,
+                ) {
+                    field_visibility_error = true;
+                    continue;
+                }
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::MissingField {
                         structure: format!("{}::{}", enum_name, variant_name),
@@ -1125,6 +1345,18 @@ impl TypeInference {
                     reason: ConstraintReason::Other("enum literal field".to_string()),
                 });
             }
+        }
+        if field_visibility_error {
+            return (
+                TypedExprKind::EnumConstruct {
+                    enum_name: enum_name.clone(),
+                    variant: variant_name,
+                    schema_index: self.type_table.enum_schema_index(&enum_name).unwrap_or(0),
+                    variant_index: u16::try_from(variant_index).unwrap_or(0),
+                    fields: typed_fields,
+                },
+                InferType::Poison,
+            );
         }
         (
             TypedExprKind::EnumConstruct {
@@ -1243,7 +1475,10 @@ impl TypeInference {
             .skip(1)
             .map(|parameter| parameter.substitute_params(&substitutions))
             .collect();
-        let return_type = method.return_type.substitute_params(&substitutions);
+        let return_type = self.normalize_projection_types(
+            &method.return_type.substitute_params(&substitutions),
+            span,
+        );
         (
             TypedExprKind::StructMethod {
                 object: Box::new(typed_object),
@@ -1335,4 +1570,24 @@ fn valid_sum_variant(family: &str, member: &str) -> bool {
         (family, member),
         ("Option", "Some" | "None") | ("Result", "Ok" | "Err") | ("Error", "Message")
     )
+}
+
+fn projection_failure_for(
+    failure: &crate::infer::ConstResolution,
+    receiver: &str,
+    item: &str,
+) -> crate::constraint::ProjectionFailure {
+    use crate::constraint::ProjectionFailure;
+    use crate::infer::ConstResolution;
+    match failure {
+        ConstResolution::Ambiguous(traits) => ProjectionFailure::Ambiguous {
+            traits: traits.clone(),
+        },
+        ConstResolution::NotComputable => ProjectionFailure::NotComputable,
+        ConstResolution::NotConstant => ProjectionFailure::NotConstant,
+        ConstResolution::Cyclic => ProjectionFailure::Cyclic {
+            path: vec![format!("{receiver}::{item}")],
+        },
+        ConstResolution::Missing | ConstResolution::Value(_) => ProjectionFailure::NoImpl,
+    }
 }
