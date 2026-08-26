@@ -21,7 +21,7 @@ fn write_file(dir: &TempDir, path: &str, content: &str) -> PathBuf {
 
 const SUPPORT_MODULE: &str = r#"
 pub struct Stage2Beacon {
-    seed: int,
+    pub seed: int,
 }
 
 pub enum Stage2Signal {
@@ -308,7 +308,7 @@ fn test_inherent_impl_travels_with_a_selectively_imported_struct() {
         "inherent_support.aelys",
         r#"
 pub struct Counter {
-    n: int,
+    pub n: int,
 }
 
 pub struct Unused {

@@ -8,8 +8,8 @@ use tempfile::TempDir;
 
 const GEOMETRY_MODULE: &str = r#"
 pub struct Point {
-    x: int,
-    y: int,
+    pub x: int,
+    pub y: int,
 }
 
 pub trait Norm {

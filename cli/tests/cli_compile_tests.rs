@@ -37,7 +37,7 @@ fn compile_accepts_a_type_imported_from_another_module() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("geometry.aelys"),
-        "pub struct Point {\n    x: int,\n    y: int,\n}\n\npub trait Norm {\n    fn norm(self) -> int\n}\n\nimpl Norm for Point {\n    fn norm(self) -> int { self.x * self.x + self.y * self.y }\n}\n",
+        "pub struct Point {\n    pub x: int,\n    pub y: int,\n}\n\npub trait Norm {\n    fn norm(self) -> int\n}\n\nimpl Norm for Point {\n    fn norm(self) -> int { self.x * self.x + self.y * self.y }\n}\n",
     )
     .unwrap();
     let src_path = dir.join("main.aelys");

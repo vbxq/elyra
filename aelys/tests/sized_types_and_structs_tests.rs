@@ -214,13 +214,17 @@ fn type_table_register_and_get() {
                 name: "x".to_string(),
                 ty: InferType::F64,
                 is_pub: false,
+                ordinal: 0,
             },
             StructField {
                 name: "y".to_string(),
                 ty: InferType::F64,
                 is_pub: false,
+                ordinal: 1,
             },
         ],
+        is_pub: true,
+        owner: aelys_syntax::ModuleId::new("test"),
     });
 
     assert!(table.has_struct("Point"));

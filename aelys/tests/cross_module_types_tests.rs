@@ -28,8 +28,8 @@ pub enum Shape {
 
 const GEOMETRY_MODULE: &str = r#"
 pub struct Point {
-    x: int,
-    y: int,
+    pub x: int,
+    pub y: int,
 }
 
 pub trait Norm {
@@ -211,8 +211,8 @@ needs holder
 
 const CANDIDATE_BASE_MODULE: &str = r#"
 pub struct Vector {
-    x: int,
-    y: int,
+    pub x: int,
+    pub y: int,
 }
 
 pub trait Norm {
@@ -375,20 +375,122 @@ struct Point {
     );
 }
 
-#[test]
-fn test_public_function_carrying_a_nominal_value_is_rejected() {
-    let dir = create_module_env();
-    write_file(
-        &dir,
-        "factory.aelys",
-        r#"
+const VISIBILITY_MODULE: &str = r#"
 pub struct Point {
-    x: int,
+    pub x: int,
     y: int,
 }
 
-pub fn origin() -> Point {
+pub fn make() -> Point {
     Point { x: 1, y: 2 }
+}
+
+fn owner_read(point: Point) -> int {
+    point.y
+}
+"#;
+
+fn assert_visibility_diagnostic(error: aelys_common::error::AelysError, code: &str) {
+    let message = error.to_string();
+    assert!(message.contains(code), "expected {code}, got: {message}");
+    assert!(
+        message.contains("owner module 'shapes'") && message.contains("current module"),
+        "visibility context missing from diagnostic: {message}"
+    );
+    assert!(
+        message.contains("help:"),
+        "visibility help missing from diagnostic: {message}"
+    );
+}
+
+#[test]
+fn public_nominal_return_is_allowed() {
+    let dir = create_module_env();
+    write_file(&dir, "shapes.aelys", VISIBILITY_MODULE);
+
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        r#"
+needs shapes
+let point = shapes::make()
+point.x
+"#,
+    );
+
+    let result = run_file(&main_path).expect("public nominal values must cross module boundaries");
+    assert_eq!(result.as_int(), Some(1));
+}
+
+#[test]
+fn private_field_read_is_e0412() {
+    let dir = create_module_env();
+    write_file(&dir, "shapes.aelys", VISIBILITY_MODULE);
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs shapes\nlet point = shapes::make()\npoint.y\n",
+    );
+
+    let error = run_file(&main_path).expect_err("a private field read must be rejected");
+    assert_visibility_diagnostic(error, "E0412");
+}
+
+#[test]
+fn private_field_write_is_e0412() {
+    let dir = create_module_env();
+    write_file(&dir, "shapes.aelys", VISIBILITY_MODULE);
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs shapes\nlet mut point = shapes::make()\npoint.y = 7\npoint.x\n",
+    );
+
+    let error = run_file(&main_path).expect_err("a private field write must be rejected");
+    assert_visibility_diagnostic(error, "E0412");
+}
+
+#[test]
+fn private_field_literal_is_e0413() {
+    let dir = create_module_env();
+    write_file(&dir, "shapes.aelys", VISIBILITY_MODULE);
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Point from shapes\nPoint { x: 1, y: 2 }\n",
+    );
+
+    let error = run_file(&main_path).expect_err("a private field literal must be rejected");
+    assert_visibility_diagnostic(error, "E0413");
+}
+
+#[test]
+fn private_field_pattern_is_e0413() {
+    let dir = create_module_env();
+    write_file(&dir, "shapes.aelys", VISIBILITY_MODULE);
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs shapes\nlet point = shapes::make()\nmatch point { Point { y, .. } => y }\n",
+    );
+
+    let error = run_file(&main_path).expect_err("a private field pattern must be rejected");
+    assert_visibility_diagnostic(error, "E0413");
+}
+
+#[test]
+fn private_nominal_return_is_e0407() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "hidden.aelys",
+        r#"
+struct Hidden {
+    value: int,
+}
+
+pub fn leak() -> Hidden {
+    Hidden { value: 1 }
 }
 "#,
     );
@@ -397,20 +499,15 @@ pub fn origin() -> Point {
         &dir,
         "main.aelys",
         r#"
-needs factory
+needs hidden
 1
 "#,
     );
 
-    let error = run_file(&main_path).expect_err("a nominal value must not cross the boundary");
+    let error = run_file(&main_path).expect_err("a private nominal type must not be exported");
     let message = error.to_string();
     assert!(
-        message.contains("cannot be exported from module 'factory'"),
-        "unexpected diagnostic: {}",
-        message
-    );
-    assert!(
-        message.contains("schema id is assigned per compilation unit"),
+        message.contains("E0407") && message.contains("cannot be exported from module 'hidden'"),
         "unexpected diagnostic: {}",
         message
     );

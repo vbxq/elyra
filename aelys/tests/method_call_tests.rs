@@ -280,3 +280,120 @@ fn active_instantiation_stack_at_the_limit_still_compiles() {
     let source = deep_instantiation_source(1_000);
     assert_eq!(compile_result(&source), Ok(()));
 }
+
+#[test]
+fn borrowed_receiver_executes() {
+    let result = run_ok(
+        r#"
+struct Point { x: int }
+impl Point { fn read(&self) -> int { self.x } }
+fn use_point() -> int {
+    let point = Point { x: 4 }
+    point.read()
+}
+use_point()
+"#,
+    );
+    assert_eq!(result.as_int(), Some(4));
+}
+
+fn assert_borrow_error(source: &str, code: &str, fragment: &str) {
+    let error = compile_result(source).expect_err("borrow source should be rejected");
+    assert!(
+        error.contains(code),
+        "expected {code} in diagnostic: {error}"
+    );
+    assert!(
+        error.contains(fragment),
+        "expected {fragment:?} in diagnostic: {error}"
+    );
+}
+
+#[test]
+fn shared_receiver_cannot_mutate_e0414() {
+    assert_borrow_error(
+        r#"
+struct Point { x: int }
+impl Point { fn bad(&self) -> int { self.x = 3; self.x } }
+fn use_point() -> int {
+    let point = Point { x: 1 }
+    point.bad()
+}
+use_point()
+"#,
+        "E0414",
+        "shared loan",
+    );
+}
+
+#[test]
+fn two_mutable_loans_conflict_e0415() {
+    assert_borrow_error(
+        r#"
+struct Point { x: int }
+fn clash(a: &mut Point, b: &mut Point) -> int { a.x + b.x }
+let point = Point { x: 1 }
+clash(&mut point, &mut point)
+"#,
+        "E0415",
+        "overlap",
+    );
+}
+
+#[test]
+fn read_over_mutable_loan_e0416() {
+    assert_borrow_error(
+        r#"
+struct Point { x: int }
+fn clash(a: &mut Point, b: &Point) -> int { a.x + b.x }
+let mut point = Point { x: 1 }
+clash(&mut point, point)
+"#,
+        "E0416",
+        "mutable loan",
+    );
+}
+
+#[test]
+fn borrow_escape_e0417() {
+    assert_borrow_error(
+        r#"
+struct Point { x: int }
+fn leak(point: &Point) -> &Point { point }
+"#,
+        "E0417",
+        "escapes",
+    );
+}
+
+#[test]
+fn borrow_invalidation_e0418() {
+    assert_borrow_error(
+        r#"
+struct Point { x: int }
+fn observe(point: &Point) -> int { point.x }
+fn bad(point: &mut Point) -> int {
+    observe(point)
+    point.x = 2
+    point.x
+}
+let point = Point { x: 1 }
+bad(&mut point)
+"#,
+        "E0418",
+        "invalidated",
+    );
+}
+
+#[test]
+fn temporary_borrow_e0419() {
+    assert_borrow_error(
+        r#"
+struct Point { x: int }
+fn read(point: &Point) -> int { point.x }
+read(&Point { x: 1 })
+"#,
+        "E0419",
+        "temporary",
+    );
+}

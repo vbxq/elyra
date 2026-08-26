@@ -20,86 +20,94 @@ fn assert_deferred(message: &str, code: &str, fragment: &str) {
 }
 
 #[test]
-fn shared_borrowing_receiver_is_named_and_deferred() {
-    let message = compile_message(
+fn shared_borrowing_receiver_is_accepted_in_stage3() {
+    let result = Runtime::new().compile(
         r#"
 trait Scorable {
     fn score(&self) -> int;
 }
 "#,
+        CompileOptions::default(),
     );
-    assert_deferred(
-        &message,
-        "error[E0111]",
-        "borrowing receiver '&self' is deferred to Stage 3",
+    assert!(
+        result.is_ok(),
+        "Stage 3 shared receiver should compile: {:?}",
+        result.err()
     );
 }
 
 #[test]
-fn mutable_borrowing_receiver_is_named_and_deferred() {
-    let message = compile_message(
+fn mutable_borrowing_receiver_is_accepted_in_stage3() {
+    let result = Runtime::new().compile(
         r#"
 struct Point { x: int }
 impl Point {
     fn bump(&mut self) -> int { 0 }
 }
 "#,
+        CompileOptions::default(),
     );
-    assert_deferred(
-        &message,
-        "error[E0111]",
-        "borrowing receiver '&mut self' is deferred to Stage 3",
+    assert!(
+        result.is_ok(),
+        "Stage 3 mutable receiver should compile: {:?}",
+        result.err()
     );
 }
 
 #[test]
-fn associated_type_in_a_trait_is_named_and_deferred() {
-    let message = compile_message(
+fn associated_type_in_a_trait_is_accepted_in_stage3() {
+    let result = Runtime::new().compile(
         r#"
 trait Container {
     type Item;
     fn count(self) -> int;
 }
 "#,
+        CompileOptions::default(),
     );
-    assert_deferred(
-        &message,
-        "error[E0112]",
-        "associated type is deferred to Stage 3",
+    assert!(
+        result.is_ok(),
+        "Stage 3 associated type should compile: {:?}",
+        result.err()
     );
 }
 
 #[test]
-fn associated_constant_in_a_trait_is_named_and_deferred() {
-    let message = compile_message(
+fn associated_constant_in_a_trait_is_accepted_in_stage3() {
+    let result = Runtime::new().compile(
         r#"
 trait Limits {
     const MAX: int;
     fn ceiling(self) -> int;
 }
 "#,
+        CompileOptions::default(),
     );
-    assert_deferred(
-        &message,
-        "error[E0112]",
-        "associated constant is deferred to Stage 3",
+    assert!(
+        result.is_ok(),
+        "Stage 3 associated constant should compile: {:?}",
+        result.err()
     );
 }
 
 #[test]
-fn associated_type_in_an_impl_is_named_and_deferred() {
-    let message = compile_message(
+fn associated_type_in_an_impl_is_accepted_in_stage3() {
+    let result = Runtime::new().compile(
         r#"
-struct Point { x: int }
-impl Point {
+trait Source {
+    type Item;
+}
+struct Counter { value: int }
+impl Source for Counter {
     type Item = int;
 }
 "#,
+        CompileOptions::default(),
     );
-    assert_deferred(
-        &message,
-        "error[E0112]",
-        "associated type is deferred to Stage 3",
+    assert!(
+        result.is_ok(),
+        "Stage 3 associated type definition should compile: {:?}",
+        result.err()
     );
 }
 

@@ -236,7 +236,7 @@ fn an_imported_display_impl_still_dispatches() {
     let directory = tempfile::tempdir().expect("temporary module directory");
     std::fs::write(
         directory.path().join("shout.aelys"),
-        "pub struct Loud { v: int }\n\nimpl Display for Loud {\n    fn to_display(self) -> string { \"loud\" }\n}\n",
+        "pub struct Loud { pub v: int }\n\nimpl Display for Loud {\n    fn to_display(self) -> string { \"loud\" }\n}\n",
     )
     .expect("write module");
     let main = directory.path().join("main.aelys");
