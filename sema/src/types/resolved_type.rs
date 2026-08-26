@@ -164,6 +164,7 @@ impl ResolvedType {
                 args: args.iter().map(Self::from_infer_type).collect(),
             },
             InferType::Param(name) => ResolvedType::TypeParam(name.clone()),
+            InferType::Projection { .. } => ResolvedType::Poison,
             InferType::Var(id) => ResolvedType::TypeVar(*id),
             InferType::Dynamic => ResolvedType::Dynamic,
             InferType::Poison => ResolvedType::Poison,

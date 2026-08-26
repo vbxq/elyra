@@ -289,6 +289,13 @@ pub enum TypedExprKind {
         expr: Box<TypedExpr>,
         target: InferType,
     },
+
+    /// the monomorphizer replaces this node with the integer literal. it must
+    AssociatedConst {
+        param: String,
+        trait_name: String,
+        item: String,
+    },
 }
 
 #[derive(Debug, Clone)]

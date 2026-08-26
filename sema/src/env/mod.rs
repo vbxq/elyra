@@ -5,12 +5,15 @@ mod functions;
 mod scope;
 
 use crate::types::InferType;
+use aelys_syntax::ReferenceKind;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Default)]
 pub struct TypeEnv {
     locals: Vec<HashMap<String, InferType>>,
+
+    borrow_bindings: Vec<HashMap<String, ReferenceKind>>,
 
     local_mutability: Vec<HashMap<String, bool>>,
 
@@ -21,6 +24,8 @@ pub struct TypeEnv {
     explicit_dynamic_locals: Vec<HashSet<String>>,
 
     captures: HashMap<String, InferType>,
+
+    borrow_captures: HashMap<String, ReferenceKind>,
 
     capture_mutability: HashMap<String, bool>,
 
@@ -38,11 +43,13 @@ impl TypeEnv {
     pub fn new() -> Self {
         Self {
             locals: vec![HashMap::new()],
+            borrow_bindings: vec![HashMap::new()],
             local_mutability: vec![HashMap::new()],
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: HashMap::new(),
+            borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
             explicit_dynamic_captures: HashSet::new(),
             functions: HashMap::new(),

@@ -1,4 +1,5 @@
 use super::InferType;
+use aelys_syntax::ModuleId;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -6,6 +7,7 @@ pub struct StructField {
     pub name: String,
     pub ty: InferType,
     pub is_pub: bool,
+    pub ordinal: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -13,6 +15,8 @@ pub struct StructDef {
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<StructField>,
+    pub owner: ModuleId,
+    pub is_pub: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +46,8 @@ pub struct TraitDef {
     pub type_params: Vec<String>,
     pub super_bounds: Vec<String>,
     pub methods: Vec<TraitMethod>,
+    pub associated_types: Vec<String>,
+    pub associated_consts: Vec<(String, InferType)>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +56,8 @@ pub struct TraitImplDef {
     pub trait_args: Vec<InferType>,
     pub self_type: InferType,
     pub methods: Vec<TraitMethod>,
+    pub associated_types: Vec<(String, InferType)>,
+    pub associated_consts: Vec<(String, InferType, InferType, Option<i64>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +78,8 @@ pub struct EnumDef {
     pub name: String,
     pub type_params: Vec<String>,
     pub variants: Vec<EnumVariantDef>,
+    pub owner: ModuleId,
+    pub is_pub: bool,
 }
 
 // unresolved carries the candidate headers, so a caller never has to rebuild them for the diagnostic
@@ -273,8 +283,8 @@ impl TypeTable {
             .get(structure)?
             .fields
             .iter()
-            .position(|candidate| candidate.name == field)
-            .and_then(|offset| u16::try_from(offset).ok())
+            .find(|candidate| candidate.name == field)
+            .map(|candidate| candidate.ordinal)
     }
 
     pub fn register_method(&mut self, structure: String, method: StructMethod) {
@@ -332,7 +342,57 @@ impl TypeTable {
     }
 
     pub fn types_match(&self, expected: &InferType, actual: &InferType) -> bool {
+        if let InferType::Projection { .. } = expected
+            && let Some(resolved) = self.resolve_projection(expected)
+        {
+            return type_matches(&resolved, actual) || type_matches(actual, &resolved);
+        }
+        if let InferType::Projection { .. } = actual
+            && let Some(resolved) = self.resolve_projection(actual)
+        {
+            return type_matches(&resolved, expected) || type_matches(expected, &resolved);
+        }
         type_matches(expected, actual) || type_matches(actual, expected)
+    }
+
+    pub fn resolve_projection(&self, projection: &InferType) -> Option<InferType> {
+        let InferType::Projection {
+            trait_name,
+            item,
+            self_ty,
+        } = projection
+        else {
+            return None;
+        };
+        if !self_ty.is_concrete() {
+            return None;
+        }
+        let mut found = Vec::new();
+        for implementation in &self.trait_impl_defs {
+            if trait_name
+                .as_deref()
+                .is_some_and(|name| implementation.trait_name != *name)
+            {
+                continue;
+            }
+            if !type_matches(&implementation.self_type, self_ty)
+                && !type_matches(self_ty, &implementation.self_type)
+            {
+                continue;
+            }
+            if let Some((_, ty)) = implementation
+                .associated_types
+                .iter()
+                .find(|(name, _)| name == item)
+            {
+                found.push(ty.clone());
+            }
+        }
+        if found.len() == 1 {
+            Some(found.swap_remove(0))
+        } else {
+            None
+        }
     }
 
     pub fn trait_impl_defs(&self) -> &[TraitImplDef] {
@@ -618,6 +678,18 @@ fn type_matches(pattern: &InferType, actual: &InferType) -> bool {
         (InferType::Option(expected), InferType::Option(found))
         | (InferType::Array(expected), InferType::Array(found))
         | (InferType::Vec(expected), InferType::Vec(found)) => type_matches(expected, found),
+        (
+            InferType::Projection {
+                item: expected_item,
+                self_ty: expected_self,
+                ..
+            },
+            InferType::Projection {
+                item: found_item,
+                self_ty: found_self,
+                ..
+            },
+        ) => expected_item == found_item && type_matches(expected_self, found_self),
         (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err)) => {
             type_matches(expected_ok, found_ok) && type_matches(expected_err, found_err)
         }

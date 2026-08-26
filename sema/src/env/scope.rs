@@ -1,9 +1,11 @@
 use super::TypeEnv;
 use crate::types::InferType;
+use aelys_syntax::ReferenceKind;
 
 impl TypeEnv {
     pub fn push_scope(&mut self) {
         self.locals.push(std::collections::HashMap::new());
+        self.borrow_bindings.push(std::collections::HashMap::new());
         self.local_mutability.push(std::collections::HashMap::new());
         self.read_only_bindings
             .push(std::collections::HashSet::new());
@@ -16,6 +18,7 @@ impl TypeEnv {
     pub fn pop_scope(&mut self) {
         if self.locals.len() > 1 {
             self.locals.pop();
+            self.borrow_bindings.pop();
             self.local_mutability.pop();
             self.read_only_bindings.pop();
             self.known_collection_lengths.pop();
@@ -60,6 +63,20 @@ impl TypeEnv {
             }
         }
         self.capture_mutability.get(name).copied().unwrap_or(false)
+    }
+
+    pub fn define_borrow_binding(&mut self, name: String, kind: ReferenceKind) {
+        if let Some(scope) = self.borrow_bindings.last_mut() {
+            scope.insert(name, kind);
+        }
+    }
+
+    pub fn borrow_kind(&self, name: &str) -> Option<ReferenceKind> {
+        self.borrow_bindings
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+            .or_else(|| self.borrow_captures.get(name).copied())
     }
 
     pub fn define_local_with_collection_length(

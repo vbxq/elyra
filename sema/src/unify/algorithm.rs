@@ -126,6 +126,19 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
             unify(err1, err2, subst)
         }
 
+        (
+            InferType::Projection {
+                item: item1,
+                self_ty: self1,
+                ..
+            },
+            InferType::Projection {
+                item: item2,
+                self_ty: self2,
+                ..
+            },
+        ) if item1 == item2 => unify(self1, self2, subst),
+
         (InferType::Range, InferType::Range) => Ok(()),
 
         (InferType::Tuple(elems1), InferType::Tuple(elems2)) => {

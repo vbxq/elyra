@@ -66,6 +66,15 @@ impl Substitution {
                 name: name.clone(),
                 args: args.iter().map(|arg| self.apply(arg)).collect(),
             },
+            InferType::Projection {
+                trait_name,
+                item,
+                self_ty,
+            } => InferType::Projection {
+                trait_name: trait_name.clone(),
+                item: item.clone(),
+                self_ty: Box::new(self.apply(self_ty)),
+            },
             InferType::I8
             | InferType::I16
             | InferType::I32

@@ -46,6 +46,13 @@ pub enum InferType {
 
     Param(String),
 
+    /// an unresolved associated projection `self::item` or `t::item`.
+    Projection {
+        trait_name: Option<String>,
+        item: String,
+        self_ty: Box<InferType>,
+    },
+
     Var(TypeVarId),
 
     Dynamic,
@@ -96,6 +103,15 @@ impl InferType {
                     .iter()
                     .map(|arg| arg.substitute_params(substitutions))
                     .collect(),
+            },
+            InferType::Projection {
+                trait_name,
+                item,
+                self_ty,
+            } => InferType::Projection {
+                trait_name: trait_name.clone(),
+                item: item.clone(),
+                self_ty: Box::new(self_ty.substitute_params(substitutions)),
             },
             _ => self.clone(),
         }
@@ -170,12 +186,27 @@ impl InferType {
             InferType::Result(ok, err) => ok.contains_poison() || err.contains_poison(),
             InferType::Tuple(elements) => elements.iter().any(Self::contains_poison),
             InferType::Applied { args, .. } => args.iter().any(Self::contains_poison),
+            InferType::Projection { self_ty, .. } => self_ty.contains_poison(),
             _ => false,
         }
     }
 
     pub fn is_resolved(&self) -> bool {
         !self.has_vars()
+    }
+
+    pub fn item_name(&self) -> &str {
+        match self {
+            InferType::Projection { item, .. } => item,
+            _ => "",
+        }
+    }
+
+    pub fn self_ty(&self) -> &InferType {
+        match self {
+            InferType::Projection { self_ty, .. } => self_ty,
+            _ => self,
+        }
     }
 
     pub fn is_concrete(&self) -> bool {
@@ -193,6 +224,7 @@ impl InferType {
             InferType::UntypedNative(_)
             | InferType::Var(_)
             | InferType::Param(_)
+            | InferType::Projection { .. }
             | InferType::Dynamic
             | InferType::Poison => false,
             InferType::I8
@@ -445,6 +477,14 @@ impl fmt::Display for InferType {
                 write!(f, ">")
             }
             InferType::Param(name) => write!(f, "{name}"),
+            InferType::Projection {
+                trait_name,
+                item,
+                self_ty,
+            } => match trait_name {
+                Some(trait_name) => write!(f, "<{} as {}>::{}", self_ty, trait_name, item),
+                None => write!(f, "{}::{}", self_ty, item),
+            },
             InferType::Var(_) => write!(f, "inferred type"),
             InferType::Dynamic => write!(f, "dynamic"),
             InferType::Poison => write!(f, "poisoned type"),

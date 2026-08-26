@@ -5,11 +5,13 @@ impl TypeEnv {
     pub fn for_function(&self) -> TypeEnv {
         TypeEnv {
             locals: vec![HashMap::new()],
+            borrow_bindings: vec![HashMap::new()],
             local_mutability: vec![HashMap::new()],
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: HashMap::new(),
+            borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
             explicit_dynamic_captures: HashSet::new(),
             functions: self.functions.clone(),
@@ -20,6 +22,7 @@ impl TypeEnv {
 
     pub fn for_closure(&self) -> TypeEnv {
         let mut all_visible = HashMap::new();
+        let mut all_borrowed = HashMap::new();
         let mut explicit_dynamic = HashSet::new();
         let mut capture_mutability = HashMap::new();
         let mut known_collection_lengths = HashMap::new();
@@ -31,6 +34,10 @@ impl TypeEnv {
                 }
                 all_visible.insert(name.clone(), ty.clone());
             }
+        }
+
+        for borrowed in &self.borrow_bindings {
+            all_borrowed.extend(borrowed.iter().map(|(name, kind)| (name.clone(), *kind)));
         }
 
         for (scope, mutability) in self.locals.iter().zip(&self.local_mutability) {
@@ -47,6 +54,9 @@ impl TypeEnv {
 
         for (name, ty) in &self.captures {
             all_visible.insert(name.clone(), ty.clone());
+            if let Some(kind) = self.borrow_captures.get(name) {
+                all_borrowed.insert(name.clone(), *kind);
+            }
             capture_mutability.insert(
                 name.clone(),
                 self.capture_mutability.get(name).copied().unwrap_or(false),
@@ -56,11 +66,13 @@ impl TypeEnv {
 
         TypeEnv {
             locals: vec![HashMap::new()],
+            borrow_bindings: vec![HashMap::new()],
             local_mutability: vec![HashMap::new()],
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![known_collection_lengths],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: all_visible,
+            borrow_captures: all_borrowed,
             capture_mutability,
             explicit_dynamic_captures: explicit_dynamic,
             functions: self.functions.clone(),

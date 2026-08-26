@@ -1,6 +1,6 @@
 use super::ConstraintReason;
 use crate::types::{InferType, TypeVarId};
-use aelys_syntax::Span;
+use aelys_syntax::{ModuleId, Span};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -14,6 +14,19 @@ impl TypeError {
     pub fn diagnostic_code(&self) -> u16 {
         self.kind.diagnostic_code()
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ProjectionFailure {
+    Unbound,
+    NoImpl,
+    InvalidLength,
+    /// the constant is defined, but its value cannot be computed: the checked
+    NotComputable,
+    NotConstant,
+    LengthFromTypeParameter,
+    Ambiguous { traits: Vec<String> },
+    Cyclic { path: Vec<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -193,8 +206,43 @@ pub enum TypeErrorKind {
     ImmutableStructField {
         field: String,
     },
+    PrivateFieldAccess {
+        structure: String,
+        field: String,
+        owner: ModuleId,
+        current: ModuleId,
+        operation: String,
+    },
+    PrivateFieldConstruction {
+        structure: String,
+        field: String,
+        owner: ModuleId,
+        current: ModuleId,
+        operation: String,
+    },
     ImmutableStructMethod {
         method: String,
+    },
+    SharedLoanMutation {
+        place: String,
+    },
+    MutableLoanOverlap {
+        place: String,
+    },
+    MutableLoanAccess {
+        place: String,
+        access: String,
+    },
+    BorrowEscapes {
+        place: String,
+        context: String,
+    },
+    BorrowInvalidated {
+        place: String,
+        context: String,
+    },
+    TemporaryBorrow {
+        place: String,
     },
     UnknownTrait {
         name: String,
@@ -202,6 +250,39 @@ pub enum TypeErrorKind {
     MissingTraitMethod {
         trait_name: String,
         method: String,
+    },
+    MissingAssociatedItem {
+        trait_name: String,
+        item: String,
+    },
+    DuplicateAssociatedItem {
+        trait_name: String,
+        item: String,
+    },
+    AssociatedItemTypeMismatch {
+        trait_name: String,
+        item: String,
+    },
+    AmbiguousAssociatedProjection {
+        receiver: String,
+        item: String,
+        cause: ProjectionFailure,
+    },
+    AssociatedProjectionLimit {
+        receiver: String,
+        item: String,
+        limit: usize,
+    },
+    AssociatedItemOutsideTraitImpl {
+        target: String,
+        item: String,
+        keyword: &'static str,
+    },
+    AssociatedBindingMismatch {
+        trait_name: String,
+        item: String,
+        requested: InferType,
+        found: InferType,
     },
     DuplicateTraitImpl {
         trait_name: String,
@@ -599,6 +680,28 @@ impl fmt::Display for TypeError {
             TypeErrorKind::ImmutableStructField { field } => {
                 write!(f, "cannot assign to immutable struct field '{}'", field)
             }
+            TypeErrorKind::PrivateFieldAccess {
+                structure,
+                field,
+                owner,
+                current,
+                operation,
+            } => write!(
+                f,
+                "private field '{}.{}' cannot be {}: owner module '{}', current module '{}'; {}\n   = help: declare the field `pub` or access it from the owner module or a descendant",
+                structure, field, operation, owner, current, self.reason
+            ),
+            TypeErrorKind::PrivateFieldConstruction {
+                structure,
+                field,
+                owner,
+                current,
+                operation,
+            } => write!(
+                f,
+                "private field '{}.{}' cannot be used in {}: owner module '{}', current module '{}'; {}\n   = help: declare the field `pub`, use a public constructor, or omit it with a rest pattern",
+                structure, field, operation, owner, current, self.reason
+            ),
             TypeErrorKind::ImmutableStructMethod { method } => {
                 write!(
                     f,
@@ -606,11 +709,122 @@ impl fmt::Display for TypeError {
                     method
                 )
             }
+            TypeErrorKind::SharedLoanMutation { place } => write!(
+                f,
+                "cannot mutate '{}': shared loan is read-only\n   = help: use '&mut {}' and a mutable root when mutation is required",
+                place, place
+            ),
+            TypeErrorKind::MutableLoanOverlap { place } => write!(
+                f,
+                "borrow of '{}' would overlap an existing mutable loan\n   = help: end the first borrow before taking another mutable loan",
+                place
+            ),
+            TypeErrorKind::MutableLoanAccess { place, access } => write!(
+                f,
+                "cannot {} '{}': a mutable loan is live\n   = help: finish the mutable borrow before reading, moving, writing, or reallocating the place",
+                access, place
+            ),
+            TypeErrorKind::BorrowEscapes { place, context } => write!(
+                f,
+                "borrow of '{}' escapes its call-scoped region ({})\n   = help: keep the borrow in a call argument or receiver position",
+                place, context
+            ),
+            TypeErrorKind::BorrowInvalidated { place, context } => write!(
+                f,
+                "borrow of '{}' was invalidated by {}\n   = help: do not mutate, move, or reallocate a place while its forwarded loan is live",
+                place, context
+            ),
+            TypeErrorKind::TemporaryBorrow { place } => write!(
+                f,
+                "cannot borrow temporary '{}': temporary borrow has no live owner\n   = help: bind the value to a local before borrowing it",
+                place
+            ),
             TypeErrorKind::UnknownTrait { name } => write!(f, "unknown trait '{}'", name),
             TypeErrorKind::MissingTraitMethod { trait_name, method } => write!(
                 f,
                 "trait '{}' is not implemented for this type: missing method '{}'",
                 trait_name, method
+            ),
+            TypeErrorKind::MissingAssociatedItem { trait_name, item } => write!(
+                f,
+                "implementation of trait '{}' is missing required associated item '{}'; define 'type {item}' or 'const {item}' in the impl body",
+                trait_name, item
+            ),
+            TypeErrorKind::DuplicateAssociatedItem { trait_name, item } => write!(
+                f,
+                "implementation of trait '{}' defines associated item '{}' more than once; each required item must be defined exactly once",
+                trait_name, item
+            ),
+            TypeErrorKind::AssociatedItemTypeMismatch { trait_name, item } => write!(
+                f,
+                "associated item '{}' in impl of trait '{}' has a different type than the trait declaration; declare the same type as the trait",
+                item, trait_name
+            ),
+            TypeErrorKind::AmbiguousAssociatedProjection {
+                receiver,
+                item,
+                cause,
+            } => match cause {
+                ProjectionFailure::Unbound => write!(
+                    f,
+                    "projection '{receiver}::{item}' cannot be resolved: no bound in scope declares '{item}'; add a bound on '{receiver}' whose trait declares '{item}'"
+                ),
+                ProjectionFailure::NoImpl => write!(
+                    f,
+                    "projection '{receiver}::{item}' cannot be resolved: no impl for '{receiver}' defines '{item}'; define it in an impl of a trait that declares '{item}'"
+                ),
+                ProjectionFailure::InvalidLength => write!(
+                    f,
+                    "constant '{receiver}::{item}' cannot be an array length: its value is negative or too large; give it a value between 0 and the maximum array length"
+                ),
+                ProjectionFailure::NotComputable => write!(
+                    f,
+                    "constant '{receiver}::{item}' is defined but its value cannot be computed: the arithmetic overflows or divides by zero; give it a value that evaluates"
+                ),
+                ProjectionFailure::NotConstant => write!(
+                    f,
+                    "constant '{receiver}::{item}' is defined but its value is not a constant integer expression; use integer literals and '+ - * / %' only"
+                ),
+                ProjectionFailure::LengthFromTypeParameter => write!(
+                    f,
+                    "array length '{receiver}::{item}' depends on the type parameter '{receiver}', and a fixed-array length must be known where the array is written; use a concrete receiver such as 'Bounds::{item}', or a growable array"
+                ),
+                ProjectionFailure::Ambiguous { traits } => write!(
+                    f,
+                    "projection '{receiver}::{item}' is ambiguous: {} both define '{item}' for {receiver}; remove one of the competing impls, or rename the item so a single trait provides it",
+                    traits.join(" and ")
+                ),
+                ProjectionFailure::Cyclic { path } => write!(
+                    f,
+                    "projection '{receiver}::{item}' forms a cycle: its definition resolves back to itself through {}; give the associated type a concrete definition to break the cycle",
+                    path.join(" -> ")
+                ),
+            },
+            TypeErrorKind::AssociatedProjectionLimit {
+                receiver,
+                item,
+                limit,
+            } => write!(
+                f,
+                "resolving projection '{receiver}::{item}' expands to more than {limit} type nodes; an associated type that names another one more than once doubles the expansion at each step, so give one of them a concrete definition"
+            ),
+            TypeErrorKind::AssociatedItemOutsideTraitImpl {
+                target,
+                item,
+                keyword,
+            } => write!(
+                f,
+                "associated item '{keyword} {item}' is defined in the inherent impl of '{target}', where no trait declares it; move it into an impl of a trait that declares '{item}'"
+            ),
+            TypeErrorKind::AssociatedBindingMismatch {
+                trait_name,
+                item,
+                requested,
+                found,
+            } => write!(
+                f,
+                "associated binding '{}::{} = {}' disagrees with the selected impl, which provides {}; change the requested binding or the impl",
+                trait_name, item, requested, found
             ),
             TypeErrorKind::DuplicateTraitImpl { trait_name, target } => write!(
                 f,
@@ -861,6 +1075,8 @@ impl TypeErrorKind {
             Self::InvalidStringMethod { .. } => 312,
             Self::ModuleMemberNotPublic { .. } => 313,
             Self::ModulePathSeparator { .. } => 411,
+            Self::PrivateFieldAccess { .. } => 412,
+            Self::PrivateFieldConstruction { .. } => 413,
             Self::SizedArrayElementNotDefaultable { .. } => 314,
             Self::NegativeArraySize { .. } => 315,
             Self::NonConstantArrayRepeat => 316,
@@ -879,8 +1095,21 @@ impl TypeErrorKind {
             Self::InvalidStructMethod { .. } => 329,
             Self::ImmutableStructField { .. } => 330,
             Self::ImmutableStructMethod { .. } => 331,
+            Self::SharedLoanMutation { .. } => 414,
+            Self::MutableLoanOverlap { .. } => 415,
+            Self::MutableLoanAccess { .. } => 416,
+            Self::BorrowEscapes { .. } => 417,
+            Self::BorrowInvalidated { .. } => 418,
+            Self::TemporaryBorrow { .. } => 419,
             Self::UnknownTrait { .. } => 332,
             Self::MissingTraitMethod { .. } => 333,
+            Self::MissingAssociatedItem { .. } => 421,
+            Self::AssociatedItemTypeMismatch { .. } => 422,
+            Self::AmbiguousAssociatedProjection { .. } => 423,
+            Self::AssociatedItemOutsideTraitImpl { .. } => 425,
+            Self::AssociatedProjectionLimit { .. } => 427,
+            Self::AssociatedBindingMismatch { .. } => 424,
+            Self::DuplicateAssociatedItem { .. } => 426,
             Self::DuplicateTraitImpl { .. } => 334,
             Self::TraitMethodNotInTrait { .. } => 335,
             Self::TraitMethodSignatureMismatch { .. } => 336,
