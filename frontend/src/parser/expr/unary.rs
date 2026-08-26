@@ -4,6 +4,20 @@ use aelys_syntax::{Expr, ExprKind, TokenKind, UnaryOp};
 
 impl Parser {
     pub(super) fn unary(&mut self) -> Result<Expr> {
+        if self.match_token(&TokenKind::Ampersand) {
+            let start = self.previous().span;
+            let mutable = self.match_token(&TokenKind::Mut);
+            let operand = self.unary()?;
+            let span = start.merge(operand.span);
+            return Ok(Expr::new(
+                ExprKind::Borrow {
+                    mutable,
+                    operand: Box::new(operand),
+                },
+                span,
+            ));
+        }
+
         if self.match_token(&TokenKind::Minus) {
             let start = self.previous().span;
             let operand = self.unary()?;

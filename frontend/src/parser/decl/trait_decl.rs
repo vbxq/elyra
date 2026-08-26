@@ -26,18 +26,52 @@ impl Parser {
 
         self.consume(&TokenKind::LBrace, "{")?;
         let mut methods = Vec::new();
+        let mut associated_types = Vec::new();
+        let mut associated_consts = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             if self.match_token(&TokenKind::Semicolon) {
                 continue;
             }
-            self.reject_deferred_body_item()?;
-            if !self.check(&TokenKind::Fn) {
-                return Err(self.error(CompileErrorKind::UnexpectedToken {
-                    expected: "fn in trait declaration".to_string(),
-                    found: self.peek().kind.to_string(),
-                }));
+            if self.check(&TokenKind::Fn) {
+                methods.push(self.trait_method_declaration()?);
+                continue;
             }
-            methods.push(self.trait_method_declaration()?);
+            if let TokenKind::Identifier(word) = &self.peek().kind
+                && matches!(self.peek_at(1).kind, TokenKind::Identifier(_))
+            {
+                let item_span = self.peek().span;
+                match word.as_str() {
+                    "type" => {
+                        self.advance();
+                        let name = self.consume_identifier("associated type name")?;
+                        associated_types.push(aelys_syntax::AssociatedTypeDecl {
+                            name,
+                            span: item_span.merge(self.previous().span),
+                        });
+                        self.match_token(&TokenKind::Semicolon);
+                        continue;
+                    }
+                    "const" => {
+                        self.advance();
+                        let name = self.consume_identifier("associated constant name")?;
+                        self.consume(&TokenKind::Colon, ":")?;
+                        let type_annotation = self.parse_type_annotation()?;
+                        associated_consts.push(aelys_syntax::AssociatedConstDecl {
+                            name,
+                            type_annotation,
+                            span: item_span.merge(self.previous().span),
+                        });
+                        self.match_token(&TokenKind::Semicolon);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            self.reject_deferred_body_item()?;
+            return Err(self.error(CompileErrorKind::UnexpectedToken {
+                expected: "fn, type, or const in trait declaration".to_string(),
+                found: self.peek().kind.to_string(),
+            }));
         }
         self.consume(&TokenKind::RBrace, "}")?;
 
@@ -48,6 +82,8 @@ impl Parser {
                 super_bounds,
                 where_clauses,
                 methods,
+                associated_types,
+                associated_consts,
                 is_pub,
             },
             start_span.merge(self.previous().span),
@@ -124,14 +160,7 @@ impl Parser {
         let TokenKind::Identifier(word) = &self.peek().kind else {
             return Ok(());
         };
-        let named_next = matches!(self.peek_at(1).kind, TokenKind::Identifier(_));
         match word.as_str() {
-            "type" if named_next => Err(self.error(CompileErrorKind::AssociatedItemDeferred {
-                item: "type".to_string(),
-            })),
-            "const" if named_next => Err(self.error(CompileErrorKind::AssociatedItemDeferred {
-                item: "constant".to_string(),
-            })),
             "default" if matches!(self.peek_at(1).kind, TokenKind::Fn) => {
                 Err(self.error(CompileErrorKind::SpecializationDeferred))
             }

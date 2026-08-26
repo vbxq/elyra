@@ -46,9 +46,56 @@ impl Parser {
 
         self.consume(&TokenKind::LBrace, "{")?;
         let mut methods = Vec::new();
+        let mut associated_types = Vec::new();
+        let mut associated_consts = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             if self.match_token(&TokenKind::Semicolon) {
                 continue;
+            }
+            if self.check(&TokenKind::Fn) {
+                let method = self.function_declaration(Vec::new(), false)?;
+                let StmtKind::Function(method) = method.kind else {
+                    unreachable!("impl parser only accepts functions")
+                };
+                methods.push(method);
+                continue;
+            }
+            if let TokenKind::Identifier(word) = &self.peek().kind
+                && matches!(self.peek_at(1).kind, TokenKind::Identifier(_))
+            {
+                let item_span = self.peek().span;
+                match word.as_str() {
+                    "type" => {
+                        self.advance();
+                        let name = self.consume_identifier("associated type name")?;
+                        self.consume(&TokenKind::Eq, "=")?;
+                        let value = self.parse_type_annotation()?;
+                        associated_types.push(aelys_syntax::AssociatedTypeDef {
+                            name,
+                            value,
+                            span: item_span.merge(self.previous().span),
+                        });
+                        self.match_token(&TokenKind::Semicolon);
+                        continue;
+                    }
+                    "const" => {
+                        self.advance();
+                        let name = self.consume_identifier("associated constant name")?;
+                        self.consume(&TokenKind::Colon, ":")?;
+                        let type_annotation = self.parse_type_annotation()?;
+                        self.consume(&TokenKind::Eq, "=")?;
+                        let value = self.expression()?;
+                        associated_consts.push(aelys_syntax::AssociatedConstDef {
+                            name,
+                            type_annotation,
+                            value,
+                            span: item_span.merge(self.previous().span),
+                        });
+                        self.match_token(&TokenKind::Semicolon);
+                        continue;
+                    }
+                    _ => {}
+                }
             }
             self.reject_deferred_body_item()?;
             let method = self.function_declaration(Vec::new(), false)?;
@@ -65,6 +112,8 @@ impl Parser {
                 self_type,
                 where_clauses,
                 methods,
+                associated_types,
+                associated_consts,
             },
             start_span.merge(self.previous().span),
         ))

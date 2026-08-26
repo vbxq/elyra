@@ -1,7 +1,7 @@
 use super::Parser;
 use aelys_common::Result;
 use aelys_common::error::CompileErrorKind;
-use aelys_syntax::{Parameter, TokenKind, TypeAnnotation};
+use aelys_syntax::{Parameter, ReferenceKind, TokenKind, TypeAnnotation};
 
 // can never build a type the binary format cannot carry
 const MAX_TYPE_NESTING_DEPTH: usize = 64;
@@ -23,6 +23,23 @@ impl Parser {
     fn parse_type_annotation_inner(&mut self) -> Result<TypeAnnotation> {
         let start_span = self.peek().span;
 
+        if self.match_token(&TokenKind::Ampersand) {
+            let reference = if self.match_token(&TokenKind::Mut) {
+                ReferenceKind::Mutable
+            } else {
+                ReferenceKind::Shared
+            };
+            let inner = self.parse_type_annotation()?;
+            if inner.reference.is_some() {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "a concrete type after '&'".to_string(),
+                    found: "reference type".to_string(),
+                }));
+            }
+            let span = start_span.merge(inner.span);
+            return Ok(inner.with_reference(reference, span));
+        }
+
         if self.match_token(&TokenKind::Fn) {
             return self.parse_function_type_annotation(start_span);
         }
@@ -33,6 +50,20 @@ impl Parser {
             let length_token = self.advance().clone();
             let length = match length_token.kind {
                 TokenKind::Int(value) if value >= 0 => value as u64,
+                TokenKind::Identifier(name) => {
+                    // `[t; bounds::limit]` symbolic length from an associated
+                    let mut path = vec![name];
+                    while self.match_token(&TokenKind::ColonColon) {
+                        path.push(self.consume_identifier("associated constant path segment")?);
+                    }
+                    self.consume(&TokenKind::RBracket, "]")?;
+                    let end_span = self.previous().span;
+                    return Ok(TypeAnnotation::fixed_array_symbolic(
+                        element,
+                        path,
+                        start_span.merge(end_span),
+                    ));
+                }
                 _ => {
                     return Err(self.error(CompileErrorKind::UnexpectedToken {
                         expected: "non-negative array length".to_string(),
@@ -69,6 +100,28 @@ impl Parser {
         }
 
         if self.match_token(&TokenKind::Lt) {
+            if matches!(self.peek().kind, TokenKind::Identifier(_))
+                && matches!(self.peek_at(1).kind, TokenKind::Eq)
+            {
+                let mut bindings = Vec::new();
+                loop {
+                    let binding_name = self.consume_identifier("associated binding name")?;
+                    self.consume(&TokenKind::Eq, "=")?;
+                    let binding_ty = self.parse_type_annotation()?;
+                    bindings.push((binding_name, binding_ty));
+                    if !self.match_token(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.consume_generic_close()?;
+                let end_span = self.previous().span;
+                let mut annotation =
+                    TypeAnnotation::new(path.last().cloned().unwrap_or(first_name), start_span);
+                annotation.path = path;
+                annotation.associated_bindings = bindings;
+                annotation.span = start_span.merge(end_span);
+                return Ok(annotation);
+            }
             let mut type_params = vec![self.parse_type_annotation()?];
             while self.match_token(&TokenKind::Comma) {
                 type_params.push(self.parse_type_annotation()?);
@@ -147,34 +200,33 @@ impl Parser {
         }))
     }
 
-    fn reject_borrowing_receiver(&self) -> Result<()> {
-        if !self.check(&TokenKind::Ampersand) {
-            return Ok(());
-        }
-        let borrows_mutably = matches!(self.peek_at(1).kind, TokenKind::Mut);
-        let name_offset = if borrows_mutably { 2 } else { 1 };
-        let receives_self = matches!(
-            &self.peek_at(name_offset).kind,
-            TokenKind::Identifier(name) if name == "self"
-        );
-        if !receives_self {
-            return Ok(());
-        }
-        let form = if borrows_mutably {
-            "&mut self"
-        } else {
-            "&self"
-        };
-        Err(self.error(CompileErrorKind::BorrowingReceiverDeferred {
-            form: form.to_string(),
-        }))
-    }
-
     pub fn parse_parameter(&mut self) -> Result<Parameter> {
         let span = self.peek().span;
-        self.reject_borrowing_receiver()?;
-        let mutable = self.match_token(&TokenKind::Mut);
-        let name = self.consume_identifier("parameter name")?;
+        let receiver_reference = if self.match_token(&TokenKind::Ampersand) {
+            let reference = if self.match_token(&TokenKind::Mut) {
+                ReferenceKind::Mutable
+            } else {
+                ReferenceKind::Shared
+            };
+            let name = self.consume_identifier("parameter name")?;
+            if name != "self" {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "'self' after a receiver borrow".to_string(),
+                    found: name,
+                }));
+            }
+            Some(reference)
+        } else {
+            None
+        };
+        let mutable = receiver_reference
+            .is_some_and(|reference| reference == ReferenceKind::Mutable)
+            || self.match_token(&TokenKind::Mut);
+        let name = if receiver_reference.is_some() {
+            "self".to_string()
+        } else {
+            self.consume_identifier("parameter name")?
+        };
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {
             Some(self.parse_type_annotation()?)
@@ -183,11 +235,13 @@ impl Parser {
         };
 
         let end_span = self.previous().span;
-        Ok(Parameter::new(
-            name,
-            mutable,
-            type_annotation,
-            span.merge(end_span),
-        ))
+        let mut parameter = Parameter::new(name, mutable, type_annotation, span.merge(end_span));
+        parameter.reference = receiver_reference.or_else(|| {
+            parameter
+                .type_annotation
+                .as_ref()
+                .and_then(|annotation| annotation.reference)
+        });
+        Ok(parameter)
     }
 }

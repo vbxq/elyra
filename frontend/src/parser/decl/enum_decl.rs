@@ -72,6 +72,7 @@ impl Parser {
                         continue;
                     }
                     let field_span = self.peek().span;
+                    let field_is_pub = self.match_token(&TokenKind::Pub);
                     let field_name = self.consume_identifier("enum field name")?;
                     if fields
                         .iter()
@@ -87,7 +88,7 @@ impl Parser {
                     fields.push(StructFieldDecl {
                         name: field_name,
                         type_annotation,
-                        is_pub: false,
+                        is_pub: field_is_pub,
                         span: field_span.merge(end_span),
                     });
                     if !self.match_token(&TokenKind::Comma)
