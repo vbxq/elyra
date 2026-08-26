@@ -1,11 +1,12 @@
 use super::expr::{Expr, Parameter, TypeAnnotation};
-use crate::Span;
+use crate::{ModuleId, Span};
 
 #[derive(Debug, Clone)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
     pub read_only: bool,
+    pub definition_module: Option<ModuleId>,
 }
 
 impl Stmt {
@@ -14,6 +15,7 @@ impl Stmt {
             kind,
             span,
             read_only: false,
+            definition_module: None,
         }
     }
 
@@ -22,7 +24,13 @@ impl Stmt {
             kind,
             span,
             read_only: true,
+            definition_module: None,
         }
+    }
+
+    pub fn with_definition_module(mut self, module: ModuleId) -> Self {
+        self.definition_module = Some(module);
+        self
     }
 }
 
@@ -75,6 +83,8 @@ pub enum StmtKind {
         self_type: TypeAnnotation,
         where_clauses: Vec<WhereClause>,
         methods: Vec<Function>,
+        associated_types: Vec<AssociatedTypeDef>,
+        associated_consts: Vec<AssociatedConstDef>,
     },
     TraitDecl {
         name: String,
@@ -82,6 +92,8 @@ pub enum StmtKind {
         super_bounds: Vec<TypeAnnotation>,
         where_clauses: Vec<WhereClause>,
         methods: Vec<TraitMethod>,
+        associated_types: Vec<AssociatedTypeDecl>,
+        associated_consts: Vec<AssociatedConstDecl>,
         is_pub: bool,
     },
     Needs(NeedsStmt),
@@ -127,6 +139,34 @@ pub enum EnumVariantFields {
 pub struct TraitMethod {
     pub function: Function,
     pub has_body: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedTypeDecl {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedConstDecl {
+    pub name: String,
+    pub type_annotation: TypeAnnotation,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedTypeDef {
+    pub name: String,
+    pub value: TypeAnnotation,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociatedConstDef {
+    pub name: String,
+    pub type_annotation: TypeAnnotation,
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

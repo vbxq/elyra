@@ -1,5 +1,11 @@
 use crate::Span;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceKind {
+    Shared,
+    Mutable,
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeAnnotation {
     pub name: String,
@@ -8,6 +14,10 @@ pub struct TypeAnnotation {
     pub fn_params: Option<Vec<TypeAnnotation>>,
     pub fn_ret: Option<Box<TypeAnnotation>>,
     pub array_length: Option<u64>,
+    /// `[t; bounds::limit]` a symbolic fixed-array length resolved from an
+    pub array_length_path: Option<Vec<String>>,
+    pub associated_bindings: Vec<(String, TypeAnnotation)>,
+    pub reference: Option<ReferenceKind>,
     pub span: Span,
 }
 
@@ -20,6 +30,9 @@ impl TypeAnnotation {
             fn_params: None,
             fn_ret: None,
             array_length: None,
+            array_length_path: None,
+            associated_bindings: Vec::new(),
+            reference: None,
             span,
         }
     }
@@ -32,6 +45,9 @@ impl TypeAnnotation {
             fn_params: None,
             fn_ret: None,
             array_length: None,
+            array_length_path: None,
+            associated_bindings: Vec::new(),
+            reference: None,
             span,
         }
     }
@@ -48,6 +64,9 @@ impl TypeAnnotation {
             fn_params: Some(params),
             fn_ret: Some(Box::new(ret)),
             array_length: None,
+            array_length_path: None,
+            associated_bindings: Vec::new(),
+            reference: None,
             span,
         }
     }
@@ -60,12 +79,36 @@ impl TypeAnnotation {
             fn_params: None,
             fn_ret: None,
             array_length: Some(length),
+            array_length_path: None,
+            associated_bindings: Vec::new(),
+            reference: None,
+            span,
+        }
+    }
+
+    pub fn fixed_array_symbolic(element: TypeAnnotation, path: Vec<String>, span: Span) -> Self {
+        Self {
+            name: "array".to_string(),
+            path: vec!["array".to_string()],
+            type_params: vec![element],
+            fn_params: None,
+            fn_ret: None,
+            array_length: None,
+            array_length_path: Some(path),
+            associated_bindings: Vec::new(),
+            reference: None,
             span,
         }
     }
 
     pub fn is_function_type(&self) -> bool {
         self.fn_params.is_some()
+    }
+
+    pub fn with_reference(mut self, reference: ReferenceKind, span: Span) -> Self {
+        self.reference = Some(reference);
+        self.span = span;
+        self
     }
 }
 
@@ -74,6 +117,7 @@ pub struct Parameter {
     pub name: String,
     pub mutable: bool,
     pub type_annotation: Option<TypeAnnotation>, // None = inferred
+    pub reference: Option<ReferenceKind>,
     pub span: Span,
 }
 
@@ -88,6 +132,7 @@ impl Parameter {
             name,
             mutable,
             type_annotation,
+            reference: None,
             span,
         }
     }
@@ -97,6 +142,7 @@ impl Parameter {
             name,
             mutable: false,
             type_annotation: None,
+            reference: None,
             span,
         }
     }
@@ -153,6 +199,10 @@ pub enum ExprKind {
     },
     Unary {
         op: UnaryOp,
+        operand: Box<Expr>,
+    },
+    Borrow {
+        mutable: bool,
         operand: Box<Expr>,
     },
 
