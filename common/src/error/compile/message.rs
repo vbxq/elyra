@@ -42,9 +42,6 @@ impl CompileErrorKind {
             Self::BorrowingReceiverDeferred { form } => format!(
                 "borrowing receiver '{form}' is deferred to Stage 3\n   = help: Stage 2 methods take the receiver by value; write 'self'"
             ),
-            Self::AssociatedItemDeferred { item } => format!(
-                "associated {item} is deferred to Stage 3\n   = help: a Stage 2 trait or impl body holds only 'fn' items"
-            ),
             Self::TraitObjectDeferred { trait_name } => format!(
                 "trait object 'dyn {trait_name}' is deferred to Stage 3\n   = help: take a generic type parameter bound by {trait_name} instead"
             ),
@@ -159,6 +156,28 @@ impl CompileErrorKind {
             Self::ModulePathSeparator { module, member } => format!(
                 "module members are reached with '::'; write '{}::{}'",
                 module, member
+            ),
+            Self::PrivateFieldAccess {
+                structure,
+                field,
+                owner,
+                current,
+                operation,
+                reason,
+            } => format!(
+                "private field '{}.{}' cannot be {}: owner module '{}', current module '{}'; {}\n   = help: declare the field `pub` or access it from the owner module or a descendant",
+                structure, field, operation, owner, current, reason
+            ),
+            Self::PrivateFieldConstruction {
+                structure,
+                field,
+                owner,
+                current,
+                operation,
+                reason,
+            } => format!(
+                "private field '{}.{}' cannot be used in {}: owner module '{}', current module '{}'; {}\n   = help: declare the field `pub`, use a public constructor, or omit it with a rest pattern",
+                structure, field, operation, owner, current, reason
             ),
             Self::NonExhaustiveMatch { missing } => format!(
                 "non-exhaustive match; missing {}\n   = help: add a missing arm or '_'",

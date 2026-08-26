@@ -37,9 +37,6 @@ pub enum CompileErrorKind {
     BorrowingReceiverDeferred {
         form: String,
     },
-    AssociatedItemDeferred {
-        item: String,
-    },
     TraitObjectDeferred {
         trait_name: String,
     },
@@ -115,6 +112,22 @@ pub enum CompileErrorKind {
     ModulePathSeparator {
         module: String,
         member: String,
+    },
+    PrivateFieldAccess {
+        structure: String,
+        field: String,
+        owner: String,
+        current: String,
+        operation: String,
+        reason: String,
+    },
+    PrivateFieldConstruction {
+        structure: String,
+        field: String,
+        owner: String,
+        current: String,
+        operation: String,
+        reason: String,
     },
 
     NonExhaustiveMatch {

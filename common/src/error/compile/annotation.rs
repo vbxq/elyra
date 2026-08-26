@@ -18,7 +18,6 @@ impl CompileErrorKind {
             Self::TypeNestingTooDeep { .. } => "nesting limit exceeded",
             Self::UnexpectedToken { .. } => "unexpected token",
             Self::BorrowingReceiverDeferred { .. } => "borrowing receivers arrive in Stage 3",
-            Self::AssociatedItemDeferred { .. } => "associated items arrive in Stage 3",
             Self::TraitObjectDeferred { .. } => "trait objects arrive in Stage 3",
             Self::NegativeImplDeferred => "negative impls arrive in Stage 3",
             Self::SpecializationDeferred => "specialization arrives in Stage 3",
