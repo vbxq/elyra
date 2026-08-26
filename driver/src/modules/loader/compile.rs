@@ -7,7 +7,7 @@ use aelys_frontend::parser::Parser;
 use aelys_opt::Optimizer;
 use aelys_runtime::VM;
 use aelys_sema::{InferType, TypeInference, TypedStmtKind};
-use aelys_syntax::{Source, StmtKind};
+use aelys_syntax::{ModuleId, Source, StmtKind};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -134,7 +134,9 @@ impl ModuleLoader {
                             nominal_scope,
                         );
                     imported_types.extend(selected);
-                    imported_impl_stmts.extend(selected_impls);
+                    imported_impl_stmts.extend(selected_impls.into_iter().map(|stmt| {
+                        stmt.with_definition_module(ModuleId::new(nested_module_path.clone()))
+                    }));
 
                     match &nested_needs.kind {
                         aelys_syntax::ImportKind::Module { alias: None }
@@ -196,7 +198,7 @@ impl ModuleLoader {
             )
             .collect();
 
-        let inference_result = TypeInference::infer_program_full_with_native_signatures(
+        let inference_result = TypeInference::infer_program_full_with_native_signatures_in_module(
             main_stmts,
             module_source.clone(),
             module_aliases.clone(),
@@ -204,6 +206,7 @@ impl ModuleLoader {
             known_native_globals.clone(),
             native_signatures,
             imported_types,
+            ModuleId::new(module_path_str),
         )
         .map_err(|errors| {
             if let Some(err) = errors.first() {

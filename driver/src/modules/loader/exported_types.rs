@@ -215,19 +215,30 @@ pub fn collect_exported_types(
     Ok(exported)
 }
 
-const BOUNDARY_REASON: &str = "a value of a nominal type cannot cross a module boundary yet because a struct or enum schema id is assigned per compilation unit";
+const BOUNDARY_REASON: &str =
+    "a private nominal declaration cannot cross the module boundary; make the declaration public";
 
 fn mentions_nominal(ty: &aelys_sema::InferType, type_table: &TypeTable) -> Option<String> {
     use aelys_sema::InferType;
     match ty {
-        InferType::Struct(name) => type_table.has_nominal(name).then(|| name.clone()),
-        InferType::Applied { name, args } => type_table
-            .has_nominal(name)
+        InferType::Struct(name) => type_table
+            .get_struct(name)
+            .is_some_and(|def| !def.is_pub)
             .then(|| name.clone())
             .or_else(|| {
+                type_table
+                    .get_enum(name)
+                    .is_some_and(|def| !def.is_pub)
+                    .then(|| name.clone())
+            }),
+        InferType::Applied { name, args } => {
+            let private_base = type_table.get_struct(name).is_some_and(|def| !def.is_pub)
+                || type_table.get_enum(name).is_some_and(|def| !def.is_pub);
+            private_base.then(|| name.clone()).or_else(|| {
                 args.iter()
                     .find_map(|arg| mentions_nominal(arg, type_table))
-            }),
+            })
+        }
         InferType::Option(inner)
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
