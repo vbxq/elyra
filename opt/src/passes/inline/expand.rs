@@ -364,6 +364,15 @@ impl InlineExpander {
             TypedExprKind::Bool(b) => TypedExprKind::Bool(*b),
             TypedExprKind::String(s) => TypedExprKind::String(s.clone()),
             TypedExprKind::Unit => TypedExprKind::Unit,
+            TypedExprKind::AssociatedConst {
+                param,
+                trait_name,
+                item,
+            } => TypedExprKind::AssociatedConst {
+                param: param.clone(),
+                trait_name: trait_name.clone(),
+                item: item.clone(),
+            },
             TypedExprKind::Null => TypedExprKind::Null,
             TypedExprKind::Try {
                 operand,

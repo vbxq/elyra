@@ -158,6 +158,7 @@ impl ConstantFolder {
             | TypedExprKind::String(_)
             | TypedExprKind::Unit
             | TypedExprKind::Null
+            | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Identifier(_) => {}
         }
 

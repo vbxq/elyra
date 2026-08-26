@@ -130,6 +130,7 @@ impl DeadCodeEliminator {
             | TypedExprKind::String(_)
             | TypedExprKind::Unit
             | TypedExprKind::Null
+            | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Identifier(_) => {}
         }
     }

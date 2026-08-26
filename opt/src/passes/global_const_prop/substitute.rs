@@ -139,7 +139,8 @@ impl GlobalConstantPropagator {
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
             | TypedExprKind::Unit
-            | TypedExprKind::Null => {}
+            | TypedExprKind::Null
+            | TypedExprKind::AssociatedConst { .. } => {}
         }
     }
 

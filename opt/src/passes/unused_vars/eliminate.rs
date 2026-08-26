@@ -160,6 +160,7 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Null => false,
     }
 }

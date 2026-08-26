@@ -225,6 +225,7 @@ fn collect_uses_in_expr(expr: &TypedExpr, used: &mut HashSet<String>) {
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
+        | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Null => {}
     }
 }
