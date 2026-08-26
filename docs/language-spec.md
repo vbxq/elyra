@@ -804,32 +804,51 @@ println(Local { n: 5 }.score())
 Importing a type that is not `pub` is E0403 `'Point' is not public in module
 'shapes'`.
 
-A *value* of a nominal type may not cross a module boundary yet, because a struct
-or enum schema ID is assigned per compilation unit. A `pub fn` whose signature
-mentions a struct or an enum, in a parameter or in the return type, is rejected
+A public nominal type may cross a module boundary, including when some of its
+fields are private. A private nominal type in a public signature is still rejected
 at the point of declaration with E0407:
 
 ```rust
-pub struct Point { x: int, y: int }
+pub struct Point { pub x: int, y: int }
+
 pub fn make() -> Point { Point { x: 1, y: 2 } }
-// ✗ error[E0407]: 'Point' cannot be exported from module 'shapes'
+// ✓ the public nominal type is exportable; `y` remains private
+
+struct Hidden { value: int }
+pub fn leak() -> Hidden { Hidden { value: 1 } }
+// ✗ error[E0407]: 'Hidden' cannot be exported from module 'shapes'
 ```
 
-Stage 2 does not give struct fields a separate module-visibility boundary: every
-field of a public imported struct is available to the importer. Field-level `pub`
-is accepted as forward-compatible syntax and does not change that rule. Private
-field access and its diagnostic are reserved for the ownership and borrowing
-stage; this keeps imported impl bodies and their fixed schema compatible in the
-current compilation model.
-
-The restriction is on the exported signature only. A private function in the same
-module may take and return the type freely, and a `pub fn` may use it internally
-as long as the type does not appear in its signature:
+Fields are private by default. A `pub` field of a public nominal type may be read,
+written, used in a literal, or bound in a pattern from another module, subject to
+the normal mutable-root rule for writes. A private field may be used only in its
+defining module and descendant modules. An unrelated importer or sibling module
+cannot read or write it; attempting either is E0412. Naming a private field in a
+literal or pattern is E0413. A rest pattern may omit private fields without
+revealing them, but it may not name them:
 
 ```rust
-pub struct Point { x: int, y: int }
+needs shapes
+let point = shapes::make()
+point.x                              // ✓ public field
+point.y                              // ✗ error[E0412]
+match point { Point { y, .. } => y } // ✗ error[E0413]
+```
+
+E0412 and E0413 include the source span, the nominal owner module, the current
+module, the rejected operation, and a help message. The compiler carries the
+stable nominal owner and field ordinals through imports, impl bodies, and patterns;
+visibility is checked before typed AST emission, while lowering uses only the
+validated fixed-layout schema ordinal.
+
+The restriction is on the exported signature's nominal visibility, not on field
+privacy. A private function in the defining module may take and return the type
+freely, and a descendant module may use its private fields:
+
+```rust
+pub struct Point { pub x: int, y: int }
 fn make() -> Point { Point { x: 1, y: 2 } }
-pub fn depth() -> int { make().x }
+pub fn depth() -> int { make().y }
 ```
 
 ## Function Attributes
@@ -1599,7 +1618,6 @@ stage fails with a clear reason instead of a parse error.
 | Code | Construct | Message |
 |------|-----------|---------|
 | E0111 | `&self`, `&mut self` | borrowing receiver '&self' is deferred to Stage 3 |
-| E0112 | associated `type`, associated `const` | associated type is deferred to Stage 3 |
 | E0113 | `dyn Trait` | trait object 'dyn T' is deferred to Stage 3 |
 | E0114 | `impl !Trait for T` | negative impl is deferred to Stage 3 |
 | E0115 | `default fn` | specialization with 'default fn' is deferred to Stage 3 |
@@ -1659,7 +1677,6 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0109 | UnknownVariant | no such variant on that type |
 | E0110 | MatchArmValueRequired | a match arm must produce a value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
-| E0112 | AssociatedItemDeferred | associated types and constants are Stage 3 |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
 | E0114 | NegativeImplDeferred | a negative impl is Stage 3 |
 | E0115 | SpecializationDeferred | `default fn` is Stage 3 |
@@ -1731,6 +1748,13 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0341 | DuplicateTraitMethod | a trait declares a method twice |
 | E0342 | InvalidTraitReceiver | a receiver the trait does not allow |
 | E0343 | UnresolvedGenericType | a type argument cannot be inferred |
+| E0421 | MissingAssociatedItem | an impl omits a required associated type or constant |
+| E0422 | AssociatedItemTypeMismatch | an associated item has the wrong declared type |
+| E0423 | AmbiguousAssociatedProjection | a projection is unresolved, ambiguous, or cyclic |
+| E0424 | AssociatedBindingMismatch | a requested associated binding disagrees with the selected impl |
+| E0425 | AssociatedItemOutsideTraitImpl | an inherent impl defines an associated item no trait declares |
+| E0426 | DuplicateAssociatedItem | an impl defines an associated item more than once |
+| E0427 | AssociatedProjectionLimit | resolving a projection expands past the type-node limit |
 | E0344 | RecursiveMonomorphization | instantiation recurses without decreasing |
 | E0345 | MonomorphizationLimit | the instantiation limit is exceeded |
 | E0346 | EnumLayoutTooLarge | an enum payload exceeds the layout limit |
@@ -1783,3 +1807,11 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0409 | NativeVersionMismatch | the native module version does not match |
 | E0410 | SymbolConflict | two imports bring in the same name |
 | E0411 | ModulePathSeparator | a module path uses the wrong separator |
+| E0412 | PrivateFieldAccess | a private field is read or written outside its owner module |
+| E0413 | PrivateFieldConstruction | a private field is named in a literal or pattern outside its owner module |
+| E0414 | SharedLoanMutation | mutation through a shared loan is not allowed |
+| E0415 | MutableLoanOverlap | two mutable loans overlap |
+| E0416 | MutableLoanAccess | a read, move, or write overlaps a live mutable loan |
+| E0417 | BorrowEscapes | a call-scoped loan escapes through a binding, return, capture, or unsupported parameter |
+| E0418 | BorrowInvalidated | a mutation, move, or reallocation invalidates a live loan |
+| E0419 | TemporaryBorrow | a borrow target is temporary or dead |
