@@ -51,6 +51,66 @@ fn parse_bound_marker(symbol: &str) -> Option<(String, String, String)> {
     Some((parts.next()?, parts.next()?, parts.next()?))
 }
 
+fn parse_fixed_len_fields(mut cursor: &str, count: usize) -> Option<Vec<String>> {
+    let mut parts = Vec::with_capacity(count);
+    for _ in 0..count {
+        if cursor.len() < 8 || !cursor.is_char_boundary(8) {
+            return None;
+        }
+        let (length, tail) = cursor.split_at(8);
+        let length = usize::from_str_radix(length, 16).ok()?;
+        let tail = tail.strip_prefix(':')?;
+        if tail.len() < length || !tail.is_char_boundary(length) {
+            return None;
+        }
+        let (value, tail) = tail.split_at(length);
+        parts.push(value.to_string());
+        cursor = tail;
+    }
+    Some(parts)
+}
+
+fn decode_generic_instance_name(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for pair in hex.as_bytes().chunks(2) {
+        let pair = std::str::from_utf8(pair).ok()?;
+        bytes.push(u8::from_str_radix(pair, 16).ok()?);
+    }
+    let decoded = String::from_utf8(bytes).ok()?;
+    let (length, tail) = decoded.split_once(':')?;
+    let length = length.parse::<usize>().ok()?;
+    (tail.len() >= length && tail.is_char_boundary(length)).then(|| tail[..length].to_string())
+}
+
+fn user_facing_symbol(symbol: &str) -> String {
+    let base = symbol.split(IMPL_INSTANCE_INFIX).next().unwrap_or(symbol);
+    if base == DISPLAY_MARKER_SYMBOL {
+        return "to_display".to_string();
+    }
+    if let Some(rest) = base.strip_prefix("__aelys_struct::")
+        && let Some(parts) = parse_fixed_len_fields(rest, 2)
+    {
+        return format!("{}::{}", parts[0], parts[1]);
+    }
+    if let Some(rest) = base.strip_prefix("__aelys_trait::")
+        && let Some(parts) = parse_fixed_len_fields(rest, 3)
+    {
+        return format!("{}::{}", parts[1], parts[2]);
+    }
+    if let Some((_, param, method)) = parse_bound_marker(base) {
+        return format!("{param}::{method}");
+    }
+    if let Some(hex) = base.strip_prefix(GENERIC_INSTANCE_PREFIX)
+        && let Some(name) = decode_generic_instance_name(hex)
+    {
+        return name;
+    }
+    "a generic item".to_string()
+}
+
 fn is_generated_instance_symbol(symbol: &str) -> bool {
     symbol == DISPLAY_MARKER_SYMBOL
         || symbol.starts_with(BOUND_MARKER_PREFIX)
@@ -1113,15 +1173,6 @@ impl TypeInference {
             })
             .collect::<HashMap<_, _>>();
 
-        if generic_defs.is_empty() {
-            self.lower_display_dispatch(&mut stmts);
-            self.monomorphize_impls(&mut stmts);
-            self.materialize_nominals(&mut stmts);
-            strip_display_markers(&mut stmts);
-            self.reject_unresolved_instance_symbols(&mut stmts);
-            return stmts;
-        }
-
         let mut queue = VecDeque::new();
         let mut queued = HashSet::new();
         let mut symbols = HashMap::<InstanceKey, String>::new();
@@ -1142,6 +1193,17 @@ impl TypeInference {
                 &mut symbol_keys,
                 &mut errors,
             );
+        }
+
+        if generic_defs.is_empty() {
+            self.lower_display_dispatch(&mut stmts);
+            self.monomorphize_impls(&mut stmts);
+            self.materialize_nominals(&mut stmts);
+            strip_display_markers(&mut stmts);
+            self.errors.extend(errors);
+            self.reject_unresolved_instance_symbols(&mut stmts);
+            self.reject_unspecialized_associated_consts(&mut stmts);
+            return stmts;
         }
 
         let mut specialized = Vec::new();
@@ -1192,6 +1254,7 @@ impl TypeInference {
         strip_display_markers(&mut stmts);
         self.errors.extend(errors);
         self.reject_unresolved_instance_symbols(&mut stmts);
+        self.reject_unspecialized_associated_consts(&mut stmts);
         stmts
     }
 
@@ -1217,6 +1280,30 @@ impl TypeInference {
         self.errors.extend(errors);
     }
 
+    // a method carrying its own type parameters is never specialized, so a
+    fn reject_unspecialized_associated_consts(&mut self, stmts: &mut [TypedStmt]) {
+        let mut refused = Vec::new();
+        for stmt in stmts.iter_mut() {
+            visit_exprs_stmt(stmt, &mut |expr| {
+                let TypedExprKind::AssociatedConst { param, item, .. } = &expr.kind else {
+                    return;
+                };
+                refused.push((param.clone(), item.clone(), expr.span));
+            });
+        }
+        for (param, item, span) in refused {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                    receiver: param,
+                    item,
+                    cause: crate::constraint::ProjectionFailure::UnspecializedGenericMethod,
+                },
+                span,
+                reason: ConstraintReason::Other("a value expression".to_string()),
+            });
+        }
+    }
+
     // a generated symbol with no definition must fail here, never as a runtime undefined variable
     fn reject_unresolved_instance_symbols(&mut self, stmts: &mut [TypedStmt]) {
         let mut defined = HashSet::new();
@@ -1239,7 +1326,9 @@ impl TypeInference {
         }
         for (symbol, span) in missing {
             self.errors.push(TypeError {
-                kind: TypeErrorKind::UnresolvedInstanceSymbol { symbol },
+                kind: TypeErrorKind::UnresolvedInstanceSymbol {
+                    name: user_facing_symbol(&symbol),
+                },
                 span,
                 reason: ConstraintReason::Other("generic instance resolution".to_string()),
             });
@@ -1267,7 +1356,7 @@ impl TypeInference {
         function.name = symbol;
         function.type_params.clear();
         {
-            let constants = self.associated_const_table();
+            let constants = self.associated_const_resolutions();
             let substitution = &substitution;
             for stmt in &mut function.body {
                 visit_exprs_stmt(stmt, &mut |expr| {
@@ -1359,36 +1448,28 @@ impl TypeInference {
         }
         let mut seen = HashSet::new();
         let mut next_call = 0;
-        let mut replacements = HashMap::<String, Vec<(InferType, String)>>::new();
+        let mut replacements = HashMap::<String, Vec<ImplInstanceMethod>>::new();
         let mut specialized_by_template = vec![Vec::new(); templates.len()];
         let mut marker_errors = Vec::new();
         let mut limit_error = None;
+        let mut collision_errors = Vec::new();
+        let mut instance_symbol_keys = HashMap::<String, (usize, Vec<InferType>)>::new();
+        let associated_constants = self.associated_const_resolutions();
         'impl_work: while next_call < calls.len() {
             let mut discovered = Vec::<(usize, Vec<InferType>)>::new();
             while next_call < calls.len() {
-                let (symbol, receiver) = calls[next_call].clone();
+                let call_index = next_call;
+                let call_symbol = calls[call_index].symbol.clone();
                 next_call += 1;
                 for &template_index in template_indices_by_method
-                    .get(&symbol)
+                    .get(&call_symbol)
                     .into_iter()
                     .flatten()
                 {
                     let template = &templates[template_index];
-                    let mut mapping = HashMap::new();
-                    if match_types(&template.target_type, &receiver, &mut mapping).is_none() {
-                        continue;
-                    }
-                    let Some(args) = template
-                        .type_params
-                        .iter()
-                        .map(|param| mapping.get(param).cloned())
-                        .collect::<Option<Vec<_>>>()
-                    else {
+                    let Some(args) = deduce_impl_arguments(template, &calls[call_index]) else {
                         continue;
                     };
-                    if args.iter().any(|arg| !arg.is_concrete()) {
-                        continue;
-                    }
                     let key = (template_index, args.clone());
                     if !seen.contains(&key) {
                         if seen.len() >= MAX_IMPL_INSTANCES {
@@ -1435,17 +1516,44 @@ impl TypeInference {
                     let mut method = self.apply_substitution_func(method, &substitution);
                     let original = method.name.clone();
                     method.name = format!("{original}$s2${encoded}");
+                    let instance_key = (template_index, args.clone());
+                    if let Some(previous) = instance_symbol_keys.get(&method.name)
+                        && *previous != instance_key
+                    {
+                        collision_errors.push(TypeError {
+                            kind: TypeErrorKind::MangledSymbolCollision {
+                                name: template.target.clone(),
+                            },
+                            span: template.span,
+                            reason: ConstraintReason::Other(
+                                "generic impl instance symbol collision".to_string(),
+                            ),
+                        });
+                    }
+                    instance_symbol_keys.insert(method.name.clone(), instance_key);
                     replacements
                         .entry(original)
                         .or_default()
-                        .push((concrete_target.clone(), method.name.clone()));
+                        .push(ImplInstanceMethod {
+                            target: concrete_target.clone(),
+                            args: args.clone(),
+                            symbol: method.name.clone(),
+                        });
                     methods.push(method);
                 }
                 {
                     let type_table = &self.type_table;
+                    let substitution = &substitution;
+                    let constants = &associated_constants;
                     for method in &mut methods {
                         for stmt in &mut method.body {
                             visit_exprs_stmt(stmt, &mut |expr| {
+                                resolve_associated_const_node(
+                                    expr,
+                                    substitution,
+                                    constants,
+                                    &mut marker_errors,
+                                );
                                 resolve_bound_marker(expr, type_table, &mut marker_errors);
                                 resolve_display_marker(expr, type_table);
                             });
@@ -1470,17 +1578,23 @@ impl TypeInference {
                 ));
             }
         }
+        self.errors.append(&mut collision_errors);
         if let Some(error) = limit_error {
             self.errors.push(error);
         }
         self.errors.append(&mut marker_errors);
 
+        let rewrite = ImplCallRewrite {
+            templates: &templates,
+            template_indices_by_method: &template_indices_by_method,
+            replacements: &replacements,
+        };
         for stmt in stmts.iter_mut() {
-            rewrite_impl_call_symbols_stmt(stmt, &replacements);
+            rewrite_impl_call_symbols_stmt(stmt, &rewrite);
         }
         for group in specialized_by_template.iter_mut() {
             for stmt in group.iter_mut() {
-                rewrite_impl_call_symbols_stmt(stmt, &replacements);
+                rewrite_impl_call_symbols_stmt(stmt, &rewrite);
             }
         }
         let original = std::mem::take(stmts);
@@ -1619,6 +1733,7 @@ impl TypeInference {
                             ),
                             is_pub: field.is_pub,
                             ordinal: field.ordinal,
+                            span: field.span,
                         })
                         .collect();
                     return Some((
@@ -1646,6 +1761,7 @@ impl TypeInference {
                         .iter()
                         .map(|variant| crate::types::EnumVariantDef {
                             name: variant.name.clone(),
+                            span: variant.span,
                             fields: match &variant.fields {
                                 crate::types::EnumVariantFieldsDef::Unit => {
                                     crate::types::EnumVariantFieldsDef::Unit
@@ -1679,6 +1795,7 @@ impl TypeInference {
                                                 ),
                                                 is_pub: field.is_pub,
                                                 ordinal: field.ordinal,
+                                                span: field.span,
                                             })
                                             .collect(),
                                     )
@@ -1769,7 +1886,43 @@ struct GenericImplTemplate {
     span: Span,
 }
 
-fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<(String, InferType)>) {
+// a `::` call has no receiver: its object is typed poison, so the impl
+struct ImplCallSite {
+    symbol: String,
+    receiver: Option<InferType>,
+    actuals: Vec<InferType>,
+    result: InferType,
+}
+
+fn deduce_impl_arguments(
+    template: &GenericImplTemplate,
+    call: &ImplCallSite,
+) -> Option<Vec<InferType>> {
+    let mut mapping = HashMap::new();
+    match &call.receiver {
+        Some(receiver) => {
+            match_types(&template.target_type, receiver, &mut mapping)?;
+        }
+        None => {
+            let method = template
+                .methods
+                .iter()
+                .find(|method| method.name == call.symbol)?;
+            for (formal, actual) in method.params.iter().zip(&call.actuals) {
+                match_types(&formal.ty, actual, &mut mapping)?;
+            }
+            match_types(&method.return_type, &call.result, &mut mapping)?;
+        }
+    }
+    let args = template
+        .type_params
+        .iter()
+        .map(|param| mapping.get(param).cloned())
+        .collect::<Option<Vec<_>>>()?;
+    args.iter().all(|arg| arg.is_concrete()).then_some(args)
+}
+
+fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
     match &stmt.kind {
         TypedStmtKind::Expression(expr) => collect_impl_calls_expr(expr, calls),
         TypedStmtKind::Let { initializer, .. } => collect_impl_calls_expr(initializer, calls),
@@ -1837,7 +1990,7 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<(String, InferType)
     }
 }
 
-fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<(String, InferType)>) {
+fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
     match &expr.kind {
         TypedExprKind::Call { callee, args } => {
             if let TypedExprKind::StructMethod {
@@ -1847,14 +2000,14 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<(String, InferType)
                 ..
             } = &callee.kind
             {
-                let receiver = if *separator == aelys_syntax::MemberSeparator::Dot {
-                    Some(object.ty.clone())
-                } else {
-                    args.first().map(|arg| arg.ty.clone())
-                };
-                if let Some(receiver) = receiver {
-                    calls.push((symbol.clone(), receiver));
-                }
+                let receiver =
+                    (*separator == aelys_syntax::MemberSeparator::Dot).then(|| object.ty.clone());
+                calls.push(ImplCallSite {
+                    symbol: symbol.clone(),
+                    receiver,
+                    actuals: args.iter().map(|arg| arg.ty.clone()).collect(),
+                    result: expr.ty.clone(),
+                });
             }
             collect_impl_calls_expr(callee, calls);
             for arg in args {
@@ -2170,19 +2323,26 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
     }
 }
 
-fn rewrite_impl_call_symbols_stmt(
-    stmt: &mut TypedStmt,
-    replacements: &HashMap<String, Vec<(InferType, String)>>,
-) {
+struct ImplInstanceMethod {
+    target: InferType,
+    args: Vec<InferType>,
+    symbol: String,
+}
+
+struct ImplCallRewrite<'a> {
+    templates: &'a [GenericImplTemplate],
+    template_indices_by_method: &'a HashMap<String, Vec<usize>>,
+    replacements: &'a HashMap<String, Vec<ImplInstanceMethod>>,
+}
+
+fn rewrite_impl_call_symbols_stmt(stmt: &mut TypedStmt, rewrite: &ImplCallRewrite<'_>) {
     visit_exprs_stmt(stmt, &mut |expr| {
-        rewrite_impl_call_symbol(expr, replacements);
+        rewrite_impl_call_symbol(expr, rewrite);
     });
 }
 
-fn rewrite_impl_call_symbol(
-    expr: &mut TypedExpr,
-    replacements: &HashMap<String, Vec<(InferType, String)>>,
-) {
+fn rewrite_impl_call_symbol(expr: &mut TypedExpr, rewrite: &ImplCallRewrite<'_>) {
+    let result = expr.ty.clone();
     let TypedExprKind::Call { callee, args } = &mut expr.kind else {
         return;
     };
@@ -2195,27 +2355,50 @@ fn rewrite_impl_call_symbol(
     else {
         return;
     };
-    let Some(candidates) = replacements.get(symbol) else {
+    let Some(candidates) = rewrite.replacements.get(symbol) else {
         return;
     };
-    let receiver = if *separator == aelys_syntax::MemberSeparator::Dot {
-        Some(object.ty.clone())
-    } else {
-        args.first().map(|arg| arg.ty.clone())
-    };
-    if let Some(receiver) = receiver
-        && let Some((_, replacement)) = candidates
+    if *separator == aelys_syntax::MemberSeparator::Dot {
+        let receiver = object.ty.clone();
+        if let Some(instance) = candidates
             .iter()
-            .find(|(expected, _)| *expected == receiver)
+            .find(|candidate| candidate.target == receiver)
+        {
+            *symbol = instance.symbol.clone();
+        }
+        return;
+    }
+    // the same deduction the worklist ran, so a `::` call can never land on an
+    let call = ImplCallSite {
+        symbol: symbol.clone(),
+        receiver: None,
+        actuals: args.iter().map(|arg| arg.ty.clone()).collect(),
+        result,
+    };
+    for &template_index in rewrite
+        .template_indices_by_method
+        .get(&call.symbol)
+        .into_iter()
+        .flatten()
     {
-        *symbol = replacement.clone();
+        let Some(instance_args) = deduce_impl_arguments(&rewrite.templates[template_index], &call)
+        else {
+            continue;
+        };
+        if let Some(instance) = candidates
+            .iter()
+            .find(|candidate| candidate.args == instance_args)
+        {
+            *symbol = instance.symbol.clone();
+            return;
+        }
     }
 }
 
 fn resolve_associated_const_node(
     expr: &mut TypedExpr,
     substitution: &crate::unify::Substitution,
-    constants: &std::collections::HashMap<(String, String), i64>,
+    constants: &std::collections::HashMap<(String, String), crate::infer::ConstResolution>,
     errors: &mut Vec<TypeError>,
 ) {
     let TypedExprKind::AssociatedConst {
@@ -2227,27 +2410,41 @@ fn resolve_associated_const_node(
         return;
     };
     let concrete = substitution.apply(&InferType::Param(param.clone()));
+    // that this substitution does not bind; the guard after monomorphization
+    if !concrete.is_concrete() {
+        return;
+    }
     let receiver = match &concrete {
         InferType::Struct(name) => name.clone(),
         InferType::Applied { name, .. } => name.clone(),
         other => other.to_string(),
     };
     match constants.get(&(receiver.clone(), item.clone())) {
-        Some(value) => {
+        Some(crate::infer::ConstResolution::Value(value)) => {
             expr.kind = TypedExprKind::Int(*value);
             expr.ty = InferType::I64;
         }
-        None => errors.push(TypeError {
-            kind: crate::constraint::TypeErrorKind::AmbiguousAssociatedProjection {
-                receiver,
-                item: item.clone(),
-                cause: crate::constraint::ProjectionFailure::NoImpl,
-            },
-            span: expr.span,
-            reason: crate::constraint::ConstraintReason::Other(format!(
-                "associated constant of trait '{trait_name}'"
-            )),
-        }),
+        found => {
+            let cause = match found {
+                Some(resolution) => {
+                    crate::infer::expr::member::projection_failure_for(resolution, &receiver, item)
+                }
+                None => crate::constraint::ProjectionFailure::NoImpl,
+            };
+            errors.push(TypeError {
+                kind: crate::constraint::TypeErrorKind::AmbiguousAssociatedProjection {
+                    receiver,
+                    item: item.clone(),
+                    cause,
+                },
+                span: expr.span,
+                reason: crate::constraint::ConstraintReason::Other(format!(
+                    "associated constant of trait '{trait_name}'"
+                )),
+            });
+            expr.kind = TypedExprKind::Null;
+            expr.ty = InferType::Poison;
+        }
     }
 }
 
@@ -3268,8 +3465,13 @@ fn rewrite_generic_call(
     symbol_keys: &mut HashMap<String, InstanceKey>,
     errors: &mut Vec<TypeError>,
 ) {
-    let TypedExprKind::Identifier(name) = &callee.kind else {
-        return;
+    let name = match &callee.kind {
+        TypedExprKind::Identifier(name) => name,
+        TypedExprKind::StructMethod { .. } => {
+            check_method_call_obligations(inference, callee, args, call_ty, call_span, errors);
+            return;
+        }
+        _ => return,
     };
     let Some(template) = generic_defs.get(name) else {
         return;
@@ -3331,7 +3533,13 @@ fn rewrite_generic_call(
         });
         return;
     }
-    check_instance_trait_bounds(inference, name, template, &key.args, call_span, errors);
+    let resolved = template
+        .type_params
+        .iter()
+        .cloned()
+        .zip(key.args.iter().cloned())
+        .collect::<HashMap<_, _>>();
+    check_instance_trait_bounds(inference, name, &resolved, call_span, errors);
     let symbol = instance_symbol(&key, symbols, symbol_keys, errors, call_span);
     if inference.monomorphization_active.len() >= MAX_ACTIVE_INSTANCES {
         errors.push(TypeError {
@@ -3371,30 +3579,18 @@ fn rewrite_generic_call(
 fn check_instance_trait_bounds(
     inference: &TypeInference,
     name: &str,
-    template: &TypedFunction,
-    args: &[InferType],
+    resolved: &HashMap<String, InferType>,
     span: aelys_syntax::Span,
     errors: &mut Vec<TypeError>,
 ) {
     let Some(bounds) = inference.generic_function_bounds.get(name) else {
-        check_instance_trait_bindings(inference, name, template, args, span, errors);
+        check_instance_trait_bindings(inference, name, resolved, span, errors);
         return;
     };
-    let mut substitution = Substitution::new();
-    for (param, arg) in template.type_params.iter().zip(args) {
-        substitution.bind_param(param.clone(), arg.clone());
-    }
+    let substitution = subject_substitution(resolved);
     for (subject, trait_name, trait_args) in bounds {
-        let actual = match template
-            .type_params
-            .iter()
-            .position(|param| param == subject)
-        {
-            Some(index) => match args.get(index) {
-                Some(actual) => actual.clone(),
-                None => continue,
-            },
-            None => InferType::Struct(subject.clone()),
+        let Some(actual) = subject_type(inference, resolved, subject) else {
+            continue;
         };
         let trait_args = trait_args
             .iter()
@@ -3414,43 +3610,112 @@ fn check_instance_trait_bounds(
             });
         }
     }
-    check_instance_trait_bindings(inference, name, template, args, span, errors);
+    check_instance_trait_bindings(inference, name, resolved, span, errors);
+}
+
+fn subject_substitution(resolved: &HashMap<String, InferType>) -> Substitution {
+    let mut substitution = Substitution::new();
+    for (param, ty) in resolved {
+        substitution.bind_param(param.clone(), ty.clone());
+    }
+    substitution
+}
+
+// an unresolved subject is either the nominal that `where counter: source`
+fn subject_type(
+    inference: &TypeInference,
+    resolved: &HashMap<String, InferType>,
+    subject: &str,
+) -> Option<InferType> {
+    match resolved.get(subject) {
+        Some(actual) => Some(actual.clone()),
+        None if inference.type_table.has_nominal(subject) => {
+            Some(InferType::Struct(subject.to_string()))
+        }
+        None => None,
+    }
 }
 
 fn check_instance_trait_bindings(
     inference: &TypeInference,
     name: &str,
-    template: &TypedFunction,
-    args: &[InferType],
+    resolved: &HashMap<String, InferType>,
     span: aelys_syntax::Span,
     errors: &mut Vec<TypeError>,
 ) {
     let Some(bindings) = inference.generic_function_bindings.get(name) else {
         return;
     };
-    let mut substitution = Substitution::new();
-    for (param, arg) in template.type_params.iter().zip(args) {
-        substitution.bind_param(param.clone(), arg.clone());
-    }
+    let substitution = subject_substitution(resolved);
     for (subject, trait_name, items) in bindings {
-        let actual = match template
-            .type_params
-            .iter()
-            .position(|param| param == subject)
-        {
-            Some(index) => match args.get(index) {
-                Some(actual) => actual.clone(),
-                None => continue,
-            },
-            None => InferType::Struct(subject.clone()),
+        let Some(actual) = subject_type(inference, resolved, subject) else {
+            continue;
         };
         for (item, requested) in items {
-            let requested = substitution.apply(requested);
+            let requested = match requested {
+                crate::infer::BoundItem::Type(ty) => {
+                    crate::infer::BoundItem::Type(substitution.apply(ty))
+                }
+                crate::infer::BoundItem::Const(value) => crate::infer::BoundItem::Const(*value),
+            };
             let projection = InferType::Projection {
                 trait_name: Some(trait_name.clone()),
                 item: item.clone(),
                 self_ty: Box::new(actual.clone()),
             };
+            if inference.type_table.get_trait(trait_name).is_none() {
+                continue;
+            }
+            // lookups walk the super bounds.
+            let is_associated_const = inference
+                .type_table
+                .trait_declaring_item_in(
+                    trait_name,
+                    item,
+                    Some(crate::constraint::ItemNamespace::Const),
+                )
+                .is_some();
+            let declares_item = is_associated_const
+                || inference
+                    .type_table
+                    .trait_declaring_item_in(
+                        trait_name,
+                        item,
+                        Some(crate::constraint::ItemNamespace::Type),
+                    )
+                    .is_some();
+            if !declares_item {
+                errors.push(TypeError {
+                    kind: TypeErrorKind::UndeclaredAssociatedBinding {
+                        trait_name: trait_name.clone(),
+                        item: item.clone(),
+                    },
+                    span,
+                    reason: binding_reason(subject),
+                });
+                continue;
+            }
+            if is_associated_const {
+                check_associated_const_binding(
+                    inference,
+                    trait_name,
+                    item,
+                    subject,
+                    &requested,
+                    &projection,
+                    span,
+                    errors,
+                );
+                continue;
+            }
+            // monomorphization, so dropping it here loses no diagnostic.
+            let crate::infer::BoundItem::Type(requested) = requested else {
+                continue;
+            };
+            let requested = inference
+                .type_table
+                .resolve_projection(&requested)
+                .unwrap_or(requested);
             match inference.type_table.resolve_projection(&projection) {
                 Some(found) if inference.type_table.types_match(&requested, &found) => {}
                 Some(found) => {
@@ -3462,7 +3727,7 @@ fn check_instance_trait_bindings(
                             found,
                         },
                         span,
-                        reason: ConstraintReason::Other("generic associated binding".to_string()),
+                        reason: binding_reason(subject),
                     });
                 }
                 None => {
@@ -3474,12 +3739,139 @@ fn check_instance_trait_bindings(
                             found: InferType::Poison,
                         },
                         span,
-                        reason: ConstraintReason::Other("generic associated binding".to_string()),
+                        reason: binding_reason(subject),
                     });
                 }
             }
         }
     }
+}
+
+// an associated-const binding cannot be compared as a type: `resolve_projection`
+#[allow(clippy::too_many_arguments)]
+fn check_associated_const_binding(
+    inference: &TypeInference,
+    trait_name: &str,
+    item: &str,
+    subject: &str,
+    requested: &crate::infer::BoundItem,
+    projection: &InferType,
+    span: aelys_syntax::Span,
+    errors: &mut Vec<TypeError>,
+) {
+    let requested_value = match requested {
+        crate::infer::BoundItem::Const(value) => Some(*value),
+        crate::infer::BoundItem::Type(ty) => associated_const_value(inference, ty),
+    };
+    let found_value = associated_const_value(inference, projection);
+    let (Some(left), Some(right)) = (requested_value, found_value) else {
+        let mut unevaluated = Vec::new();
+        if let (None, crate::infer::BoundItem::Type(ty)) = (requested_value, requested) {
+            unevaluated.push(ty.clone());
+        }
+        if found_value.is_none() {
+            unevaluated.push(projection.clone());
+        }
+        errors.push(TypeError {
+            kind: TypeErrorKind::UnevaluatedAssociatedConstBinding {
+                trait_name: trait_name.to_string(),
+                item: item.to_string(),
+                unevaluated,
+            },
+            span,
+            reason: binding_reason(subject),
+        });
+        return;
+    };
+    if left == right {
+        return;
+    }
+    errors.push(TypeError {
+        kind: TypeErrorKind::AssociatedConstBindingMismatch {
+            trait_name: trait_name.to_string(),
+            item: item.to_string(),
+            requested: left,
+            found: right,
+        },
+        span,
+        reason: binding_reason(subject),
+    });
+}
+
+fn binding_reason(subject: &str) -> ConstraintReason {
+    ConstraintReason::Other(format!("a bound on '{subject}'"))
+}
+
+fn associated_const_value(inference: &TypeInference, ty: &InferType) -> Option<i64> {
+    let InferType::Projection {
+        trait_name,
+        item,
+        self_ty,
+    } = ty
+    else {
+        return None;
+    };
+    let receiver = match self_ty.as_ref() {
+        InferType::Struct(name) => name.clone(),
+        InferType::Applied { name, .. } => name.clone(),
+        other => other.to_string(),
+    };
+    // table cannot key them apart, so the written qualifier picks the impl.
+    if let Some(trait_name) = trait_name {
+        let candidates = inference.associated_const_candidates(&receiver, item);
+        if candidates.len() > 1 {
+            let declaring = inference
+                .type_table
+                .trait_declaring_item(trait_name, item)
+                .unwrap_or_else(|| trait_name.clone());
+            return candidates
+                .into_iter()
+                .find(|(name, _)| *name == declaring)
+                .and_then(|(_, value)| value);
+        }
+    }
+    match inference
+        .associated_const_resolutions()
+        .get(&(receiver, item.clone()))
+    {
+        Some(crate::infer::ConstResolution::Value(value)) => Some(*value),
+        _ => None,
+    }
+}
+
+// a receiver call names its callee by the mangled impl symbol, so the instance
+fn check_method_call_obligations(
+    inference: &TypeInference,
+    callee: &TypedExpr,
+    args: &[TypedExpr],
+    call_ty: &InferType,
+    span: aelys_syntax::Span,
+    errors: &mut Vec<TypeError>,
+) {
+    let TypedExprKind::StructMethod {
+        object,
+        symbol,
+        separator,
+        ..
+    } = &callee.kind
+    else {
+        return;
+    };
+    let Some(signature) = inference.impl_method_signatures.get(symbol) else {
+        return;
+    };
+    let mut actuals = Vec::with_capacity(args.len() + 1);
+    if *separator == aelys_syntax::MemberSeparator::Dot {
+        actuals.push(object.ty.clone());
+    }
+    actuals.extend(args.iter().map(|arg| arg.ty.clone()));
+    let mut resolved = HashMap::new();
+    for (formal, actual) in signature.params.iter().zip(&actuals) {
+        match_types(formal, actual, &mut resolved);
+    }
+    match_types(&signature.return_type, call_ty, &mut resolved);
+    resolved.retain(|_, ty| ty.is_concrete());
+    check_instance_trait_bounds(inference, symbol, &resolved, span, errors);
 }
 
 fn instance_arguments(

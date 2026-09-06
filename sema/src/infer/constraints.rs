@@ -56,7 +56,12 @@ struct NormalizeState {
 
 impl TypeInference {
     /// monomorphizer substitutes it and the backend resolves it.
-    pub(super) fn normalize_projection_types(&mut self, ty: &InferType, span: Span) -> InferType {
+    pub(super) fn normalize_projection_types(
+        &mut self,
+        ty: &InferType,
+        span: Span,
+        reason: &crate::constraint::ConstraintReason,
+    ) -> InferType {
         let mut state = NormalizeState {
             visiting: Vec::new(),
             cache: HashMap::new(),
@@ -71,13 +76,40 @@ impl TypeInference {
                     limit: MAX_PROJECTION_NODES,
                 },
                 span,
-                reason: crate::constraint::ConstraintReason::Other(
-                    "associated projection normalization".to_string(),
-                ),
+                reason: reason.clone(),
             });
             return InferType::Poison;
         }
         normalized
+    }
+
+    /// builds a bounded multiple of the budget, never the explosion.
+    pub(super) fn report_oversized_projection(
+        &mut self,
+        ty: &InferType,
+        span: Span,
+        reason: &crate::constraint::ConstraintReason,
+    ) {
+        let mut state = NormalizeState {
+            visiting: Vec::new(),
+            cache: HashMap::new(),
+            overflowed: None,
+        };
+        let escaped = self.projection_cycle_escaped.get();
+        let _ = self.normalize_projection_types_bounded(ty, &mut state);
+        self.projection_cycle_escaped.set(escaped);
+        let Some((receiver, item)) = state.overflowed else {
+            return;
+        };
+        self.errors.push(TypeError {
+            kind: TypeErrorKind::AssociatedProjectionLimit {
+                receiver,
+                item,
+                limit: MAX_PROJECTION_NODES,
+            },
+            span,
+            reason: reason.clone(),
+        });
     }
 
     /// already rejected with e0423 when the impls are collected, so reaching
@@ -165,8 +197,10 @@ impl TypeInference {
                 reason,
             } = constraint
             {
-                let left_resolved = self.normalize_projection_types(&subst.apply(&left), span);
-                let right_resolved = self.normalize_projection_types(&subst.apply(&right), span);
+                let left_resolved =
+                    self.normalize_projection_types(&subst.apply(&left), span, &reason);
+                let right_resolved =
+                    self.normalize_projection_types(&subst.apply(&right), span, &reason);
 
                 // the constraint carrying an unresolved projection is often the
                 if contains_open_projection(&left_resolved)
@@ -205,8 +239,9 @@ impl TypeInference {
         }
 
         for (left, right, span, reason) in deferred {
-            let left_resolved = self.normalize_projection_types(&subst.apply(&left), span);
-            let right_resolved = self.normalize_projection_types(&subst.apply(&right), span);
+            let left_resolved = self.normalize_projection_types(&subst.apply(&left), span, &reason);
+            let right_resolved =
+                self.normalize_projection_types(&subst.apply(&right), span, &reason);
             match unify(&left_resolved, &right_resolved, &mut subst) {
                 Ok(()) => {}
                 Err(UnifyError::Poisoned) => {
@@ -229,7 +264,7 @@ impl TypeInference {
                 reason,
             } = constraint
             {
-                let resolved = self.normalize_projection_types(&subst.apply(&ty), span);
+                let resolved = self.normalize_projection_types(&subst.apply(&ty), span, &reason);
 
                 match &resolved {
                     InferType::Var(_) | InferType::Dynamic | InferType::Poison => {}

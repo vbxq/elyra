@@ -1,4 +1,4 @@
-use super::TypeInference;
+use super::{GENERATED_SYMBOL_PREFIX, TypeInference};
 use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedFunction, TypedParam};
 use crate::types::InferType;
@@ -6,7 +6,7 @@ use aelys_syntax::{Function, Stmt, StmtKind, TypeAnnotation};
 
 pub(crate) fn struct_method_symbol(structure: &str, method: &str) -> String {
     format!(
-        "__aelys_struct::{:08x}:{}{:08x}:{}",
+        "{GENERATED_SYMBOL_PREFIX}struct::{:08x}:{}{:08x}:{}",
         structure.len(),
         structure,
         method.len(),
@@ -21,7 +21,7 @@ pub(crate) fn trait_method_symbol(
     trait_args: &[InferType],
 ) -> String {
     let mut symbol = format!(
-        "__aelys_trait::{:08x}:{}{:08x}:{}{:08x}:{}",
+        "{GENERATED_SYMBOL_PREFIX}trait::{:08x}:{}{:08x}:{}{:08x}:{}",
         trait_name.len(),
         trait_name,
         structure.len(),
@@ -61,14 +61,13 @@ impl TypeInference {
                 .cloned()
                 .unwrap_or_default(),
         );
-        let saved_function_bindings = std::mem::replace(&mut self.current_function_bindings, {
-            let bindings = self
-                .generic_function_bindings
+        let saved_function_bindings = std::mem::replace(
+            &mut self.current_function_bindings,
+            self.generic_function_bindings
                 .get(&func.name)
                 .cloned()
-                .unwrap_or_default();
-            bindings
-        });
+                .unwrap_or_default(),
+        );
 
         for type_param in &func.type_params {
             let fresh_var = self.type_gen.fresh();
@@ -97,9 +96,9 @@ impl TypeInference {
 
         let return_type = sig_ret
             .or_else(|| {
-                func.return_type
-                    .as_ref()
-                    .map(|ann| self.type_from_annotation(ann))
+                func.return_type.as_ref().map(|ann| {
+                    self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
+                })
             })
             .unwrap_or_else(|| {
                 if func.body.is_empty() {
@@ -213,7 +212,9 @@ impl TypeInference {
             .current_impl_self
             .replace(InferType::Struct(target.clone()));
         let mut typed_methods = Vec::with_capacity(effective_methods.len());
-        for method in &effective_methods {
+        let saved_default_body = self.in_trait_default_body;
+        for (index, method) in effective_methods.iter().enumerate() {
+            self.in_trait_default_body = index >= methods.len();
             let mut normalized = method.clone();
             normalized.type_params = impl_type_params
                 .iter()
@@ -232,6 +233,7 @@ impl TypeInference {
             }
             typed_methods.push(self.infer_function(&normalized));
         }
+        self.in_trait_default_body = saved_default_body;
         self.current_impl_self = saved_impl_self;
         crate::typed_ast::TypedStmtKind::ImplDecl {
             target,
@@ -240,7 +242,8 @@ impl TypeInference {
             target_type: {
                 let saved =
                     std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
-                let ty = self.type_from_annotation(self_type);
+                let ty = self
+                    .type_from_annotation_as(crate::infer::OccurrenceRole::ImplHeader, self_type);
                 self.type_params_in_scope = saved;
                 ty
             },
@@ -261,7 +264,9 @@ impl TypeInference {
         let args = path
             .type_params
             .iter()
-            .map(|argument| self.type_from_annotation(argument))
+            .map(|argument| {
+                self.type_from_annotation_as(crate::infer::OccurrenceRole::ImplHeader, argument)
+            })
             .collect();
         self.type_params_in_scope = saved;
         args

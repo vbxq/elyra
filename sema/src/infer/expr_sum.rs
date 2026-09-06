@@ -1,4 +1,5 @@
 use super::TypeInference;
+use super::expr::member::FieldVisibilityCheck;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{
     TypedExpr, TypedExprKind, TypedMatchArm, TypedMatchArmBody, TypedPattern, TypedPatternKind,
@@ -353,8 +354,8 @@ impl TypeInference {
             }
             if !self.reject_untyped_native(&arg.ty, expected, arg.span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
-                    arg.ty.clone(),
                     expected.clone(),
+                    arg.ty.clone(),
                     arg.span,
                     reason,
                 ));
@@ -561,8 +562,8 @@ impl TypeInference {
             }
             if !self.reject_untyped_native(&arg.ty, expected, arg.span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
-                    arg.ty.clone(),
                     expected.clone(),
+                    arg.ty.clone(),
                     arg.span,
                     reason,
                 ));
@@ -1058,8 +1059,8 @@ impl TypeInference {
                         reason.clone(),
                     ) {
                         self.constraints.push(Constraint::equal(
-                            arg_types[0].clone(),
                             InferType::String,
+                            arg_types[0].clone(),
                             callee.span,
                             reason,
                         ));
@@ -1337,8 +1338,8 @@ impl TypeInference {
                     ConstraintReason::IfCondition,
                 ) {
                     self.constraints.push(Constraint::equal(
-                        typed_guard.ty.clone(),
                         InferType::Bool,
+                        typed_guard.ty.clone(),
                         guard.span,
                         ConstraintReason::IfCondition,
                     ));
@@ -1356,8 +1357,8 @@ impl TypeInference {
                         ConstraintReason::IfBranches,
                     ) {
                         self.constraints.push(Constraint::equal(
-                            typed_expr.ty.clone(),
                             result_type.clone(),
+                            typed_expr.ty.clone(),
                             expr.span,
                             ConstraintReason::IfBranches,
                         ));
@@ -1402,8 +1403,8 @@ impl TypeInference {
                     dynamic_result |= matches!(body_type, Some(InferType::Dynamic));
                     if let Some(body_type) = body_type {
                         self.constraints.push(Constraint::equal(
-                            body_type,
                             result_type.clone(),
+                            body_type,
                             arm.span,
                             ConstraintReason::IfBranches,
                         ));
@@ -1864,15 +1865,15 @@ impl TypeInference {
                             .find(|candidate| candidate.name == expected_field.name)
                         else {
                             if !*has_rest {
-                                if !self.check_field_visibility(
-                                    &format!("{}::{}", enum_name, variant.name),
-                                    &expected_field.name,
-                                    expected_field.is_pub,
-                                    &enum_def.owner,
-                                    pattern.span,
-                                    "an enum pattern",
-                                    true,
-                                ) {
+                                if !self.check_field_visibility(FieldVisibilityCheck {
+                                    structure: &format!("{}::{}", enum_name, variant.name),
+                                    field: &expected_field.name,
+                                    is_pub: expected_field.is_pub,
+                                    owner: &enum_def.owner,
+                                    span: pattern.span,
+                                    operation: "an enum pattern",
+                                    construction: true,
+                                }) {
                                     continue;
                                 }
                                 self.errors.push(TypeError {
@@ -1888,15 +1889,15 @@ impl TypeInference {
                             }
                             continue;
                         };
-                        if !self.check_field_visibility(
-                            &format!("{}::{}", enum_name, variant.name),
-                            &expected_field.name,
-                            expected_field.is_pub,
-                            &enum_def.owner,
-                            field.span,
-                            "an enum pattern",
-                            true,
-                        ) {
+                        if !self.check_field_visibility(FieldVisibilityCheck {
+                            structure: &format!("{}::{}", enum_name, variant.name),
+                            field: &expected_field.name,
+                            is_pub: expected_field.is_pub,
+                            owner: &enum_def.owner,
+                            span: field.span,
+                            operation: "an enum pattern",
+                            construction: true,
+                        }) {
                             continue;
                         }
                         typed_fields.push(self.infer_pattern(&field.pattern, &expected_field.ty));
@@ -1979,15 +1980,15 @@ impl TypeInference {
                         });
                         continue;
                     };
-                    if !self.check_field_visibility(
-                        &name,
-                        &field.name,
-                        field_def.is_pub,
-                        &def.owner,
-                        field.span,
-                        "a struct pattern",
-                        true,
-                    ) {
+                    if !self.check_field_visibility(FieldVisibilityCheck {
+                        structure: &name,
+                        field: &field.name,
+                        is_pub: field_def.is_pub,
+                        owner: &def.owner,
+                        span: field.span,
+                        operation: "a struct pattern",
+                        construction: true,
+                    }) {
                         continue;
                     }
                     typed_fields.push((
@@ -2001,15 +2002,15 @@ impl TypeInference {
                         if fields.iter().any(|candidate| candidate.name == field.name) {
                             continue;
                         }
-                        self.check_field_visibility(
-                            &name,
-                            &field.name,
-                            field.is_pub,
-                            &def.owner,
-                            pattern.span,
-                            "a struct pattern",
-                            true,
-                        );
+                        self.check_field_visibility(FieldVisibilityCheck {
+                            structure: &name,
+                            field: &field.name,
+                            is_pub: field.is_pub,
+                            owner: &def.owner,
+                            span: pattern.span,
+                            operation: "a struct pattern",
+                            construction: true,
+                        });
                     }
                     let required_fields = def
                         .fields

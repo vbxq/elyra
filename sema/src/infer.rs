@@ -24,6 +24,100 @@ use aelys_syntax::{ModuleId, ReferenceKind};
 use std::collections::{HashMap, HashSet};
 
 const MAX_INFERENCE_DEPTH: usize = 200;
+
+pub const GENERATED_SYMBOL_PREFIX: &str = "__aelys_";
+
+// global layout has to tell a mangled method from a `module::function` import
+pub fn is_mangled_symbol(symbol: &str) -> bool {
+    let Some(tail) = symbol.strip_prefix(GENERATED_SYMBOL_PREFIX) else {
+        return false;
+    };
+    let Some((_, fields)) = tail.split_once("::") else {
+        return false;
+    };
+    let bytes = fields.as_bytes();
+    bytes.len() > 8 && bytes[8] == b':' && bytes[..8].iter().all(u8::is_ascii_hexdigit)
+}
+
+#[cfg(test)]
+mod mangled_symbol_tests {
+    use super::is_mangled_symbol;
+
+    #[test]
+    fn a_mangled_method_is_recognised() {
+        assert!(is_mangled_symbol(&super::functions::struct_method_symbol(
+            "Point", "score"
+        )));
+        assert!(is_mangled_symbol(&super::functions::trait_method_symbol(
+            "Scored",
+            "Point",
+            "score",
+            &[]
+        )));
+        assert!(is_mangled_symbol(
+            &super::monomorphize::bound_marker_symbol("Scored", "T", "score")
+        ));
+    }
+
+    #[test]
+    fn a_module_named_like_the_prefix_is_not_mangled() {
+        assert!(!is_mangled_symbol("__aelys_struct::helper"));
+        assert!(!is_mangled_symbol("__aelys_trait::helper"));
+        assert!(!is_mangled_symbol("io::println"));
+        assert!(!is_mangled_symbol("println"));
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum BoundItem {
+    Type(InferType),
+    Const(i64),
+}
+
+pub(crate) type AssociatedBindings = Vec<(String, String, Vec<(String, BoundItem)>)>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OccurrenceRole {
+    Parameter,
+    ReturnType,
+    StructField,
+    EnumVariantField,
+    Bound,
+    ImplHeader,
+    ItemDefinition,
+}
+
+impl OccurrenceRole {
+    pub(crate) fn describe(self) -> &'static str {
+        match self {
+            Self::Parameter => "a parameter type",
+            Self::ReturnType => "a return type",
+            Self::StructField => "a struct field",
+            Self::EnumVariantField => "an enum variant field",
+            Self::Bound => "a bound",
+            Self::ImplHeader => "an impl header",
+            Self::ItemDefinition => "an associated item definition",
+        }
+    }
+}
+
+/// keyed by the mangled impl symbol: a receiver call reaches no generic
+pub(crate) struct ImplMethodSignature {
+    pub(crate) params: Vec<InferType>,
+    pub(crate) return_type: InferType,
+}
+
+/// only monomorphization can say what it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectionNamespace {
+    Found,
+    Opaque,
+    WrongNamespace {
+        found: crate::constraint::ItemNamespace,
+    },
+    Absent,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ConstResolution {
     Value(i64),
@@ -71,6 +165,7 @@ pub struct TypeInference {
     function_reference_modes: HashMap<String, Vec<Option<ReferenceKind>>>,
     allow_reference_annotation: bool,
     allow_direct_borrow: bool,
+    callee_position: bool,
     borrow_call_scopes: Vec<Vec<borrows::ActiveLoan>>,
     forwarded_mutable_borrows: HashSet<String>,
     try_residuals: Vec<expr_sum::TryResidual>,
@@ -91,24 +186,32 @@ pub struct TypeInference {
     pub(crate) current_module: ModuleId,
     collection_iter_allowed: bool,
     withheld_nominals: std::collections::BTreeMap<String, String>,
+    module_globals:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, InferType>>,
     pub(crate) monomorphization_active: Vec<(String, Vec<InferType>)>,
     current_trait_name: Option<String>,
     current_trait_associated_items: Vec<String>,
+    nominal_parameter_scope: bool,
     /// bounds of the function currently being collected, for `t::item` projections.
     current_function_bounds: Vec<(String, String, Vec<InferType>)>,
-    current_function_bindings: Vec<(String, String, Vec<(String, InferType)>)>,
+    current_function_bindings: AssociatedBindings,
     /// associated bindings per (function, subject param): `item = int` bounds.
-    generic_function_bindings: HashMap<String, Vec<(String, String, Vec<(String, InferType)>)>>,
+    generic_function_bindings: HashMap<String, AssociatedBindings>,
+    impl_method_signatures: HashMap<String, ImplMethodSignature>,
     /// deeply nested typed tree cannot overflow the stack.
     substitution_depth: std::cell::Cell<usize>,
     associated_type_definitions: Vec<AssociatedTypeDefinition>,
-    /// memo for `associated_const_table`, which the monomorphizer asks for at
-    associated_const_table_cache: std::cell::RefCell<Option<HashMap<(String, String), i64>>>,
+    /// memo for `associated_const_resolutions`, which the monomorphizer asks for at
+    associated_const_resolution_cache:
+        std::cell::RefCell<Option<HashMap<(String, String), ConstResolution>>>,
     trait_qualified_items: HashMap<(String, String), Vec<String>>,
     /// demand, after every impl is registered, so the result cannot depend on
     associated_const_exprs: HashMap<(String, String), (String, aelys_syntax::Expr)>,
     defer_projection_resolution: bool,
+    annotation_namespace: crate::constraint::ItemNamespace,
+    occurrence_role: Option<OccurrenceRole>,
     current_impl_self: Option<InferType>,
+    in_trait_default_body: bool,
     /// reject, so the compile reports it instead of yielding a poisoned type.
     projection_cycle_escaped: std::cell::Cell<bool>,
     /// compile reports a recursion-limit error instead of silently emitting a
@@ -118,6 +221,7 @@ pub struct TypeInference {
 struct AssociatedTypeDefinition {
     receiver: String,
     item: String,
+    namespace: crate::constraint::ItemNamespace,
     edges: Vec<(String, String)>,
     span: aelys_syntax::Span,
 }

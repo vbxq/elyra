@@ -138,10 +138,10 @@ impl TypeInference {
         callee: &Expr,
         typed_callee: &TypedExpr,
     ) -> Vec<Option<ReferenceKind>> {
-        if let TypedExprKind::StructMethod { symbol, .. } = &typed_callee.kind {
-            if let Some(modes) = self.function_reference_modes.get(symbol) {
-                return modes.clone();
-            }
+        if let TypedExprKind::StructMethod { symbol, .. } = &typed_callee.kind
+            && let Some(modes) = self.function_reference_modes.get(symbol)
+        {
+            return modes.clone();
         }
         source_call_path(callee)
             .and_then(|name| self.function_reference_modes.get(&name).cloned())
@@ -181,7 +181,7 @@ impl TypeInference {
     ) -> InferType {
         let saved = self.allow_reference_annotation;
         self.allow_reference_annotation = true;
-        let ty = self.type_from_annotation(annotation);
+        let ty = self.type_from_annotation_as(crate::infer::OccurrenceRole::Parameter, annotation);
         self.allow_reference_annotation = saved;
         ty
     }

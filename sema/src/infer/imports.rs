@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::types::{EnumDef, StructDef, TraitDef};
+use crate::types::{EnumDef, InferType, StructDef, TraitDef};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default)]
@@ -8,6 +8,7 @@ pub struct ImportedTypes {
     pub structs: Vec<StructDef>,
     pub traits: Vec<TraitDef>,
     pub withheld: BTreeMap<String, String>,
+    pub module_globals: BTreeMap<String, BTreeMap<String, InferType>>,
 }
 
 impl ImportedTypes {
@@ -20,6 +21,7 @@ impl ImportedTypes {
         self.structs.extend(other.structs);
         self.traits.extend(other.traits);
         self.withheld.extend(other.withheld);
+        self.module_globals.extend(other.module_globals);
     }
 
     pub fn nominal_names(&self) -> Vec<String> {
@@ -44,6 +46,7 @@ impl TypeInference {
             self.type_table.register_trait(def);
         }
         self.withheld_nominals = imported.withheld;
+        self.module_globals = imported.module_globals;
     }
 
     pub(crate) fn withholding_module(&self, name: &str) -> Option<&str> {

@@ -31,7 +31,7 @@ impl TypeInference {
                 reason: ConstraintReason::Other("final typed surface audit".to_string()),
             });
         }
-        if let Some(InferType::Applied { name, .. }) = self
+        if let Some((InferType::Applied { name, .. }, span)) = self
             .type_table
             .unmaterialized_applied_types()
             .into_iter()
@@ -39,7 +39,7 @@ impl TypeInference {
         {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::UnmaterializedAppliedType { name },
-                span: aelys_syntax::Span::dummy(),
+                span,
                 reason: ConstraintReason::Other("final schema audit".to_string()),
             });
         }

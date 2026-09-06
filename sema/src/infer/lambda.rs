@@ -29,7 +29,9 @@ impl TypeInference {
         }
 
         let return_type = match return_type_ann {
-            Some(ann) => self.type_from_annotation(ann),
+            Some(ann) => {
+                self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
+            }
             None if body.is_empty() => InferType::Unit,
             None => self.type_gen.fresh(),
         };

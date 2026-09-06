@@ -9,7 +9,11 @@ pub mod unify;
 
 pub use constraint::{Constraint, ConstraintReason, TypeError};
 pub use env::TypeEnv;
-pub use infer::{TypeInference, entry::InferenceResult};
+pub use infer::{
+    GENERATED_SYMBOL_PREFIX, TypeInference,
+    entry::{InferenceInputs, InferenceResult},
+    is_mangled_symbol,
+};
 pub use typed_ast::{
     TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedMatchArm, TypedMatchArmBody,
     TypedParam, TypedPattern, TypedPatternKind, TypedProgram, TypedStmt, TypedStmtKind,
