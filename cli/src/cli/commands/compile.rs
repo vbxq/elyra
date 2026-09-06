@@ -2,7 +2,7 @@ use aelys_backend::Compiler;
 use aelys_bytecode::asm::NativeBundle;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_common::{Warning, WarningConfig};
-use aelys_driver::modules::{LoadedNativeInfo, load_modules_with_loader};
+use aelys_driver::modules::{LoadedNativeInfo, load_modules_with_loader, resolve_globals};
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_modules::manifest::Manifest;
@@ -11,8 +11,6 @@ use aelys_runtime::{VM, VmConfig};
 use aelys_syntax::{Source, StmtKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-const BUILTIN_NAMES: &[&str] = &["alloc", "free", "load", "store"];
 
 #[allow(dead_code)]
 pub fn compile_to_avbc(path: &Path, opt_level: OptimizationLevel) -> Result<PathBuf, String> {
@@ -79,17 +77,11 @@ pub fn compile_to_avbc_with_output(
         )
         .collect();
 
-    let mut all_known_globals = imports.known_globals.clone();
-    for builtin in BUILTIN_NAMES {
-        all_known_globals.insert(builtin.to_string());
-    }
-    all_known_globals.extend(vm.repl_known_globals().iter().cloned());
-
-    let mut all_module_aliases = imports.module_aliases.clone();
-    all_module_aliases.extend(vm.repl_module_aliases().iter().cloned());
-
-    let mut all_known_native_globals = imports.known_native_globals.clone();
-    all_known_native_globals.extend(vm.repl_known_native_globals().iter().cloned());
+    let resolved = resolve_globals(Some(&imports), &vm);
+    let all_known_globals = resolved.known_globals;
+    let codegen_globals = resolved.codegen_globals;
+    let all_module_aliases = resolved.module_aliases;
+    let all_known_native_globals = resolved.known_native_globals;
 
     let typed_program = aelys_sema::TypeInference::infer_program_full_with_native_signatures(
         main_stmts,
@@ -109,7 +101,11 @@ pub fn compile_to_avbc_with_output(
                     message: format!("{}", err),
                 },
                 err.span,
-                src.clone(),
+                aelys_driver::modules::diagnostic_source(
+                    Some(&imports),
+                    err.defining_module(),
+                    &src,
+                ),
             )
             .to_string()
         } else {
@@ -136,20 +132,13 @@ pub fn compile_to_avbc_with_output(
         })
         .collect();
 
-    let mut all_symbol_origins = imports.symbol_origins;
-    for (name, origin) in vm.repl_symbol_origins() {
-        all_symbol_origins
-            .entry(name.clone())
-            .or_insert_with(|| origin.clone());
-    }
-
     let (mut function, _globals) = Compiler::with_modules(
         None,
         src.clone(),
         all_module_aliases,
-        all_known_globals,
+        codegen_globals,
         all_known_native_globals,
-        all_symbol_origins,
+        resolved.symbol_origins,
     )
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;

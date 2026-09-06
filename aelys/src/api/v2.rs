@@ -474,7 +474,7 @@ impl Runtime {
         let avbc = serialize(&function).map_err(|error| {
             CompileError::new(
                 CompileErrorKind::CompilationLimitExceeded(error.to_string()),
-                Span::dummy(),
+                Span::whole_unit(&source),
                 source.clone(),
             )
         })?;
@@ -919,7 +919,7 @@ impl Isolate {
         let avbc = serialize(&function).map_err(|error| {
             CompileError::new(
                 CompileErrorKind::CompilationLimitExceeded(error.to_string()),
-                Span::dummy(),
+                Span::whole_unit(&source),
                 Arc::clone(&source),
             )
         })?;

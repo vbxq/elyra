@@ -116,7 +116,6 @@ fn detect_format(path: &Path) -> Result<InputFormat, String> {
 }
 
 fn is_bytecode(path: &Path) -> Result<bool, String> {
-    // VBXQ magic bytes
     use std::io::Read;
     let mut file = std::fs::File::open(path)
         .map_err(|err| format!("failed to open {}: {}", path.display(), err))?;
@@ -224,6 +223,9 @@ fn collect_required_modules_rec(
     modules: &mut HashSet<String>,
 ) {
     for name in function.global_layout.names() {
+        if aelys_sema::is_mangled_symbol(name) {
+            continue;
+        }
         if let Some(module_name) = name.split("::").next()
             && name.contains("::")
         {
@@ -378,7 +380,6 @@ fn register_native_module(
     Ok(())
 }
 
-// FNV-1a, good enough for integrity checks
 fn compute_simple_hash(data: &[u8]) -> String {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;

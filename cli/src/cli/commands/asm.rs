@@ -1,7 +1,7 @@
 use crate::cli::vm_config::parse_vm_args_or_error;
 use aelys_backend::Compiler;
 use aelys_bytecode::asm::{deserialize_with_manifest, disassemble_to_string};
-use aelys_driver::modules::load_modules_with_loader;
+use aelys_driver::modules::{load_modules_with_loader, resolve_globals};
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::{OptimizationLevel, Optimizer};
@@ -142,17 +142,14 @@ fn compile_source(
         )
         .collect();
 
-    let mut all_known_globals = imports.known_globals.clone();
-    for builtin in ["alloc", "free", "load", "store"] {
-        all_known_globals.insert(builtin.to_string());
-    }
+    let resolved = resolve_globals(Some(&imports), &vm);
 
     let typed_program = aelys_sema::TypeInference::infer_program_full_with_native_signatures(
         main_stmts,
         src.clone(),
-        imports.module_aliases.clone(),
-        all_known_globals,
-        imports.known_native_globals.clone(),
+        resolved.module_aliases.clone(),
+        resolved.known_globals.clone(),
+        resolved.known_native_globals.clone(),
         imports.native_signatures.clone(),
         imports.imported_types.clone(),
     )
@@ -171,10 +168,10 @@ fn compile_source(
     let (function, _globals) = Compiler::with_modules(
         None,
         src.clone(),
-        imports.module_aliases,
-        imports.known_globals,
-        imports.known_native_globals,
-        imports.symbol_origins,
+        resolved.module_aliases,
+        resolved.codegen_globals,
+        resolved.known_native_globals,
+        resolved.symbol_origins,
     )
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;
