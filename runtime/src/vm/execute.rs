@@ -53,6 +53,7 @@ impl VM {
         self.frames.clear();
         self.open_upvalues.clear();
         self.current_upvalues.clear();
+        self.globals_by_index.clear();
         self.current_global_mapping_id = 0;
     }
 

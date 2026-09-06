@@ -167,7 +167,7 @@ impl VM {
         }
     }
 
-    fn ensure_heap_capacity(&self, additional: u64) -> Result<(), RuntimeError> {
+    pub(crate) fn ensure_heap_capacity(&self, additional: u64) -> Result<(), RuntimeError> {
         let heap_bytes = u64::try_from(self.heap.bytes_allocated()).unwrap_or(u64::MAX);
         let new_total = heap_bytes.checked_add(additional).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::OutOfMemory {

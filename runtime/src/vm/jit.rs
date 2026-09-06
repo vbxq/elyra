@@ -322,8 +322,8 @@ impl VM {
             .frames
             .get(self.frames.len().saturating_sub(2))
             .map_or(0, |frame| frame.global_mapping_id);
-        let switch_globals = current_globals != 0 && current_globals != caller_globals;
-        if switch_globals && caller_globals != 0 {
+        let switch_globals = current_globals != caller_globals;
+        if switch_globals {
             self.sync_current_function_globals();
         }
         self.pop_frame_with_jit_metadata();
@@ -335,7 +335,7 @@ impl VM {
             .base
             .checked_add(usize::from(destination))
             .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
-        if switch_globals && caller_globals != 0 {
+        if switch_globals {
             self.prepare_globals_for_function(caller_function);
         }
         if destination >= self.registers.len() {

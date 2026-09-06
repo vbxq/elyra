@@ -86,13 +86,21 @@ impl VM {
 
         loop {
             if ip >= bytecode_len {
+                let previous_gmap = global_mapping_id;
+                let caller_gmap = if self.frames.len() > 1 {
+                    self.frames[self.frames.len() - 2].global_mapping_id
+                } else {
+                    0
+                };
+                if previous_gmap != caller_gmap {
+                    self.sync_current_function_globals();
+                }
                 self.pop_frame_with_jit_metadata();
                 if self.frames.is_empty() {
                     return Ok(Value::null());
                 }
-                let previous_gmap = global_mapping_id;
                 reload_frame_state!();
-                if global_mapping_id != 0 && global_mapping_id != previous_gmap {
+                if global_mapping_id != previous_gmap {
                     global_mapping_id = self.prepare_globals_for_function(func_ref);
                 }
                 continue;
@@ -267,13 +275,26 @@ impl VM {
 
                 39 => {
                     let (dest, source, global) = decode_abc(instr);
-                    let left = self
+                    let left_value = self
                         .globals_by_index
                         .get(usize::from(global))
                         .copied()
-                        .unwrap_or_else(Value::null)
-                        .as_int_unchecked();
-                    let right = reg_ref!(base + usize::from(source)).as_int_unchecked();
+                        .unwrap_or_else(Value::null);
+                    let right_value = *reg_ref!(base + usize::from(source));
+                    let (Some(left), Some(right)) = (left_value.as_int(), right_value.as_int())
+                    else {
+                        let found = if left_value.as_int().is_some() {
+                            right_value
+                        } else {
+                            left_value
+                        };
+                        self.frames[current_frame_idx].ip = ip;
+                        return Err(self.runtime_error(RuntimeErrorKind::TypeError {
+                            operation: "AddGlobalI",
+                            expected: "int",
+                            got: found.type_name().to_string(),
+                        }));
+                    };
                     let result = int_value!(left.wrapping_add(right));
                     self.set_global_by_index(usize::from(global), result);
                     reg_set!(base + usize::from(dest), result);
@@ -512,10 +533,8 @@ impl VM {
                                             }
                                     }
 
-                                    if callee_gmap != 0 && callee_gmap != global_mapping_id {
-                                        if global_mapping_id != 0 {
-                                            self.sync_current_function_globals();
-                                        }
+                                    if callee_gmap != global_mapping_id {
+                                        self.sync_current_function_globals();
                                         self.prepare_globals_for_function(callee_ref);
                                     }
 
@@ -605,10 +624,8 @@ impl VM {
                                         ));
                                     }
 
-                                    if callee_gmap != 0 && callee_gmap != global_mapping_id {
-                                        if global_mapping_id != 0 {
-                                            self.sync_current_function_globals();
-                                        }
+                                    if callee_gmap != global_mapping_id {
+                                        self.sync_current_function_globals();
                                         self.prepare_globals_for_function(inner_func);
                                     }
 
@@ -665,9 +682,9 @@ impl VM {
                             0
                         };
 
-                        let needs_switch = current_gmap != 0 && current_gmap != caller_gmap;
+                        let needs_switch = current_gmap != caller_gmap;
 
-                        if needs_switch && caller_gmap != 0 {
+                        if needs_switch {
                             self.sync_current_function_globals();
                         }
 
@@ -679,7 +696,7 @@ impl VM {
 
                         reload_frame_state!();
 
-                        if needs_switch && caller_gmap != 0 {
+                        if needs_switch {
                             self.prepare_globals_for_function(func_ref);
                         }
 
@@ -696,9 +713,9 @@ impl VM {
                             0
                         };
 
-                        let needs_switch = current_gmap != 0 && current_gmap != caller_gmap;
+                        let needs_switch = current_gmap != caller_gmap;
 
-                        if needs_switch && caller_gmap != 0 {
+                        if needs_switch {
                             self.sync_current_function_globals();
                         }
 
@@ -710,7 +727,7 @@ impl VM {
 
                         reload_frame_state!();
 
-                        if needs_switch && caller_gmap != 0 {
+                        if needs_switch {
                             self.prepare_globals_for_function(func_ref);
                         }
 
@@ -961,10 +978,8 @@ impl VM {
                                                 crate::vm::jit::JitRegisterCallResult::Unsupported => {}
                                             }
                                     }
-                                    if callee_gmap != 0 && callee_gmap != global_mapping_id {
-                                        if global_mapping_id != 0 {
-                                            self.sync_current_function_globals();
-                                        }
+                                    if callee_gmap != global_mapping_id {
+                                        self.sync_current_function_globals();
                                         self.prepare_globals_for_function(callee_ref);
                                     }
                                     let new_base = base
@@ -1044,10 +1059,8 @@ impl VM {
                                             },
                                         ));
                                     }
-                                    if callee_gmap != 0 && callee_gmap != global_mapping_id {
-                                        if global_mapping_id != 0 {
-                                            self.sync_current_function_globals();
-                                        }
+                                    if callee_gmap != global_mapping_id {
+                                        self.sync_current_function_globals();
                                         self.prepare_globals_for_function(inner_func);
                                     }
                                     let new_base = base

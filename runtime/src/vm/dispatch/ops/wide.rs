@@ -91,17 +91,19 @@ impl VM {
             }
             OpCode::GetGlobalIdx => {
                 let index = (b << 16) | c;
-                let value = self
-                    .globals_by_index
-                    .get(index)
-                    .copied()
-                    .unwrap_or(Value::null());
+                let Some(value) = self.globals_by_index.get(index).copied() else {
+                    self.frames[current_frame_idx].ip = ip;
+                    return Err(self.global_index_error("wide GetGlobalIdx", index));
+                };
                 reg_set!(base + a, value);
             }
             OpCode::SetGlobalIdx => {
                 let index = (b << 16) | c;
                 let value = reg_get!(base + a);
-                self.set_global_by_index(index, value);
+                if let Err(error) = self.set_global_by_index_checked(index, value) {
+                    self.frames[current_frame_idx].ip = ip;
+                    return Err(error);
+                }
             }
             OpCode::LoadNull => reg_set!(base + a, Value::null()),
             OpCode::LoadUnit => reg_set!(base + a, Value::unit()),
@@ -867,8 +869,8 @@ impl VM {
                 } else {
                     0
                 };
-                let needs_switch = current_gmap != 0 && current_gmap != caller_gmap;
-                if needs_switch && caller_gmap != 0 {
+                let needs_switch = current_gmap != caller_gmap;
+                if needs_switch {
                     self.sync_current_function_globals();
                 }
                 self.pop_frame_with_jit_metadata();
@@ -878,7 +880,7 @@ impl VM {
                 return Ok(DispatchControl::ReturnToCaller {
                     destination: dest,
                     value: result,
-                    switch_globals: needs_switch && caller_gmap != 0,
+                    switch_globals: needs_switch,
                 });
             }
             _ => {
