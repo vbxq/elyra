@@ -1,4 +1,3 @@
-// source location - byte offset + line/col for error messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -26,7 +25,11 @@ impl Span {
         }
     }
 
-    // combine two spans (useful for AST nodes that span multiple tokens)
+    // inside it. a dummy span renders at line 0, which shows no location and
+    pub fn whole_unit(source: &crate::Source) -> Self {
+        Self::new(0, source.get_line(1).len(), 1, 1)
+    }
+
     pub fn merge(self, other: Span) -> Span {
         Span {
             start: self.start.min(other.start),

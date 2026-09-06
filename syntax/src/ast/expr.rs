@@ -6,6 +6,13 @@ pub enum ReferenceKind {
     Mutable,
 }
 
+/// to a value, which the type grammar cannot express.
+#[derive(Debug, Clone)]
+pub enum AssociatedBinding {
+    Type(TypeAnnotation),
+    Const(i64),
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeAnnotation {
     pub name: String,
@@ -16,7 +23,7 @@ pub struct TypeAnnotation {
     pub array_length: Option<u64>,
     /// `[t; bounds::limit]` a symbolic fixed-array length resolved from an
     pub array_length_path: Option<Vec<String>>,
-    pub associated_bindings: Vec<(String, TypeAnnotation)>,
+    pub associated_bindings: Vec<(String, AssociatedBinding, Span)>,
     pub reference: Option<ReferenceKind>,
     pub span: Span,
 }
@@ -329,7 +336,7 @@ pub struct MatchArm {
 
 #[derive(Debug, Clone)]
 pub enum MatchArmBody {
-    Expr(Expr),
+    Expr(Box<Expr>),
     Block(Vec<crate::ast::Stmt>),
 }
 

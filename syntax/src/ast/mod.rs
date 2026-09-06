@@ -2,9 +2,9 @@ mod expr;
 mod stmt;
 
 pub use expr::{
-    BinaryOp, Expr, ExprKind, FmtStringPart, MatchArm, MatchArmBody, MemberSeparator, Parameter,
-    Pattern, PatternKind, ReferenceKind, StructFieldInit, StructPatternField, TypeAnnotation,
-    UnaryOp,
+    AssociatedBinding, BinaryOp, Expr, ExprKind, FmtStringPart, MatchArm, MatchArmBody,
+    MemberSeparator, Parameter, Pattern, PatternKind, ReferenceKind, StructFieldInit,
+    StructPatternField, TypeAnnotation, UnaryOp,
 };
 pub use stmt::{
     AssociatedConstDecl, AssociatedConstDef, AssociatedTypeDecl, AssociatedTypeDef, Decorator,
