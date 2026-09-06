@@ -210,3 +210,85 @@ fn a_reasonably_nested_type_annotation_still_compiles() {
     std::fs::write(&path, &source).expect("the source is written");
     run_file(&path).expect("eight levels of nesting stay inside the limit");
 }
+
+fn assemble_root(text: &str) -> Function {
+    let functions = aelys_bytecode::asm::assemble(text).expect("the assembly is well formed");
+    functions
+        .into_iter()
+        .next()
+        .expect("the assembly declares a function")
+}
+
+fn run_assembly_with_heap(
+    text: &str,
+    max_heap_bytes: u64,
+) -> Result<aelys_runtime::Value, RuntimeErrorKind> {
+    let config = aelys_runtime::VmConfig::new(max_heap_bytes).expect("the budget is legal");
+    let mut vm = VM::with_config(Source::new("test.aasm", ""), config).expect("a bare vm starts");
+    let func_ref = vm
+        .alloc_function(assemble_root(text))
+        .expect("allocation succeeds");
+    vm.execute(func_ref).map_err(|err| err.kind)
+}
+
+fn global_index_program(set_op: &str, index: &str) -> String {
+    format!(
+        ".version 3\n\
+         .function 0\n\
+        \x20 .arity 0\n\
+        \x20 .registers 2\n\
+        \x20 .code\n\
+        \x20   0000: LoadI     r0, 7\n\
+        \x20   0001: {set_op} {index}, r0\n\
+        \x20   0002: Return    r0\n"
+    )
+}
+
+#[test]
+fn a_wide_global_index_grows_the_store_only_inside_the_heap_budget() {
+    let kind = run_assembly_with_heap(
+        &global_index_program("SetGlobalIdxWide", "20000000"),
+        8 * 1024 * 1024,
+    )
+    .expect_err("the store is a plain Vec, and the budget has to reach it too");
+    match kind {
+        RuntimeErrorKind::OutOfMemory { requested, max } => {
+            assert_eq!(requested, 20_000_001 * 16);
+            assert_eq!(max, 8 * 1024 * 1024);
+        }
+        other => panic!("expected the budget to refuse the growth, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_narrow_global_index_grows_the_store_only_inside_the_heap_budget() {
+    // the narrow operand is sixteen bits, so 65535 is the largest index it can
+    let kind = run_assembly_with_heap(
+        &global_index_program("SetGlobalIdx", "-1"),
+        aelys_runtime::VmConfig::MIN_HEAP_BYTES,
+    )
+    .expect_err("65536 slots do not fit the smallest legal budget");
+    match kind {
+        RuntimeErrorKind::OutOfMemory { requested, max } => {
+            assert_eq!(requested, 65_536 * 16);
+            assert_eq!(max, aelys_runtime::VmConfig::MIN_HEAP_BYTES);
+        }
+        other => panic!("expected the budget to refuse the growth, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_global_index_that_fits_the_heap_budget_still_runs() {
+    let text = ".version 3\n\
+                .function 0\n\
+                \x20 .arity 0\n\
+                \x20 .registers 2\n\
+                \x20 .code\n\
+                \x20   0000: LoadI     r0, 7\n\
+                \x20   0001: SetGlobalIdxWide 65534, r0\n\
+                \x20   0002: GetGlobalIdxWide r1, 65534\n\
+                \x20   0003: Return    r1\n";
+    let value = run_assembly_with_heap(text, 8 * 1024 * 1024)
+        .expect("a store inside the budget still grows");
+    assert_eq!(value.as_int(), Some(7));
+}
