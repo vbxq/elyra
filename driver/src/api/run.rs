@@ -39,7 +39,18 @@ pub fn run_with_config_and_opt(
     let stmts = Parser::new_rust_collections(tokens, src.clone()).parse()?;
     reject_unloadable_needs(&stmts, &src)?;
 
-    let typed_program = TypeInference::infer_program(stmts, src.clone()).map_err(|errors| {
+    let mut vm =
+        VM::with_config_and_args(src.clone(), config, program_args).map_err(AelysError::Runtime)?;
+    let resolved = crate::modules::resolve_globals(None, &vm);
+
+    let typed_program = TypeInference::infer_program_with_imports_and_natives(
+        stmts,
+        src.clone(),
+        resolved.module_aliases.clone(),
+        resolved.known_globals.clone(),
+        resolved.known_native_globals.clone(),
+    )
+    .map_err(|errors| {
         if let Some(err) = errors.first() {
             AelysError::Compile(CompileError::new(
                 CompileErrorKind::NamedTypeError {
@@ -61,10 +72,16 @@ pub fn run_with_config_and_opt(
     let mut optimizer = Optimizer::new(opt_level);
     let typed_program = optimizer.optimize(typed_program);
 
-    let (function, _globals) = Compiler::new(None, src.clone()).compile_typed(&typed_program)?;
+    let (function, _globals) = Compiler::with_modules(
+        None,
+        src.clone(),
+        resolved.module_aliases,
+        resolved.known_globals,
+        resolved.known_native_globals,
+        resolved.symbol_origins,
+    )
+    .compile_typed(&typed_program)?;
 
-    let mut vm =
-        VM::with_config_and_args(src, config, program_args).map_err(AelysError::Runtime)?;
     let func_ref = vm.alloc_function(function).map_err(AelysError::Runtime)?;
     Ok(vm.execute(func_ref)?)
 }

@@ -29,9 +29,10 @@ pub fn run_with_vm_and_opt(
         .iter()
         .any(|s| matches!(s.kind, aelys_syntax::StmtKind::Needs(_)));
 
-    let mut module_aliases = vm.repl_module_aliases().clone();
-    let mut known_globals = vm.repl_known_globals().clone();
-    let mut known_native_globals = vm.repl_known_native_globals().clone();
+    let resolved = crate::modules::resolve_globals(None, vm);
+    let mut module_aliases = resolved.module_aliases;
+    let mut known_globals = resolved.known_globals;
+    let mut known_native_globals = resolved.known_native_globals;
     let mut native_signatures = std::collections::HashMap::new();
     for global in &known_globals {
         let Some(value) = vm.get_global(global) else {
@@ -50,7 +51,7 @@ pub fn run_with_vm_and_opt(
             native_signatures.insert(global.clone(), ty);
         }
     }
-    let mut symbol_origins = vm.repl_symbol_origins().clone();
+    let mut symbol_origins = resolved.symbol_origins;
 
     let main_stmts = if has_needs {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

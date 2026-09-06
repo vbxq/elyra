@@ -98,22 +98,15 @@ pub fn run_file_full_with_control(
         )
         .collect();
 
-    let mut all_known_globals = imports.known_globals.clone();
-    all_known_globals.extend(vm.repl_known_globals().iter().cloned());
-
-    let mut all_module_aliases = imports.module_aliases.clone();
-    all_module_aliases.extend(vm.repl_module_aliases().iter().cloned());
-
-    let mut all_known_native_globals = imports.known_native_globals.clone();
-    all_known_native_globals.extend(vm.repl_known_native_globals().iter().cloned());
+    let resolved = crate::modules::resolve_globals(Some(&imports), &vm);
     let all_native_signatures = imports.native_signatures.clone();
 
     let inference_result = TypeInference::infer_program_full_with_native_signatures(
         main_stmts,
         src.clone(),
-        all_module_aliases,
-        all_known_globals,
-        all_known_native_globals,
+        resolved.module_aliases.clone(),
+        resolved.known_globals.clone(),
+        resolved.known_native_globals.clone(),
         all_native_signatures,
         imports.imported_types.clone(),
     )
@@ -125,7 +118,7 @@ pub fn run_file_full_with_control(
                     message: format!("{}", err),
                 },
                 err.span,
-                src.clone(),
+                crate::modules::diagnostic_source(Some(&imports), err.defining_module(), &src),
             ))
         } else {
             AelysError::Compile(CompileError::new(
@@ -162,26 +155,13 @@ pub fn run_file_full_with_control(
         .collect();
     warnings.extend(opt_warnings);
 
-    let mut compiler_known_globals = imports.known_globals;
-    compiler_known_globals.extend(vm.repl_known_globals().iter().cloned());
-    let mut compiler_module_aliases = imports.module_aliases;
-    compiler_module_aliases.extend(vm.repl_module_aliases().iter().cloned());
-    let mut compiler_native_globals = imports.known_native_globals;
-    compiler_native_globals.extend(vm.repl_known_native_globals().iter().cloned());
-    let mut compiler_symbol_origins = imports.symbol_origins;
-    for (k, v) in vm.repl_symbol_origins() {
-        compiler_symbol_origins
-            .entry(k.clone())
-            .or_insert_with(|| v.clone());
-    }
-
     let compiler = Compiler::with_modules(
         None,
         src.clone(),
-        compiler_module_aliases,
-        compiler_known_globals,
-        compiler_native_globals,
-        compiler_symbol_origins,
+        resolved.module_aliases,
+        resolved.codegen_globals,
+        resolved.known_native_globals,
+        resolved.symbol_origins,
     );
     let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
