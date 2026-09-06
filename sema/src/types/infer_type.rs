@@ -191,6 +191,24 @@ impl InferType {
         }
     }
 
+    pub fn mentions_param(&self, name: &str) -> bool {
+        match self {
+            InferType::Param(param) => param == name,
+            InferType::Function { params, ret } => {
+                params.iter().any(|param| param.mentions_param(name)) || ret.mentions_param(name)
+            }
+            InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
+                inner.mentions_param(name)
+            }
+            InferType::FixedArray(inner, _) => inner.mentions_param(name),
+            InferType::Result(ok, err) => ok.mentions_param(name) || err.mentions_param(name),
+            InferType::Tuple(elements) => elements.iter().any(|el| el.mentions_param(name)),
+            InferType::Applied { args, .. } => args.iter().any(|arg| arg.mentions_param(name)),
+            InferType::Projection { self_ty, .. } => self_ty.mentions_param(name),
+            _ => false,
+        }
+    }
+
     pub fn is_resolved(&self) -> bool {
         !self.has_vars()
     }

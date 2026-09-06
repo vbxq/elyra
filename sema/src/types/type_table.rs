@@ -1,5 +1,6 @@
 use super::InferType;
-use aelys_syntax::ModuleId;
+use crate::constraint::ItemNamespace;
+use aelys_syntax::{ModuleId, Span};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -8,6 +9,7 @@ pub struct StructField {
     pub ty: InferType,
     pub is_pub: bool,
     pub ordinal: u16,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,7 @@ pub struct TraitImplDef {
 pub struct EnumVariantDef {
     pub name: String,
     pub fields: EnumVariantFieldsDef,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +170,16 @@ impl TypeTable {
 
     pub fn has_nominal(&self, name: &str) -> bool {
         self.has_struct(name) || self.has_enum(name)
+    }
+
+    pub fn nominal_keyword(&self, name: &str) -> Option<&'static str> {
+        if self.has_struct(name) {
+            Some("struct")
+        } else if self.has_enum(name) {
+            Some("enum")
+        } else {
+            None
+        }
     }
 
     pub fn has_struct(&self, name: &str) -> bool {
@@ -323,22 +336,44 @@ impl TypeTable {
         self.trait_impl_defs.push(definition);
     }
 
-    pub fn trait_impl_overlaps(
+    pub fn push_trait_impl_def(&mut self, definition: TraitImplDef) -> usize {
+        self.trait_impl_defs.push(definition);
+        self.trait_impl_defs.len() - 1
+    }
+
+    pub fn trait_impl_def_at_mut(&mut self, index: usize) -> Option<&mut TraitImplDef> {
+        self.trait_impl_defs.get_mut(index)
+    }
+
+    pub fn remove_trait_impl_defs(&mut self, indices: &[usize]) {
+        for index in indices.iter().rev() {
+            if *index < self.trait_impl_defs.len() {
+                self.trait_impl_defs.remove(*index);
+            }
+        }
+    }
+
+    // has not resolved yet cannot be mistaken for a competing one.
+    pub fn trait_impl_overlaps_among(
         &self,
+        indices: &[usize],
         trait_name: &str,
         trait_args: &[InferType],
         self_type: &InferType,
     ) -> bool {
-        self.trait_impl_defs.iter().any(|definition| {
-            definition.trait_name == trait_name
-                && definition.trait_args.len() == trait_args.len()
-                && definition
-                    .trait_args
-                    .iter()
-                    .zip(trait_args)
-                    .all(|(left, right)| types_overlap(left, right))
-                && types_overlap(&definition.self_type, self_type)
-        })
+        indices
+            .iter()
+            .filter_map(|index| self.trait_impl_defs.get(*index))
+            .any(|definition| {
+                definition.trait_name == trait_name
+                    && definition.trait_args.len() == trait_args.len()
+                    && definition
+                        .trait_args
+                        .iter()
+                        .zip(trait_args)
+                        .all(|(left, right)| types_overlap(left, right))
+                    && types_overlap(&definition.self_type, self_type)
+            })
     }
 
     pub fn types_match(&self, expected: &InferType, actual: &InferType) -> bool {
@@ -355,6 +390,97 @@ impl TypeTable {
         type_matches(expected, actual) || type_matches(actual, expected)
     }
 
+    pub fn trait_declaring_item(&self, trait_name: &str, item: &str) -> Option<String> {
+        self.trait_declaring_item_in(trait_name, item, None)
+    }
+
+    // keyed on one trait must accept an impl of any of them, and must not pick a
+    pub fn supertrait_closure(&self, trait_name: &str) -> Vec<String> {
+        let mut closure = Vec::new();
+        let mut queue = std::collections::VecDeque::from([trait_name.to_string()]);
+        let mut seen = std::collections::HashSet::new();
+        while let Some(name) = queue.pop_front() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if let Some(definition) = self.get_trait(&name) {
+                queue.extend(definition.super_bounds.iter().cloned());
+            }
+            closure.push(name);
+        }
+        closure
+    }
+
+    pub fn trait_declaring_item_in(
+        &self,
+        trait_name: &str,
+        item: &str,
+        namespace: Option<ItemNamespace>,
+    ) -> Option<String> {
+        let mut queue = vec![trait_name.to_string()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(name) = queue.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Some(definition) = self.get_trait(&name) else {
+                continue;
+            };
+            let declares_type = definition.associated_types.contains(&item.to_string());
+            let declares_const = definition
+                .associated_consts
+                .iter()
+                .any(|(candidate, _)| candidate == item);
+            let declares = match namespace {
+                Some(ItemNamespace::Type) => declares_type,
+                Some(ItemNamespace::Const) => declares_const,
+                None => declares_type || declares_const,
+            };
+            if declares {
+                return Some(name);
+            }
+            queue.extend(definition.super_bounds.iter().cloned());
+        }
+        None
+    }
+
+    pub fn declared_associated_items(
+        &self,
+        trait_name: &str,
+        namespace: ItemNamespace,
+    ) -> Vec<String> {
+        if namespace == ItemNamespace::Const {
+            return self
+                .declared_associated_consts(trait_name)
+                .into_iter()
+                .map(|(item, _)| item)
+                .collect();
+        }
+        let Some(definition) = self.get_trait(trait_name) else {
+            return Vec::new();
+        };
+        let mut named = std::collections::HashSet::new();
+        definition
+            .associated_types
+            .iter()
+            .filter(|item| named.insert((*item).clone()))
+            .cloned()
+            .collect()
+    }
+
+    pub fn declared_associated_consts(&self, trait_name: &str) -> Vec<(String, InferType)> {
+        let Some(definition) = self.get_trait(trait_name) else {
+            return Vec::new();
+        };
+        let mut named = std::collections::HashSet::new();
+        definition
+            .associated_consts
+            .iter()
+            .filter(|(item, _)| named.insert(item.clone()))
+            .cloned()
+            .collect()
+    }
+
     pub fn resolve_projection(&self, projection: &InferType) -> Option<InferType> {
         let InferType::Projection {
             trait_name,
@@ -367,11 +493,14 @@ impl TypeTable {
         if !self_ty.is_concrete() {
             return None;
         }
+        let closure = trait_name
+            .as_deref()
+            .map(|name| self.supertrait_closure(name));
         let mut found = Vec::new();
         for implementation in &self.trait_impl_defs {
-            if trait_name
+            if closure
                 .as_deref()
-                .is_some_and(|name| implementation.trait_name != *name)
+                .is_some_and(|names| !names.contains(&implementation.trait_name))
             {
                 continue;
             }
@@ -585,31 +714,65 @@ impl TypeTable {
         entries.into_iter()
     }
 
-    pub fn unmaterialized_applied_types(&self) -> Vec<InferType> {
+    // a caller that reports only the first entry must not see a different one on a
+    pub fn unmaterialized_applied_types(&self) -> Vec<(InferType, Span)> {
         let mut found = Vec::new();
         for definition in self.structs.values() {
             for field in &definition.fields {
-                collect_applied_types(&field.ty, &mut found);
+                collect_applied_types_at(
+                    &field.ty,
+                    &format!("{}.{}", definition.name, field.name),
+                    field.span,
+                    &mut found,
+                );
             }
         }
         for definition in self.enums.values() {
             for variant in &definition.variants {
+                let site = format!("{}.{}", definition.name, variant.name);
                 match &variant.fields {
                     EnumVariantFieldsDef::Unit => {}
                     EnumVariantFieldsDef::Tuple(fields) => {
-                        for field in fields {
-                            collect_applied_types(field, &mut found);
+                        for (index, field) in fields.iter().enumerate() {
+                            collect_applied_types_at(
+                                field,
+                                &format!("{site}.{index}"),
+                                variant.span,
+                                &mut found,
+                            );
                         }
                     }
                     EnumVariantFieldsDef::Named(fields) => {
                         for field in fields {
-                            collect_applied_types(&field.ty, &mut found);
+                            collect_applied_types_at(
+                                &field.ty,
+                                &format!("{site}.{}", field.name),
+                                field.span,
+                                &mut found,
+                            );
                         }
                     }
                 }
             }
         }
+        found.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
         found
+            .into_iter()
+            .map(|(_, _, ty, span)| (ty, span))
+            .collect()
+    }
+}
+
+fn collect_applied_types_at(
+    ty: &InferType,
+    site: &str,
+    span: Span,
+    found: &mut Vec<(String, String, InferType, Span)>,
+) {
+    let mut applied = Vec::new();
+    collect_applied_types(ty, &mut applied);
+    for candidate in applied {
+        found.push((candidate.to_string(), site.to_string(), candidate, span));
     }
 }
 
@@ -733,7 +896,7 @@ fn types_overlap(left: &InferType, right: &InferType) -> bool {
     }
 }
 
-fn nominal_name(ty: &InferType) -> Option<String> {
+pub(crate) fn nominal_name(ty: &InferType) -> Option<String> {
     match ty {
         InferType::Struct(name) | InferType::Applied { name, .. } => Some(name.clone()),
         _ => None,
