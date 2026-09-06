@@ -149,7 +149,7 @@ with a diagnostic that names these replacements.
 | `Option<T>` | A value or absence | heap allocated when needed |
 | `Result<T, E>` | Success or failure | heap allocated when needed |
 | `Error` | Structured error value | heap allocated when needed |
-| `function` | Function/closure | heap allocated |
+| `fn(T, ...) -> R` | Function/closure | heap allocated |
 | `Name { field: T, ... }` | Fixed-layout struct | heap allocated |
 | `[T; N]` | Fixed-size array | heap allocated |
 | `Vec<T>` | Growable vector | heap allocated |
@@ -181,10 +181,15 @@ fn process(input: string, count: int) -> bool {
 }
 ```
 
-Lambdas:
+Lambdas, and the annotation for a value holding one:
 ```rust
 let f = fn(x: int) -> int { x * 2 }
+let g: fn(int) -> int = f
 ```
+
+A function type is written `fn(T, ...) -> R`, with the parameter types and no
+parameter names. `function` is not a type: `let f: function`, `fn f(g: function)`
+and `fn f() -> function` are each E0372 `unknown type 'function'`.
 
 ### Type Inference
 
@@ -995,7 +1000,10 @@ let typed: Vec<int> = vec![]
 ```
 
 `[value; N]` creates an array with a compile-time non-negative constant length.
-`vec![value; count]` creates a Vec and permits a dynamic count. The element is
+`N` is an integer literal, an arithmetic expression over such literals, or an
+associated constant named on a concrete type or on `Self`, the same lengths the
+annotation `[T; N]` accepts. `vec![value; count]` creates a Vec and permits a
+dynamic count. The element is
 evaluated once and copied into each slot. There is no runtime-sized array
 constructor; use a Vec when the count is not known at compile time.
 
@@ -1333,7 +1341,9 @@ println(Shrine { n: "Reimu" }.greet())
 An associated function is selected with `Trait::name` or `Type::name`; a value
 method uses `value.name(...)`. Selection is resolved to one direct symbol at
 compile time. Missing required methods, ambiguous methods, orphan impls, and
-overlapping impls are compile errors.
+overlapping impls are compile errors. A trait may not share its name with a
+struct or an enum, whatever the declaration order: that is E0326, reported on the
+trait, so the left side of a `::` path names exactly one declaration.
 
 ### Bounds
 
@@ -1394,6 +1404,14 @@ fn run<T: Extra>(value: T) -> int { value.extra() }
 println(run(Bullet { n: 7 }))
 ```
 
+Implementing a trait requires implementing each of its supertraits for the same
+type: an impl header that promises one without it is E0338. The requirement
+applies to every impl in turn, so a chain of any depth obliges every link. A
+diamond obliges the shared root once, not once per path.
+
+A supertrait also carries its associated types and constants into the
+inheriting trait; see [Inherited associated items](#inherited-associated-items).
+
 ### Display
 
 `Display` is a compiler-known trait that every module sees without importing it.
@@ -1449,6 +1467,308 @@ format string still renders an array, an `Option` or a `Result` structurally:
 let arr = [1, 2, 3]
 println("arr = {arr}")   // arr = [1, 2, 3]
 ```
+
+## Associated Types and Constants
+
+A trait may declare items other than methods: an associated **type**, which each
+impl fills in with a type, and an associated **constant**, which each impl fills
+in with a value. They live in two separate namespaces, so one trait may declare
+`type X` and `const X: int` and both resolve, the position deciding which is
+meant. A name in either namespace is read back with a projection, `Type::Name`.
+
+### Declaring an associated item
+
+An associated type declaration carries a name and nothing else. An associated
+constant declaration carries a name and a type annotation, and no value:
+
+```rust
+trait Source {
+    type Item
+    const LIMIT: int
+    fn next(self) -> Self::Item;
+}
+```
+
+The asymmetry is load-bearing. A trait states no type for `type Item`, so there
+is nothing for an impl's `type Item = int` to disagree with; a bound would be
+such a statement and there is no syntax for one, `type Item: Display` being
+E0101 `expected fn, type, or const in trait declaration, found :`. A default is
+equally absent: `type Item = int` in a trait body is E0101 on the `=`. An
+associated constant is the other way round, and its annotation is required:
+`const LIMIT` with no `: int` is E0101 `expected :`.
+
+The declaring trait may use its own items in the signatures and default bodies
+below them, through `Self::`.
+
+### Defining an associated item
+
+An impl of the trait defines each item once, repeating the constant's declared
+type and supplying a value:
+
+```rust
+struct Counter { value: int }
+
+impl Source for Counter {
+    type Item = int
+    const LIMIT: int = 10
+    fn next(self) -> int { self.value }
+}
+```
+
+An impl must define **every** required item **exactly once**. Omitting one is
+E0421, which names the item and the spelling that would define it. Defining one
+twice is E0426. Defining one the implemented trait does not declare is E0425,
+and so is writing any associated item in an inherent `impl Counter { ... }`,
+which declares nothing: the only home the language offers an associated item is
+the impl of a trait that declares it.
+
+The constant's value is folded at compile time, so an expression is allowed
+where it folds, and `const LIMIT: int = 2 + 1` is accepted. Two disagreements
+are E0422, and they are distinct: a declared type that differs from the trait's,
+as in `const LIMIT: string` against the trait's `const LIMIT: int`, and an
+initialiser whose type differs from the declaration the impl itself wrote, as in
+`const LIMIT: int = "x"`. E0422 reaches associated constants only, since an
+associated type has no declared type to disagree with.
+
+### Projections
+
+A projection is exactly two segments, a receiver and an item name, written
+`Receiver::Name`. The accepted receivers:
+
+| Receiver | Example | Resolves to |
+|----------|---------|-------------|
+| a nominal type | `Counter::Item`, `Counter::LIMIT` | the item of whichever impl for `Counter` defines it |
+| a generic nominal type | `Wrap::<int>::LIMIT` | the item of the impl for that instantiation |
+| a trait | `Source::Item` | the item of the single impl of `Source` that defines it |
+| `Self` | `Self::Item`, inside a trait declaration or an impl | the item of the implementing type |
+| a bounded type parameter | `T::Item` under `T: Source` | the item of the impl selected at the call site |
+
+`Self` outside an impl and outside a trait declaration is E0423, and a type
+parameter whose bounds declare no such item is E0423 asking for the bound.
+
+A **module-qualified receiver is not implemented**. `support::Counter::Item` is
+E0372 `unknown type 'support'`, and so is `support::Counter` on its own: a module
+path names no type in this language, whichever `needs` form imported the module.
+The bare receiver is the working spelling, and it works under every import form,
+selective, whole-module, and aliased, because an import brings the type itself
+into scope rather than a path to it.
+
+A projection fails to resolve for four reasons, all E0423:
+
+- no impl for the receiver defines the name;
+- the name exists in the other namespace, which the message says outright,
+  naming the namespace written and the one the position wanted;
+- two impls define it for the receiver, whether two impls of one trait or impls
+  of two traits that both declare the name. Naming the trait instead of the
+  nominal type disambiguates when a single impl of that trait defines the item;
+- the definition resolves back to itself. A cycle is rejected when the impls are
+  collected, so it is a diagnostic whether or not any program names the
+  projection.
+
+Because a nominal receiver and a trait receiver share one spelling, a trait may
+not share its name with a struct or an enum; that is E0326, stated above under
+[Traits](#traits).
+
+### Where a projection may be written
+
+A projection is written where its namespace belongs, and nowhere else. Both
+columns below are measured, and every refusal is E0423 naming the mismatch:
+
+| Position | `Counter::Item`, a type | `Counter::LIMIT`, a constant |
+|----------|-------------------------|------------------------------|
+| variable annotation | accepted | E0423 |
+| parameter type | accepted | E0423 |
+| return type | accepted | E0423 |
+| struct field type | accepted | E0423 |
+| array element type | accepted | E0423 |
+| value expression | E0423 | accepted |
+| fixed-array length | E0423 | accepted |
+| array repeat count | E0423 | accepted |
+| lambda body | accepted, as an annotation | accepted, as a value |
+| across an imported module | accepted | accepted |
+
+The last row is not a weaker case. Every position above holds for a type
+imported from another module, the struct field and both halves of a signature
+included.
+
+Three traps turn on what the receiver is known to be at that point rather than
+on the position:
+
+- Inside a generic body, `T::Item` is **not** the concrete type it will become.
+  A value annotated `T::Item` is not interchangeable with an `int` even when
+  every call site instantiates `T::Item = int`: both `x + 1` and `let y: int = x`
+  are E0301. Return it, pass it, or store it, and it resolves at the call site.
+- A fixed-array length may not come from a type parameter, so `[int; T::LIMIT]`
+  is E0423 even under `T: Source`. Inside a **trait declaration** `Self` is such
+  a parameter, so `[int; Self::LIMIT]` in a trait method signature is E0423
+  whether the constant is declared on that trait or inherited from a supertrait.
+  That is a property of the position, not supertrait blindness: the same length
+  is accepted in a default body of the same trait, and in an impl's signature
+  and body alike, where `Self` is one concrete type. The repairs the diagnostic
+  offers are a literal length, the constant on a concrete type, or a `Vec`.
+- A method that declares its **own** type parameter is compiled a single time
+  whatever the types it is called with, so a constant on that parameter has no
+  single value:
+  `fn pick<T: Source>(self, v: T) -> int { T::LIMIT }` inside an `impl` is E0423,
+  which points at a free generic function as the specialized alternative. The
+  type half of that shape is accepted in the signature, but calling a bound
+  method on the parameter is E0352, so the shape as a whole is not usable.
+
+### Bindings in a bound
+
+A bound may pin the associated items of the trait it names, in the inline form
+or in a `where` clause:
+
+```rust
+trait Source {
+    type Item
+    const LIMIT: int
+    fn next(self) -> Self::Item;
+}
+
+struct Counter { value: int }
+
+impl Source for Counter {
+    type Item = int
+    const LIMIT: int = 3
+    fn next(self) -> int { self.value }
+}
+
+fn take<T: Source<Item = int, LIMIT = 3>>(value: T) -> int { T::LIMIT }
+fn also<T>(value: T) -> int where T: Source<Item = int, LIMIT = 3> { T::LIMIT }
+
+println(take(Counter { value: 1 }) + also(Counter { value: 1 }))
+```
+
+The angle brackets hold associated bindings, not type arguments. A binding is
+checked against the impl selected at the call site, and four things go wrong:
+
+- the impl provides something else. `Item = string` against an impl providing
+  `int`, or `LIMIT = 4` against an impl providing `3`, is E0424, which prints
+  both sides;
+- the trait declares no such item. `Nope = int` is E0424 saying the binding
+  constrains nothing;
+- the binding crosses the namespaces. `Item = 3` binds a value to an associated
+  type and `LIMIT = int` binds a type to an associated constant, both E0424,
+  reported on the bound itself rather than at the call site;
+- a side has no value the compiler can compute. Against an impl whose
+  `const LIMIT: int = 1 / 0`, the comparison never happens, and reporting a
+  disagreement would assert a cause nobody established. That is E0429, distinct
+  from E0424 for exactly that reason. The requested side of a binding is a
+  literal, `LIMIT = 1 / 0` being E0101, so only the impl's side can reach it.
+
+The object form of a binding, `dyn Source<Item = int>`, is not available: `dyn`
+is E0113, deferred, as [Stage 3 boundary diagnostics](#stage-3-boundary-diagnostics)
+records.
+
+### Inherited associated items
+
+A supertrait's associated types and constants are in scope wherever its methods
+are: the declaration of the inheriting trait, a default body, an impl of it, and
+a bound on a type parameter. They are *defined* in the impl of the trait that
+declares them, and writing one in the impl of an inheriting trait is E0425.
+
+```rust
+trait Base {
+    type Item
+    const LIMIT: int
+    fn base(self) -> Self::Item;
+}
+
+trait Derived: Base {
+    fn extra(self) -> Self::Item { self.base() }
+    fn cap(self) -> int { Self::LIMIT }
+}
+
+struct Bullet { n: int }
+
+impl Base for Bullet {
+    type Item = int
+    const LIMIT: int = 4
+    fn base(self) -> int { self.n }
+}
+impl Derived for Bullet { }
+
+println(Bullet { n: 3 }.extra() + Bullet { n: 3 }.cap())
+```
+
+The two halves hold each other up. Because an impl of a trait obliges an impl of
+each of its supertraits, the impl that must define `Item` always exists, so
+E0421 has an impl to attach to and the inheriting impl never needs a second home
+for the same item.
+
+### Nominal types no value inhabits
+
+`struct A { a: A }` describes a type whose construction needs a value of itself
+before it can start, so no program can build one. The definition is rejected
+with E0428 rather than accepted and left unusable.
+
+The criterion is inhabitation, not size. The **constructor graph** has an edge
+from a struct to each field type, from an enum to each payload type of each
+variant, and from `[T; n]` to `T` only when `n > 0`. `Option`, `Vec` and
+`Result` contribute no edge: each has a constructor that is inhabited whatever
+its type arguments are. The **fixpoint**: a struct is inhabited when every field
+type is, an enum when at least one variant is, and `[T; n]` when `n == 0` or `T`
+is. **E0428 fires when the fixpoint fails for a type that lies on a cycle of
+that graph.** The message names the cycle path, and the accused definition is
+chosen by a property of the cycle rather than by declaration order, so the two
+orders of a two-node cycle produce the same sentence.
+
+Rejected: `struct A { a: A }`, `enum E { V(E) }`, `struct A { xs: [A; 1] }`, and
+a struct and an enum that carry each other. Accepted, and each of these
+executes: `enum List { Cons(int, List), Nil }`, `struct A { f: Option<A> }`,
+`struct A { xs: Vec<A> }`, `struct A { r: Result<A, int> }`, and
+`struct A { xs: [A; 0] }`. A type whose fixpoint fails without lying on a cycle
+is also accepted: `enum E { }` is a construct written on purpose, and so is a
+struct that carries one. E0428 is named for the cycle and is not a general
+uninhabitation ban.
+
+### Impl type parameters
+
+An impl instance is mangled from its substituted target type and nothing else,
+so a type parameter the target type never mentions leaves no trace in the
+symbol. `impl<T, U> W<T>` is rejected at the header with E0430, the caret on the
+target type, naming the parameter and the two repairs: mention it in the target
+type, or move it onto the method. The constrained set is exactly "appears in the
+impl target type", which deliberately excludes a parameter appearing only in a
+trait argument, only in a method signature, or only in a `where` clause.
+
+### The diagnostics
+
+Ten codes carry this material. The registry gives each its name; the condition
+is here.
+
+- **E0421** fires when an impl of a trait omits an associated type or constant
+  the trait requires.
+- **E0422** fires when an impl's associated constant declares a type the trait
+  does not, or is initialised with a value of a type its own declaration does
+  not.
+- **E0423** fires when a projection resolves to nothing, to more than one thing,
+  or to itself: no impl defines the name, the name is in the other namespace,
+  two impls define it, the definition cycles, `Self` is written where no impl or
+  trait declaration is open, a fixed-array length is taken from a type
+  parameter, or a constant is read on a method's own type parameter.
+- **E0424** fires when an associated binding in a bound disagrees with the
+  selected impl, names an item the trait does not declare, or binds a value to a
+  type or a type to a value.
+- **E0425** fires when an impl defines an associated item the trait it
+  implements does not declare, and when an inherent impl defines one at all.
+- **E0426** fires when one impl defines the same required associated item more
+  than once.
+- **E0427** fires when resolving a projection expands past 4096 type nodes. The
+  bound is on the **size of the expanded type**, not on the number of resolution
+  steps: termination is already guaranteed by cycle detection, and a step budget
+  would reject a long acyclic chain while admitting a short explosive one. An
+  associated type naming another one twice, as in
+  `type I0 = Result<Self::I1, Self::I1>`, doubles the expansion at each step and
+  reaches the bound within a few dozen lines. The same chain is E0427 at the
+  same depth in a variable annotation, a parameter type, and a struct field.
+- **E0428** fires when the inhabitation fixpoint fails for a nominal type lying
+  on a cycle of the constructor graph.
+- **E0429** fires when an associated-constant binding has a side the compiler
+  cannot fold, so no comparison happened.
+- **E0430** fires when an impl header declares a type parameter its target type
+  never mentions.
 
 ## Compiler Warnings
 
@@ -1730,7 +2050,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0323 | MutableCollectionAlias | a mutable collection is aliased |
 | E0324 | NonExhaustiveStruct | a struct match needs `_` or an irrefutable field pattern |
 | E0325 | GenericStructDeferred | this generic struct form is not delivered |
-| E0326 | DuplicateStruct | two structs share a name |
+| E0326 | DuplicateNominal | two declarations share a name |
 | E0327 | DuplicateStructField | two fields share a name |
 | E0328 | UnknownStruct | no such struct |
 | E0329 | InvalidStructMethod | no such method on that struct |
@@ -1742,19 +2062,12 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0335 | TraitMethodNotInTrait | an impl declares a method the trait does not |
 | E0336 | TraitMethodSignatureMismatch | an impl method does not match the trait |
 | E0337 | AmbiguousTraitMethod | more than one trait supplies that method |
-| E0338 | UnsatisfiedTraitBound | a bound is not satisfied by the concrete type |
+| E0338 | UnsatisfiedTraitBound | a bound is not satisfied by the concrete type, or an impl promises a supertrait nothing implements |
 | E0339 | OrphanTraitImpl | neither the trait nor the type is local |
 | E0340 | OverlappingTraitImpl | two impls cover the same type |
 | E0341 | DuplicateTraitMethod | a trait declares a method twice |
 | E0342 | InvalidTraitReceiver | a receiver the trait does not allow |
 | E0343 | UnresolvedGenericType | a type argument cannot be inferred |
-| E0421 | MissingAssociatedItem | an impl omits a required associated type or constant |
-| E0422 | AssociatedItemTypeMismatch | an associated item has the wrong declared type |
-| E0423 | AmbiguousAssociatedProjection | a projection is unresolved, ambiguous, or cyclic |
-| E0424 | AssociatedBindingMismatch | a requested associated binding disagrees with the selected impl |
-| E0425 | AssociatedItemOutsideTraitImpl | an inherent impl defines an associated item no trait declares |
-| E0426 | DuplicateAssociatedItem | an impl defines an associated item more than once |
-| E0427 | AssociatedProjectionLimit | resolving a projection expands past the type-node limit |
 | E0344 | RecursiveMonomorphization | instantiation recurses without decreasing |
 | E0345 | MonomorphizationLimit | the instantiation limit is exceeded |
 | E0346 | EnumLayoutTooLarge | an enum payload exceeds the layout limit |
@@ -1762,7 +2075,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0348 | UntypedNativeValue | a native value arrives without a type |
 | E0349 | UnmaterializedAppliedType | an applied type never became concrete |
 | E0351 | UnboundTypeParamMethod | a method call on an unbounded type parameter |
-| E0352 | UnresolvedInstanceSymbol | a monomorphized symbol is missing |
+| E0352 | UnresolvedInstanceSymbol | a generic call has no specialized instance |
 | E0353 | UnresolvedTypeVariable | a type stayed open after inference |
 | E0354 | PoisonedType | a type derived from an earlier error |
 | E0355 | MangledSymbolCollision | two instances mangle to one symbol |
@@ -1792,7 +2105,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 
-### E04xx, modules
+### E04xx, modules, visibility, borrows, and associated items
 
 | Code | Name | Meaning |
 |------|------|---------|
@@ -1815,3 +2128,13 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0417 | BorrowEscapes | a call-scoped loan escapes through a binding, return, capture, or unsupported parameter |
 | E0418 | BorrowInvalidated | a mutation, move, or reallocation invalidates a live loan |
 | E0419 | TemporaryBorrow | a borrow target is temporary or dead |
+| E0421 | MissingAssociatedItem | an impl omits a required associated type or constant |
+| E0422 | AssociatedItemTypeMismatch | an associated item's declared type disagrees with the trait, or a constant's value disagrees with its own declaration |
+| E0423 | AmbiguousAssociatedProjection | a projection is unresolved, ambiguous, or cyclic |
+| E0424 | AssociatedBindingMismatch | a requested associated binding disagrees with the selected impl, names no item the trait declares, or binds a value where the trait declares a type and the reverse |
+| E0425 | AssociatedItemOutsideTraitImpl | an impl defines an associated item the trait it implements does not declare, or an inherent impl defines one at all |
+| E0426 | DuplicateAssociatedItem | an impl defines an associated item more than once |
+| E0427 | AssociatedProjectionLimit | resolving a projection expands past the type-node limit |
+| E0428 | UninhabitedNominalCycle | the inhabitation fixpoint fails for a type on a cycle of the constructor graph |
+| E0429 | UnevaluatedAssociatedConstBinding | an associated-constant binding has a side the compiler cannot evaluate |
+| E0430 | UnconstrainedImplTypeParam | an impl declares a type parameter its target type never mentions |
