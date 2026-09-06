@@ -46,7 +46,6 @@ pub(crate) fn execute(
         return Err(vm.runtime_error(RuntimeErrorKind::UndefinedVariable("upvalue".to_string())));
     }
 
-    // SAFETY: the upvalue index was checked against the active frame's upvalue count.
     let upvalue = unsafe { *upvalues.add(upvalue_index) };
     let callee_value = vm.get_upvalue_value(upvalue);
     let callee = callee_value.as_ptr().map(GcRef::new).ok_or_else(|| {
@@ -164,10 +163,8 @@ pub(crate) fn execute(
         }
     };
 
-    if callee_gmap != 0 && callee_gmap != global_mapping_id {
-        if global_mapping_id != 0 {
-            vm.sync_current_function_globals();
-        }
+    if callee_gmap != global_mapping_id {
+        vm.sync_current_function_globals();
         vm.prepare_globals_for_function(function);
     }
 

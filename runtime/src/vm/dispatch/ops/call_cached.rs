@@ -187,10 +187,8 @@ pub(crate) fn execute(
         }
     };
 
-    if callee_gmap != 0 && callee_gmap != global_mapping_id {
-        if global_mapping_id != 0 {
-            vm.sync_current_function_globals();
-        }
+    if callee_gmap != global_mapping_id {
+        vm.sync_current_function_globals();
         vm.prepare_globals_for_function(function);
     }
 
