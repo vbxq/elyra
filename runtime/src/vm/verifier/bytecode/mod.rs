@@ -26,6 +26,7 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
     let num_regs = usize::try_from(func.num_registers)
         .map_err(|_| "register count does not fit this target".to_string())?;
     let constants_len = func.constants.len();
+    let globals_len = func.global_layout.names().len();
     let upvalues_len = func.upvalue_descriptors.len();
     let bytecode = &func.bytecode;
 
@@ -121,6 +122,10 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             if inner == OpCode::LoadK {
                 let index = (wide_b << 16) | wide_c;
                 verify_const(index, constants_len, "LoadKWideRegister")?;
+            }
+            if matches!(inner, OpCode::GetGlobalIdx | OpCode::SetGlobalIdx) {
+                let index = (wide_b << 16) | wide_c;
+                verify_global_index(index, globals_len, "wide-register global")?;
             }
             if inner == OpCode::WhileLoopLt {
                 let offset_bits = wide_b as u16;
@@ -442,6 +447,9 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             if matches!(opcode, OpCode::LoadKWide | OpCode::MakeClosureWide) {
                 verify_const(index, constants_len, "wide-index instruction")?;
             }
+            if matches!(opcode, OpCode::GetGlobalIdxWide | OpCode::SetGlobalIdxWide) {
+                verify_global_index(index, globals_len, "wide-index global")?;
+            }
             if opcode == OpCode::MakeClosureWide {
                 let constant = &func.constants[index];
                 let function_index = constant.as_nested_fn_marker().ok_or_else(|| {
@@ -486,6 +494,7 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             imm,
             num_regs,
             constants_len,
+            globals_len,
             bytecode.len(),
         )? {
             ip += 1;
@@ -755,6 +764,23 @@ pub(super) fn verify_jump(
 
 pub(super) fn verify_reg(reg: usize, num_regs: usize, op: &str) -> Result<(), String> {
     check_reg(reg, num_regs, op)
+}
+
+// the store path grows the mapping to fit, so only a declared layout bounds them.
+pub(super) fn verify_global_index(
+    index: usize,
+    globals_len: usize,
+    op: &str,
+) -> Result<(), String> {
+    if globals_len == 0 {
+        return Ok(());
+    }
+    if index >= globals_len {
+        return Err(format!(
+            "{op} expected a global index below the declared {globals_len}, found {index}"
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn verify_upval(idx: usize, upvalues_len: usize, op: &str) -> Result<(), String> {

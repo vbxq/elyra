@@ -1,13 +1,11 @@
 use super::super::{GcRef, HostRoot, VM, Value};
+use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 impl VM {
-    /// Return a stable identity for this VM. Embedding handles use it to
-    /// reject a callable resolved from a different heap.
     pub fn id(&self) -> u64 {
         self.id
     }
 
-    /// Pin a heap reference held by host code until the returned token drops.
     pub fn pin_host_ref(&self, reference: GcRef) -> HostRoot {
         HostRoot::new(&self.host_roots, reference, self.id)
     }
@@ -27,6 +25,15 @@ impl VM {
         value
     }
 
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn global_index_error(&self, operation: &str, index: usize) -> RuntimeError {
+        let mapped = self.globals_by_index.len();
+        self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+            "{operation} expected a global index below the mapped {mapped}, found {index}"
+        )))
+    }
+
     pub fn global_names(&self) -> Vec<String> {
         self.globals.keys().cloned().collect()
     }
@@ -43,6 +50,32 @@ impl VM {
         self.globals_by_index_cache.clear();
     }
 
+    pub(crate) fn set_global_by_index_checked(
+        &mut self,
+        idx: usize,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        if idx >= self.globals_by_index.len() {
+            const SLOT_BYTES: u64 =
+                (std::mem::size_of::<Value>() + std::mem::size_of::<u64>()) as u64;
+            let projected = u64::try_from(idx)
+                .ok()
+                .and_then(|idx| idx.checked_add(1))
+                .and_then(|slots| slots.checked_mul(SLOT_BYTES))
+                .unwrap_or(u64::MAX);
+            self.ensure_heap_capacity(projected)?;
+        }
+        self.set_global_by_index(idx, value);
+        Ok(())
+    }
+
+    pub(crate) fn sync_global_generation_len(&mut self, len: usize) {
+        if self.global_generations.len() < len {
+            self.global_generations.resize(len, 0);
+        }
+        self.global_generations.truncate(len);
+    }
+
     pub(crate) fn bump_global_generations(&mut self, len: usize) {
         if self.global_generations.len() < len {
             self.global_generations.resize(len, 0);
@@ -53,9 +86,6 @@ impl VM {
         self.global_generations.truncate(len);
     }
 
-    /// Invalidate the indexed view after host-side global mutation. The
-    /// sentinel keeps even the canonical empty layout from being mistaken for
-    /// an already-prepared mapping on the next JIT or call entry.
     pub fn invalidate_global_mapping(&mut self) {
         self.globals_by_index.clear();
         self.globals_by_index_cache.clear();

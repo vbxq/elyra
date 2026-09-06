@@ -1,6 +1,6 @@
 use crate::vm::OpCode;
 
-use super::{verify_call_args, verify_const, verify_reg};
+use super::{verify_call_args, verify_const, verify_global_index, verify_reg};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn verify(
@@ -9,9 +9,10 @@ pub(super) fn verify(
     a: usize,
     b: usize,
     c: usize,
-    _imm: i16,
+    imm: i16,
     num_regs: usize,
     constants_len: usize,
+    globals_len: usize,
     _bytecode_len: usize,
 ) -> Result<bool, String> {
     match opcode {
@@ -21,14 +22,18 @@ pub(super) fn verify(
         }
         OpCode::GetGlobalIdx | OpCode::SetGlobalIdx => {
             verify_reg(a, num_regs, "GlobalIdx")?;
+            let index = usize::from(u16::from_ne_bytes(imm.to_ne_bytes()));
+            verify_global_index(index, globals_len, "GlobalIdx")?;
         }
         OpCode::AddGlobalI => {
             verify_reg(a, num_regs, "global integer add")?;
             verify_reg(b, num_regs, "global integer add")?;
+            verify_global_index(c, globals_len, "global integer add")?;
         }
         OpCode::CallGlobal => {
             verify_reg(a, num_regs, "CallGlobal")?;
             verify_call_args(a, c, num_regs, "CallGlobal")?;
+            verify_global_index(b, globals_len, "CallGlobal")?;
         }
         _ => return Ok(false),
     }

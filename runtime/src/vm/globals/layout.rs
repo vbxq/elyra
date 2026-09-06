@@ -2,7 +2,6 @@ use super::super::{GcRef, ObjectKind, VM, Value};
 use std::sync::Arc;
 
 impl VM {
-    /// Get the global mapping ID for a function (global layout ID).
     pub fn get_global_mapping_id(&self, func_ref: GcRef) -> usize {
         if let Some(obj) = self.heap.get(func_ref) {
             match &obj.kind {
@@ -32,7 +31,6 @@ impl VM {
         layout.id()
     }
 
-    /// Prepare globals_by_index for a function call.
     pub fn prepare_globals_for_function(&mut self, func_ref: GcRef) -> usize {
         let layout = if let Some(obj) = self.heap.get(func_ref) {
             match &obj.kind {
@@ -58,10 +56,6 @@ impl VM {
         }
     }
 
-    /// Prepare globals_by_index for a compiled function that has not yet been
-    /// allocated in this VM. This is needed by root JIT calls, which execute
-    /// before an interpreter frame (and therefore before a function object)
-    /// exists.
     pub fn prepare_globals_for_layout(&mut self, layout: &super::super::GlobalLayout) -> usize {
         let mapping_id = layout.id();
         if mapping_id == self.current_global_mapping_id {
@@ -80,7 +74,7 @@ impl VM {
                     len,
                 );
             }
-            self.bump_global_generations(len);
+            self.sync_global_generation_len(len);
             self.current_global_mapping_id = mapping_id;
             return mapping_id;
         }
@@ -100,7 +94,7 @@ impl VM {
             }
         }
         self.globals_by_index.truncate(needed_len);
-        self.bump_global_generations(needed_len);
+        self.sync_global_generation_len(needed_len);
 
         self.current_global_mapping_id = mapping_id;
         self.globals_by_index_cache
