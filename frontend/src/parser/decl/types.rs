@@ -1,7 +1,7 @@
 use super::Parser;
 use aelys_common::Result;
 use aelys_common::error::CompileErrorKind;
-use aelys_syntax::{Parameter, ReferenceKind, TokenKind, TypeAnnotation};
+use aelys_syntax::{AssociatedBinding, Parameter, ReferenceKind, TokenKind, TypeAnnotation};
 
 // can never build a type the binary format cannot carry
 const MAX_TYPE_NESTING_DEPTH: usize = 64;
@@ -105,10 +105,15 @@ impl Parser {
             {
                 let mut bindings = Vec::new();
                 loop {
+                    let binding_start = self.peek().span;
                     let binding_name = self.consume_identifier("associated binding name")?;
                     self.consume(&TokenKind::Eq, "=")?;
-                    let binding_ty = self.parse_type_annotation()?;
-                    bindings.push((binding_name, binding_ty));
+                    let value = match self.associated_binding_literal() {
+                        Some(value) => AssociatedBinding::Const(value),
+                        None => AssociatedBinding::Type(self.parse_type_annotation()?),
+                    };
+                    let binding_span = binding_start.merge(self.previous().span);
+                    bindings.push((binding_name, value, binding_span));
                     if !self.match_token(&TokenKind::Comma) {
                         break;
                     }
@@ -141,6 +146,22 @@ impl Parser {
             annotation.path = path;
             Ok(annotation)
         }
+    }
+
+    fn associated_binding_literal(&mut self) -> Option<i64> {
+        if let TokenKind::Int(value) = self.peek().kind {
+            self.advance();
+            return Some(value);
+        }
+        if matches!(self.peek().kind, TokenKind::Minus)
+            && let TokenKind::Int(value) = self.peek_at(1).kind
+            && let Some(value) = value.checked_neg()
+        {
+            self.advance();
+            self.advance();
+            return Some(value);
+        }
+        None
     }
 
     pub(crate) fn consume_generic_close(&mut self) -> Result<()> {

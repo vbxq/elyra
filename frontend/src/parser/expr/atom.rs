@@ -105,7 +105,7 @@ impl Parser {
             let body = if self.match_token(&TokenKind::LBrace) {
                 MatchArmBody::Block(self.block_statements()?)
             } else {
-                MatchArmBody::Expr(self.expression()?)
+                MatchArmBody::Expr(Box::new(self.expression()?))
             };
             let end_span = self.previous().span;
             let span = pattern.span.merge(end_span);
