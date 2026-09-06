@@ -25,8 +25,8 @@ impl TypeInference {
             let first_ty = typed_elements[0].ty.clone();
             for elem in typed_elements.iter().skip(1) {
                 self.constraints.push(Constraint::equal(
-                    elem.ty.clone(),
                     first_ty.clone(),
+                    elem.ty.clone(),
                     elem.span,
                     ConstraintReason::ArrayElement,
                 ));
@@ -41,25 +41,28 @@ impl TypeInference {
             }
             if !self.reject_untyped_native(&element.ty, &elem_ty, element.span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
-                    element.ty.clone(),
                     elem_ty.clone(),
+                    element.ty.clone(),
                     element.span,
                     reason,
                 ));
             }
         }
 
-        let result_type = match repeat.and_then(constant_int_value) {
+        let result_type = match repeat.and_then(|count| self.constant_length_value(count)) {
             Some(value) if value >= 0 => usize::try_from(value)
                 .map(|length| InferType::FixedArray(Box::new(elem_ty.clone()), length))
                 .unwrap_or_else(|_| InferType::Array(Box::new(elem_ty.clone()))),
             Some(_) => InferType::Array(Box::new(elem_ty.clone())),
             None if repeat.is_some() => {
-                self.errors.push(TypeError {
-                    kind: TypeErrorKind::NonConstantArrayRepeat,
-                    span: repeat.map(|expr| expr.span).unwrap_or(_span),
-                    reason: ConstraintReason::ArrayIndex,
-                });
+                match repeat {
+                    Some(count) => self.report_unfoldable_repeat(count),
+                    None => self.errors.push(TypeError {
+                        kind: TypeErrorKind::NonConstantArrayRepeat,
+                        span: _span,
+                        reason: ConstraintReason::ArrayIndex,
+                    }),
+                }
                 InferType::Array(Box::new(elem_ty.clone()))
             }
             None => InferType::FixedArray(Box::new(elem_ty.clone()), elements.len()),
@@ -83,7 +86,7 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         let typed_size = self.infer_expr(size);
 
-        if let Some(value) = constant_int_value(size)
+        if let Some(value) = self.constant_length_value(size)
             && value < 0
         {
             self.errors.push(TypeError {
@@ -105,8 +108,8 @@ impl TypeInference {
             ConstraintReason::ArrayIndex,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_size.ty.clone(),
                 InferType::I64,
+                typed_size.ty.clone(),
                 span,
                 ConstraintReason::ArrayIndex,
             ));
@@ -172,8 +175,8 @@ impl TypeInference {
             let first_ty = typed_elements[0].ty.clone();
             for elem in typed_elements.iter().skip(1) {
                 self.constraints.push(Constraint::equal(
-                    elem.ty.clone(),
                     first_ty.clone(),
+                    elem.ty.clone(),
                     elem.span,
                     ConstraintReason::ArrayElement,
                 ));
@@ -188,8 +191,8 @@ impl TypeInference {
             }
             if !self.reject_untyped_native(&element.ty, &elem_ty, element.span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
-                    element.ty.clone(),
                     elem_ty.clone(),
+                    element.ty.clone(),
                     element.span,
                     reason,
                 ));
@@ -206,9 +209,39 @@ impl TypeInference {
         )
     }
 
+    fn report_unfoldable_repeat(&mut self, count: &Expr) {
+        if let Some((receiver, item)) = self.projection_path_parts(count)
+            && self.type_params_in_scope.contains(&receiver)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                    receiver,
+                    item,
+                    cause: crate::constraint::ProjectionFailure::LengthFromTypeParameter,
+                },
+                span: count.span,
+                reason: ConstraintReason::Other("an array repeat count".to_string()),
+            });
+            return;
+        }
+        self.errors.push(TypeError {
+            kind: TypeErrorKind::NonConstantArrayRepeat,
+            span: count.span,
+            reason: ConstraintReason::ArrayIndex,
+        });
+    }
+
+    pub(super) fn constant_length_value(&self, expr: &Expr) -> Option<i64> {
+        constant_int_value_with(expr, &|leaf| self.constant_path_int(leaf))
+    }
+
+    pub(crate) fn constant_collection_length(&self, expr: &Expr) -> Option<usize> {
+        constant_collection_length_with(expr, &|leaf| self.constant_path_int(leaf))
+    }
+
     fn infer_repeat_count(&mut self, count: &Expr) -> TypedExpr {
         let typed_count = self.infer_expr(count);
-        if let Some(value) = constant_int_value(count)
+        if let Some(value) = self.constant_length_value(count)
             && value < 0
         {
             self.errors.push(TypeError {
@@ -229,8 +262,8 @@ impl TypeInference {
             ConstraintReason::ArrayIndex,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_count.ty.clone(),
                 InferType::I64,
+                typed_count.ty.clone(),
                 count.span,
                 ConstraintReason::ArrayIndex,
             ));
@@ -281,8 +314,8 @@ impl TypeInference {
         ) && !matches!(typed_index.ty, InferType::UntypedNative(_))
         {
             self.constraints.push(Constraint::equal(
-                typed_index.ty.clone(),
                 InferType::I64,
+                typed_index.ty.clone(),
                 index.span,
                 ConstraintReason::ArrayIndex,
             ));
@@ -399,8 +432,8 @@ impl TypeInference {
         ) && !matches!(typed_index.ty, InferType::UntypedNative(_))
         {
             self.constraints.push(Constraint::equal(
-                typed_index.ty.clone(),
                 InferType::I64,
+                typed_index.ty.clone(),
                 index.span,
                 ConstraintReason::ArrayIndex,
             ));
@@ -425,8 +458,8 @@ impl TypeInference {
                     )
                 {
                     self.constraints.push(Constraint::equal(
-                        typed_value.ty.clone(),
                         inner.as_ref().clone(),
+                        typed_value.ty.clone(),
                         value.span,
                         reason,
                     ));
@@ -464,8 +497,8 @@ impl TypeInference {
                     )
                 {
                     self.constraints.push(Constraint::equal(
-                        typed_value.ty.clone(),
                         element,
+                        typed_value.ty.clone(),
                         value.span,
                         reason,
                     ));
@@ -509,7 +542,7 @@ impl TypeInference {
         };
         let length = match &object.kind {
             ExprKind::Identifier(name) => self.env.collection_length(name),
-            _ => constant_collection_length(object),
+            _ => self.constant_collection_length(object),
         };
         let Some(length) = length else {
             return;
@@ -534,7 +567,7 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         let known_length = match &object.kind {
             ExprKind::Identifier(name) => self.env.collection_length(name),
-            _ => constant_collection_length(object),
+            _ => self.constant_collection_length(object),
         };
         if let Some(length) = known_length
             && let ExprKind::Range {
@@ -616,8 +649,8 @@ impl TypeInference {
             )
         {
             self.constraints.push(Constraint::equal(
-                s.ty.clone(),
                 InferType::I64,
+                s.ty.clone(),
                 s.span,
                 ConstraintReason::RangeBound,
             ));
@@ -632,8 +665,8 @@ impl TypeInference {
             )
         {
             self.constraints.push(Constraint::equal(
-                e.ty.clone(),
                 InferType::I64,
+                e.ty.clone(),
                 e.span,
                 ConstraintReason::RangeBound,
             ));
@@ -674,6 +707,12 @@ fn constant_slice_bounds(
 }
 
 fn constant_int_value(expr: &Expr) -> Option<i64> {
+    constant_int_value_with(expr, &|_| None)
+}
+
+// `resolve` folds a leaf the syntax alone cannot: an associated constant named
+fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) -> Option<i64> {
+    let constant_int_value = |expr: &Expr| constant_int_value_with(expr, resolve);
     match &expr.kind {
         ExprKind::Int(value) => Some(*value),
         ExprKind::Grouping(inner) => constant_int_value(inner),
@@ -707,23 +746,26 @@ fn constant_int_value(expr: &Expr) -> Option<i64> {
                 | BinaryOp::Ge => None,
             }
         }
-        _ => None,
+        _ => resolve(expr),
     }
 }
 
-pub(crate) fn constant_collection_length(expr: &Expr) -> Option<usize> {
+fn constant_collection_length_with(
+    expr: &Expr,
+    resolve: &dyn Fn(&Expr) -> Option<i64>,
+) -> Option<usize> {
     match &expr.kind {
         ExprKind::ArrayLiteral { elements, .. } | ExprKind::VecLiteral { elements, .. } => expr
             .repeat
             .as_deref()
-            .and_then(constant_int_value)
+            .and_then(|count| constant_int_value_with(count, resolve))
             .and_then(|length| usize::try_from(length).ok())
             .or(Some(elements.len())),
-        ExprKind::ArraySized { size, .. } => constant_int_value(size)
+        ExprKind::ArraySized { size, .. } => constant_int_value_with(size, resolve)
             .filter(|size| *size >= 0)
             .and_then(|size| usize::try_from(size).ok()),
         ExprKind::String(value) => Some(value.chars().count()),
-        ExprKind::Grouping(inner) => constant_collection_length(inner),
+        ExprKind::Grouping(inner) => constant_collection_length_with(inner, resolve),
         _ => None,
     }
 }

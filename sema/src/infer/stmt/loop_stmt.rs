@@ -25,8 +25,8 @@ impl TypeInference {
             ConstraintReason::IfCondition,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_cond.ty.clone(),
                 InferType::Bool,
+                typed_cond.ty.clone(),
                 condition.span,
                 ConstraintReason::IfCondition,
             ));
@@ -57,8 +57,8 @@ impl TypeInference {
             ConstraintReason::WhileCondition,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_cond.ty.clone(),
                 InferType::Bool,
+                typed_cond.ty.clone(),
                 condition.span,
                 ConstraintReason::WhileCondition,
             ));
@@ -97,8 +97,8 @@ impl TypeInference {
             ConstraintReason::ForBounds,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_start.ty.clone(),
                 InferType::I64,
+                typed_start.ty.clone(),
                 start.span,
                 ConstraintReason::ForBounds,
             ));
@@ -115,8 +115,8 @@ impl TypeInference {
             ConstraintReason::ForBounds,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_end.ty.clone(),
                 InferType::I64,
+                typed_end.ty.clone(),
                 end.span,
                 ConstraintReason::ForBounds,
             ));
@@ -135,8 +135,8 @@ impl TypeInference {
                 ConstraintReason::ForBounds,
             ) {
                 self.constraints.push(Constraint::equal(
-                    ts.ty.clone(),
                     InferType::I64,
+                    ts.ty.clone(),
                     step_span,
                     ConstraintReason::ForBounds,
                 ));

@@ -117,6 +117,7 @@ impl TypeInference {
             }
         }
 
+        self.callee_position = true;
         let inferred_callee = self.infer_expr(callee);
         let native_obligations = self.native_obligations_for(callee, &inferred_callee.ty);
         let typed_callee = self.instantiate_generic_signature(inferred_callee);
@@ -482,8 +483,8 @@ impl TypeInference {
                             ConstraintReason::Other("enum constructor field".to_string()),
                         ) {
                             self.constraints.push(Constraint::equal(
-                                typed.ty.clone(),
                                 expected.clone(),
+                                typed.ty.clone(),
                                 typed.span,
                                 ConstraintReason::Other("enum constructor field".to_string()),
                             ));
@@ -633,8 +634,8 @@ impl TypeInference {
                 )
             {
                 self.constraints.push(Constraint::equal(
-                    typed.ty.clone(),
                     expected.clone(),
+                    typed.ty.clone(),
                     typed.span,
                     ConstraintReason::Argument {
                         func_name: symbol.clone(),
@@ -788,8 +789,8 @@ impl TypeInference {
                 continue;
             }
             self.constraints.push(Constraint::equal(
-                arg.ty.clone(),
                 expected.clone(),
+                arg.ty.clone(),
                 arg.span,
                 reason,
             ));
@@ -1044,8 +1045,8 @@ impl TypeInference {
                 && !self.reject_untyped_native(&arg.ty, expected, arg.span, reason.clone())
             {
                 self.constraints.push(Constraint::equal(
-                    arg.ty.clone(),
                     expected.clone(),
+                    arg.ty.clone(),
                     arg.span,
                     reason,
                 ));

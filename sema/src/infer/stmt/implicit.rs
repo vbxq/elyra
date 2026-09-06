@@ -37,8 +37,8 @@ impl TypeInference {
                     },
                 ) {
                     self.constraints.push(Constraint::equal(
-                        typed_expr.ty.clone(),
                         return_type.clone(),
+                        typed_expr.ty.clone(),
                         expr.span,
                         ConstraintReason::Return {
                             func_name: self
@@ -76,8 +76,8 @@ impl TypeInference {
                 );
                 if !invalid_condition {
                     self.constraints.push(Constraint::equal(
-                        typed_cond.ty.clone(),
                         InferType::Bool,
+                        typed_cond.ty.clone(),
                         condition.span,
                         ConstraintReason::IfCondition,
                     ));

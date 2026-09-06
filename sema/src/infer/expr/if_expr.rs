@@ -32,8 +32,8 @@ impl TypeInference {
             ConstraintReason::IfCondition,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_cond.ty.clone(),
                 InferType::Bool,
+                typed_cond.ty.clone(),
                 condition.span,
                 ConstraintReason::IfCondition,
             ));
@@ -47,8 +47,8 @@ impl TypeInference {
             ConstraintReason::IfBranches,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_then.ty.clone(),
                 result_type.clone(),
+                typed_then.ty.clone(),
                 then_branch.span,
                 ConstraintReason::IfBranches,
             ));
@@ -60,8 +60,8 @@ impl TypeInference {
             ConstraintReason::IfBranches,
         ) {
             self.constraints.push(Constraint::equal(
-                typed_else.ty.clone(),
                 result_type.clone(),
+                typed_else.ty.clone(),
                 else_branch.span,
                 ConstraintReason::IfBranches,
             ));

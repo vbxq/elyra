@@ -5,17 +5,27 @@ use crate::types::InferType;
 use aelys_syntax::{Expr, MemberSeparator, ModuleId, Span, StructFieldInit};
 use std::collections::HashMap;
 
+pub(crate) struct FieldVisibilityCheck<'a> {
+    pub structure: &'a str,
+    pub field: &'a str,
+    pub is_pub: bool,
+    pub owner: &'a ModuleId,
+    pub span: Span,
+    pub operation: &'a str,
+    pub construction: bool,
+}
+
 impl TypeInference {
-    pub(crate) fn check_field_visibility(
-        &mut self,
-        structure: &str,
-        field: &str,
-        is_pub: bool,
-        owner: &ModuleId,
-        span: Span,
-        operation: &str,
-        construction: bool,
-    ) -> bool {
+    pub(crate) fn check_field_visibility(&mut self, check: FieldVisibilityCheck<'_>) -> bool {
+        let FieldVisibilityCheck {
+            structure,
+            field,
+            is_pub,
+            owner,
+            span,
+            operation,
+            construction,
+        } = check;
         if is_pub || self.current_module.is_same_or_descendant_of(owner) {
             return true;
         }
@@ -42,6 +52,36 @@ impl TypeInference {
             reason: ConstraintReason::Other(format!("private field {operation}")),
         });
         false
+    }
+
+    pub(crate) fn projection_path_parts(&self, expr: &Expr) -> Option<(String, String)> {
+        let aelys_syntax::ExprKind::Member {
+            object,
+            member,
+            separator: MemberSeparator::Path,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        Some((source_path_name(object)?, member.clone()))
+    }
+
+    // an array length written `bounds::limit`, `limits::limit` or `self::limit`
+    pub(crate) fn constant_path_int(&self, expr: &Expr) -> Option<i64> {
+        let (receiver, item) = self.projection_path_parts(expr)?;
+        if !self.names_associated_items(&receiver) {
+            return None;
+        }
+        match self.resolve_constant(&receiver, &item) {
+            crate::infer::ConstResolution::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn names_associated_items(&self, receiver: &str) -> bool {
+        receiver == "Self"
+            || self.type_table.has_nominal(receiver)
+            || self.type_table.get_trait(receiver).is_some()
     }
 
     fn report_no_such_member(
@@ -91,6 +131,7 @@ impl TypeInference {
         member: &str,
         separator: MemberSeparator,
         _span: Span,
+        callee_position: bool,
     ) -> (TypedExprKind, InferType) {
         if separator == MemberSeparator::Dot
             && let Some(path) = source_path_name(object)
@@ -144,18 +185,9 @@ impl TypeInference {
         // emitted and the monomorphizer replaces it with the literal.
         if separator == MemberSeparator::Path
             && let Some(param) = source_path_name(object)
-            && self.type_params_in_scope.iter().any(|name| *name == param)
+            && self.type_params_in_scope.contains(&param)
         {
-            // a lambda body is a different "current function", so the bounds of
-            let mut bounds = self.param_bounds_in_scope(&param);
-            if bounds.is_empty() {
-                bounds = self
-                    .current_function_bounds
-                    .iter()
-                    .filter(|(subject, _, _)| *subject == param)
-                    .map(|(_, trait_name, args)| (trait_name.clone(), args.clone()))
-                    .collect();
-            }
+            let bounds = self.bounds_in_scope_for_param(&param);
             let declaring = bounds.into_iter().find(|(name, _)| {
                 self.type_table.get_trait(name).is_some_and(|definition| {
                     definition
@@ -165,16 +197,25 @@ impl TypeInference {
                 })
             });
             let Some((trait_name, _)) = declaring else {
+                let cause = match self.associated_item_namespace(
+                    &param,
+                    member,
+                    crate::constraint::ItemNamespace::Const,
+                ) {
+                    Some(crate::infer::ProjectionNamespace::WrongNamespace { found }) => {
+                        crate::constraint::ProjectionFailure::WrongNamespace { found }
+                    }
+                    _ => crate::constraint::ProjectionFailure::Unbound,
+                };
+                let reason = self.occurrence_reason("a value expression");
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::AmbiguousAssociatedProjection {
                         receiver: param.clone(),
                         item: member.to_string(),
-                        cause: crate::constraint::ProjectionFailure::Unbound,
+                        cause,
                     },
                     span: _span,
-                    reason: ConstraintReason::UnknownType {
-                        name: format!("{param}::{member}"),
-                    },
+                    reason,
                 });
                 return (TypedExprKind::Null, InferType::Poison);
             };
@@ -202,26 +243,66 @@ impl TypeInference {
         // `bounds::limit`, `source::limit` or `self::limit` one branch for
         if separator == MemberSeparator::Path
             && let Some(receiver) = source_path_name(object)
-            && (receiver == "Self"
-                || self.type_table.has_nominal(&receiver)
-                || self.type_table.get_trait(&receiver).is_some())
+            && self.names_associated_items(&receiver)
         {
             match self.resolve_constant(&receiver, member) {
                 crate::infer::ConstResolution::Value(value) => {
                     return (TypedExprKind::Int(value), InferType::I64);
                 }
-                crate::infer::ConstResolution::Missing => {}
+                crate::infer::ConstResolution::Missing => {
+                    if receiver == "Self"
+                        && self.current_impl_self.is_none()
+                        && self.current_trait_name.is_none()
+                    {
+                        let reason = self.occurrence_reason("a value expression");
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                                receiver: receiver.clone(),
+                                item: member.to_string(),
+                                cause: crate::constraint::ProjectionFailure::SelfOutsideImpl,
+                            },
+                            span: _span,
+                            reason,
+                        });
+                        return (TypedExprKind::Null, InferType::Poison);
+                    }
+                    if let Some(crate::infer::ProjectionNamespace::WrongNamespace { found }) = self
+                        .associated_item_namespace(
+                            &receiver,
+                            member,
+                            crate::constraint::ItemNamespace::Const,
+                        )
+                    {
+                        let reason = self.occurrence_reason("a value expression");
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                                receiver: self.projection_receiver(&receiver),
+                                item: member.to_string(),
+                                cause: crate::constraint::ProjectionFailure::WrongNamespace {
+                                    found,
+                                },
+                            },
+                            span: _span,
+                            reason,
+                        });
+                        return (TypedExprKind::Null, InferType::Poison);
+                    }
+                }
                 failure => {
+                    let reason = self.occurrence_reason("a value expression");
+                    let cause = projection_failure_for(&failure, &receiver, member);
+                    let named = match cause {
+                        crate::constraint::ProjectionFailure::Cyclic { .. } => receiver.clone(),
+                        _ => self.projection_receiver(&receiver),
+                    };
                     self.errors.push(TypeError {
                         kind: TypeErrorKind::AmbiguousAssociatedProjection {
-                            receiver: receiver.clone(),
+                            receiver: named,
                             item: member.to_string(),
-                            cause: projection_failure_for(&failure, &receiver, member),
+                            cause,
                         },
                         span: _span,
-                        reason: ConstraintReason::UnknownType {
-                            name: format!("{receiver}::{member}"),
-                        },
+                        reason,
                     });
                     return (TypedExprKind::Null, InferType::Poison);
                 }
@@ -577,19 +658,25 @@ impl TypeInference {
                 );
             }
 
-            if let Some(root) = path.split("::").next()
-                && self.module_aliases.contains(root)
+            if let Some(root) = path.split("::").next().map(str::to_string)
+                && self.module_aliases.contains(&root)
                 && !self.known_globals.contains(&qualified)
                 && !self
                     .known_globals
                     .iter()
                     .any(|name| name.starts_with(&format!("{}::", qualified)))
             {
-                self.errors.push(TypeError {
-                    kind: TypeErrorKind::ModuleMemberNotPublic {
+                // only a path that is itself the alias names a module member,
+                let kind = if self.module_aliases.contains(&path) {
+                    TypeErrorKind::ModuleMemberNotPublic {
                         module: path,
                         member: member.to_string(),
-                    },
+                    }
+                } else {
+                    TypeErrorKind::UnknownTypeName { name: root }
+                };
+                self.errors.push(TypeError {
+                    kind,
                     span: _span,
                     reason: ConstraintReason::Other("module export lookup".to_string()),
                 });
@@ -605,18 +692,34 @@ impl TypeInference {
         }
 
         if let Some(path) = &path_root {
-            let kind =
+            let lookup_reason = ConstraintReason::Other("namespace path lookup".to_string());
+            let (kind, reason) =
                 if self.env.lookup(path).is_some() || self.env.lookup_function(path).is_some() {
-                    TypeErrorKind::NotANamespace { name: path.clone() }
+                    (
+                        TypeErrorKind::NotANamespace { name: path.clone() },
+                        lookup_reason,
+                    )
+                } else if !callee_position && self.names_associated_items(path) {
+                    (
+                        TypeErrorKind::AmbiguousAssociatedProjection {
+                            receiver: self.projection_receiver(path),
+                            item: member.to_string(),
+                            cause: crate::constraint::ProjectionFailure::NoImpl,
+                        },
+                        self.occurrence_reason("a value expression"),
+                    )
                 } else {
-                    TypeErrorKind::UndefinedFunction {
-                        name: format!("{}::{}", path, member),
-                    }
+                    (
+                        TypeErrorKind::UndefinedFunction {
+                            name: format!("{}::{}", path, member),
+                        },
+                        lookup_reason,
+                    )
                 };
             self.errors.push(TypeError {
                 kind,
                 span: _span,
-                reason: ConstraintReason::Other("namespace path lookup".to_string()),
+                reason,
             });
             return (
                 TypedExprKind::Member {
@@ -729,15 +832,15 @@ impl TypeInference {
             Some((name, substitutions)) => {
                 if let Some(def) = self.type_table.get_struct(&name).cloned() {
                     if let Some(field) = def.fields.iter().find(|f| f.name == member) {
-                        if !self.check_field_visibility(
-                            &name,
-                            member,
-                            field.is_pub,
-                            &def.owner,
-                            _span,
-                            "read",
-                            false,
-                        ) {
+                        if !self.check_field_visibility(FieldVisibilityCheck {
+                            structure: &name,
+                            field: member,
+                            is_pub: field.is_pub,
+                            owner: &def.owner,
+                            span: _span,
+                            operation: "read",
+                            construction: false,
+                        }) {
                             return (
                                 TypedExprKind::Member {
                                     object: Box::new(typed_object),
@@ -887,15 +990,15 @@ impl TypeInference {
 
                 if let Some(def) = &def {
                     if let Some(field_def) = def.fields.iter().find(|df| df.name == f.name) {
-                        let visible = self.check_field_visibility(
-                            name,
-                            &f.name,
-                            field_def.is_pub,
-                            &def.owner,
-                            f.span,
-                            "a struct literal",
-                            true,
-                        );
+                        let visible = self.check_field_visibility(FieldVisibilityCheck {
+                            structure: name,
+                            field: &f.name,
+                            is_pub: field_def.is_pub,
+                            owner: &def.owner,
+                            span: f.span,
+                            operation: "a struct literal",
+                            construction: true,
+                        });
                         if !visible {
                             field_visibility_error = true;
                             return None;
@@ -914,8 +1017,8 @@ impl TypeInference {
                             )
                         {
                             self.constraints.push(Constraint::equal(
-                                typed_value.ty.clone(),
                                 field_ty,
+                                typed_value.ty.clone(),
                                 f.span,
                                 reason,
                             ));
@@ -944,15 +1047,15 @@ impl TypeInference {
         if let Some(def) = &def {
             for field in &def.fields {
                 if !fields.iter().any(|value| value.name == field.name) {
-                    if !self.check_field_visibility(
-                        name,
-                        &field.name,
-                        field.is_pub,
-                        &def.owner,
-                        _span,
-                        "a struct literal",
-                        true,
-                    ) {
+                    if !self.check_field_visibility(FieldVisibilityCheck {
+                        structure: name,
+                        field: &field.name,
+                        is_pub: field.is_pub,
+                        owner: &def.owner,
+                        span: _span,
+                        operation: "a struct literal",
+                        construction: true,
+                    }) {
                         continue;
                     }
                     self.errors.push(TypeError {
@@ -1020,7 +1123,7 @@ impl TypeInference {
             );
         };
         self.check_write_access(object, span, "mutation");
-        if self.env.borrow_kind(&root).is_none() && !self.env.is_mutable(&root) {
+        if self.env.borrow_kind(root).is_none() && !self.env.is_mutable(root) {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {
                     field: member.to_string(),
@@ -1035,15 +1138,15 @@ impl TypeInference {
                     if let Some(definition) = self.type_table.get_struct(&name).cloned()
                         && let Some(field) =
                             definition.fields.iter().find(|field| field.name == member)
-                        && !self.check_field_visibility(
-                            &name,
-                            member,
-                            field.is_pub,
-                            &definition.owner,
+                        && !self.check_field_visibility(FieldVisibilityCheck {
+                            structure: &name,
+                            field: member,
+                            is_pub: field.is_pub,
+                            owner: &definition.owner,
                             span,
-                            "write",
-                            false,
-                        )
+                            operation: "write",
+                            construction: false,
+                        })
                     {
                         return (
                             TypedExprKind::MemberAssign {
@@ -1094,8 +1197,8 @@ impl TypeInference {
             },
         ) {
             self.constraints.push(Constraint::equal(
-                typed_value.ty.clone(),
                 field_ty.clone(),
+                typed_value.ty.clone(),
                 value.span,
                 ConstraintReason::Assignment {
                     var_name: format!("struct field {}", member),
@@ -1273,15 +1376,15 @@ impl TypeInference {
                 });
             }
             if let Some(expected) = expected_fields.iter().find(|f| f.name == field.name) {
-                let visible = self.check_field_visibility(
-                    &format!("{}::{}", enum_name, variant_name),
-                    &field.name,
-                    expected.is_pub,
-                    &def.owner,
-                    field.span,
-                    "an enum literal",
-                    true,
-                );
+                let visible = self.check_field_visibility(FieldVisibilityCheck {
+                    structure: &format!("{}::{}", enum_name, variant_name),
+                    field: &field.name,
+                    is_pub: expected.is_pub,
+                    owner: &def.owner,
+                    span: field.span,
+                    operation: "an enum literal",
+                    construction: true,
+                });
                 if !visible {
                     field_visibility_error = true;
                     continue;
@@ -1299,8 +1402,8 @@ impl TypeInference {
                     )
                 {
                     self.constraints.push(Constraint::equal(
-                        typed_value.ty.clone(),
                         expected_ty,
+                        typed_value.ty.clone(),
                         field.span,
                         reason,
                     ));
@@ -1324,15 +1427,15 @@ impl TypeInference {
             if let Some(value) = typed_by_name.remove(&expected.name) {
                 typed_fields.push((Some(expected.name.clone()), value));
             } else {
-                if !self.check_field_visibility(
-                    &format!("{}::{}", enum_name, variant_name),
-                    &expected.name,
-                    expected.is_pub,
-                    &def.owner,
+                if !self.check_field_visibility(FieldVisibilityCheck {
+                    structure: &format!("{}::{}", enum_name, variant_name),
+                    field: &expected.name,
+                    is_pub: expected.is_pub,
+                    owner: &def.owner,
                     span,
-                    "an enum literal",
-                    true,
-                ) {
+                    operation: "an enum literal",
+                    construction: true,
+                }) {
                     field_visibility_error = true;
                     continue;
                 }
@@ -1368,6 +1471,19 @@ impl TypeInference {
             },
             enum_type,
         )
+    }
+
+    // a lambda body is a different "current function", so the bounds of the
+    pub(crate) fn bounds_in_scope_for_param(&self, param: &str) -> Vec<(String, Vec<InferType>)> {
+        let bounds = self.param_bounds_in_scope(param);
+        if !bounds.is_empty() {
+            return bounds;
+        }
+        self.current_function_bounds
+            .iter()
+            .filter(|(subject, _, _)| subject == param)
+            .map(|(_, trait_name, args)| (trait_name.clone(), args.clone()))
+            .collect()
     }
 
     fn param_bounds_in_scope(&self, param: &str) -> Vec<(String, Vec<InferType>)> {
@@ -1407,7 +1523,7 @@ impl TypeInference {
         separator: MemberSeparator,
     ) -> (TypedExprKind, InferType) {
         let mut candidates = Vec::new();
-        for (trait_name, trait_args) in self.param_bounds_in_scope(param) {
+        for (trait_name, trait_args) in self.bounds_in_scope_for_param(param) {
             let Some(definition) = self.type_table.get_trait(&trait_name) else {
                 continue;
             };
@@ -1478,6 +1594,9 @@ impl TypeInference {
         let return_type = self.normalize_projection_types(
             &method.return_type.substitute_params(&substitutions),
             span,
+            &ConstraintReason::Return {
+                func_name: member.to_string(),
+            },
         );
         (
             TypedExprKind::StructMethod {
@@ -1572,7 +1691,7 @@ fn valid_sum_variant(family: &str, member: &str) -> bool {
     )
 }
 
-fn projection_failure_for(
+pub(crate) fn projection_failure_for(
     failure: &crate::infer::ConstResolution,
     receiver: &str,
     item: &str,
@@ -1587,6 +1706,7 @@ fn projection_failure_for(
         ConstResolution::NotConstant => ProjectionFailure::NotConstant,
         ConstResolution::Cyclic => ProjectionFailure::Cyclic {
             path: vec![format!("{receiver}::{item}")],
+            namespace: crate::constraint::ItemNamespace::Const,
         },
         ConstResolution::Missing | ConstResolution::Value(_) => ProjectionFailure::NoImpl,
     }

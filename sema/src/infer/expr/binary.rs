@@ -474,8 +474,8 @@ impl TypeInference {
                 );
                 if !invalid {
                     self.constraints.push(Constraint::equal(
-                        operand.ty.clone(),
                         InferType::Bool,
+                        operand.ty.clone(),
                         span,
                         ConstraintReason::IfCondition,
                     ));

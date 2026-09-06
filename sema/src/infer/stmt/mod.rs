@@ -16,8 +16,16 @@ impl TypeInference {
 
     pub(super) fn infer_stmt(&mut self, stmt: &Stmt) -> TypedStmt {
         let previous_module = self.current_module.clone();
+        let mut definition_scope = false;
+        let mut definition_mark = None;
         if let Some(definition_module) = &stmt.definition_module {
             self.current_module = definition_module.clone();
+            definition_scope = self.push_definition_module_globals(definition_module);
+            definition_mark = Some((
+                self.errors.len(),
+                self.constraints.len(),
+                definition_module.as_str().to_string(),
+            ));
         }
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
@@ -119,11 +127,38 @@ impl TypeInference {
                     .unwrap_or_default(),
             },
         };
+        if definition_scope {
+            self.env.pop_scope();
+        }
+        if let Some((errors_mark, constraints_mark, module)) = definition_mark {
+            for error in &mut self.errors[errors_mark..] {
+                error.reason.wrap_in_module(&module);
+            }
+            for constraint in &mut self.constraints[constraints_mark..] {
+                constraint.reason_mut().wrap_in_module(&module);
+            }
+        }
         self.current_module = previous_module;
 
         TypedStmt {
             kind,
             span: stmt.span,
         }
+    }
+
+    // names it reads are that module's globals, which the importer never bound.
+    fn push_definition_module_globals(&mut self, module: &aelys_syntax::ModuleId) -> bool {
+        let Some(globals) = self.module_globals.get(module.as_str()) else {
+            return false;
+        };
+        let globals: Vec<(String, crate::types::InferType)> = globals
+            .iter()
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect();
+        self.env.push_scope();
+        for (name, ty) in globals {
+            self.env.define_local(name, ty);
+        }
+        true
     }
 }

@@ -21,8 +21,8 @@ impl TypeInference {
             };
             if !self.reject_dynamic(&typed_value.ty, &var_type, span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
-                    typed_value.ty.clone(),
                     var_type.clone(),
+                    typed_value.ty.clone(),
                     span,
                     reason,
                 ));

@@ -29,6 +29,7 @@ impl TypeInference {
     }
 
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
+        let callee_position = std::mem::take(&mut self.callee_position);
         self.depth += 1;
         if self.depth > super::MAX_INFERENCE_DEPTH {
             self.errors.push(TypeError::recursion_limit(expr.span));
@@ -103,6 +104,7 @@ impl TypeInference {
             ExprKind::Or { left, right } => self.infer_logical_expr("or", left, right, expr),
             ExprKind::Call { callee, args } => self.infer_call_expr(callee, args, expr.span),
             ExprKind::GenericApply { callee, type_args } => {
+                self.callee_position = callee_position;
                 self.infer_generic_apply(callee, type_args, expr.span)
             }
             ExprKind::Assign { name, value } => self.infer_assign_expr(name, value, expr.span),
@@ -130,7 +132,7 @@ impl TypeInference {
                 object,
                 member,
                 separator,
-            } => self.infer_member_expr(object, member, *separator, expr.span),
+            } => self.infer_member_expr(object, member, *separator, expr.span, callee_position),
             ExprKind::ArrayLiteral {
                 element_type,
                 elements,
@@ -255,8 +257,8 @@ impl TypeInference {
             reason(op_label),
         ) {
             self.constraints.push(Constraint::equal(
-                typed_left.ty.clone(),
                 InferType::Bool,
+                typed_left.ty.clone(),
                 left.span,
                 reason(op_label),
             ));
@@ -273,8 +275,8 @@ impl TypeInference {
             reason(op_label),
         ) {
             self.constraints.push(Constraint::equal(
-                typed_right.ty.clone(),
                 InferType::Bool,
+                typed_right.ty.clone(),
                 right.span,
                 reason(op_label),
             ));
