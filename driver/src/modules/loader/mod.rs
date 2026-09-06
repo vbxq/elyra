@@ -12,7 +12,9 @@ mod stdlib_loaded;
 mod stdlib_register;
 mod types;
 
-pub use exported_types::{ExportedTypes, NominalScope, select_exported_nominals};
+pub use exported_types::{
+    ExportedTypes, NominalScope, NominalScopeEntry, select_exported_nominals, widen_nominal_scope,
+};
 pub use types::{
     ExportInfo, LoadResult, LoadedNativeInfo, ModuleImports, ModuleInfo, ModuleLoader,
 };

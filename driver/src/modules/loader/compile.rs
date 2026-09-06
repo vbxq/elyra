@@ -101,6 +101,9 @@ impl ModuleLoader {
         let mut native_signatures = std::collections::HashMap::new();
         let mut imported_types = aelys_sema::infer::imports::ImportedTypes::default();
         let mut imported_impl_stmts: Vec<aelys_syntax::Stmt> = Vec::new();
+        let mut nominal_scopes: Vec<super::exported_types::NominalScopeEntry> = Vec::new();
+        let mut module_sources: std::collections::HashMap<String, Arc<Source>> =
+            std::collections::HashMap::new();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -121,22 +124,16 @@ impl ModuleLoader {
                         known_native_globals.insert(native_name.clone());
                     }
                     native_signatures.extend(module_info.native_signatures.clone());
-                    let nominal_scope = match &nested_needs.kind {
-                        aelys_syntax::ImportKind::Symbols(symbols) => {
-                            super::exported_types::NominalScope::Only(symbols)
-                        }
-                        _ => super::exported_types::NominalScope::All,
+                    let wanted = match &nested_needs.kind {
+                        aelys_syntax::ImportKind::Symbols(symbols) => Some(symbols.clone()),
+                        _ => None,
                     };
-                    let (selected, selected_impls) =
-                        super::exported_types::select_exported_nominals(
-                            &module_info.exported_types,
-                            &nested_module_path,
-                            nominal_scope,
-                        );
-                    imported_types.extend(selected);
-                    imported_impl_stmts.extend(selected_impls.into_iter().map(|stmt| {
-                        stmt.with_definition_module(ModuleId::new(nested_module_path.clone()))
-                    }));
+                    super::exported_types::widen_nominal_scope(
+                        &mut nominal_scopes,
+                        &nested_module_path,
+                        wanted,
+                        nested_needs.span,
+                    );
 
                     match &nested_needs.kind {
                         aelys_syntax::ImportKind::Module { alias: None }
@@ -172,6 +169,39 @@ impl ModuleLoader {
             }
         }
 
+        for entry in &nominal_scopes {
+            let Some(module_info) = self.get_module(&entry.module_path) else {
+                continue;
+            };
+            let (selected, selected_impls) = super::exported_types::select_exported_nominals(
+                &module_info.exported_types,
+                &entry.module_path,
+                entry.scope(),
+            );
+            imported_types.extend(selected);
+            if !selected_impls.is_empty() {
+                if let Some(source) = &module_info.exported_types.source {
+                    module_sources.insert(
+                        ModuleId::new(entry.module_path.clone())
+                            .as_str()
+                            .to_string(),
+                        source.clone(),
+                    );
+                }
+                imported_types.module_globals.insert(
+                    ModuleId::new(entry.module_path.clone())
+                        .as_str()
+                        .to_string(),
+                    module_info.exported_types.globals.clone(),
+                );
+            }
+            imported_impl_stmts.extend(
+                selected_impls.into_iter().map(|stmt| {
+                    stmt.with_definition_module(ModuleId::new(entry.module_path.clone()))
+                }),
+            );
+        }
+
         self.base_dir = original_base_dir;
         self.base_root = original_base_root;
 
@@ -199,14 +229,16 @@ impl ModuleLoader {
             .collect();
 
         let inference_result = TypeInference::infer_program_full_with_native_signatures_in_module(
-            main_stmts,
-            module_source.clone(),
-            module_aliases.clone(),
-            known_globals.clone(),
-            known_native_globals.clone(),
-            native_signatures,
-            imported_types,
-            ModuleId::new(module_path_str),
+            aelys_sema::InferenceInputs {
+                stmts: main_stmts,
+                source: module_source.clone(),
+                module_aliases: module_aliases.clone(),
+                known_globals: known_globals.clone(),
+                known_native_globals: known_native_globals.clone(),
+                known_native_signatures: native_signatures.clone(),
+                imported_types,
+                current_module: ModuleId::new(module_path_str),
+            },
         )
         .map_err(|errors| {
             if let Some(err) = errors.first() {
@@ -263,12 +295,39 @@ impl ModuleLoader {
             module_path_str,
             &module_source,
         )?;
-        let exported_types = super::exported_types::collect_exported_types(
+        let mut exported_types = super::exported_types::collect_exported_types(
             &declaration_stmts,
             &inference_result.type_table,
             module_path_str,
             module_source.clone(),
         )?;
+        exported_types.source = Some(module_source.clone());
+        for name in &known_globals {
+            if let Some(signature) = native_signatures.get(name) {
+                exported_types
+                    .globals
+                    .insert(name.clone(), signature.clone());
+            }
+        }
+        for stmt in &typed_program.stmts {
+            match &stmt.kind {
+                TypedStmtKind::Let { name, var_type, .. } => {
+                    exported_types
+                        .globals
+                        .insert(name.clone(), var_type.clone());
+                }
+                TypedStmtKind::Function(function) => {
+                    exported_types.globals.insert(
+                        function.name.clone(),
+                        InferType::Function {
+                            params: function.params.iter().map(|p| p.ty.clone()).collect(),
+                            ret: Box::new(function.return_type.clone()),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
         if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
             module_info.native_signatures = inferred_export_signatures;
             module_info.exported_types = exported_types;

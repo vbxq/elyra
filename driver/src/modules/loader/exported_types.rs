@@ -3,7 +3,7 @@ use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_sema::infer::imports::ImportedTypes;
 use aelys_sema::types::TypeTable;
 use aelys_syntax::{Source, Span, Stmt, StmtKind};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Default)]
@@ -11,12 +11,53 @@ pub struct ExportedTypes {
     pub types: ImportedTypes,
     pub impl_stmts: Vec<Stmt>,
     pub private_names: HashSet<String>,
+    pub globals: BTreeMap<String, aelys_sema::types::InferType>,
+    pub source: Option<Arc<Source>>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum NominalScope<'a> {
     All,
     Only(&'a [String]),
+}
+
+pub struct NominalScopeEntry {
+    pub module_path: String,
+    pub wanted: Option<Vec<String>>,
+    pub span: Span,
+}
+
+impl NominalScopeEntry {
+    pub fn scope(&self) -> NominalScope<'_> {
+        match &self.wanted {
+            Some(names) => NominalScope::Only(names),
+            None => NominalScope::All,
+        }
+    }
+}
+
+pub fn widen_nominal_scope(
+    scopes: &mut Vec<NominalScopeEntry>,
+    module_path: &str,
+    wanted: Option<Vec<String>>,
+    span: Span,
+) {
+    let Some(entry) = scopes
+        .iter_mut()
+        .find(|entry| entry.module_path == module_path)
+    else {
+        scopes.push(NominalScopeEntry {
+            module_path: module_path.to_string(),
+            wanted,
+            span,
+        });
+        return;
+    };
+    match (entry.wanted.as_mut(), wanted) {
+        (Some(names), Some(more)) => names.extend(more),
+        (_, None) => entry.wanted = None,
+        (None, Some(_)) => {}
+    }
 }
 
 fn impl_ends(stmt: &Stmt) -> Option<(String, Option<String>)> {
@@ -39,7 +80,6 @@ fn impl_ends(stmt: &Stmt) -> Option<(String, Option<String>)> {
     Some((target, trait_name))
 }
 
-/// only when every end it names is itself in scope, so importing a trait alone never smuggles in
 pub fn select_exported_nominals(
     exported: &ExportedTypes,
     module_path: &str,

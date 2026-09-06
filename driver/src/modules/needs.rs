@@ -1,5 +1,6 @@
 use crate::modules::loader::{
-    LoadResult, ModuleImports, ModuleLoader, NominalScope, select_exported_nominals,
+    LoadResult, ModuleImports, ModuleLoader, NominalScope, NominalScopeEntry,
+    select_exported_nominals, widen_nominal_scope,
 };
 use aelys_common::Result;
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
@@ -37,6 +38,8 @@ struct NominalImports {
     types: aelys_sema::infer::imports::ImportedTypes,
     impl_stmts: Vec<Stmt>,
     origins: HashMap<String, String>,
+    body_globals: std::collections::HashSet<String>,
+    module_sources: HashMap<String, Arc<Source>>,
 }
 
 impl NominalImports {
@@ -67,7 +70,24 @@ impl NominalImports {
             self.origins.insert(name, module_path.to_string());
         }
         self.types.extend(selected);
-        self.impl_stmts.extend(impl_stmts);
+        if !impl_stmts.is_empty() {
+            let module = aelys_syntax::ModuleId::new(module_path);
+            self.body_globals
+                .extend(module_info.exported_types.globals.keys().cloned());
+            if let Some(defining) = &module_info.exported_types.source {
+                self.module_sources
+                    .insert(module.as_str().to_string(), defining.clone());
+            }
+            self.types.module_globals.insert(
+                module.as_str().to_string(),
+                module_info.exported_types.globals.clone(),
+            );
+            self.impl_stmts.extend(
+                impl_stmts
+                    .into_iter()
+                    .map(|stmt| stmt.with_definition_module(module.clone())),
+            );
+        }
         Ok(())
     }
 }
@@ -111,6 +131,7 @@ fn load_modules(
     let mut native_signatures: HashMap<String, InferType> = HashMap::new();
     let mut symbol_origins: HashMap<String, String> = HashMap::new();
     let mut nominal_imports = NominalImports::default();
+    let mut nominal_scopes: Vec<NominalScopeEntry> = Vec::new();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
         .iter()
@@ -144,20 +165,13 @@ fn load_modules(
                 Some(symbol) => ImportKind::Symbols(vec![symbol.clone()]),
                 None => needs.kind.clone(),
             };
-            // `needs a::b::c` names one member of `a::b` and never a type, so its nominal scope is
-            const NO_NAMES: &[String] = &[];
-            let nominal_scope = match (&fallback_symbol, &effective_kind) {
-                (Some(_), _) => NominalScope::Only(NO_NAMES),
-                (None, ImportKind::Symbols(symbols)) => NominalScope::Only(symbols),
-                (None, _) => NominalScope::All,
+            // `needs a::b::c` names one member of `a::b` and never a type, so it
+            let wanted = match (&fallback_symbol, &effective_kind) {
+                (Some(_), _) => Some(Vec::new()),
+                (None, ImportKind::Symbols(symbols)) => Some(symbols.clone()),
+                (None, _) => None,
             };
-            nominal_imports.absorb(
-                module_info,
-                &module_path,
-                nominal_scope,
-                needs.span,
-                &source,
-            )?;
+            widen_nominal_scope(&mut nominal_scopes, &module_path, wanted, needs.span);
             for native_name in &module_info.native_functions {
                 known_native_globals.insert(native_name.clone());
             }
@@ -274,6 +288,14 @@ fn load_modules(
         }
     }
 
+    for entry in &nominal_scopes {
+        let Some(module_info) = loader.get_module(&entry.module_path) else {
+            continue;
+        };
+        let scope = entry.scope();
+        nominal_imports.absorb(module_info, &entry.module_path, scope, entry.span, &source)?;
+    }
+
     reject_local_nominal_conflicts(stmts, &nominal_imports.origins, &source)?;
 
     Ok((
@@ -285,6 +307,8 @@ fn load_modules(
             symbol_origins,
             imported_types: nominal_imports.types,
             imported_impl_stmts: nominal_imports.impl_stmts,
+            impl_body_globals: nominal_imports.body_globals,
+            module_sources: nominal_imports.module_sources,
         },
         loader,
     ))
