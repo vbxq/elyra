@@ -1,4 +1,3 @@
-//! Tests for the compilation pipeline.
 
 use aelys_driver::pipeline::{
     CompilerStage, LexerStage, ParserStage, Pipeline, TypeInferenceStage, VMStage,
@@ -50,22 +49,17 @@ fn test_standard_pipeline_function() {
 fn test_pipeline_caching() {
     let mut pipeline = standard_pipeline();
 
-    // First execution
     let result1 = pipeline.execute_str("test", "1 + 2");
     assert!(result1.is_ok());
     assert_eq!(result1.unwrap().as_int(), Some(3));
 
-    // Cache should have entries now (lexer, parser, type_inference, compiler)
-    // VM is not cached because it has side effects
     assert!(pipeline.cache_size() > 0);
     let cache_size_after_first = pipeline.cache_size();
 
-    // Second execution with same source - should use cache
     let result2 = pipeline.execute_str("test", "1 + 2");
     assert!(result2.is_ok());
     assert_eq!(result2.unwrap().as_int(), Some(3));
 
-    // Cache size should be the same (no new entries)
     assert_eq!(pipeline.cache_size(), cache_size_after_first);
 }
 
@@ -73,18 +67,15 @@ fn test_pipeline_caching() {
 fn test_pipeline_cache_invalidation() {
     let mut pipeline = standard_pipeline();
 
-    // First execution
     let result1 = pipeline.execute_str("test", "1 + 2");
     assert!(result1.is_ok());
     assert_eq!(result1.unwrap().as_int(), Some(3));
     let cache_size_first = pipeline.cache_size();
 
-    // Different source - new cache entries
     let result2 = pipeline.execute_str("test", "10 + 20");
     assert!(result2.is_ok());
     assert_eq!(result2.unwrap().as_int(), Some(30));
 
-    // Cache should have more entries now
     assert!(pipeline.cache_size() > cache_size_first);
 }
 
@@ -124,7 +115,7 @@ fn test_pipeline_syntax_error() {
 #[test]
 fn test_pipeline_type_error() {
     let mut pipeline = standard_pipeline();
-    // This should cause a type error - undefined variable
+    // this should cause a type error - undefined variable
     let result = pipeline.execute_str("test", "undefined_var");
     assert!(result.is_err());
 }
@@ -133,4 +124,11 @@ fn test_pipeline_type_error() {
 fn test_driver_run_source() {
     let result = run_source("1 + 2", "<driver>", None).expect("driver run should succeed");
     assert_eq!(result.as_int(), Some(3));
+}
+
+#[test]
+fn the_string_entry_point_sees_the_globals_the_vm_registers() {
+    let result = run_source("abs(0 - 42)", "<driver>", None)
+        .expect("a string program reaches the same globals a file program does");
+    assert_eq!(result.as_int(), Some(42));
 }

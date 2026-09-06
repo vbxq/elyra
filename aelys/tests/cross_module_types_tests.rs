@@ -512,3 +512,133 @@ needs hidden
         message
     );
 }
+
+const GAUGE_MODULE: &str = r#"pub let mut ticks = 7
+pub struct Gauge { pub base: int }
+impl Gauge {
+    fn tick(self) -> int {
+        return self.base + ticks
+    }
+}
+pub fn ambient() -> int {
+    return ticks
+}
+"#;
+
+#[test]
+fn an_imported_impl_body_reads_the_global_of_the_module_that_defined_it() {
+    let dir = create_module_env();
+    write_file(&dir, "gauge.aelys", GAUGE_MODULE);
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Gauge from gauge\nfn main() -> int {\n    let g = Gauge { base: 1 }\n    return g.tick()\n}\nmain()\n",
+    );
+    let value = run_file(&main_path).expect("the imported impl body must resolve its own global");
+    assert_eq!(
+        value.as_int(),
+        Some(8),
+        "only the module's global 'ticks' of 7 added to a base of 1 gives this"
+    );
+}
+
+#[test]
+fn an_imported_impl_body_reads_a_global_its_own_module_only_imported() {
+    let dir = create_module_env();
+    write_file(&dir, "base.aelys", "pub let stride = 4\n");
+    write_file(
+        &dir,
+        "mid.aelys",
+        "needs stride from base\npub struct Meter { pub v: int }\nimpl Meter {\n    fn walk(self) -> int {\n        return self.v + stride\n    }\n}\n",
+    );
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Meter from mid\nfn main() -> int {\n    let m = Meter { v: 2 }\n    return m.walk()\n}\nmain()\n",
+    );
+    let value = run_file(&main_path).expect("the impl body must read what its own module read");
+    assert_eq!(value.as_int(), Some(6));
+}
+
+#[test]
+fn a_module_private_global_stays_invisible_to_the_importer() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "gauge.aelys",
+        "let mut ticks = 7\npub struct Gauge { pub base: int }\nimpl Gauge {\n    fn tick(self) -> int {\n        return self.base + ticks\n    }\n}\n",
+    );
+    let running = write_file(
+        &dir,
+        "reader.aelys",
+        "needs Gauge from gauge\nfn main() -> int {\n    let g = Gauge { base: 1 }\n    return g.tick()\n}\nmain()\n",
+    );
+    assert_eq!(
+        run_file(&running)
+            .expect("a private global is still the impl body's own")
+            .as_int(),
+        Some(8)
+    );
+
+    let leaking = write_file(
+        &dir,
+        "leaker.aelys",
+        "needs Gauge from gauge\nfn main() -> int {\n    return ticks\n}\nmain()\n",
+    );
+    let error = run_file(&leaking).expect_err("the importer must not see the module's global");
+    let message = error.to_string();
+    assert!(
+        message.contains("ticks") && message.contains("leaker.aelys"),
+        "the leak must be refused against the importer's own file: {message}"
+    );
+}
+
+#[test]
+fn a_diagnostic_from_an_imported_impl_body_points_at_the_defining_file() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "dials.aelys",
+        "struct Cell { n: int }\npub struct Dial { pub base: int }\nimpl Dial {\n    fn read(self) -> int {\n        let c = Cell { n: 3 }\n        return self.base + c.n\n    }\n}\n",
+    );
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Dial from dials\n\n\n\n\nfn main() -> int {\n    let d = Dial { base: 1 }\n    return d.read()\n}\nmain()\n",
+    );
+    let error = run_file(&main_path).expect_err("a private nominal in the body must be rejected");
+    let message = error.to_string();
+    assert!(
+        message.contains("dials.aelys:5:17"),
+        "the diagnostic must name the defining file and its real line: {message}"
+    );
+    assert!(
+        message.contains("let c = Cell { n: 3 }"),
+        "the rendered line must be the one the span indexes: {message}"
+    );
+    assert!(
+        !message.contains("main.aelys"),
+        "the importer's file must not be named: {message}"
+    );
+}
+
+#[test]
+fn an_imported_impl_body_writes_the_mutable_global_of_its_own_module() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "tally.aelys",
+        "pub let mut counter = 0\npub struct Tally { pub by: int }\nimpl Tally {\n    fn bump(self) -> int {\n        counter = counter + self.by\n        return counter\n    }\n}\n",
+    );
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Tally from tally\nfn main() -> int {\n    let t = Tally { by: 3 }\n    return t.bump() + t.bump()\n}\nmain()\n",
+    );
+    let value = run_file(&main_path).expect("the body must write its own module's global");
+    assert_eq!(
+        value.as_int(),
+        Some(9),
+        "3 then 6 is the only sum a global carried across both calls gives"
+    );
+}

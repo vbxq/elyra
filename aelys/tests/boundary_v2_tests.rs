@@ -6,6 +6,9 @@ use aelys_common::{AelysError, CompileErrorKind, RuntimeErrorKind};
 use aelys_runtime::{VM, Value};
 use aelys_syntax::Source;
 
+mod common;
+use common::assert_located;
+
 fn balanced_sum(registers: &[String]) -> String {
     if registers.len() == 1 {
         return registers[0].clone();
@@ -1432,4 +1435,149 @@ fn long_integer_loop_roundtrips_and_executes() {
     let mut vm = VM::new(Source::new("long-loop.aelys", "")).unwrap();
     let function_ref = vm.alloc_function(reassembled[0].clone()).unwrap();
     assert_eq!(vm.execute(function_ref).unwrap().as_int(), Some(2));
+}
+
+fn left_nested_sum(additions: usize) -> String {
+    (0..additions).fold("0".to_string(), |left, value| format!("{left} + {value}"))
+}
+
+#[test]
+fn the_inference_depth_bound_accepts_the_expression_one_addition_below_it() {
+    let accepted = left_nested_sum(199);
+    let value = Runtime::new()
+        .compile(
+            &accepted,
+            CompileOptions {
+                optimization_level: aelys_opt::OptimizationLevel::None,
+                ..CompileOptions::default()
+            },
+        )
+        .map(|_| aelys::run(&accepted, "depth-boundary.aelys"))
+        .expect("199 additions must compile")
+        .expect("199 additions must run");
+    assert_eq!(
+        value.as_int(),
+        Some((0..199).sum::<i64>()),
+        "the accepted side must produce the sum it is written to produce"
+    );
+
+    let Err(error) = Runtime::new().compile(
+        &left_nested_sum(200),
+        CompileOptions {
+            optimization_level: aelys_opt::OptimizationLevel::None,
+            ..CompileOptions::default()
+        },
+    ) else {
+        panic!("200 additions must be rejected");
+    };
+    assert!(
+        error.to_string().contains("recursion limit"),
+        "the rejected side must name the recursion limit: {error}"
+    );
+}
+
+fn nested_functions(depth: usize) -> String {
+    let mut source = String::new();
+    for level in 0..depth {
+        source.push_str(&"    ".repeat(level));
+        source.push_str(&format!("fn f{level}() -> int {{\n"));
+    }
+    source.push_str(&"    ".repeat(depth));
+    source.push_str("1\n");
+    for level in (0..depth).rev() {
+        source.push_str(&"    ".repeat(level));
+        source.push_str("}\n");
+        if level > 0 {
+            source.push_str(&"    ".repeat(level));
+            source.push_str(&format!("return f{level}()\n"));
+        }
+    }
+    source.push_str("f0()\n");
+    source
+}
+
+#[test]
+fn a_serialization_limit_is_located_on_a_compiled_source() {
+    let runtime = Runtime::new();
+    let module = runtime
+        .compile(&nested_functions(64), CompileOptions::default())
+        .expect("64 nested functions must serialize");
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    let ExecutionOutcome::Returned(value) =
+        isolate.execute(&module, RunOptions::default()).unwrap()
+    else {
+        panic!("the accepted nest must return through every level");
+    };
+    assert_eq!(value.as_int(), Some(1));
+
+    let over_the_limit = nested_functions(65);
+    let root = std::env::temp_dir();
+    let mut rooted = runtime.new_isolate(IsolateConfig::default());
+    for (entry, result) in [
+        (
+            "compile",
+            runtime.compile(&over_the_limit, CompileOptions::default()),
+        ),
+        (
+            "compile_with_root",
+            rooted.compile_with_root(&over_the_limit, &root, CompileOptions::default()),
+        ),
+    ] {
+        let Err(error) = result else {
+            panic!("{entry} must reject 65 nested functions");
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("E0214"),
+            "{entry} must report the compilation limit: {message}"
+        );
+        assert_located("E0214", &message);
+    }
+}
+
+// index is a u16: 65536 entries still index, and the serializer refuses the table
+fn struct_declarations(count: usize) -> String {
+    let mut source = String::with_capacity(count * 22);
+    for index in 0..count {
+        source.push_str(&format!("struct S{index} {{ v: int }}\n"));
+    }
+    source.push_str(&format!("let last = S{} {{ v: 7 }}\nlast.v\n", count - 1));
+    source
+}
+
+fn unoptimized() -> CompileOptions {
+    CompileOptions {
+        optimization_level: aelys_opt::OptimizationLevel::None,
+        ..CompileOptions::default()
+    }
+}
+
+#[test]
+fn an_unindexable_struct_schema_is_located_on_a_compiled_source() {
+    let runtime = Runtime::new();
+    let module = runtime
+        .compile(&struct_declarations(300), unoptimized())
+        .expect("a small schema table must compile");
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    let ExecutionOutcome::Returned(value) =
+        isolate.execute(&module, RunOptions::default()).unwrap()
+    else {
+        panic!("the accepted table must construct the struct it declares last");
+    };
+    assert_eq!(value.as_int(), Some(7));
+
+    // executing 65535 schemas costs a minute in this build, so the edge itself is
+    runtime
+        .compile(&struct_declarations(65535), unoptimized())
+        .expect("65535 struct schemas must still index");
+
+    let Err(error) = runtime.compile(&struct_declarations(65537), unoptimized()) else {
+        panic!("65537 struct schemas must be rejected");
+    };
+    let message = error.to_string();
+    assert!(
+        message.contains("E0301"),
+        "the unindexed schema must be reported: {message}"
+    );
+    assert_located("E0301", &message);
 }

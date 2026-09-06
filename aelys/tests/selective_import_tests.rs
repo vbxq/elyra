@@ -5,6 +5,9 @@ use tempfile::TempDir;
 
 use aelys_driver::run_file;
 
+mod common;
+use common::assert_associated_diagnostic;
+
 fn create_module_env() -> TempDir {
     tempfile::tempdir().expect("Failed to create temp dir")
 }
@@ -334,4 +337,356 @@ Counter { n: 21 }.doubled()
 
     let result = run_file(&main_path).expect("an inherent impl must travel with its self type");
     assert_eq!(result.as_int(), Some(42));
+}
+
+const ASSOCIATED_SUPPORT: &str = r#"
+pub struct Counter { pub v: int }
+
+pub trait Source {
+    type Item
+    const LIMIT: int
+    fn next(self) -> Self::Item
+}
+
+impl Source for Counter {
+    type Item = int
+    const LIMIT: int = 4
+    fn next(self) -> int { return self.v }
+}
+"#;
+
+fn imported_projection_main(receiver: &str, item: &str, position: &str, split: bool) -> String {
+    let projection = format!("{receiver}::{item}");
+    let line = match position {
+        "parameter" => {
+            format!("fn probe(x: {projection}) -> int {{\n    return x + 100\n}}\nprobe(2)\n")
+        }
+        "return" => format!(
+            "fn probe(x: {projection}) -> {projection} {{\n    return x\n}}\nprobe(2) + 100\n"
+        ),
+        "annotation" => format!(
+            "fn probe(x: {projection}) -> int {{\n    let z: {projection} = x\n    return z + 100\n}}\nprobe(2)\n"
+        ),
+        "field" => format!(
+            "struct Holder {{ it: {projection} }}\nfn probe() -> int {{\n    let h = Holder {{ it: 2 }}\n    return h.it + 100\n}}\nprobe()\n"
+        ),
+        "bound" => format!(
+            "fn pull<T: Source>(s: T, x: T::Item) -> T::Item {{\n    return x\n}}\nfn probe(x: {projection}) -> int {{\n    return pull(Counter {{ v: 0 }}, x) + 100\n}}\nprobe(2)\n"
+        ),
+        "value" => format!("fn probe() -> int {{ return {projection} + 1 }}\nprobe()\n"),
+        "length" => format!(
+            "fn probe() -> int {{\n    let a: [int; {projection}] = [0, 0, 0, 7]\n    return a[3]\n}}\nprobe()\n"
+        ),
+        "method" => "fn probe() -> int { return Counter { v: 6 }.next() }\nprobe()\n".to_string(),
+        other => unreachable!("no imported cell for {other}"),
+    };
+    let imports = match split {
+        true => "needs Counter from support\nneeds Source from support",
+        false => "needs Counter, Source from support",
+    };
+    format!("{imports}\n{line}")
+}
+
+fn run_imported(receiver: &str, item: &str, position: &str, split: bool) -> Result<i64, String> {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", ASSOCIATED_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        &imported_projection_main(receiver, item, position, split),
+    );
+    match run_file(&main) {
+        Ok(value) => Ok(value.as_int().unwrap_or_default()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+const IMPORTED_TYPE_POSITIONS: [&str; 5] = ["parameter", "return", "annotation", "field", "bound"];
+
+#[test]
+fn an_associated_type_crosses_a_selective_import_in_every_type_position() {
+    for position in IMPORTED_TYPE_POSITIONS {
+        for receiver in ["Counter", "Source"] {
+            for split in [false, true] {
+                assert_eq!(
+                    run_imported(receiver, "Item", position, split),
+                    Ok(102),
+                    "cell {receiver}::Item in {position} position must resolve across the import \
+                     and carry an int through it, split {split}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_imported_impl_method_crosses_a_selective_import_written_either_way() {
+    for split in [false, true] {
+        assert_eq!(
+            run_imported("Counter", "Item", "method", split),
+            Ok(6),
+            "the method of the imported impl must run, split {split}"
+        );
+    }
+}
+
+#[test]
+fn an_associated_constant_crosses_a_selective_import_in_both_value_positions() {
+    for split in [false, true] {
+        assert_eq!(
+            run_imported("Counter", "LIMIT", "value", split),
+            Ok(5),
+            "an imported constant must fold in value position, split {split}"
+        );
+        assert_eq!(
+            run_imported("Counter", "LIMIT", "length", split),
+            Ok(7),
+            "an imported constant must fold into an array length, split {split}"
+        );
+    }
+}
+
+#[test]
+fn an_imported_projection_keeps_its_namespace_and_absence_diagnostics() {
+    for position in IMPORTED_TYPE_POSITIONS {
+        for split in [false, true] {
+            let Err(message) = run_imported("Counter", "LIMIT", position, split) else {
+                panic!("a constant in {position} position must be rejected across the import");
+            };
+            assert!(
+                message.contains("error[E0423]")
+                    && message.contains("'LIMIT' is an associated constant of 'Counter'"),
+                "cell Counter::LIMIT in {position} position, split {split}: {message}"
+            );
+            let Err(absent) = run_imported("Counter", "NOPE", position, split) else {
+                panic!("an absent item in {position} position must be rejected across the import");
+            };
+            assert!(
+                absent.contains("error[E0423]")
+                    && absent.contains("no impl for 'Counter' defines 'NOPE'"),
+                "cell Counter::NOPE in {position} position, split {split}: {absent}"
+            );
+        }
+    }
+    for split in [false, true] {
+        let Err(type_in_value) = run_imported("Counter", "Item", "value", split) else {
+            panic!("a type in value position must be rejected across the import");
+        };
+        assert!(
+            type_in_value.contains("'Item' is an associated type of 'Counter'"),
+            "cell Counter::Item in value position, split {split}: {type_in_value}"
+        );
+    }
+}
+
+#[test]
+fn a_projection_needs_the_trait_that_declares_it_to_be_imported_too() {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", ASSOCIATED_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        "needs Counter from support\nfn probe(x: Counter::Item) -> int { return 1 }\n1\n",
+    );
+    let error = run_file(&main).expect_err("the trait must be in scope for the item to resolve");
+    let message = error.to_string();
+    assert!(
+        message.contains("error[E0423]")
+            && message.contains("no impl for 'Counter' defines 'Item'"),
+        "importing the type alone must report the item absent: {message}"
+    );
+}
+
+#[test]
+fn a_module_qualified_receiver_is_not_a_projection_receiver() {
+    // measured, not desired: the whole-module and aliased import forms bring
+    for (import, receiver) in [
+        ("needs support", "support::Counter"),
+        ("needs support as s", "s::Counter"),
+    ] {
+        let dir = create_module_env();
+        write_file(&dir, "support.aelys", ASSOCIATED_SUPPORT);
+        let main = write_file(
+            &dir,
+            "main.aelys",
+            &format!("{import}\nfn probe(x: {receiver}::Item) -> int {{ return 1 }}\n1\n"),
+        );
+        let error = run_file(&main).expect_err("a module path cannot receive a projection");
+        let message = error.to_string();
+        assert!(
+            message.contains("error[E0372]") && message.contains("no such type is in scope"),
+            "the {import} form reports the module head as an unknown type: {message}"
+        );
+    }
+}
+
+#[test]
+fn an_impl_written_beside_an_imported_trait_still_answers_a_projection() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "support.aelys",
+        "pub trait Source {\n    type Item\n    const LIMIT: int\n}\n",
+    );
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        r#"
+needs Source from support
+struct Counter { v: int }
+impl Source for Counter {
+    type Item = int
+    const LIMIT: int = 4
+}
+fn probe(x: Counter::Item) -> int { return x + Counter::LIMIT }
+probe(3)
+"#,
+    );
+    let value = run_file(&main).expect("a local impl of an imported trait must resolve");
+    assert_eq!(value.as_int(), Some(7));
+}
+
+const WHOLE_MODULE_SUPPORT: &str = r#"
+pub struct Cell { pub v: int }
+
+pub trait Source {
+    type Item
+    const LIMIT: int
+}
+
+impl Source for Cell {
+    type Item = int
+    const LIMIT: int = 4
+}
+
+pub fn make() -> int { return 11 }
+
+fn secret() -> int { return 7 }
+"#;
+
+// receiver as the bare type the `needs` brought into scope, the rejected half
+fn whole_module_main(receiver: &str, item: &str, position: &str) -> String {
+    let projection = format!("{receiver}::{item}");
+    let line = match position {
+        "annotation" => format!(
+            "fn probe(x: {projection}) -> int {{\n    let z: {projection} = x\n    return z\n}}\nprobe(3)\n"
+        ),
+        "parameter" => format!("fn probe(x: {projection}) -> int {{ return 1 }}\nprobe(3)\n"),
+        "return" => format!("fn probe(x: {projection}) -> {projection} {{ return x }}\nprobe(3)\n"),
+        "field" => format!("struct Holder {{ it: {projection} }}\nHolder {{ it: 5 }}.it\n"),
+        "binding" => format!(
+            "fn probe() -> int {{\n    let z: {projection} = 6\n    return z\n}}\nprobe()\n"
+        ),
+        "value" => format!("fn probe() -> int {{ return {projection} + 1 }}\nprobe()\n"),
+        "length" => format!(
+            "fn probe() -> int {{\n    let a: [int; {projection}] = [0, 0, 0, 7]\n    return a[3]\n}}\nprobe()\n"
+        ),
+        other => unreachable!("no whole-module cell for {other}"),
+    };
+    format!("needs support\n{line}")
+}
+
+fn run_whole_module(receiver: &str, item: &str, position: &str) -> Result<i64, String> {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", WHOLE_MODULE_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        &whole_module_main(receiver, item, position),
+    );
+    match run_file(&main) {
+        Ok(value) => Ok(value.as_int().unwrap_or_default()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+const WHOLE_MODULE_POSITIONS: [&str; 7] = [
+    "annotation",
+    "parameter",
+    "return",
+    "field",
+    "binding",
+    "value",
+    "length",
+];
+
+#[test]
+fn a_module_qualified_receiver_never_reports_a_visibility_cause() {
+    for item in ["Item", "LIMIT"] {
+        for position in WHOLE_MODULE_POSITIONS {
+            let message = run_whole_module("support::Cell", item, position)
+                .expect_err("a module-qualified receiver carries no projection");
+            assert_associated_diagnostic(
+                &message,
+                "E0372",
+                "unknown type 'support'",
+                "",
+                "no such type is in scope",
+            );
+            assert!(
+                !message.contains("is not public"),
+                "support::Cell::{item} in {position} position must not claim a visibility cause: {message}"
+            );
+            assert!(
+                !message.contains("add 'pub'"),
+                "support::Cell::{item} in {position} position must not prescribe a 'pub' that cannot be written inside an impl: {message}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_bare_receiver_the_module_brought_in_still_answers_every_projection() {
+    for (position, expected) in [
+        ("annotation", 3),
+        ("parameter", 1),
+        ("return", 3),
+        ("field", 5),
+        ("binding", 6),
+    ] {
+        assert_eq!(
+            run_whole_module("Cell", "Item", position),
+            Ok(expected),
+            "Cell::Item in {position} position must run after `needs support`"
+        );
+    }
+    for (position, expected) in [("value", 5), ("length", 7)] {
+        assert_eq!(
+            run_whole_module("Cell", "LIMIT", position),
+            Ok(expected),
+            "Cell::LIMIT in {position} position must fold after `needs support`"
+        );
+    }
+}
+
+fn run_module_member(name: &str) -> Result<i64, String> {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", WHOLE_MODULE_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        &format!("needs support\nsupport::{name}()\n"),
+    );
+    match run_file(&main) {
+        Ok(value) => Ok(value.as_int().unwrap_or_default()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[test]
+fn a_module_member_still_reports_the_visibility_it_looked_up() {
+    assert_eq!(
+        run_module_member("make"),
+        Ok(11),
+        "an exported free function must run through its module alias"
+    );
+    let message =
+        run_module_member("secret").expect_err("an unexported free function must be rejected");
+    assert_associated_diagnostic(
+        &message,
+        "E0313",
+        "module member 'support::secret'",
+        "",
+        "is not public; add 'pub' to its declaration",
+    );
 }
