@@ -124,3 +124,99 @@ fn compiled_bytecode_calls_a_math_stdlib_helper_twice() {
         "stdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }
+
+#[test]
+fn an_inherent_impl_method_survives_its_own_bytecode() {
+    let (stdout, stderr, code) = compile_and_run_capturing_stdout(
+        "inherent_impl_method",
+        "struct Point { x: int }\n\
+         impl Point {\n    fn score(self) -> int {\n        return self.x + 1;\n    }\n}\n\
+         Point { x: 7 }.score()\n",
+    );
+
+    assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(
+        stdout.trim(),
+        "8",
+        "the method did not run from the product; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_trait_impl_method_survives_its_own_bytecode() {
+    let (stdout, stderr, code) = compile_and_run_capturing_stdout(
+        "trait_impl_method",
+        "trait Scored {\n    fn score(self) -> int;\n}\n\
+         struct Point { x: int }\n\
+         impl Scored for Point {\n    fn score(self) -> int {\n        return self.x + 1;\n    }\n}\n\
+         Point { x: 7 }.score()\n",
+    );
+
+    assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(
+        stdout.trim(),
+        "8",
+        "the trait method did not run from the product; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn an_inherent_impl_with_no_method_survives_its_own_bytecode() {
+    let (stdout, stderr, code) = compile_and_run_capturing_stdout(
+        "inherent_impl_no_method",
+        "struct Point { x: int }\nimpl Point {\n}\nPoint { x: 7 }.x + 1\n",
+    );
+
+    assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(stdout.trim(), "8", "stdout:\n{stdout}\nstderr:\n{stderr}");
+}
+
+#[test]
+fn a_trait_impl_with_no_method_survives_its_own_bytecode() {
+    let (stdout, stderr, code) = compile_and_run_capturing_stdout(
+        "trait_impl_no_method",
+        "trait Holder {\n    type Item\n}\n\
+         struct Point { x: int }\n\
+         impl Holder for Point {\n    type Item = int\n}\n\
+         Point { x: 7 }.x + 1\n",
+    );
+
+    assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(stdout.trim(), "8", "stdout:\n{stdout}\nstderr:\n{stderr}");
+}
+
+#[test]
+fn a_module_named_like_the_mangling_prefix_still_loads_from_bytecode() {
+    let dir = std::env::temp_dir().join("aelys_cli_avbc_prefix_module");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("__aelys_struct.aelys"),
+        "pub fn helper() -> int {\n    return 5;\n}\n",
+    )
+    .unwrap();
+    let src_path = dir.join("prefix_module.aelys");
+    std::fs::write(
+        &src_path,
+        "needs __aelys_struct\n__aelys_struct::helper()\n",
+    )
+    .unwrap();
+
+    let bytecode_path =
+        aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::Standard)
+            .unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+        .arg("run")
+        .arg(&bytecode_path)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stdout.trim(),
+        "5",
+        "the module scan mistook a real import for a mangled method; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
