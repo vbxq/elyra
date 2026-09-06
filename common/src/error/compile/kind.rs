@@ -113,22 +113,8 @@ pub enum CompileErrorKind {
         module: String,
         member: String,
     },
-    PrivateFieldAccess {
-        structure: String,
-        field: String,
-        owner: String,
-        current: String,
-        operation: String,
-        reason: String,
-    },
-    PrivateFieldConstruction {
-        structure: String,
-        field: String,
-        owner: String,
-        current: String,
-        operation: String,
-        reason: String,
-    },
+    PrivateFieldAccess(Box<PrivateFieldDetail>),
+    PrivateFieldConstruction(Box<PrivateFieldDetail>),
 
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -159,4 +145,14 @@ pub enum CompileErrorKind {
         code: u16,
         message: String,
     },
+}
+
+#[derive(Debug)]
+pub struct PrivateFieldDetail {
+    pub structure: String,
+    pub field: String,
+    pub owner: String,
+    pub current: String,
+    pub operation: String,
+    pub reason: String,
 }

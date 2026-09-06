@@ -4,7 +4,7 @@ pub mod compile;
 pub mod runtime;
 pub mod stack;
 
-pub use compile::{CompileError, CompileErrorKind};
+pub use compile::{CompileError, CompileErrorKind, PrivateFieldDetail};
 pub use runtime::{RuntimeError, RuntimeErrorKind};
 pub use stack::StackFrame;
 

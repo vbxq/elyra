@@ -270,7 +270,7 @@ fn poisoned_schema_error(source: &Arc<aelys_syntax::Source>) -> aelys_common::Ae
         CompileErrorKind::TypeInferenceError(
             "a poisoned type reached bytecode schema emission".to_string(),
         ),
-        aelys_syntax::Span::dummy(),
+        aelys_syntax::Span::whole_unit(source),
         source.clone(),
     )
     .into()
@@ -279,20 +279,26 @@ fn poisoned_schema_error(source: &Arc<aelys_syntax::Source>) -> aelys_common::Ae
 /// escaped cycle a `none` (a hard compile error here) rather than a stack
 const MAX_PROJECTION_HOPS: usize = 64;
 
+/// a hop count bounds a chain, not a fan: an associated type naming another one
+const MAX_DESCRIPTOR_NODES: usize = 65_536;
+
 // returns none for the poison marker so a poisoned type can never reach the bytecode schema
 fn type_descriptor(
     ty: &aelys_sema::InferType,
     type_table: &aelys_sema::TypeTable,
 ) -> Option<TypeDescriptor> {
-    type_descriptor_bounded(ty, type_table, 0)
+    let mut remaining = MAX_DESCRIPTOR_NODES;
+    type_descriptor_bounded(ty, type_table, 0, &mut remaining)
 }
 
 fn type_descriptor_bounded(
     ty: &aelys_sema::InferType,
     type_table: &aelys_sema::TypeTable,
     projection_hops: usize,
+    remaining: &mut usize,
 ) -> Option<TypeDescriptor> {
     use aelys_sema::InferType;
+    *remaining = remaining.checked_sub(1)?;
     let descriptor = match ty {
         InferType::I8 => TypeDescriptor::Int(IntWidth::I8),
         InferType::I16 => TypeDescriptor::Int(IntWidth::I16),
@@ -324,7 +330,7 @@ fn type_descriptor_bounded(
                 return None;
             }
             let resolved = type_table.resolve_projection(ty)?;
-            return type_descriptor_bounded(&resolved, type_table, projection_hops + 1);
+            return type_descriptor_bounded(&resolved, type_table, projection_hops + 1, remaining);
         }
         InferType::Error => TypeDescriptor::Error,
         InferType::Struct(name) if type_table.has_enum(name) => {
@@ -338,33 +344,56 @@ fn type_descriptor_bounded(
             inner,
             type_table,
             projection_hops,
+            remaining,
         )?)),
         InferType::Result(ok, err) => TypeDescriptor::Result(
-            Box::new(type_descriptor_bounded(ok, type_table, projection_hops)?),
-            Box::new(type_descriptor_bounded(err, type_table, projection_hops)?),
+            Box::new(type_descriptor_bounded(
+                ok,
+                type_table,
+                projection_hops,
+                remaining,
+            )?),
+            Box::new(type_descriptor_bounded(
+                err,
+                type_table,
+                projection_hops,
+                remaining,
+            )?),
         ),
         InferType::Array(inner) => TypeDescriptor::Array(Box::new(type_descriptor_bounded(
             inner,
             type_table,
             projection_hops,
+            remaining,
         )?)),
         InferType::FixedArray(inner, len) => TypeDescriptor::FixedArray(
-            Box::new(type_descriptor_bounded(inner, type_table, projection_hops)?),
+            Box::new(type_descriptor_bounded(
+                inner,
+                type_table,
+                projection_hops,
+                remaining,
+            )?),
             u32::try_from(*len).unwrap_or(u32::MAX),
         ),
         InferType::Vec(inner) => TypeDescriptor::Vec(Box::new(type_descriptor_bounded(
             inner,
             type_table,
             projection_hops,
+            remaining,
         )?)),
         InferType::Tuple(_) | InferType::Never => return None,
         InferType::Function { params, ret } => TypeDescriptor::Function {
             params: params
                 .iter()
-                .map(|param| type_descriptor_bounded(param, type_table, projection_hops))
+                .map(|param| type_descriptor_bounded(param, type_table, projection_hops, remaining))
                 .collect::<Option<Vec<_>>>()?
                 .into_boxed_slice(),
-            ret: Box::new(type_descriptor_bounded(ret, type_table, projection_hops)?),
+            ret: Box::new(type_descriptor_bounded(
+                ret,
+                type_table,
+                projection_hops,
+                remaining,
+            )?),
         },
         InferType::UntypedNative(_) | InferType::Range => return None,
         InferType::Poison => return None,

@@ -3,7 +3,8 @@ pub mod result;
 pub mod warning;
 
 pub use error::{
-    AelysError, CompileError, CompileErrorKind, RuntimeError, RuntimeErrorKind, StackFrame,
+    AelysError, CompileError, CompileErrorKind, PrivateFieldDetail, RuntimeError, RuntimeErrorKind,
+    StackFrame,
 };
 pub use result::Result;
 pub use warning::{Warning, WarningCollector, WarningConfig, WarningKind, format_warnings};
