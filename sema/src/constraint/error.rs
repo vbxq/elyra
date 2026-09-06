@@ -14,19 +14,77 @@ impl TypeError {
     pub fn diagnostic_code(&self) -> u16 {
         self.kind.diagnostic_code()
     }
+
+    pub fn defining_module(&self) -> Option<&str> {
+        self.reason.defining_module()
+    }
+}
+
+/// the position a projection is written in names the namespace, never its
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemNamespace {
+    Type,
+    Const,
+}
+
+impl ItemNamespace {
+    pub fn other(self) -> Self {
+        match self {
+            Self::Type => Self::Const,
+            Self::Const => Self::Type,
+        }
+    }
+
+    pub fn noun(self) -> &'static str {
+        match self {
+            Self::Type => "associated type",
+            Self::Const => "associated constant",
+        }
+    }
+
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Type => "type",
+            Self::Const => "const",
+        }
+    }
+
+    fn position(self) -> &'static str {
+        match self {
+            Self::Type => "type",
+            Self::Const => "value",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AssociatedItemDisagreement {
+    DeclaredType,
+    ConstantValue { declared: String, found: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum ProjectionFailure {
     Unbound,
     NoImpl,
+    SelfOutsideImpl,
+    NominalParameter,
+    WrongNamespace {
+        found: ItemNamespace,
+    },
     InvalidLength,
     /// the constant is defined, but its value cannot be computed: the checked
     NotComputable,
     NotConstant,
     LengthFromTypeParameter,
-    Ambiguous { traits: Vec<String> },
-    Cyclic { path: Vec<String> },
+    UnspecializedGenericMethod,
+    Ambiguous {
+        traits: Vec<String>,
+    },
+    Cyclic {
+        path: Vec<String>,
+        namespace: ItemNamespace,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -189,8 +247,10 @@ pub enum TypeErrorKind {
     GenericStructDeferred {
         name: String,
     },
-    DuplicateStruct {
+    DuplicateNominal {
         name: String,
+        keyword: &'static str,
+        collides_with: Option<&'static str>,
     },
     DuplicateStructField {
         structure: String,
@@ -254,6 +314,7 @@ pub enum TypeErrorKind {
     MissingAssociatedItem {
         trait_name: String,
         item: String,
+        namespace: ItemNamespace,
     },
     DuplicateAssociatedItem {
         trait_name: String,
@@ -262,6 +323,7 @@ pub enum TypeErrorKind {
     AssociatedItemTypeMismatch {
         trait_name: String,
         item: String,
+        disagreement: AssociatedItemDisagreement,
     },
     AmbiguousAssociatedProjection {
         receiver: String,
@@ -277,12 +339,44 @@ pub enum TypeErrorKind {
         target: String,
         item: String,
         keyword: &'static str,
+        trait_name: Option<String>,
+    },
+    UninhabitedNominalCycle {
+        keyword: &'static str,
+        path: Vec<String>,
     },
     AssociatedBindingMismatch {
         trait_name: String,
         item: String,
         requested: InferType,
         found: InferType,
+    },
+    AssociatedConstBindingMismatch {
+        trait_name: String,
+        item: String,
+        requested: i64,
+        found: i64,
+    },
+    UndeclaredAssociatedBinding {
+        trait_name: String,
+        item: String,
+    },
+    AssociatedBindingNamespaceMismatch {
+        trait_name: String,
+        item: String,
+        /// the right-hand side as written, so the message never renders a type
+        value: String,
+        declared: ItemNamespace,
+    },
+    UnevaluatedAssociatedConstBinding {
+        trait_name: String,
+        item: String,
+        unevaluated: Vec<InferType>,
+    },
+    UnconstrainedImplTypeParam {
+        param: String,
+        target: String,
+        call_site_binds: bool,
     },
     DuplicateTraitImpl {
         trait_name: String,
@@ -305,10 +399,15 @@ pub enum TypeErrorKind {
         method: String,
     },
     UnresolvedInstanceSymbol {
-        symbol: String,
+        name: String,
     },
     UnsatisfiedTraitBound {
         trait_name: String,
+        ty: InferType,
+    },
+    MissingSupertraitImpl {
+        trait_name: String,
+        supertrait: String,
         ty: InferType,
     },
     OrphanTraitImpl {
@@ -378,6 +477,16 @@ pub enum TypeErrorKind {
 
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_kind(f)?;
+        if self.kind.states_its_reason() {
+            write!(f, " ({})", self.reason)?;
+        }
+        Ok(())
+    }
+}
+
+impl TypeError {
+    fn write_kind(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             TypeErrorKind::Mismatch { expected, found } => {
                 write!(
@@ -663,9 +772,17 @@ impl fmt::Display for TypeError {
             TypeErrorKind::GenericStructDeferred { .. } => {
                 write!(f, "generic struct support is reserved for Stage 2")
             }
-            TypeErrorKind::DuplicateStruct { name } => {
-                write!(f, "duplicate struct declaration '{}'", name)
-            }
+            TypeErrorKind::DuplicateNominal {
+                name,
+                keyword,
+                collides_with,
+            } => match collides_with {
+                Some(other) => write!(
+                    f,
+                    "duplicate {keyword} declaration '{name}': the name is already taken by the {other} '{name}', and one name cannot be both; rename the {keyword} or the {other}"
+                ),
+                None => write!(f, "duplicate {keyword} declaration '{name}'"),
+            },
             TypeErrorKind::DuplicateStructField { structure, field } => {
                 write!(f, "duplicate field '{}' in struct {}", field, structure)
             }
@@ -745,21 +862,35 @@ impl fmt::Display for TypeError {
                 "trait '{}' is not implemented for this type: missing method '{}'",
                 trait_name, method
             ),
-            TypeErrorKind::MissingAssociatedItem { trait_name, item } => write!(
+            TypeErrorKind::MissingAssociatedItem {
+                trait_name,
+                item,
+                namespace,
+            } => write!(
                 f,
-                "implementation of trait '{}' is missing required associated item '{}'; define 'type {item}' or 'const {item}' in the impl body",
-                trait_name, item
+                "implementation of trait '{}' is missing required associated item '{}'; define '{} {item}' in the impl body",
+                trait_name,
+                item,
+                namespace.keyword()
             ),
             TypeErrorKind::DuplicateAssociatedItem { trait_name, item } => write!(
                 f,
-                "implementation of trait '{}' defines associated item '{}' more than once; each required item must be defined exactly once",
-                trait_name, item
+                "implementation of trait '{trait_name}' defines associated item '{item}' more than once; each required item must be defined exactly once"
             ),
-            TypeErrorKind::AssociatedItemTypeMismatch { trait_name, item } => write!(
-                f,
-                "associated item '{}' in impl of trait '{}' has a different type than the trait declaration; declare the same type as the trait",
-                item, trait_name
-            ),
+            TypeErrorKind::AssociatedItemTypeMismatch {
+                trait_name,
+                item,
+                disagreement,
+            } => match disagreement {
+                AssociatedItemDisagreement::DeclaredType => write!(
+                    f,
+                    "associated item '{item}' in impl of trait '{trait_name}' has a different type than the trait declaration; declare the same type as the trait"
+                ),
+                AssociatedItemDisagreement::ConstantValue { declared, found } => write!(
+                    f,
+                    "associated item '{item}' in impl of trait '{trait_name}' declares type '{declared}', which agrees with the trait, and is initialised with a value of type '{found}'; write an initialiser of type '{declared}'"
+                ),
+            },
             TypeErrorKind::AmbiguousAssociatedProjection {
                 receiver,
                 item,
@@ -772,6 +903,22 @@ impl fmt::Display for TypeError {
                 ProjectionFailure::NoImpl => write!(
                     f,
                     "projection '{receiver}::{item}' cannot be resolved: no impl for '{receiver}' defines '{item}'; define it in an impl of a trait that declares '{item}'"
+                ),
+                ProjectionFailure::SelfOutsideImpl => write!(
+                    f,
+                    "projection '{receiver}::{item}' cannot be resolved: '{receiver}' names a type only inside an impl or a trait declaration, and neither is open here; write the type itself in place of '{receiver}'"
+                ),
+                ProjectionFailure::NominalParameter => write!(
+                    f,
+                    "projection '{receiver}::{item}' cannot be resolved: '{receiver}' is a type parameter of a struct or an enum, and those carry no bound, so nothing declares '{item}'; name a concrete type here, or give the struct or enum a parameter for '{item}' itself"
+                ),
+                ProjectionFailure::WrongNamespace { found } => write!(
+                    f,
+                    "projection '{receiver}::{item}' cannot be resolved: '{item}' is an {} of '{receiver}', not an {}; name an {} here, or use '{receiver}::{item}' where a {} is expected",
+                    found.noun(),
+                    found.other().noun(),
+                    found.other().noun(),
+                    found.position()
                 ),
                 ProjectionFailure::InvalidLength => write!(
                     f,
@@ -787,17 +934,22 @@ impl fmt::Display for TypeError {
                 ),
                 ProjectionFailure::LengthFromTypeParameter => write!(
                     f,
-                    "array length '{receiver}::{item}' depends on the type parameter '{receiver}', and a fixed-array length must be known where the array is written; use a concrete receiver such as 'Bounds::{item}', or a growable array"
+                    "array length '{receiver}::{item}' depends on the type parameter '{receiver}', and a fixed-array length must be known where the array is written; write the length as a literal, name the constant on a concrete type, or use a growable array"
+                ),
+                ProjectionFailure::UnspecializedGenericMethod => write!(
+                    f,
+                    "constant '{receiver}::{item}' cannot be read here: '{receiver}' is a type parameter of the method itself, and such a method is compiled a single time whatever the types it is called with, so '{item}' has no single value; name the constant on a concrete type, or move the body into a free generic function, which is specialized"
                 ),
                 ProjectionFailure::Ambiguous { traits } => write!(
                     f,
                     "projection '{receiver}::{item}' is ambiguous: {} both define '{item}' for {receiver}; remove one of the competing impls, or rename the item so a single trait provides it",
                     traits.join(" and ")
                 ),
-                ProjectionFailure::Cyclic { path } => write!(
+                ProjectionFailure::Cyclic { path, namespace } => write!(
                     f,
-                    "projection '{receiver}::{item}' forms a cycle: its definition resolves back to itself through {}; give the associated type a concrete definition to break the cycle",
-                    path.join(" -> ")
+                    "projection '{receiver}::{item}' forms a cycle: its definition resolves back to itself through {}; give the {} a concrete definition to break the cycle",
+                    path.join(" -> "),
+                    namespace.noun()
                 ),
             },
             TypeErrorKind::AssociatedProjectionLimit {
@@ -812,10 +964,33 @@ impl fmt::Display for TypeError {
                 target,
                 item,
                 keyword,
-            } => write!(
-                f,
-                "associated item '{keyword} {item}' is defined in the inherent impl of '{target}', where no trait declares it; move it into an impl of a trait that declares '{item}'"
-            ),
+                trait_name,
+            } => match trait_name {
+                Some(trait_name) => write!(
+                    f,
+                    "associated item '{keyword} {item}' is defined in the impl of trait '{trait_name}' for '{target}', which does not declare it; move it into an impl of a trait that declares '{item}'"
+                ),
+                None => write!(
+                    f,
+                    "associated item '{keyword} {item}' is defined in the inherent impl of '{target}', which declares no associated item; move it into an impl of a trait that declares '{item}'"
+                ),
+            },
+            TypeErrorKind::UninhabitedNominalCycle { keyword, path } => {
+                let (members, repair) = if *keyword == "enum" {
+                    (
+                        "variants",
+                        "a variant carrying none of the types on the cycle",
+                    )
+                } else {
+                    ("fields", "an enum with a terminating variant")
+                };
+                write!(
+                    f,
+                    "{keyword} '{}' can never be constructed: its {members} form the cycle {}, so building one would first require building another; break the cycle with an Option, a Vec, or {repair}",
+                    path.first().map(String::as_str).unwrap_or_default(),
+                    path.join(" -> ")
+                )
+            }
             TypeErrorKind::AssociatedBindingMismatch {
                 trait_name,
                 item,
@@ -826,6 +1001,69 @@ impl fmt::Display for TypeError {
                 "associated binding '{}::{} = {}' disagrees with the selected impl, which provides {}; change the requested binding or the impl",
                 trait_name, item, requested, found
             ),
+            TypeErrorKind::AssociatedConstBindingMismatch {
+                trait_name,
+                item,
+                requested,
+                found,
+            } => write!(
+                f,
+                "associated binding '{}::{} = {}' disagrees with the selected impl, which provides {}; change the requested binding or the impl",
+                trait_name, item, requested, found
+            ),
+            TypeErrorKind::UndeclaredAssociatedBinding { trait_name, item } => write!(
+                f,
+                "associated binding '{}::{}' constrains nothing: trait '{}' declares no associated type or constant '{}'; name an item the trait declares, or drop the binding",
+                trait_name, item, trait_name, item
+            ),
+            TypeErrorKind::AssociatedBindingNamespaceMismatch {
+                trait_name,
+                item,
+                value,
+                declared,
+            } => write!(
+                f,
+                "associated binding '{}::{} = {}' binds a {} to an {}; bind a {}, or name an {}",
+                trait_name,
+                item,
+                value,
+                declared.other().position(),
+                declared.noun(),
+                declared.position(),
+                declared.other().noun()
+            ),
+            TypeErrorKind::UnevaluatedAssociatedConstBinding {
+                trait_name,
+                item,
+                unevaluated,
+            } => write!(
+                f,
+                "associated binding '{}::{}' cannot be checked because {} could not be evaluated; give the constant a value the compiler can fold",
+                trait_name,
+                item,
+                unevaluated
+                    .iter()
+                    .map(|ty| ty.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            ),
+            TypeErrorKind::UnconstrainedImplTypeParam {
+                param,
+                target,
+                call_site_binds,
+            } => {
+                if *call_site_binds {
+                    write!(
+                        f,
+                        "impl type parameter '{param}' does not appear in the impl target type '{target}', though a call site determines it; an impl instance is named by its target type alone, so two choices of '{param}' would share one symbol; mention '{param}' in the target type or move it onto the method"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "impl type parameter '{param}' does not appear in the impl target type '{target}', so no call site can determine it; mention '{param}' in the target type or move it onto the method"
+                    )
+                }
+            }
             TypeErrorKind::DuplicateTraitImpl { trait_name, target } => write!(
                 f,
                 "duplicate implementation of trait '{}' for type '{}'",
@@ -851,15 +1089,23 @@ impl fmt::Display for TypeError {
                 "method '{}' is not available on type parameter '{}' because no bound on '{}' provides it; add the bound '{}: Trait' that declares '{}'",
                 method, param, param, param, method
             ),
-            TypeErrorKind::UnresolvedInstanceSymbol { symbol } => write!(
+            TypeErrorKind::UnresolvedInstanceSymbol { name } => write!(
                 f,
-                "generic instance symbol '{}' was never specialized and would not exist at run time",
-                symbol
+                "'{}' was not specialized for this call because a type parameter stayed unknown; add a type annotation that pins every type parameter of the call",
+                name
             ),
             TypeErrorKind::UnsatisfiedTraitBound { trait_name, ty } => write!(
                 f,
                 "trait '{}' is not implemented for {}; add an impl or change the bound",
                 trait_name, ty
+            ),
+            TypeErrorKind::MissingSupertraitImpl {
+                trait_name,
+                supertrait,
+                ty,
+            } => write!(
+                f,
+                "trait '{supertrait}' is not implemented for {ty}, and the impl of '{trait_name}' requires it; implement '{supertrait}' for {ty}, or drop '{supertrait}' from the supertraits of '{trait_name}'"
             ),
             TypeErrorKind::OrphanTraitImpl { trait_name, target } => write!(
                 f,
@@ -1055,6 +1301,10 @@ impl TypeError {
 }
 
 impl TypeErrorKind {
+    fn states_its_reason(&self) -> bool {
+        matches!(self.diagnostic_code(), 421..=430)
+    }
+
     pub fn diagnostic_code(&self) -> u16 {
         match self {
             Self::NonExhaustiveMatch { .. } => 302,
@@ -1089,7 +1339,7 @@ impl TypeErrorKind {
             Self::MutableCollectionAlias => 323,
             Self::NonExhaustiveStruct { .. } => 324,
             Self::GenericStructDeferred { .. } => 325,
-            Self::DuplicateStruct { .. } => 326,
+            Self::DuplicateNominal { .. } => 326,
             Self::DuplicateStructField { .. } => 327,
             Self::UnknownStruct { .. } => 328,
             Self::InvalidStructMethod { .. } => 329,
@@ -1108,7 +1358,13 @@ impl TypeErrorKind {
             Self::AmbiguousAssociatedProjection { .. } => 423,
             Self::AssociatedItemOutsideTraitImpl { .. } => 425,
             Self::AssociatedProjectionLimit { .. } => 427,
-            Self::AssociatedBindingMismatch { .. } => 424,
+            Self::UninhabitedNominalCycle { .. } => 428,
+            Self::AssociatedBindingMismatch { .. }
+            | Self::AssociatedConstBindingMismatch { .. }
+            | Self::UndeclaredAssociatedBinding { .. }
+            | Self::AssociatedBindingNamespaceMismatch { .. } => 424,
+            Self::UnevaluatedAssociatedConstBinding { .. } => 429,
+            Self::UnconstrainedImplTypeParam { .. } => 430,
             Self::DuplicateAssociatedItem { .. } => 426,
             Self::DuplicateTraitImpl { .. } => 334,
             Self::TraitMethodNotInTrait { .. } => 335,
@@ -1120,7 +1376,7 @@ impl TypeErrorKind {
             Self::PoisonedType => 354,
             Self::UndeterminedType => 377,
             Self::GlobalWithoutSignature { .. } => 376,
-            Self::UnsatisfiedTraitBound { .. } => 338,
+            Self::UnsatisfiedTraitBound { .. } | Self::MissingSupertraitImpl { .. } => 338,
             Self::OrphanTraitImpl { .. } => 339,
             Self::OverlappingTraitImpl { .. } => 340,
             Self::DuplicateTraitMethod { .. } => 341,

@@ -1,66 +1,73 @@
 use crate::types::InferType;
 use std::fmt;
 
-/// Reason for a constraint (for error messages)
 #[derive(Debug, Clone)]
 pub enum ConstraintReason {
-    /// Binary operation requires compatible types
     BinaryOp {
         op: String,
     },
-    /// Bitwise operation requires integer types (FATAL error)
     BitwiseOp {
         op: String,
     },
-    /// Function call argument type
     Argument {
         func_name: String,
         arg_index: usize,
     },
-    /// Function return type
     Return {
         func_name: String,
     },
-    /// Variable assignment (reassignment)
     Assignment {
         var_name: String,
     },
-    /// Explicit type annotation on variable declaration (FATAL error)
     TypeAnnotation {
         var_name: String,
     },
-    /// If condition must be bool
     IfCondition,
-    /// If branches must have same type
     IfBranches,
-    /// While condition must be bool
     WhileCondition,
-    /// For loop bounds must be int
+    /// for loop bounds must be int
     ForBounds,
-    /// Comparison operands
     Comparison,
-    /// Array element types must be consistent
     ArrayElement,
-    /// Array index must be int
     ArrayIndex,
-    /// Range bounds must be int
+    /// range bounds must be int
     RangeBound,
     CollectionMethodReceiver {
         method: String,
     },
-    /// Invalid cast (fatal error)
     InvalidCast,
-    /// Unknown type in annotation (fatal error)
     UnknownType {
         name: String,
     },
-    /// Integer literal does not fit in target type (fatal error)
     IntLiteralOverflow {
         value: i64,
         target: InferType,
     },
-    /// Generic constraint
     Other(String),
+    DefinedIn {
+        module: String,
+        inner: Box<ConstraintReason>,
+    },
+}
+
+impl ConstraintReason {
+    pub fn defining_module(&self) -> Option<&str> {
+        match self {
+            ConstraintReason::DefinedIn { module, .. } => Some(module),
+            _ => None,
+        }
+    }
+
+    pub fn wrap_in_module(&mut self, module: &str) {
+        if matches!(self, ConstraintReason::DefinedIn { .. }) {
+            return;
+        }
+        let inner = std::mem::replace(self, ConstraintReason::IfCondition);
+        *self = ConstraintReason::DefinedIn {
+            module: module.to_string(),
+            inner: Box::new(inner),
+        };
+    }
 }
 
 impl fmt::Display for ConstraintReason {
@@ -102,6 +109,7 @@ impl fmt::Display for ConstraintReason {
                 write!(f, "integer literal {} does not fit in {:?}", value, target)
             }
             ConstraintReason::Other(s) => write!(f, "{}", s),
+            ConstraintReason::DefinedIn { inner, .. } => inner.fmt(f),
         }
     }
 }
