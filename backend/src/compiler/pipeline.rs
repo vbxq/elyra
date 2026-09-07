@@ -6,6 +6,7 @@ use aelys_bytecode::{
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
+use aelys_syntax::Source;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -163,10 +164,16 @@ impl Compiler {
             let last_idx = program.stmts.len() - 1;
 
             for stmt in &program.stmts[..last_idx] {
-                self.compile_typed_stmt(stmt)?;
+                let restore = self.enter_definition_module(stmt);
+                let compiled = self.compile_typed_stmt(stmt);
+                if let Some(source) = restore {
+                    self.source = source;
+                }
+                compiled?;
             }
 
             let last_stmt = &program.stmts[last_idx];
+            let restore_last = self.enter_definition_module(last_stmt);
             match &last_stmt.kind {
                 TypedStmtKind::Expression(expr) => {
                     let result_reg = self.alloc_register()?;
@@ -201,6 +208,9 @@ impl Compiler {
                     self.compile_typed_stmt(last_stmt)?;
                     self.emit_return0(last_stmt.span);
                 }
+            }
+            if let Some(source) = restore_last {
+                self.source = source;
             }
         }
 
@@ -414,4 +424,59 @@ fn struct_schema_id(name: &str, type_table: &aelys_sema::TypeTable) -> Option<u3
         .schema_index(name)
         .or_else(|| type_table.schema_index(short_name))
         .map(u32::from)
+}
+
+impl Compiler {
+    fn enter_definition_module(&mut self, stmt: &aelys_sema::TypedStmt) -> Option<Arc<Source>> {
+        let module = stmt.definition_module.as_ref()?;
+        let source = self.module_sources.get(module.as_str())?.clone();
+        Some(std::mem::replace(&mut self.source, source))
+    }
+}
+
+#[cfg(test)]
+mod definition_module_tests {
+    use super::*;
+    use aelys_sema::{InferType, TypedExpr, TypedExprKind, TypedProgram, TypedStmt};
+
+    #[test]
+    fn a_statement_of_another_module_reports_against_that_module_file() {
+        let importer = Source::new("importer.aelys", "needs L, TL from mid\n");
+        let defining = Source::new(
+            "mid.aelys",
+            "impl TL for L {\n    fn tl(self) -> int {\n        return nowhere\n    }\n}\n",
+        );
+        let mut stmt = TypedStmt::new(
+            aelys_sema::TypedStmtKind::Expression(TypedExpr {
+                kind: TypedExprKind::Identifier("nowhere".to_string()),
+                ty: InferType::I64,
+                span: aelys_syntax::Span::new(50, 57, 3, 16),
+            }),
+            aelys_syntax::Span::new(50, 57, 3, 16),
+        );
+        stmt.definition_module = Some(aelys_syntax::ModuleId::new("mid"));
+        let program = TypedProgram {
+            stmts: vec![stmt],
+            source: importer.clone(),
+            type_table: aelys_sema::TypeTable::new(),
+        };
+        let mut sources = HashMap::new();
+        sources.insert("mid".to_string(), defining);
+        let error = Compiler::with_modules(
+            None,
+            importer,
+            std::collections::HashSet::new(),
+            std::collections::HashSet::new(),
+            std::collections::HashSet::new(),
+            HashMap::new(),
+        )
+        .with_module_sources(sources)
+        .compile_typed(&program)
+        .expect_err("an undefined name must be reported");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("mid.aelys"),
+            "the report belongs to the file that owns the statement: {rendered}"
+        );
+    }
 }

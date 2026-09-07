@@ -34,6 +34,7 @@ impl Compiler {
             current_return_type: None,
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
+            module_sources: Rc::new(HashMap::new()),
         }
     }
 
@@ -82,6 +83,7 @@ impl Compiler {
             current_return_type: None,
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
+            module_sources: Rc::new(HashMap::new()),
         }
     }
 
@@ -120,6 +122,7 @@ impl Compiler {
             current_return_type: None,
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
+            module_sources: Rc::new(HashMap::new()),
         }
     }
 
@@ -159,6 +162,12 @@ impl Compiler {
             current_return_type: None,
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
+            module_sources: Rc::new(HashMap::new()),
         }
+    }
+
+    pub fn with_module_sources(mut self, sources: HashMap<String, Arc<Source>>) -> Self {
+        self.module_sources = Rc::new(sources);
+        self
     }
 }

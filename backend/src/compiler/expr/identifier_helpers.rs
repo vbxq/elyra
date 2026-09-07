@@ -1,11 +1,13 @@
 use super::Compiler;
 
 impl Compiler {
-    // "did you mean" suggestions for typos
     pub(super) fn generate_undefined_variable_hint(&self, var_name: &str) -> Option<String> {
         let mut found_modules = Vec::new();
 
         for global_name in self.globals.keys() {
+            if aelys_sema::is_module_scoped_global(global_name) {
+                continue;
+            }
             if let Some((module, func)) = global_name.split_once("::")
                 && func == var_name
                 && !found_modules.contains(&module)
@@ -52,6 +54,9 @@ impl Compiler {
         let mut similar = Vec::new();
 
         for local in &self.locals {
+            if aelys_sema::is_module_scoped_global(&local.name) {
+                continue;
+            }
             if Self::is_similar(var_name, &local.name) {
                 similar.push(local.name.clone());
             }

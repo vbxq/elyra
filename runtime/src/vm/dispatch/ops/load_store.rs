@@ -32,7 +32,6 @@ impl VM {
             };
         }
 
-
         match opcode_byte {
             0 => {
                 let (a, b, _) = decode_abc(instr);
