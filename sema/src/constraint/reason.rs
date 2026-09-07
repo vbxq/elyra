@@ -106,7 +106,12 @@ impl fmt::Display for ConstraintReason {
             ConstraintReason::InvalidCast => write!(f, "invalid cast"),
             ConstraintReason::UnknownType { name } => write!(f, "unknown type '{}'", name),
             ConstraintReason::IntLiteralOverflow { value, target } => {
-                write!(f, "integer literal {} does not fit in {:?}", value, target)
+                write!(
+                    f,
+                    "integer literal {} does not fit in {}",
+                    value,
+                    target.source_spelling()
+                )
             }
             ConstraintReason::Other(s) => write!(f, "{}", s),
             ConstraintReason::DefinedIn { inner, .. } => inner.fmt(f),

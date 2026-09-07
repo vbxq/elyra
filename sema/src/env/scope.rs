@@ -7,6 +7,7 @@ impl TypeEnv {
         self.locals.push(std::collections::HashMap::new());
         self.borrow_bindings.push(std::collections::HashMap::new());
         self.local_mutability.push(std::collections::HashMap::new());
+        self.local_aliases.push(std::collections::HashMap::new());
         self.read_only_bindings
             .push(std::collections::HashSet::new());
         self.known_collection_lengths
@@ -20,6 +21,7 @@ impl TypeEnv {
             self.locals.pop();
             self.borrow_bindings.pop();
             self.local_mutability.pop();
+            self.local_aliases.pop();
             self.read_only_bindings.pop();
             self.known_collection_lengths.pop();
             self.explicit_dynamic_locals.pop();
@@ -28,6 +30,30 @@ impl TypeEnv {
 
     pub fn define_local(&mut self, name: String, ty: InferType) {
         self.define_local_with_dynamic_origin(name, ty, false);
+    }
+
+    pub fn define_local_alias(&mut self, name: String, alias: String) {
+        if let Some(scope) = self.local_aliases.last_mut() {
+            scope.insert(name, alias);
+        }
+    }
+
+    // the innermost binding wins, so an alias is reported only when that binding is the
+    pub fn lookup_alias(&self, name: &str) -> Option<&str> {
+        for (scope, aliases) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.local_aliases.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return aliases.get(name).map(String::as_str);
+            }
+        }
+        if self.captures.contains_key(name) {
+            return self.capture_aliases.get(name).map(String::as_str);
+        }
+        None
     }
 
     pub fn set_mutable(&mut self, name: &str, mutable: bool) {

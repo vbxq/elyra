@@ -17,6 +17,8 @@ pub struct TypeEnv {
 
     local_mutability: Vec<HashMap<String, bool>>,
 
+    local_aliases: Vec<HashMap<String, String>>,
+
     read_only_bindings: Vec<HashSet<String>>,
 
     known_collection_lengths: Vec<HashMap<String, usize>>,
@@ -28,6 +30,8 @@ pub struct TypeEnv {
     borrow_captures: HashMap<String, ReferenceKind>,
 
     capture_mutability: HashMap<String, bool>,
+
+    capture_aliases: HashMap<String, String>,
 
     explicit_dynamic_captures: HashSet<String>,
 
@@ -45,12 +49,14 @@ impl TypeEnv {
             locals: vec![HashMap::new()],
             borrow_bindings: vec![HashMap::new()],
             local_mutability: vec![HashMap::new()],
+            local_aliases: vec![HashMap::new()],
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
+            capture_aliases: HashMap::new(),
             explicit_dynamic_captures: HashSet::new(),
             functions: HashMap::new(),
             current_function: None,

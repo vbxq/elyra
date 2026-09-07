@@ -7,12 +7,14 @@ impl TypeEnv {
             locals: vec![HashMap::new()],
             borrow_bindings: vec![HashMap::new()],
             local_mutability: vec![HashMap::new()],
+            local_aliases: vec![HashMap::new()],
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
+            capture_aliases: HashMap::new(),
             explicit_dynamic_captures: HashSet::new(),
             functions: self.functions.clone(),
             current_function: None,
@@ -26,6 +28,7 @@ impl TypeEnv {
         let mut explicit_dynamic = HashSet::new();
         let mut capture_mutability = HashMap::new();
         let mut known_collection_lengths = HashMap::new();
+        let mut capture_aliases = HashMap::new();
 
         for (scope, origins) in self.locals.iter().zip(&self.explicit_dynamic_locals) {
             for (name, ty) in scope {
@@ -47,6 +50,15 @@ impl TypeEnv {
             }
         }
 
+        for (scope, aliases) in self.locals.iter().zip(&self.local_aliases) {
+            for name in scope.keys() {
+                match aliases.get(name) {
+                    Some(alias) => capture_aliases.insert(name.clone(), alias.clone()),
+                    None => capture_aliases.remove(name),
+                };
+            }
+        }
+
         for lengths in &self.known_collection_lengths {
             known_collection_lengths
                 .extend(lengths.iter().map(|(name, length)| (name.clone(), *length)));
@@ -61,6 +73,10 @@ impl TypeEnv {
                 name.clone(),
                 self.capture_mutability.get(name).copied().unwrap_or(false),
             );
+            match self.capture_aliases.get(name) {
+                Some(alias) => capture_aliases.insert(name.clone(), alias.clone()),
+                None => capture_aliases.remove(name),
+            };
         }
         explicit_dynamic.extend(self.explicit_dynamic_captures.iter().cloned());
 
@@ -68,12 +84,14 @@ impl TypeEnv {
             locals: vec![HashMap::new()],
             borrow_bindings: vec![HashMap::new()],
             local_mutability: vec![HashMap::new()],
+            local_aliases: vec![HashMap::new()],
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![known_collection_lengths],
             explicit_dynamic_locals: vec![HashSet::new()],
             captures: all_visible,
             borrow_captures: all_borrowed,
             capture_mutability,
+            capture_aliases,
             explicit_dynamic_captures: explicit_dynamic,
             functions: self.functions.clone(),
             current_function: None,

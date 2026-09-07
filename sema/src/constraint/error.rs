@@ -59,8 +59,11 @@ impl ItemNamespace {
 
 #[derive(Debug, Clone)]
 pub enum AssociatedItemDisagreement {
-    DeclaredType,
-    ConstantValue { declared: String, found: String },
+    DeclaredType { declared: String, found: String },
+    ConstantValue {
+        declared: String,
+        found: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -72,14 +75,28 @@ pub enum ProjectionFailure {
     WrongNamespace {
         found: ItemNamespace,
     },
-    InvalidLength,
+    BuiltinReceiver,
+    /// the receiver is generic and the definition is one of the impl's parameters
+    ReceiverArguments {
+        param: String,
+    },
     /// the constant is defined, but its value cannot be computed: the checked
     NotComputable,
-    NotConstant,
+    NotConstant {
+        declared: Option<String>,
+    },
     LengthFromTypeParameter,
     UnspecializedGenericMethod,
     Ambiguous {
         traits: Vec<String>,
+    },
+    AmbiguousImplementors {
+        types: Vec<String>,
+    },
+    AmbiguousInstantiations {
+        trait_name: String,
+        constructor: String,
+        instantiations: Vec<String>,
     },
     Cyclic {
         path: Vec<String>,
@@ -225,6 +242,8 @@ pub enum TypeErrorKind {
     },
     NegativeArraySize {
         size: i64,
+        /// `some` when the length was written as a projection rather than a literal
+        constant: Option<String>,
     },
     NonConstantArrayRepeat,
     ConstantSliceOutOfBounds {
@@ -315,6 +334,7 @@ pub enum TypeErrorKind {
         trait_name: String,
         item: String,
         namespace: ItemNamespace,
+        declared_type: Option<String>,
     },
     DuplicateAssociatedItem {
         trait_name: String,
@@ -377,6 +397,11 @@ pub enum TypeErrorKind {
         param: String,
         target: String,
         call_site_binds: bool,
+    },
+    UnfoldableAssociatedConstType {
+        trait_name: String,
+        item: String,
+        declared: String,
     },
     DuplicateTraitImpl {
         trait_name: String,
@@ -473,6 +498,11 @@ pub enum TypeErrorKind {
         name: String,
         module: String,
     },
+    /// a nominal carried in only for an inlined body, which its own module never exported
+    PrivateNominalNotExported {
+        name: String,
+        module: String,
+    },
 }
 
 impl fmt::Display for TypeError {
@@ -533,10 +563,18 @@ impl TypeError {
                 write!(f, "type {} is not callable ({})", ty, self.reason)
             }
             TypeErrorKind::UndefinedVariable { name } => {
-                write!(f, "undefined variable: {}", name)
+                write!(
+                    f,
+                    "undefined variable: {}",
+                    crate::unscoped_global_name(name)
+                )
             }
             TypeErrorKind::UndefinedFunction { name } => {
-                write!(f, "undefined function: {}", name)
+                write!(
+                    f,
+                    "undefined function: {}",
+                    crate::unscoped_global_name(name)
+                )
             }
             TypeErrorKind::RecursionLimit => {
                 write!(f, "type inference recursion limit exceeded")
@@ -720,9 +758,13 @@ impl TypeError {
                 "cannot create a sized array of {}; initialize its elements explicitly",
                 element
             ),
-            TypeErrorKind::NegativeArraySize { size } => {
-                write!(f, "array size cannot be negative: {}", size)
-            }
+            TypeErrorKind::NegativeArraySize { size, constant } => match constant {
+                Some(path) => write!(
+                    f,
+                    "array size cannot be negative: {size}, the value of constant '{path}'; give the constant a value between 0 and the maximum array length"
+                ),
+                None => write!(f, "array size cannot be negative: {}", size),
+            },
             TypeErrorKind::NonConstantArrayRepeat => write!(
                 f,
                 "array repeat count must be a non-negative compile-time constant; use Vec for a dynamic count"
@@ -866,13 +908,21 @@ impl TypeError {
                 trait_name,
                 item,
                 namespace,
-            } => write!(
-                f,
-                "implementation of trait '{}' is missing required associated item '{}'; define '{} {item}' in the impl body",
-                trait_name,
-                item,
-                namespace.keyword()
-            ),
+                declared_type,
+            } => {
+                let keyword = namespace.keyword();
+                let spelling = match namespace {
+                    ItemNamespace::Type => format!("type {item} = <type>"),
+                    ItemNamespace::Const => match declared_type {
+                        Some(declared) => format!("const {item}: {declared} = <value>"),
+                        None => format!("const {item}: <type> = <value>"),
+                    },
+                };
+                write!(
+                    f,
+                    "implementation of trait '{trait_name}' is missing required associated item '{item}'; define '{keyword} {item}' in the impl body, written '{spelling}'"
+                )
+            }
             TypeErrorKind::DuplicateAssociatedItem { trait_name, item } => write!(
                 f,
                 "implementation of trait '{trait_name}' defines associated item '{item}' more than once; each required item must be defined exactly once"
@@ -882,14 +932,20 @@ impl TypeError {
                 item,
                 disagreement,
             } => match disagreement {
-                AssociatedItemDisagreement::DeclaredType => write!(
+                AssociatedItemDisagreement::DeclaredType { declared, found } => write!(
                     f,
-                    "associated item '{item}' in impl of trait '{trait_name}' has a different type than the trait declaration; declare the same type as the trait"
+                    "associated item '{item}' in impl of trait '{trait_name}' declares type '{found}', and the trait declares '{declared}' here; declare the same type as the trait"
                 ),
-                AssociatedItemDisagreement::ConstantValue { declared, found } => write!(
-                    f,
-                    "associated item '{item}' in impl of trait '{trait_name}' declares type '{declared}', which agrees with the trait, and is initialised with a value of type '{found}'; write an initialiser of type '{declared}'"
-                ),
+                AssociatedItemDisagreement::ConstantValue { declared, found } => match found {
+                    Some(found) => write!(
+                        f,
+                        "associated item '{item}' in impl of trait '{trait_name}' declares type '{declared}', which agrees with the trait, and is initialised with a value of type '{found}'; write an initialiser of type '{declared}'"
+                    ),
+                    None => write!(
+                        f,
+                        "associated item '{item}' in impl of trait '{trait_name}' declares type '{declared}', which agrees with the trait, and is initialised with an expression whose type no rule establishes; write an initialiser of type '{declared}' the compiler can fold"
+                    ),
+                },
             },
             TypeErrorKind::AmbiguousAssociatedProjection {
                 receiver,
@@ -920,18 +976,28 @@ impl TypeError {
                     found.other().noun(),
                     found.position()
                 ),
-                ProjectionFailure::InvalidLength => write!(
+                ProjectionFailure::BuiltinReceiver => write!(
                     f,
-                    "constant '{receiver}::{item}' cannot be an array length: its value is negative or too large; give it a value between 0 and the maximum array length"
+                    "projection '{receiver}::{item}' cannot be resolved: '{receiver}' is a built-in type, and an associated item is defined only in an impl, which a built-in type cannot have; name a struct, an enum, a trait, or a bounded type parameter here"
+                ),
+                ProjectionFailure::ReceiverArguments { param } => write!(
+                    f,
+                    "projection '{receiver}::{item}' cannot be resolved: the impl that defines '{item}' for '{receiver}' defines it as its own type parameter '{param}', and a receiver written without type arguments says nothing about '{param}'; define '{item}' as a type that does not name '{param}', or add an impl for the instantiation you mean"
                 ),
                 ProjectionFailure::NotComputable => write!(
                     f,
                     "constant '{receiver}::{item}' is defined but its value cannot be computed: the arithmetic overflows or divides by zero; give it a value that evaluates"
                 ),
-                ProjectionFailure::NotConstant => write!(
-                    f,
-                    "constant '{receiver}::{item}' is defined but its value is not a constant integer expression; use integer literals and '+ - * / %' only"
-                ),
+                ProjectionFailure::NotConstant { declared } => match declared {
+                    Some(declared) => write!(
+                        f,
+                        "constant '{receiver}::{item}' is declared with type '{declared}' and its value is not a constant integer expression; only an integer constant is folded, so no '{declared}' constant can be read back"
+                    ),
+                    None => write!(
+                        f,
+                        "constant '{receiver}::{item}' is defined but its value is not a constant integer expression; use integer literals and '+ - * / %' only"
+                    ),
+                },
                 ProjectionFailure::LengthFromTypeParameter => write!(
                     f,
                     "array length '{receiver}::{item}' depends on the type parameter '{receiver}', and a fixed-array length must be known where the array is written; write the length as a literal, name the constant on a concrete type, or use a growable array"
@@ -942,8 +1008,24 @@ impl TypeError {
                 ),
                 ProjectionFailure::Ambiguous { traits } => write!(
                     f,
-                    "projection '{receiver}::{item}' is ambiguous: {} both define '{item}' for {receiver}; remove one of the competing impls, or rename the item so a single trait provides it",
-                    traits.join(" and ")
+                    "projection '{receiver}::{item}' is ambiguous: {} both define '{item}' for {receiver}; name the trait that declares the one you mean, as in '{}::{item}', or remove one of the competing impls, or rename the item so a single trait provides it",
+                    traits.join(" and "),
+                    traits.first().map(String::as_str).unwrap_or(receiver)
+                ),
+                ProjectionFailure::AmbiguousImplementors { types } => write!(
+                    f,
+                    "projection '{receiver}::{item}' is ambiguous: {} both implement '{receiver}' and define '{item}'; name the type that owns the one you mean, as in '{}::{item}', or remove one of the competing impls",
+                    types.join(" and "),
+                    types.first().map(String::as_str).unwrap_or(receiver)
+                ),
+                ProjectionFailure::AmbiguousInstantiations {
+                    trait_name,
+                    constructor,
+                    instantiations,
+                } => write!(
+                    f,
+                    "projection '{receiver}::{item}' is ambiguous: '{trait_name}' is implemented for {}, and each defines '{item}'; a projection names '{constructor}' without its type arguments and this language has no way to write them there, so neither naming the trait nor naming the type separates the definitions; keep a single impl of '{trait_name}' for '{constructor}', or declare '{item}' in a second trait and name that trait, as in 'OtherTrait::{item}'",
+                    instantiations.join(" and ")
                 ),
                 ProjectionFailure::Cyclic { path, namespace } => write!(
                     f,
@@ -999,7 +1081,10 @@ impl TypeError {
             } => write!(
                 f,
                 "associated binding '{}::{} = {}' disagrees with the selected impl, which provides {}; change the requested binding or the impl",
-                trait_name, item, requested, found
+                trait_name,
+                item,
+                requested.source_spelling(),
+                found.source_spelling()
             ),
             TypeErrorKind::AssociatedConstBindingMismatch {
                 trait_name,
@@ -1043,9 +1128,18 @@ impl TypeError {
                 item,
                 unevaluated
                     .iter()
-                    .map(|ty| ty.to_string())
+                    .map(InferType::source_spelling)
                     .collect::<Vec<_>>()
                     .join(" and ")
+            ),
+            TypeErrorKind::UnfoldableAssociatedConstType {
+                trait_name,
+                item,
+                declared,
+            } => write!(
+                f,
+                "associated constant '{item}' of trait '{trait_name}' is declared with type '{declared}', and the compiler folds no constant of that type, so an impl could define it and no reader could ever get a value back; declare it with a type the compiler folds a constant of: {}",
+                InferType::foldable_associated_const_types()
             ),
             TypeErrorKind::UnconstrainedImplTypeParam {
                 param,
@@ -1055,7 +1149,7 @@ impl TypeError {
                 if *call_site_binds {
                     write!(
                         f,
-                        "impl type parameter '{param}' does not appear in the impl target type '{target}', though a call site determines it; an impl instance is named by its target type alone, so two choices of '{param}' would share one symbol; mention '{param}' in the target type or move it onto the method"
+                        "impl type parameter '{param}' does not appear in the impl target type '{target}', though a call site determines it; an impl instance is named by its trait, its target type and its method, and by nothing that records '{param}', so two choices of it would share one symbol; mention '{param}' in the target type or move it onto the method"
                     )
                 } else {
                     write!(
@@ -1142,11 +1236,9 @@ impl TypeError {
                 "generic instantiation limit exceeded while compiling '{}'",
                 name
             ),
-            TypeErrorKind::MangledSymbolCollision { name } => write!(
-                f,
-                "internal generic symbol collision while compiling '{}'; use a fresh build",
-                name
-            ),
+            TypeErrorKind::MangledSymbolCollision { name } => {
+                write!(f, "two instances of '{}' mangle to one symbol", name)
+            }
             TypeErrorKind::EnumLayoutTooLarge {
                 enum_name,
                 item,
@@ -1207,6 +1299,12 @@ impl TypeError {
                 "'{}' is exported by module '{}' but this file does not import it\n   \
                  = help: write `needs {} from {}`",
                 name, module, name, module
+            ),
+            TypeErrorKind::PrivateNominalNotExported { name, module } => write!(
+                f,
+                "'{name}' is not public in module '{module}'; it is registered here only for a \
+                 body this file inlines\n   \
+                 = help: declare it 'pub' in {module}.aelys, or declare a type of this file's own"
             ),
         }
     }
@@ -1302,7 +1400,7 @@ impl TypeError {
 
 impl TypeErrorKind {
     fn states_its_reason(&self) -> bool {
-        matches!(self.diagnostic_code(), 421..=430)
+        matches!(self.diagnostic_code(), 421..=430 | 434)
     }
 
     pub fn diagnostic_code(&self) -> u16 {
@@ -1365,6 +1463,7 @@ impl TypeErrorKind {
             | Self::AssociatedBindingNamespaceMismatch { .. } => 424,
             Self::UnevaluatedAssociatedConstBinding { .. } => 429,
             Self::UnconstrainedImplTypeParam { .. } => 430,
+            Self::UnfoldableAssociatedConstType { .. } => 434,
             Self::DuplicateAssociatedItem { .. } => 426,
             Self::DuplicateTraitImpl { .. } => 334,
             Self::TraitMethodNotInTrait { .. } => 335,
@@ -1404,6 +1503,8 @@ impl TypeErrorKind {
             Self::NoSuchMember { .. } => 371,
             Self::UnknownTypeName { .. } => 372,
             Self::TypeNotImported { .. } => 378,
+            // the same refusal e0403 states at the module boundary, reached from the type checker
+            Self::PrivateNominalNotExported { .. } => 403,
             Self::InvalidTryResidual { .. } => 373,
             Self::UnsatisfiedTryConversion { .. } => 374,
             Self::ReservedIdentityConversion { .. } => 375,
