@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use aelys_driver::run_file;
 
 mod common;
-use common::assert_associated_diagnostic;
+use common::{assert_associated_diagnostic, assert_located_at};
 
 fn create_module_env() -> TempDir {
     tempfile::tempdir().expect("Failed to create temp dir")
@@ -688,5 +688,260 @@ fn a_module_member_still_reports_the_visibility_it_looked_up() {
         "module member 'support::secret'",
         "",
         "is not public; add 'pub' to its declaration",
+    );
+}
+
+const NOMINAL_ITEM_SUPPORT: &str = r#"
+pub struct Payload { pub n: int }
+
+pub struct Counter { pub c: int }
+
+pub trait Source {
+    type Item
+
+    fn make(self) -> Payload
+}
+
+impl Source for Counter {
+    type Item = Payload
+
+    fn make(self) -> Payload {
+        return Payload { n: self.c * 3 }
+    }
+}
+"#;
+
+fn nominal_projection_main(import: &str, receiver: &str, position: &str) -> String {
+    let item = format!("{receiver}::Item");
+    let body = match position {
+        "field" => format!(
+            "struct Holder {{ it: {item} }}\nfn probe() -> int {{\n    let h = Holder {{ it: Counter {{ c: 4 }}.make() }}\n    return h.it.n + 100\n}}\nprobe()\n"
+        ),
+        "parameter" => format!(
+            "fn take(x: {item}) -> int {{\n    return x.n + 100\n}}\nfn probe() -> int {{\n    return take(Counter {{ c: 4 }}.make())\n}}\nprobe()\n"
+        ),
+        "return" => format!(
+            "fn give(c: Counter) -> {item} {{\n    return c.make()\n}}\nfn probe() -> int {{\n    return give(Counter {{ c: 4 }}).n + 100\n}}\nprobe()\n"
+        ),
+        "annotation" => format!(
+            "fn probe() -> int {{\n    let p: {item} = Counter {{ c: 4 }}.make()\n    return p.n + 100\n}}\nprobe()\n"
+        ),
+        "enum payload" => format!(
+            "enum Slot {{ Full({item}), Empty }}\nfn probe() -> int {{\n    let s = Slot::Full(Counter {{ c: 4 }}.make())\n    return match s {{\n        Slot::Full(p) => p.n + 100,\n        Slot::Empty => 0\n    }}\n}}\nprobe()\n"
+        ),
+        "generic argument" => format!(
+            "struct Box<T> {{ it: T }}\nfn probe() -> int {{\n    let b = Box {{ it: Counter {{ c: 4 }}.make() }}\n    let p: {item} = b.it\n    return p.n + 100\n}}\nprobe()\n"
+        ),
+        "bound" => format!(
+            "fn pull<T: Source>(s: T, x: T::Item) -> T::Item {{\n    return x\n}}\nfn probe() -> int {{\n    let p: {item} = pull(Counter {{ c: 4 }}, Counter {{ c: 4 }}.make())\n    return p.n + 100\n}}\nprobe()\n"
+        ),
+        other => unreachable!("no nominal cell for {other}"),
+    };
+    format!("{import}\n{body}")
+}
+
+fn run_nominal_projection(import: &str, receiver: &str, position: &str) -> Result<i64, String> {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", NOMINAL_ITEM_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        &nominal_projection_main(import, receiver, position),
+    );
+    match run_file(&main) {
+        Ok(value) => Ok(value.as_int().unwrap_or_default()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+const NOMINAL_IMPORT_FORMS: [&str; 4] = [
+    "needs Counter, Source from support",
+    "needs Counter from support\nneeds Source from support",
+    "needs support",
+    "needs support as s",
+];
+
+const NOMINAL_ITEM_POSITIONS: [&str; 7] = [
+    "field",
+    "parameter",
+    "return",
+    "annotation",
+    "enum payload",
+    "generic argument",
+    "bound",
+];
+
+#[test]
+fn a_nominal_associated_type_crosses_every_import_form_in_every_type_position() {
+    for import in NOMINAL_IMPORT_FORMS {
+        for receiver in ["Counter", "Source"] {
+            for position in NOMINAL_ITEM_POSITIONS {
+                assert_eq!(
+                    run_nominal_projection(import, receiver, position),
+                    Ok(112),
+                    "'{receiver}::Item' resolves to the module's own 'Payload' in {position} \
+                     position under `{import}`, and 4 * 3 + 100 is the sum only that resolution \
+                     gives"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_type_a_carried_impl_needs_is_registered_but_stays_unnameable() {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", NOMINAL_ITEM_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        "needs Counter, Source from support\nstruct Holder { it: Payload }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
+    );
+    let message = run_file(&main)
+        .expect_err("the importer never named 'Payload', so it may not write it")
+        .to_string();
+    assert!(
+        message.contains("E0378") && message.contains("needs Payload from support"),
+        "the name the carried impl needs is refused to the importer with its repair: {message}"
+    );
+    assert_located_at("E0378", &message, 2);
+}
+
+const PRIVATE_ITEM_SUPPORT: &str = r#"
+struct Hidden { n: int }
+
+pub struct Counter { pub c: int }
+
+pub trait Source {
+    type Item
+
+    fn get(self) -> int
+}
+
+impl Source for Counter {
+    type Item = Hidden
+
+    fn get(self) -> int {
+        return self.c
+    }
+}
+"#;
+
+// the same module with the private declaration made generic: monomorphization erased it
+const PRIVATE_GENERIC_ITEM_SUPPORT: &str = r#"
+struct Hidden<T> { n: T }
+
+pub struct Counter { pub c: int }
+
+pub trait Source {
+    type Item
+
+    fn get(self) -> int
+}
+
+impl Source for Counter {
+    type Item = Hidden<int>
+
+    fn get(self) -> int {
+        return self.c
+    }
+}
+"#;
+
+#[test]
+fn a_refusal_inside_a_carried_impl_names_the_file_that_owns_the_span() {
+    for import in ["needs Counter, Source from support", "needs support"] {
+        let dir = create_module_env();
+        write_file(&dir, "support.aelys", PRIVATE_GENERIC_ITEM_SUPPORT);
+        let main = write_file(
+            &dir,
+            "main.aelys",
+            &format!("{import}\nfn probe() -> int {{\n    return 1\n}}\nprobe()\n"),
+        );
+        let message = run_file(&main)
+            .expect_err("a generic private type has no definition to travel with the body")
+            .to_string();
+        assert!(
+            message.contains("E0407") && message.contains("'Hidden'"),
+            "the refusal names the type the impl wrote: {message}"
+        );
+        assert!(
+            message.contains("support.aelys") && !message.contains("main.aelys"),
+            "the span belongs to the defining file and must name it: {message}"
+        );
+        assert!(
+            message.contains("struct Hidden<T> { n: T }"),
+            "the rendered line must be the one the span covers, not an empty line past the end \
+             of another file: {message}"
+        );
+        assert_located_at("E0407", &message, 2);
+    }
+}
+
+#[test]
+fn a_module_s_own_private_nominal_travels_with_the_body_that_names_it() {
+    for import in ["needs Counter, Source from support", "needs support"] {
+        let dir = create_module_env();
+        write_file(&dir, "support.aelys", PRIVATE_ITEM_SUPPORT);
+        let main = write_file(
+            &dir,
+            "main.aelys",
+            &format!(
+                "{import}\nfn probe() -> int {{\n    let c = Counter {{ c: 6 }}\n    \
+                 return c.get()\n}}\nprobe()\n"
+            ),
+        );
+        assert_eq!(
+            run_file(&main)
+                .expect("the body reads the private type of its own module")
+                .as_int(),
+            Some(6),
+            "only the module's own 'Hidden' answers 'type Item = Hidden'"
+        );
+
+        let naming = write_file(
+            &dir,
+            "naming.aelys",
+            &format!(
+                "{import}\nfn probe() -> int {{\n    let h = Hidden {{ n: 1 }}\n    return h.n\n}}\nprobe()\n"
+            ),
+        );
+        let message = run_file(&naming)
+            .expect_err("the importer may not name what only a carried body reaches")
+            .to_string();
+        assert!(
+            message.contains("E0403") && message.contains("'Hidden'"),
+            "the importer's own use of the carried name is refused: {message}"
+        );
+        assert!(
+            message.contains("not public in module 'support'"),
+            "no `needs` line reaches it, and the message says why: {message}"
+        );
+        assert!(
+            !message.contains("needs Hidden from support"),
+            "a repair that would itself be refused must not be offered: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_carried_private_nominal_does_not_bind_to_the_importer_s_own_declaration() {
+    let dir = create_module_env();
+    write_file(&dir, "support.aelys", PRIVATE_ITEM_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        "needs Counter, Source from support\nstruct Hidden { pub other: int }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
+    );
+    let message = run_file(&main)
+        .expect_err("two declarations of one name reach one flat table")
+        .to_string();
+    assert!(
+        message.contains("E0410") && message.contains("'Hidden'"),
+        "the collision is reported rather than resolved in the importer's favour: {message}"
+    );
+    assert!(
+        message.contains("main.aelys"),
+        "the file that declared the clashing name is where the repair is written: {message}"
     );
 }
