@@ -412,6 +412,15 @@ fn replace_nominal_type(ty: &InferType, replacements: &HashMap<String, String>) 
                 .map(|element| replace_nominal_type(element, replacements))
                 .collect(),
         ),
+        InferType::Projection {
+            trait_name,
+            item,
+            self_ty,
+        } => InferType::Projection {
+            trait_name: trait_name.clone(),
+            item: item.clone(),
+            self_ty: Box::new(replace_nominal_type(self_ty, replacements)),
+        },
         _ => ty.clone(),
     }
 }
@@ -1366,10 +1375,11 @@ impl TypeInference {
         }
         {
             let type_table = &self.type_table;
+            let gate = &self.impls_missing_supertraits;
             let mut marker_errors = Vec::new();
             for stmt in &mut function.body {
                 visit_exprs_stmt(stmt, &mut |expr| {
-                    resolve_bound_marker(expr, type_table, &mut marker_errors);
+                    resolve_bound_marker(expr, type_table, gate, &mut marker_errors);
                 });
             }
             errors.append(&mut marker_errors);
@@ -1543,6 +1553,7 @@ impl TypeInference {
                 }
                 {
                     let type_table = &self.type_table;
+                    let gate = &self.impls_missing_supertraits;
                     let substitution = &substitution;
                     let constants = &associated_constants;
                     for method in &mut methods {
@@ -1554,7 +1565,7 @@ impl TypeInference {
                                     constants,
                                     &mut marker_errors,
                                 );
-                                resolve_bound_marker(expr, type_table, &mut marker_errors);
+                                resolve_bound_marker(expr, type_table, gate, &mut marker_errors);
                                 resolve_display_marker(expr, type_table);
                             });
                         }
@@ -2417,7 +2428,11 @@ fn resolve_associated_const_node(
     let receiver = match &concrete {
         InferType::Struct(name) => name.clone(),
         InferType::Applied { name, .. } => name.clone(),
-        other => other.to_string(),
+        other => other.source_spelling(),
+    };
+    let non_integer = match expr.ty.is_integer() {
+        true => None,
+        false => Some(expr.ty.source_spelling()),
     };
     match constants.get(&(receiver.clone(), item.clone())) {
         Some(crate::infer::ConstResolution::Value(value)) => {
@@ -2426,9 +2441,13 @@ fn resolve_associated_const_node(
         }
         found => {
             let cause = match found {
-                Some(resolution) => {
-                    crate::infer::expr::member::projection_failure_for(resolution, &receiver, item)
-                }
+                Some(resolution) => crate::infer::expr::member::projection_failure_for(
+                    resolution,
+                    &receiver,
+                    item,
+                    false,
+                    non_integer,
+                ),
                 None => crate::constraint::ProjectionFailure::NoImpl,
             };
             errors.push(TypeError {
@@ -2451,6 +2470,7 @@ fn resolve_associated_const_node(
 fn resolve_bound_marker(
     expr: &mut TypedExpr,
     type_table: &crate::types::TypeTable,
+    gate: &std::collections::BTreeMap<(String, String), (InferType, Vec<String>)>,
     errors: &mut Vec<TypeError>,
 ) {
     let span = expr.span;
@@ -2476,14 +2496,25 @@ fn resolve_bound_marker(
     match type_table.select_bound_method(&trait_name, &receiver, &method_name) {
         BoundSelection::Selected(resolved) => *symbol = resolved,
         BoundSelection::CompilerRule => {}
-        BoundSelection::Missing => errors.push(TypeError {
-            kind: TypeErrorKind::UnsatisfiedTraitBound {
-                trait_name,
-                ty: receiver,
-            },
-            span,
-            reason: ConstraintReason::Other("bound method at a concrete instance".to_string()),
-        }),
+        BoundSelection::Missing => {
+            let gated = crate::types::nominal_name(&receiver).and_then(|target| {
+                super::signatures::supertrait_gate_error_for(
+                    type_table,
+                    gate,
+                    &target,
+                    &method_name,
+                    span,
+                )
+            });
+            errors.push(gated.unwrap_or_else(|| TypeError {
+                kind: TypeErrorKind::UnsatisfiedTraitBound {
+                    trait_name,
+                    ty: receiver,
+                },
+                span,
+                reason: ConstraintReason::Other("bound method at a concrete instance".to_string()),
+            }));
+        }
         BoundSelection::Ambiguous => errors.push(TypeError {
             kind: TypeErrorKind::AmbiguousTraitMethod {
                 target: receiver.to_string(),
@@ -3667,7 +3698,7 @@ fn check_instance_trait_bindings(
                 continue;
             }
             // lookups walk the super bounds.
-            let is_associated_const = inference
+            let declares_const = inference
                 .type_table
                 .trait_declaring_item_in(
                     trait_name,
@@ -3675,16 +3706,19 @@ fn check_instance_trait_bindings(
                     Some(crate::constraint::ItemNamespace::Const),
                 )
                 .is_some();
-            let declares_item = is_associated_const
-                || inference
-                    .type_table
-                    .trait_declaring_item_in(
-                        trait_name,
-                        item,
-                        Some(crate::constraint::ItemNamespace::Type),
-                    )
-                    .is_some();
-            if !declares_item {
+            let declares_type = inference
+                .type_table
+                .trait_declaring_item_in(
+                    trait_name,
+                    item,
+                    Some(crate::constraint::ItemNamespace::Type),
+                )
+                .is_some();
+            let is_associated_const = match requested {
+                crate::infer::BoundItem::Const(_) => declares_const,
+                crate::infer::BoundItem::Type(_) => !declares_type,
+            };
+            if !declares_const && !declares_type {
                 errors.push(TypeError {
                     kind: TypeErrorKind::UndeclaredAssociatedBinding {
                         trait_name: trait_name.clone(),
@@ -3826,8 +3860,8 @@ fn associated_const_value(inference: &TypeInference, ty: &InferType) -> Option<i
                 .unwrap_or_else(|| trait_name.clone());
             return candidates
                 .into_iter()
-                .find(|(name, _)| *name == declaring)
-                .and_then(|(_, value)| value);
+                .find(|(name, _, _)| *name == declaring)
+                .and_then(|(_, _, value)| value);
         }
     }
     match inference

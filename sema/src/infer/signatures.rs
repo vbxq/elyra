@@ -13,6 +13,7 @@ struct ImplBlock<'a> {
     where_clauses: &'a [aelys_syntax::WhereClause],
     associated_types: &'a [aelys_syntax::AssociatedTypeDef],
     associated_consts: &'a [aelys_syntax::AssociatedConstDef],
+    definition_module: Option<&'a aelys_syntax::ModuleId>,
 }
 
 struct ImplName {
@@ -26,6 +27,13 @@ struct ImplName {
 pub(super) struct DeclaredImpls {
     names: Vec<ImplName>,
     live: Vec<usize>,
+}
+
+struct BlockModule {
+    saved: aelys_syntax::ModuleId,
+    name: String,
+    errors: usize,
+    constraints: usize,
 }
 
 struct ImplHeader {
@@ -80,6 +88,7 @@ fn gather_impl_blocks<'a>(stmts: &'a [Stmt], out: &mut Vec<ImplBlock<'a>>) {
                     where_clauses,
                     associated_types,
                     associated_consts,
+                    definition_module: stmt.definition_module.as_ref(),
                 });
             }
             StmtKind::Block(inner_stmts) => gather_impl_blocks(inner_stmts, out),
@@ -175,6 +184,7 @@ impl TypeInference {
                 continue;
             }
             self.type_table.register_trait(TraitDef {
+                owner: self.current_module.clone(),
                 name: name.clone(),
                 type_params: type_params.clone(),
                 super_bounds: super_bounds
@@ -236,7 +246,9 @@ impl TypeInference {
         let live: Vec<usize> = (0..self.type_table.trait_impl_defs().len()).collect();
         let mut names = Vec::with_capacity(blocks.len());
         for block in &blocks {
+            let saved = self.enter_block_module(block);
             let name = self.declare_impl_names(block);
+            self.leave_block_module(saved);
             names.push(name);
         }
         DeclaredImpls { names, live }
@@ -256,16 +268,22 @@ impl TypeInference {
         } = declared;
         debug_assert_eq!(blocks.len(), names.len());
         for (block, name) in blocks.iter().zip(names.iter_mut()) {
+            let saved = self.enter_block_module(block);
             self.resolve_impl_item_definitions(block, name);
+            self.leave_block_module(saved);
         }
         let mut headers = Vec::with_capacity(blocks.len());
         for (block, name) in blocks.iter().zip(&names) {
+            let saved = self.enter_block_module(block);
             let header = self.resolve_impl_header(block, name);
+            self.leave_block_module(saved);
             headers.push(header);
         }
         let mut accepted = Vec::with_capacity(blocks.len());
         for ((block, header), name) in blocks.iter().zip(&headers).zip(&names) {
+            let saved = self.enter_block_module(block);
             let kept = self.check_impl_header(block, header, name, &mut live);
+            self.leave_block_module(saved);
             accepted.push(kept);
         }
         self.retract_rejected_impls(&blocks, &mut names, &accepted);
@@ -274,16 +292,52 @@ impl TypeInference {
             blocks.iter().zip(&headers).zip(&names).zip(&accepted)
         {
             if *kept {
+                let saved = self.enter_block_module(block);
                 self.collect_impl_associated_consts(block, header, name);
+                self.leave_block_module(saved);
             }
         }
         for (((block, header), name), kept) in
             blocks.iter().zip(&headers).zip(&names).zip(&accepted)
         {
             if *kept {
+                let saved = self.enter_block_module(block);
                 self.collect_impl_method_signatures(block, header, name);
+                self.leave_block_module(saved);
             }
         }
+    }
+
+    fn enter_block_module(&mut self, block: &ImplBlock<'_>) -> Option<BlockModule> {
+        let module = block.definition_module?.clone();
+        let name = module.as_str().to_string();
+        let errors = self.errors.len();
+        let constraints = self.constraints.len();
+        Some(BlockModule {
+            saved: std::mem::replace(&mut self.current_module, module),
+            name,
+            errors,
+            constraints,
+        })
+    }
+
+    fn leave_block_module(&mut self, saved: Option<BlockModule>) {
+        let Some(BlockModule {
+            saved,
+            name,
+            errors,
+            constraints,
+        }) = saved
+        else {
+            return;
+        };
+        for error in &mut self.errors[errors..] {
+            error.reason.wrap_in_module(&name);
+        }
+        for constraint in &mut self.constraints[constraints..] {
+            constraint.reason_mut().wrap_in_module(&name);
+        }
+        self.current_module = saved;
     }
 
     pub(super) fn collect_function_signatures(&mut self, stmts: &[Stmt], prefix: &str) {
@@ -375,6 +429,37 @@ impl TypeInference {
                     crate::infer::OccurrenceRole::ItemDefinition,
                     &item.type_annotation,
                 );
+                let names_a_type = match &ty {
+                    InferType::Struct(nominal) | InferType::Applied { name: nominal, .. } => {
+                        self.type_table.has_nominal(nominal)
+                    }
+                    _ => true,
+                };
+                if names_a_type && matches!(ty, InferType::Projection { .. }) {
+                    self.projected_associated_const_types.push(
+                        crate::infer::ProjectedAssociatedConstType {
+                            trait_name: name.to_string(),
+                            item: item.name.clone(),
+                            declared: ty.clone(),
+                            span: item.span,
+                        },
+                    );
+                } else if names_a_type
+                    && let Some(settled) = self.settled_associated_const_type(&ty)
+                    && !settled.folds_an_associated_constant()
+                {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::UnfoldableAssociatedConstType {
+                            trait_name: name.to_string(),
+                            item: item.name.clone(),
+                            declared: settled.source_spelling(),
+                        },
+                        span: item.span,
+                        reason: crate::constraint::ConstraintReason::Other(format!(
+                            "declared type in trait '{name}'"
+                        )),
+                    });
+                }
                 (item.name.clone(), ty)
             })
             .collect();
@@ -382,6 +467,7 @@ impl TypeInference {
         self.current_trait_name = saved_trait;
         self.current_trait_associated_items = saved_trait_items;
         self.type_table.register_trait(TraitDef {
+            owner: self.current_module.clone(),
             name: name.to_string(),
             type_params: type_params.to_vec(),
             super_bounds: super_bounds
@@ -573,7 +659,11 @@ impl TypeInference {
                     })
                     .collect();
                 let trait_name = bound.path.join("::");
-                if let Some(module) = self.withholding_module(&trait_name).map(str::to_string) {
+                if let Some(module) = self
+                    .withholding_module(&trait_name)
+                    .or_else(|| self.refused_private_nominal(&trait_name))
+                    .map(str::to_string)
+                {
                     self.errors.push(crate::constraint::TypeError {
                         kind: crate::constraint::TypeErrorKind::TypeNotImported {
                             name: trait_name.clone(),
@@ -604,6 +694,14 @@ impl TypeInference {
                 let trait_name = bound.path.join("::");
                 let mut items = Vec::with_capacity(bound.associated_bindings.len());
                 for (name, value, binding_span) in &bound.associated_bindings {
+                    if self.reject_undeclared_binding(
+                        &trait_name,
+                        name,
+                        &clause.type_annotation.name,
+                        *binding_span,
+                    ) {
+                        continue;
+                    }
                     let item = match value {
                         aelys_syntax::AssociatedBinding::Const(value) => {
                             self.reject_binding_in_the_wrong_namespace(
@@ -627,13 +725,10 @@ impl TypeInference {
                             {
                                 continue;
                             }
-                            let namespace = match self.type_table.trait_declaring_item_in(
-                                &trait_name,
-                                name,
-                                Some(crate::constraint::ItemNamespace::Const),
-                            ) {
-                                Some(_) => crate::constraint::ItemNamespace::Const,
-                                None => crate::constraint::ItemNamespace::Type,
+                            let namespace = if self.binding_reads_the_constant(&trait_name, name) {
+                                crate::constraint::ItemNamespace::Const
+                            } else {
+                                crate::constraint::ItemNamespace::Type
                             };
                             let saved =
                                 std::mem::replace(&mut self.annotation_namespace, namespace);
@@ -653,6 +748,54 @@ impl TypeInference {
         bindings
     }
 
+    // the binding decides which is meant, so only a const-only name reads as one
+    fn binding_reads_the_constant(&self, trait_name: &str, item: &str) -> bool {
+        self.type_table
+            .trait_declaring_item_in(
+                trait_name,
+                item,
+                Some(crate::constraint::ItemNamespace::Type),
+            )
+            .is_none()
+            && self
+                .type_table
+                .trait_declaring_item_in(
+                    trait_name,
+                    item,
+                    Some(crate::constraint::ItemNamespace::Const),
+                )
+                .is_some()
+    }
+
+    // trait never declared is refused, whether or not anything instantiates the function.
+    fn reject_undeclared_binding(
+        &mut self,
+        trait_name: &str,
+        item: &str,
+        subject: &str,
+        span: aelys_syntax::Span,
+    ) -> bool {
+        if self.type_table.get_trait(trait_name).is_none() {
+            return false;
+        }
+        if self
+            .type_table
+            .trait_declaring_item(trait_name, item)
+            .is_some()
+        {
+            return false;
+        }
+        self.errors.push(crate::constraint::TypeError {
+            kind: crate::constraint::TypeErrorKind::UndeclaredAssociatedBinding {
+                trait_name: trait_name.to_string(),
+                item: item.to_string(),
+            },
+            span,
+            reason: crate::constraint::ConstraintReason::Other(format!("a bound on '{subject}'")),
+        });
+        true
+    }
+
     // e0424. returns whether the binding was rejected.
     fn reject_binding_in_the_wrong_namespace(
         &mut self,
@@ -669,6 +812,13 @@ impl TypeInference {
         {
             return false;
         }
+        if self
+            .type_table
+            .trait_declaring_item_in(trait_name, item, Some(declared.other()))
+            .is_some()
+        {
+            return false;
+        }
         self.errors.push(crate::constraint::TypeError {
             kind: crate::constraint::TypeErrorKind::AssociatedBindingNamespaceMismatch {
                 trait_name: trait_name.to_string(),
@@ -680,6 +830,26 @@ impl TypeInference {
             reason: crate::constraint::ConstraintReason::Other("a bound".to_string()),
         });
         true
+    }
+
+    fn trait_owns_item(
+        &self,
+        trait_name: &str,
+        item: &str,
+        namespace: crate::constraint::ItemNamespace,
+    ) -> bool {
+        let Some(definition) = self.type_table.get_trait(trait_name) else {
+            return true;
+        };
+        match namespace {
+            crate::constraint::ItemNamespace::Type => {
+                definition.associated_types.iter().any(|name| name == item)
+            }
+            crate::constraint::ItemNamespace::Const => definition
+                .associated_consts
+                .iter()
+                .any(|(name, _)| name == item),
+        }
     }
 
     fn declare_impl_names(&mut self, block: &ImplBlock<'_>) -> ImplName {
@@ -705,6 +875,13 @@ impl TypeInference {
             let associated_types = block
                 .associated_types
                 .iter()
+                .filter(|item| {
+                    self.trait_owns_item(
+                        trait_name,
+                        &item.name,
+                        crate::constraint::ItemNamespace::Type,
+                    )
+                })
                 .map(|item| {
                     (
                         item.name.clone(),
@@ -715,6 +892,13 @@ impl TypeInference {
             let associated_consts = block
                 .associated_consts
                 .iter()
+                .filter(|item| {
+                    self.trait_owns_item(
+                        trait_name,
+                        &item.name,
+                        crate::constraint::ItemNamespace::Const,
+                    )
+                })
                 .map(|item| {
                     let placeholder = unresolved_associated_item(trait_name, &item.name, &self_ty);
                     (item.name.clone(), placeholder.clone(), placeholder, None)
@@ -744,20 +928,34 @@ impl TypeInference {
         }
         let associated_types = block.associated_types;
         let associated_consts = block.associated_consts;
+        let owner = name.trait_name.clone().unwrap_or_default();
+        let owner = owner.as_str();
         let target_ty = name.self_ty.clone();
         let saved_impl_self = self.current_impl_self.replace(target_ty.clone());
         let self_binding = HashMap::from([("Self".to_string(), target_ty.clone())]);
         let saved_defer = std::mem::replace(&mut self.defer_projection_resolution, true);
-        let typed_associated_types: Vec<(String, InferType)> = associated_types
+        let saved_type_params = std::mem::replace(
+            &mut self.type_params_in_scope,
+            block.impl_type_params.to_vec(),
+        );
+        let owned: Vec<bool> = associated_types
             .iter()
             .map(|item| {
+                self.trait_owns_item(owner, &item.name, crate::constraint::ItemNamespace::Type)
+            })
+            .collect();
+        let typed_associated_types: Vec<(String, InferType)> = associated_types
+            .iter()
+            .zip(&owned)
+            .filter_map(|(item, owned)| {
                 let ty = self.type_from_annotation_as(
                     crate::infer::OccurrenceRole::ItemDefinition,
                     &item.value,
                 );
-                (item.name.clone(), ty.substitute_params(&self_binding))
+                (*owned).then(|| (item.name.clone(), ty.substitute_params(&self_binding)))
             })
             .collect();
+        self.type_params_in_scope = saved_type_params;
         self.defer_projection_resolution = saved_defer;
         let receiver = target_ty.to_string();
         let first_definition = self.associated_type_definitions.len();
@@ -822,8 +1020,12 @@ impl TypeInference {
         let bounds = self.bounds_from_where_clauses(block.where_clauses);
         let bindings = self.bindings_from_where_clauses(block.where_clauses);
         self.type_params_in_scope = saved_type_params;
+        let target = match block.self_type.path.len() >= 2 {
+            true => crate::types::nominal_name(&target_ty).unwrap_or_else(|| name.target.clone()),
+            false => name.target.clone(),
+        };
         ImplHeader {
-            target: name.target.clone(),
+            target,
             target_ty,
             trait_name: name.trait_name.clone(),
             trait_args,
@@ -845,7 +1047,7 @@ impl TypeInference {
         let associated_types = block.associated_types;
         let associated_consts = block.associated_consts;
         let trait_name = header.trait_name.clone();
-        let target = name.target.clone();
+        let target = header.target.clone();
         let target_ty = header.target_ty.clone();
         let trait_args = header.trait_args.clone();
         let effective_methods = self.effective_impl_methods(block.methods, trait_name.as_deref());
@@ -859,6 +1061,12 @@ impl TypeInference {
                 span: methods.first().map_or(header_span, |m| m.span),
                 reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
             });
+            return false;
+        }
+        if let Some(error) =
+            self.private_nominal_error(&target, methods.first().map_or(header_span, |m| m.span))
+        {
+            self.errors.push(error);
             return false;
         }
         if !self.type_table.has_nominal(&target) {
@@ -886,7 +1094,7 @@ impl TypeInference {
             self.errors.push(crate::constraint::TypeError {
                 kind: crate::constraint::TypeErrorKind::UnconstrainedImplTypeParam {
                     param: unconstrained.clone(),
-                    target: target_ty.to_string(),
+                    target: target_ty.source_spelling(),
                     call_site_binds,
                 },
                 span: self_type.span,
@@ -896,6 +1104,15 @@ impl TypeInference {
         }
 
         if let Some(trait_name) = trait_name.as_deref() {
+            if let Some(error) = self.private_nominal_error(
+                trait_name,
+                methods
+                    .first()
+                    .map_or(trait_path_span, |method| method.span),
+            ) {
+                self.errors.push(error);
+                return false;
+            }
             let Some(trait_def) = self.type_table.get_trait(trait_name).cloned() else {
                 self.errors.push(crate::constraint::TypeError {
                     kind: self.nominal_error_kind(
@@ -1069,6 +1286,12 @@ impl TypeInference {
                                 trait_name: trait_name.to_string(),
                                 item: required.clone(),
                                 namespace,
+                                declared_type: self
+                                    .type_table
+                                    .declared_associated_consts(trait_name)
+                                    .into_iter()
+                                    .find(|(name, _)| *name == *required)
+                                    .map(|(_, ty)| ty.source_spelling()),
                             },
                             span: self_type.span,
                             reason: impl_site_reason(Some(trait_name), &target_ty),
@@ -1145,6 +1368,12 @@ impl TypeInference {
                 .filter(|name| !self.type_table.satisfies_bound(name, &target_ty, &[]))
                 .collect();
             missing.sort_unstable();
+            if !missing.is_empty() {
+                self.impls_missing_supertraits.insert(
+                    (trait_name.to_string(), header.target.clone()),
+                    (target_ty.clone(), missing.clone()),
+                );
+            }
             for name in missing {
                 self.errors.push(crate::constraint::TypeError {
                     kind: crate::constraint::TypeErrorKind::MissingSupertraitImpl {
@@ -1243,6 +1472,11 @@ impl TypeInference {
         let target_ty = header.target_ty.clone();
         let saved_impl_self = self.current_impl_self.replace(target_ty.clone());
         let required = self.type_table.declared_associated_consts(trait_name);
+        let instantiation = self.trait_instantiation(trait_name, &header.trait_args, &target_ty);
+        let saved_type_params = std::mem::replace(
+            &mut self.type_params_in_scope,
+            block.impl_type_params.to_vec(),
+        );
         let mut typed_associated_consts = Vec::with_capacity(associated_consts.len());
         for item in associated_consts {
             let declared = self.type_from_annotation_as(
@@ -1251,24 +1485,59 @@ impl TypeInference {
             );
             let value_ty = self.infer_const_expr_type(&item.value);
             let value = constant_int_literal(&item.value);
+            // the trait declaration cannot name an impl's parameter, so a declared
+            let declares_impl_param = block
+                .impl_type_params
+                .iter()
+                .any(|param| declared.mentions_param(param));
+            // a name defined twice is refused as a duplicate, and neither of the two
+            let defined_once = associated_consts
+                .iter()
+                .filter(|other| other.name == item.name)
+                .count()
+                == 1;
             if let Some((_, required_ty)) = required.iter().find(|(name, _)| name == &item.name)
+                && defined_once
                 && !declared.contains_poison()
             {
-                if !self.type_table.types_match(required_ty, &declared) {
+                let instantiated = required_ty.substitute_params(&instantiation);
+                if declares_impl_param || !self.type_table.types_match(&instantiated, &declared) {
                     self.errors.push(crate::constraint::TypeError {
                         kind: crate::constraint::TypeErrorKind::AssociatedItemTypeMismatch {
                             trait_name: trait_name.to_string(),
                             item: item.name.clone(),
                             disagreement:
-                                crate::constraint::AssociatedItemDisagreement::DeclaredType,
+                                crate::constraint::AssociatedItemDisagreement::DeclaredType {
+                                    declared: self.settled_spelling(&instantiated),
+                                    found: self.settled_spelling(&declared),
+                                },
                         },
                         span: item.span,
                         reason: crate::constraint::ConstraintReason::Other(format!(
-                            "declared type in the impl for '{target_ty}'"
+                            "declared type in the impl for '{}'",
+                            target_ty.source_spelling()
                         )),
                     });
-                } else if !matches!(value_ty, InferType::Poison)
-                    && !self.type_table.types_match(&declared, &value_ty)
+                } else if self.settled_associated_const_type(required_ty).is_none()
+                    && let Some(settled) = self.settled_associated_const_type(&instantiated)
+                    && !settled.folds_an_associated_constant()
+                {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::UnfoldableAssociatedConstType {
+                            trait_name: trait_name.to_string(),
+                            item: item.name.clone(),
+                            declared: settled.source_spelling(),
+                        },
+                        span: item.span,
+                        reason: crate::constraint::ConstraintReason::Other(format!(
+                            "declared type in the impl for '{}'",
+                            target_ty.source_spelling()
+                        )),
+                    });
+                } else if !matches!(value_ty, Some(InferType::Poison))
+                    && !value_ty
+                        .as_ref()
+                        .is_some_and(|found| self.type_table.types_match(&declared, found))
                 {
                     self.errors.push(crate::constraint::TypeError {
                         kind: crate::constraint::TypeErrorKind::AssociatedItemTypeMismatch {
@@ -1276,19 +1545,30 @@ impl TypeInference {
                             item: item.name.clone(),
                             disagreement:
                                 crate::constraint::AssociatedItemDisagreement::ConstantValue {
-                                    declared: declared.to_string(),
-                                    found: value_ty.to_string(),
+                                    declared: self.settled_spelling(&declared),
+                                    found: value_ty
+                                        .as_ref()
+                                        .map(|found| self.settled_spelling(found)),
                                 },
                         },
                         span: item.span,
                         reason: crate::constraint::ConstraintReason::Other(format!(
-                            "constant value in the impl for '{target_ty}'"
+                            "constant value in the impl for '{}'",
+                            target_ty.source_spelling()
                         )),
                     });
                 }
             }
-            typed_associated_consts.push((item.name.clone(), declared, value_ty, value));
+            if self.trait_owns_item(
+                trait_name,
+                &item.name,
+                crate::constraint::ItemNamespace::Const,
+            ) {
+                let recorded = value_ty.unwrap_or_else(|| declared.clone());
+                typed_associated_consts.push((item.name.clone(), declared, recorded, value));
+            }
         }
+        self.type_params_in_scope = saved_type_params;
         if let Some(slot) = name.slot
             && let Some(definition) = self.type_table.trait_impl_def_at_mut(slot)
         {
@@ -1312,7 +1592,8 @@ impl TypeInference {
         let impl_bounds = header.bounds.clone();
         let impl_bindings = header.bindings.clone();
         let saved_impl_self = self.current_impl_self.replace(target_ty.clone());
-        let effective_methods = self.effective_impl_methods(block.methods, trait_name.as_deref());
+        let effective_methods =
+            self.adopted_impl_methods(block.methods, trait_name.as_deref(), &target);
         let methods = effective_methods.as_slice();
         let mut registered_trait_methods = Vec::new();
         let saved_default_body = self.in_trait_default_body;
@@ -1413,6 +1694,13 @@ impl TypeInference {
                 .map(|param| param.substitute_params(&self_substitution))
                 .collect();
             ret = ret.substitute_params(&self_substitution);
+            params = params
+                .iter()
+                .map(|param| {
+                    self.normalize_projection_in_signature(param, associated_types, &target_ty)
+                })
+                .collect();
+            ret = self.normalize_projection_in_signature(&ret, associated_types, &target_ty);
             self.current_function_bounds = saved_bounds;
             self.current_function_bindings = saved_bindings;
             self.type_params_in_scope = saved_type_params;
@@ -1439,8 +1727,20 @@ impl TypeInference {
                     .map(|param| param.substitute_params(&substitutions))
                     .collect();
                 let expected_return = required.return_type.substitute_params(&substitutions);
-                let expected_return =
-                    self.normalize_projection_in_signature(&expected_return, associated_types);
+                let saved_type_params =
+                    std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
+                let expected_params: Vec<_> = expected_params
+                    .iter()
+                    .map(|param| {
+                        self.normalize_projection_in_signature(param, associated_types, &target_ty)
+                    })
+                    .collect();
+                let expected_return = self.normalize_projection_in_signature(
+                    &expected_return,
+                    associated_types,
+                    &target_ty,
+                );
+                self.type_params_in_scope = saved_type_params;
                 let signature_matches = params.len() == expected_params.len()
                     && params
                         .iter()
@@ -1475,6 +1775,15 @@ impl TypeInference {
                 .as_deref()
                 .map(|name| trait_method_symbol(name, &target, &method.name, &trait_args))
                 .unwrap_or_else(|| struct_method_symbol(&target, &method.name));
+            if impl_type_params.is_empty() {
+                let written_here = index < block.methods.len();
+                let span = if written_here {
+                    method.span
+                } else {
+                    block.self_type.span
+                };
+                self.report_impl_symbol_collision(&symbol, &target, &method.name, span, &target_ty);
+            }
             self.function_reference_modes.insert(
                 symbol.clone(),
                 method.params.iter().map(|param| param.reference).collect(),
@@ -1541,32 +1850,189 @@ impl TypeInference {
         self.current_impl_self = saved_impl_self;
     }
 
-    pub(super) fn infer_const_expr_type(&mut self, expr: &aelys_syntax::Expr) -> InferType {
+    // a generic impl mints one symbol per instance in the monomorphizer, which
+    fn report_impl_symbol_collision(
+        &mut self,
+        symbol: &str,
+        target: &str,
+        method: &str,
+        span: aelys_syntax::Span,
+        target_ty: &InferType,
+    ) {
+        match self.impl_method_symbol_targets.get(symbol) {
+            Some(previous) if previous == target_ty => {}
+            Some(_) => {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::MangledSymbolCollision {
+                        name: format!("{target}::{method}"),
+                    },
+                    span,
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "impl method symbol".to_string(),
+                    ),
+                });
+            }
+            None => {
+                self.impl_method_symbol_targets
+                    .insert(symbol.to_string(), target_ty.clone());
+            }
+        }
+    }
+
+    pub(super) fn infer_const_expr_type(&mut self, expr: &aelys_syntax::Expr) -> Option<InferType> {
         use aelys_syntax::ExprKind;
         match &expr.kind {
-            ExprKind::Int(_) => InferType::I64,
-            ExprKind::Float(_) => InferType::F64,
-            ExprKind::Bool(_) => InferType::Bool,
-            ExprKind::String(_) => InferType::String,
+            ExprKind::Int(_) => Some(InferType::I64),
+            ExprKind::Float(_) => Some(InferType::F64),
+            ExprKind::Bool(_) => Some(InferType::Bool),
+            ExprKind::String(_) => Some(InferType::String),
             ExprKind::Unary { op, operand } => {
                 use aelys_syntax::UnaryOp;
                 match op {
-                    UnaryOp::Neg => self.infer_const_expr_type(operand),
-                    UnaryOp::Not => self.infer_const_expr_type(operand),
-                    _ => InferType::I64,
+                    UnaryOp::Neg | UnaryOp::Not => self.infer_const_expr_type(operand),
+                    _ => None,
                 }
             }
             ExprKind::Binary { left, right, .. } => {
-                let left_ty = self.infer_const_expr_type(left);
-                let right_ty = self.infer_const_expr_type(right);
+                let left_ty = self.infer_const_expr_type(left)?;
+                let right_ty = self.infer_const_expr_type(right)?;
                 if left_ty.is_integer() && right_ty.is_integer() {
-                    InferType::I64
+                    Some(InferType::I64)
+                } else if left_ty.is_numeric() && right_ty.is_numeric() {
+                    Some(InferType::F64)
                 } else {
-                    InferType::F64
+                    None
                 }
             }
             ExprKind::Grouping(inner) => self.infer_const_expr_type(inner),
-            _ => InferType::I64,
+            ExprKind::Member {
+                object,
+                member,
+                separator: aelys_syntax::MemberSeparator::Path,
+            } => {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    return None;
+                };
+                let receiver = match name.as_str() {
+                    "Self" => crate::types::nominal_name(self.current_impl_self.as_ref()?)?,
+                    _ => name.clone(),
+                };
+                self.referenced_const_type(&receiver, member)
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn referenced_const_type(&self, receiver: &str, item: &str) -> Option<InferType> {
+        let declared_by = |trait_name: &str| {
+            self.type_table
+                .declared_associated_consts(trait_name)
+                .into_iter()
+                .find(|(name, _)| name == item)
+                .map(|(_, ty)| ty)
+        };
+        if let Some(ty) = declared_by(receiver) {
+            return Some(ty);
+        }
+        let mut traits: Vec<String> = self
+            .associated_const_candidates(receiver, item)
+            .into_iter()
+            .map(|(trait_name, _, _)| trait_name)
+            .collect();
+        traits.sort();
+        traits.dedup();
+        let [only] = traits.as_slice() else {
+            return None;
+        };
+        declared_by(only)
+    }
+
+    pub(super) fn validate_projected_associated_const_types(&mut self) {
+        let pending = std::mem::take(&mut self.projected_associated_const_types);
+        for entry in &pending {
+            let Some(settled) = self.settled_associated_const_type(&entry.declared) else {
+                continue;
+            };
+            if settled.folds_an_associated_constant() {
+                continue;
+            }
+            let trait_name = &entry.trait_name;
+            self.errors.push(crate::constraint::TypeError {
+                kind: crate::constraint::TypeErrorKind::UnfoldableAssociatedConstType {
+                    trait_name: trait_name.clone(),
+                    item: entry.item.clone(),
+                    declared: settled.source_spelling(),
+                },
+                span: entry.span,
+                reason: crate::constraint::ConstraintReason::Other(format!(
+                    "declared type in trait '{trait_name}'"
+                )),
+            });
+        }
+    }
+
+    fn trait_instantiation(
+        &self,
+        trait_name: &str,
+        trait_args: &[InferType],
+        target_ty: &InferType,
+    ) -> HashMap<String, InferType> {
+        let mut instantiation = HashMap::from([("Self".to_string(), target_ty.clone())]);
+        let Some(definition) = self.type_table.get_trait(trait_name) else {
+            return instantiation;
+        };
+        for (param, argument) in definition.type_params.iter().zip(trait_args) {
+            instantiation.insert(param.clone(), argument.clone());
+        }
+        instantiation
+    }
+
+    /// none while a parameter or an unresolved projection leaves it open
+    pub(super) fn settled_associated_const_type(&self, ty: &InferType) -> Option<InferType> {
+        let settled = match ty {
+            InferType::Projection { .. } => self.resolve_associated_projection(ty)?,
+            other => other.clone(),
+        };
+        settled.is_concrete().then_some(settled)
+    }
+
+    pub(super) fn settled_spelling(&self, ty: &InferType) -> String {
+        self.settled_associated_const_type(ty)
+            .unwrap_or_else(|| ty.clone())
+            .source_spelling()
+    }
+
+    fn impl_declared_const_type(&self, receiver: &str, item: &str) -> Option<InferType> {
+        let self_ty = InferType::Struct(receiver.to_string());
+        let mut found = Vec::new();
+        for implementation in self.type_table.trait_impl_defs() {
+            if !self
+                .type_table
+                .types_match(&implementation.self_type, &self_ty)
+            {
+                continue;
+            }
+            if let Some((_, declared, _, _)) = implementation
+                .associated_consts
+                .iter()
+                .find(|(name, _, _, _)| name == item)
+            {
+                found.push(declared.clone());
+            }
+        }
+        let [only] = found.as_slice() else {
+            return None;
+        };
+        Some(only.clone())
+    }
+
+    pub(super) fn non_integer_const_type(&self, receiver: &str, item: &str) -> Option<String> {
+        let declared = self
+            .impl_declared_const_type(receiver, item)
+            .or_else(|| self.referenced_const_type(receiver, item))?;
+        match declared.is_integer() {
+            true => None,
+            false => Some(self.settled_spelling(&declared)),
         }
     }
 
@@ -1598,12 +2064,11 @@ impl TypeInference {
             if candidates.len() < 2 {
                 continue;
             }
-            let mut traits: Vec<String> = candidates.into_iter().map(|(name, _)| name).collect();
-            traits.sort();
-            traits.dedup();
+            let traits: Vec<String> = candidates.into_iter().map(|(name, _)| name).collect();
+            let traits = self.traits_by_nameability(traits);
             self.errors.push(crate::constraint::TypeError {
                 kind: crate::constraint::TypeErrorKind::AmbiguousAssociatedProjection {
-                    receiver: self_ty.to_string(),
+                    receiver: self_ty.source_spelling(),
                     item: item.clone(),
                     cause: crate::constraint::ProjectionFailure::Ambiguous { traits },
                 },
@@ -1619,6 +2084,7 @@ impl TypeInference {
         &mut self,
         ty: &InferType,
         associated_types: &[aelys_syntax::AssociatedTypeDef],
+        target_ty: &InferType,
     ) -> InferType {
         match ty {
             InferType::Projection {
@@ -1626,49 +2092,62 @@ impl TypeInference {
                 item,
                 self_ty,
             } => {
-                if let Some(definition) = associated_types
-                    .iter()
-                    .find(|candidate| &candidate.name == item)
+                if self_ty.as_ref() == target_ty
+                    && let Some(definition) = associated_types
+                        .iter()
+                        .find(|candidate| &candidate.name == item)
                 {
                     return self.type_from_annotation(&definition.value);
                 }
                 InferType::Projection {
                     trait_name: trait_name.clone(),
                     item: item.clone(),
-                    self_ty: Box::new(
-                        self.normalize_projection_in_signature(self_ty, associated_types),
-                    ),
+                    self_ty: Box::new(self.normalize_projection_in_signature(
+                        self_ty,
+                        associated_types,
+                        target_ty,
+                    )),
                 }
             }
             InferType::Function { params, ret } => InferType::Function {
                 params: params
                     .iter()
-                    .map(|param| self.normalize_projection_in_signature(param, associated_types))
+                    .map(|param| {
+                        self.normalize_projection_in_signature(param, associated_types, target_ty)
+                    })
                     .collect(),
-                ret: Box::new(self.normalize_projection_in_signature(ret, associated_types)),
+                ret: Box::new(self.normalize_projection_in_signature(
+                    ret,
+                    associated_types,
+                    target_ty,
+                )),
             },
             InferType::Array(inner) => InferType::Array(Box::new(
-                self.normalize_projection_in_signature(inner, associated_types),
+                self.normalize_projection_in_signature(inner, associated_types, target_ty),
             )),
             InferType::FixedArray(inner, length) => InferType::FixedArray(
-                Box::new(self.normalize_projection_in_signature(inner, associated_types)),
+                Box::new(self.normalize_projection_in_signature(
+                    inner,
+                    associated_types,
+                    target_ty,
+                )),
                 *length,
             ),
             InferType::Vec(inner) => InferType::Vec(Box::new(
-                self.normalize_projection_in_signature(inner, associated_types),
+                self.normalize_projection_in_signature(inner, associated_types, target_ty),
             )),
             InferType::Option(inner) => InferType::Option(Box::new(
-                self.normalize_projection_in_signature(inner, associated_types),
+                self.normalize_projection_in_signature(inner, associated_types, target_ty),
             )),
             InferType::Result(ok, err) => InferType::Result(
-                Box::new(self.normalize_projection_in_signature(ok, associated_types)),
-                Box::new(self.normalize_projection_in_signature(err, associated_types)),
+                Box::new(self.normalize_projection_in_signature(ok, associated_types, target_ty)),
+                Box::new(self.normalize_projection_in_signature(err, associated_types, target_ty)),
             ),
             InferType::Tuple(elements) => InferType::Tuple(
                 elements
                     .iter()
                     .map(|element| {
-                        self.normalize_projection_in_signature(element, associated_types)
+                        self.normalize_projection_in_signature(element, associated_types, target_ty)
                     })
                     .collect(),
             ),
@@ -1676,11 +2155,44 @@ impl TypeInference {
                 name: name.clone(),
                 args: args
                     .iter()
-                    .map(|arg| self.normalize_projection_in_signature(arg, associated_types))
+                    .map(|arg| {
+                        self.normalize_projection_in_signature(arg, associated_types, target_ty)
+                    })
                     .collect(),
             },
             _ => ty.clone(),
         }
+    }
+
+    pub(super) fn supertrait_gate_error(
+        &self,
+        target: &str,
+        member: &str,
+        span: aelys_syntax::Span,
+    ) -> Option<crate::constraint::TypeError> {
+        supertrait_gate_error_for(
+            &self.type_table,
+            &self.impls_missing_supertraits,
+            target,
+            member,
+            span,
+        )
+    }
+
+    pub(super) fn adopted_impl_methods(
+        &self,
+        methods: &[Function],
+        trait_name: Option<&str>,
+        target: &str,
+    ) -> Vec<Function> {
+        if let Some(name) = trait_name
+            && self
+                .impls_missing_supertraits
+                .contains_key(&(name.to_string(), target.to_string()))
+        {
+            return methods.to_vec();
+        }
+        self.effective_impl_methods(methods, trait_name)
     }
 
     pub(super) fn effective_impl_methods(
@@ -2040,8 +2552,43 @@ fn impl_site_reason(
     trait_name: Option<&str>,
     target: &InferType,
 ) -> crate::constraint::ConstraintReason {
+    let target = target.source_spelling();
     crate::constraint::ConstraintReason::Other(match trait_name {
         Some(trait_name) => format!("impl of trait '{trait_name}' for '{target}'"),
         None => format!("inherent impl of '{target}'"),
     })
+}
+
+// monomorphization meets the same withheld default through a bound on a type
+pub(super) fn supertrait_gate_error_for(
+    type_table: &crate::types::TypeTable,
+    gate: &std::collections::BTreeMap<(String, String), (crate::types::InferType, Vec<String>)>,
+    target: &str,
+    member: &str,
+    span: aelys_syntax::Span,
+) -> Option<crate::constraint::TypeError> {
+    for ((trait_name, impl_target), (target_ty, missing)) in gate {
+        if impl_target != target {
+            continue;
+        }
+        if !type_table.get_trait(trait_name).is_some_and(|definition| {
+            definition
+                .methods
+                .iter()
+                .any(|method| method.name == member)
+        }) {
+            continue;
+        }
+        let supertrait = missing.first()?.clone();
+        return Some(crate::constraint::TypeError {
+            kind: crate::constraint::TypeErrorKind::MissingSupertraitImpl {
+                trait_name: trait_name.clone(),
+                supertrait,
+                ty: target_ty.clone(),
+            },
+            span,
+            reason: impl_site_reason(Some(trait_name), target_ty),
+        });
+    }
+    None
 }

@@ -12,7 +12,7 @@ pub use env::TypeEnv;
 pub use infer::{
     GENERATED_SYMBOL_PREFIX, TypeInference,
     entry::{InferenceInputs, InferenceResult},
-    is_mangled_symbol,
+    is_mangled_symbol, is_module_scoped_global, module_scoped_global, unscoped_global_name,
 };
 pub use typed_ast::{
     TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedMatchArm, TypedMatchArmBody,

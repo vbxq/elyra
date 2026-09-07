@@ -1920,7 +1920,25 @@ impl TypeInference {
                     };
                 }
                 let name = path.last().cloned().unwrap_or_default();
-                let Some(def) = self.type_table.get_struct(&name).cloned() else {
+                let refused = self.private_nominal_error(&name, pattern.span);
+                let Some(def) = refused
+                    .is_none()
+                    .then(|| self.type_table.get_struct(&name).cloned())
+                    .flatten()
+                else {
+                    if let Some(error) = refused {
+                        self.errors.push(error);
+                        return TypedPattern {
+                            kind: TypedPatternKind::Struct {
+                                name,
+                                schema_index: 0,
+                                fields: Vec::new(),
+                                has_rest: true,
+                            },
+                            ty: InferType::Poison,
+                            span: pattern.span,
+                        };
+                    }
                     self.errors.push(TypeError {
                         kind: self.nominal_error_kind(
                             &name,

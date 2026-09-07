@@ -19,6 +19,7 @@ pub struct InferenceInputs {
     pub known_native_signatures: HashMap<String, InferType>,
     pub imported_types: crate::infer::imports::ImportedTypes,
     pub current_module: ModuleId,
+    pub scope_own_globals: bool,
 }
 
 pub struct InferenceResult {
@@ -62,19 +63,26 @@ impl Default for TypeInference {
             known_globals: HashSet::new(),
             globals_without_signature: HashSet::new(),
             module_globals: std::collections::BTreeMap::new(),
+            module_scoped_globals: std::collections::BTreeMap::new(),
+            scope_own_globals: false,
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),
             current_module: ModuleId::new("<unknown>"),
             collection_iter_allowed: false,
             withheld_nominals: std::collections::BTreeMap::new(),
+            private_nominals: std::collections::BTreeMap::new(),
+            unexported_nominals: std::collections::BTreeSet::new(),
+            root_module: ModuleId::new("<unknown>"),
             monomorphization_active: Vec::new(),
             current_trait_name: None,
             current_trait_associated_items: Vec::new(),
+            projected_associated_const_types: Vec::new(),
             nominal_parameter_scope: false,
             current_function_bounds: Vec::new(),
             current_function_bindings: Vec::new(),
             generic_function_bindings: HashMap::new(),
             impl_method_signatures: HashMap::new(),
+            impl_method_symbol_targets: HashMap::new(),
             associated_type_definitions: Vec::new(),
             associated_const_resolution_cache: std::cell::RefCell::new(None),
             trait_qualified_items: HashMap::new(),
@@ -84,6 +92,7 @@ impl Default for TypeInference {
             occurrence_role: None,
             current_impl_self: None,
             in_trait_default_body: false,
+            impls_missing_supertraits: std::collections::BTreeMap::new(),
             projection_cycle_escaped: std::cell::Cell::new(false),
             substitution_depth: std::cell::Cell::new(0),
             substitution_overflowed: std::cell::Cell::new(None),
@@ -298,11 +307,27 @@ impl TypeInference {
                 let mut traits: Vec<String> =
                     candidates.into_iter().map(|(name, _)| name).collect();
                 traits.sort();
+                traits.dedup();
+                let receiver = self.projection_receiver(self_segment);
+                let cause = match traits.as_slice() {
+                    [only] => ProjectionFailure::AmbiguousInstantiations {
+                        trait_name: only.clone(),
+                        constructor: receiver.clone(),
+                        instantiations: self.rival_instantiations(
+                            &receiver,
+                            &item_name,
+                            ItemNamespace::Type,
+                        ),
+                    },
+                    _ => ProjectionFailure::Ambiguous {
+                        traits: self.traits_by_nameability(traits),
+                    },
+                };
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::AmbiguousAssociatedProjection {
-                        receiver: self.projection_receiver(self_segment),
+                        receiver,
                         item: item_name,
-                        cause: ProjectionFailure::Ambiguous { traits },
+                        cause,
                     },
                     span: ann.span,
                     reason: failure_reason,
@@ -313,11 +338,16 @@ impl TypeInference {
                 self.associated_item_namespace(self_segment, &item_name, self.annotation_namespace),
                 Some(ProjectionNamespace::Absent)
             ) {
+                let receiver = self.projection_receiver(self_segment);
+                let cause = match self.bare_receiver_definition(&receiver, &item_name) {
+                    Some(definition) => ProjectionFailure::ReceiverArguments { param: definition },
+                    None => ProjectionFailure::NoImpl,
+                };
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::AmbiguousAssociatedProjection {
-                        receiver: self.projection_receiver(self_segment),
+                        receiver,
                         item: item_name,
-                        cause: ProjectionFailure::NoImpl,
+                        cause,
                     },
                     span: ann.span,
                     reason: failure_reason,
@@ -426,6 +456,11 @@ impl TypeInference {
         if self.type_params_in_scope.iter().any(|tp| tp == &ann.name) {
             return;
         }
+        let head = ann.path.first().unwrap_or(&ann.name);
+        if let Some(error) = self.private_nominal_error(head, ann.span) {
+            self.errors.push(error);
+            return;
+        }
 
         // standalone type, so the nominal fallback below must not fire.
         if ann.path.len() >= 2 && ann.type_params.is_empty() {
@@ -438,6 +473,20 @@ impl TypeInference {
                 && !self.type_table.has_nominal(self_segment)
                 && self.type_table.get_trait(self_segment).is_none()
             {
+                if KNOWN_TYPE_NAMES.contains(&self_segment.to_lowercase().as_str()) {
+                    let item = ann.path.last().cloned().unwrap_or_default();
+                    let reason = self.occurrence_reason("a type annotation");
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::AmbiguousAssociatedProjection {
+                            receiver: self_segment.clone(),
+                            item,
+                            cause: ProjectionFailure::BuiltinReceiver,
+                        },
+                        span: ann.span,
+                        reason,
+                    });
+                    return;
+                }
                 self.errors.push(TypeError {
                     kind: self.nominal_error_kind(
                         self_segment,
@@ -709,13 +758,23 @@ impl TypeInference {
             }
             return projection;
         }
+        let mut types = targets.clone();
+        types.sort();
+        types.dedup();
+        let rivals = match types.as_slice() {
+            [only] => self.rival_instantiations(only, item, ItemNamespace::Type),
+            _ => Vec::new(),
+        };
         let cause = if targets.is_empty() {
             ProjectionFailure::NoImpl
+        } else if rivals.len() > 1 {
+            ProjectionFailure::AmbiguousInstantiations {
+                trait_name: trait_name.to_string(),
+                constructor: types[0].clone(),
+                instantiations: rivals,
+            }
         } else {
-            let mut traits = targets;
-            traits.sort();
-            traits.dedup();
-            ProjectionFailure::Ambiguous { traits }
+            ProjectionFailure::AmbiguousImplementors { types }
         };
         let reason = self.occurrence_reason("a type annotation");
         self.errors.push(TypeError {
@@ -745,10 +804,11 @@ impl TypeInference {
             {
                 continue;
             }
-            if !self
+            let matched = self
                 .type_table
-                .types_match(&implementation.self_type, self_ty)
-            {
+                .types_match(&implementation.self_type, self_ty);
+            let bare = !matched && bare_receiver_names_header(&implementation.self_type, self_ty);
+            if !matched && !bare {
                 continue;
             }
             if let Some((_, ty)) = implementation
@@ -756,10 +816,71 @@ impl TypeInference {
                 .iter()
                 .find(|(name, _)| name == item)
             {
-                found.push((implementation.trait_name.clone(), ty.clone()));
+                if bare && definition_needs_arguments(&implementation.self_type, ty) {
+                    continue;
+                }
+                found.push((
+                    implementation.trait_name.clone(),
+                    crate::types::instantiate_impl_definition(
+                        &implementation.self_type,
+                        self_ty,
+                        ty,
+                    ),
+                ));
             }
         }
         found
+    }
+
+    pub(super) fn rival_instantiations(
+        &self,
+        receiver: &str,
+        item: &str,
+        namespace: ItemNamespace,
+    ) -> Vec<String> {
+        let written = InferType::Struct(receiver.to_string());
+        let mut names: Vec<String> = self
+            .type_table
+            .trait_impl_defs()
+            .iter()
+            .filter(|implementation| {
+                bare_receiver_names_header(&implementation.self_type, &written)
+                    && match namespace {
+                        ItemNamespace::Type => implementation
+                            .associated_types
+                            .iter()
+                            .any(|(name, _)| name == item),
+                        ItemNamespace::Const => implementation
+                            .associated_consts
+                            .iter()
+                            .any(|(name, _, _, _)| name == item),
+                    }
+            })
+            .map(|implementation| implementation.self_type.source_spelling())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    pub(super) fn bare_receiver_definition(&self, receiver: &str, item: &str) -> Option<String> {
+        let written = InferType::Struct(receiver.to_string());
+        for implementation in self.type_table.trait_impl_defs() {
+            if !bare_receiver_names_header(&implementation.self_type, &written) {
+                continue;
+            }
+            let Some((_, ty)) = implementation
+                .associated_types
+                .iter()
+                .find(|(name, _)| name == item)
+            else {
+                continue;
+            };
+            if definition_needs_arguments(&implementation.self_type, ty) {
+                return Some(ty.source_spelling());
+            }
+        }
+        None
     }
 
     /// resolves a symbolic fixed-array length `[t; bounds::limit]` by looking
@@ -836,11 +957,34 @@ impl TypeInference {
             });
             return;
         }
-        let cause = match self.resolve_constant(&receiver, &item) {
-            ConstResolution::Value(_) => ProjectionFailure::InvalidLength,
-            ConstResolution::Ambiguous(traits) => ProjectionFailure::Ambiguous { traits },
+        let resolution = self.resolve_constant(&receiver, &item);
+        if let ConstResolution::Value(value) = resolution {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::NegativeArraySize {
+                    size: value,
+                    constant: Some(format!("{}::{item}", self.projection_receiver(&receiver))),
+                },
+                span,
+                reason: ConstraintReason::Other("an array length".to_string()),
+            });
+            return;
+        }
+        let cause = match resolution {
+            ConstResolution::Value(_) => unreachable!("returned above"),
+            ConstResolution::Ambiguous(names) => self.projection_ambiguity(&receiver, names),
+            ConstResolution::AmbiguousInstantiations {
+                trait_name,
+                constructor,
+                instantiations,
+            } => ProjectionFailure::AmbiguousInstantiations {
+                trait_name,
+                constructor,
+                instantiations,
+            },
             ConstResolution::NotComputable => ProjectionFailure::NotComputable,
-            ConstResolution::NotConstant => ProjectionFailure::NotConstant,
+            ConstResolution::NotConstant => ProjectionFailure::NotConstant {
+                declared: self.non_integer_const_type(&receiver, &item),
+            },
             ConstResolution::Cyclic => ProjectionFailure::Cyclic {
                 path: vec![format!("{receiver}::{item}")],
                 namespace: crate::constraint::ItemNamespace::Const,
@@ -863,9 +1007,43 @@ impl TypeInference {
         });
     }
 
+    pub(super) fn projection_ambiguity(
+        &self,
+        receiver: &str,
+        mut names: Vec<String>,
+    ) -> ProjectionFailure {
+        names.sort();
+        names.dedup();
+        if self.type_table.get_trait(receiver).is_some() && !self.type_table.has_nominal(receiver) {
+            return ProjectionFailure::AmbiguousImplementors { types: names };
+        }
+        ProjectionFailure::Ambiguous {
+            traits: self.traits_by_nameability(names),
+        }
+    }
+
+    /// the offered repair is written in the file the caret is in, and a carried body cannot
+    pub(super) fn trait_nameable_here(&self, name: &str) -> bool {
+        if self.current_module == self.root_module {
+            return true;
+        }
+        self.type_table
+            .get_trait(name)
+            .is_none_or(|definition| definition.owner != self.root_module)
+    }
+
+    pub(super) fn traits_by_nameability(&self, mut names: Vec<String>) -> Vec<String> {
+        names.sort();
+        names.dedup();
+        let (here, elsewhere): (Vec<String>, Vec<String>) = names
+            .into_iter()
+            .partition(|name| self.trait_nameable_here(name));
+        here.into_iter().chain(elsewhere).collect()
+    }
+
     pub(super) fn projection_receiver(&self, receiver: &str) -> String {
         match (receiver, self.current_impl_self.as_ref()) {
-            ("Self", Some(target)) if !self.in_trait_default_body => target.to_string(),
+            ("Self", Some(target)) if !self.in_trait_default_body => target.source_spelling(),
             _ => receiver.to_string(),
         }
     }
@@ -975,7 +1153,7 @@ impl TypeInference {
             targets.dedup();
             return match targets.as_slice() {
                 [] => ConstResolution::Missing,
-                [only] => self.resolve_associated_const_value(only, item),
+                [only] => self.resolve_associated_const_value_in(only, item, Some(receiver)),
                 _ => ConstResolution::Ambiguous(targets),
             };
         }
@@ -987,11 +1165,39 @@ impl TypeInference {
         self_name: &str,
         item: &str,
     ) -> ConstResolution {
+        self.resolve_associated_const_value_in(self_name, item, None)
+    }
+
+    fn resolve_associated_const_value_in(
+        &self,
+        self_name: &str,
+        item: &str,
+        only_trait: Option<&str>,
+    ) -> ConstResolution {
         let mut candidates = self.associated_const_candidates(self_name, item);
+        if let Some(trait_name) = only_trait {
+            let closure = self.type_table.supertrait_closure(trait_name);
+            candidates.retain(|(declaring, _, _)| closure.contains(declaring));
+        }
         if candidates.len() > 1 {
-            let mut traits: Vec<String> = candidates.into_iter().map(|(name, _)| name).collect();
+            let mut traits: Vec<String> =
+                candidates.iter().map(|(name, _, _)| name.clone()).collect();
             traits.sort();
-            return ConstResolution::Ambiguous(traits);
+            traits.dedup();
+            if let [only] = traits.as_slice() {
+                let mut instantiations: Vec<String> = candidates
+                    .into_iter()
+                    .map(|(_, instantiation, _)| instantiation)
+                    .collect();
+                instantiations.sort();
+                instantiations.dedup();
+                return ConstResolution::AmbiguousInstantiations {
+                    trait_name: only.clone(),
+                    constructor: self_name.to_string(),
+                    instantiations,
+                };
+            }
+            return ConstResolution::Ambiguous(self.traits_by_nameability(traits));
         }
         if candidates.is_empty() {
             let key = (self_name.to_string(), item.to_string());
@@ -1001,7 +1207,7 @@ impl TypeInference {
             let mut state = ConstEvalState::new(key);
             return self.eval_const_expr_value(&expr, &owner, &mut state);
         }
-        if let Some(value) = candidates.swap_remove(0).1 {
+        if let Some(value) = candidates.swap_remove(0).2 {
             return ConstResolution::Value(value);
         }
         let key = (self_name.to_string(), item.to_string());
@@ -1142,13 +1348,14 @@ impl TypeInference {
         &self,
         self_name: &str,
         item: &str,
-    ) -> Vec<(String, Option<i64>)> {
+    ) -> Vec<(String, String, Option<i64>)> {
         let self_ty = InferType::Struct(self_name.to_string());
         let mut found = Vec::new();
         for implementation in self.type_table.trait_impl_defs() {
             if !self
                 .type_table
                 .types_match(&implementation.self_type, &self_ty)
+                && !bare_receiver_names_header(&implementation.self_type, &self_ty)
             {
                 continue;
             }
@@ -1157,7 +1364,11 @@ impl TypeInference {
                 .iter()
                 .find(|(name, _, _, _)| name == item)
             {
-                found.push((implementation.trait_name.clone(), *value));
+                found.push((
+                    implementation.trait_name.clone(),
+                    implementation.self_type.source_spelling(),
+                    *value,
+                ));
             }
         }
         found
@@ -1245,6 +1456,7 @@ impl TypeInference {
             known_native_signatures,
             imported_types,
             current_module,
+            scope_own_globals: false,
         })
     }
 
@@ -1260,9 +1472,12 @@ impl TypeInference {
             known_native_signatures,
             imported_types,
             current_module,
+            scope_own_globals,
         } = inputs;
         let mut inf = TypeInference::new();
+        inf.root_module = current_module.clone();
         inf.current_module = current_module;
+        inf.scope_own_globals = scope_own_globals;
         inf.module_aliases = module_aliases.clone();
         inf.known_globals = known_globals.clone();
         inf.known_native_globals = known_native_globals;
@@ -1303,6 +1518,7 @@ impl TypeInference {
         let declared_impls = inf.declare_impl_definitions(&stmts);
         inf.collect_traits(&stmts, declared_traits);
         inf.collect_declared_impls(&stmts, declared_impls);
+        inf.validate_projected_associated_const_types();
         inf.resolve_nominal_bodies(&stmts, declared_nominals);
         inf.validate_nominal_inhabitation(&stmts);
         inf.collect_function_signatures(&stmts, "");
@@ -1401,6 +1617,10 @@ impl TypeInference {
                 self.env.define_local(name.clone(), ty);
             }
             self.env.set_mutable(name, *mutable);
+            if self.scope_own_globals {
+                let scoped = crate::infer::module_scoped_global(self.current_module.as_str(), name);
+                self.env.define_local_alias(name.clone(), scoped);
+            }
         }
     }
 
@@ -1461,6 +1681,51 @@ impl TypeInference {
 }
 
 // so it must not outrank that rejection on an earlier span.
+fn bare_receiver_names_header(header: &InferType, written: &InferType) -> bool {
+    matches!(
+        (header, written),
+        (InferType::Applied { name, .. }, InferType::Struct(receiver)) if name == receiver
+    )
+}
+
+fn definition_needs_arguments(header: &InferType, definition: &InferType) -> bool {
+    let InferType::Applied { args, .. } = header else {
+        return false;
+    };
+    let mut params = Vec::new();
+    for arg in args {
+        collect_type_params(arg, &mut params);
+    }
+    params.iter().any(|param| definition.mentions_param(param))
+}
+
+fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
+    match ty {
+        InferType::Param(name) => out.push(name.clone()),
+        InferType::Applied { args, .. } | InferType::Tuple(args) => {
+            for arg in args {
+                collect_type_params(arg, out);
+            }
+        }
+        InferType::Array(inner)
+        | InferType::Vec(inner)
+        | InferType::Option(inner)
+        | InferType::FixedArray(inner, _) => collect_type_params(inner, out),
+        InferType::Result(ok, error) => {
+            collect_type_params(ok, out);
+            collect_type_params(error, out);
+        }
+        InferType::Function { params, ret } => {
+            for param in params {
+                collect_type_params(param, out);
+            }
+            collect_type_params(ret, out);
+        }
+        InferType::Projection { self_ty, .. } => collect_type_params(self_ty, out),
+        _ => {}
+    }
+}
+
 fn error_priority(kind: &TypeErrorKind) -> u8 {
     match kind {
         TypeErrorKind::DuplicateNominal { .. } => 0,

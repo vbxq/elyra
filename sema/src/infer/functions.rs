@@ -200,14 +200,26 @@ impl TypeInference {
         methods: &[Function],
         trait_path: Option<&TypeAnnotation>,
     ) -> crate::typed_ast::TypedStmtKind {
-        let target = self_type
+        let target_type = {
+            let saved =
+                std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
+            let ty =
+                self.type_from_annotation_as(crate::infer::OccurrenceRole::ImplHeader, self_type);
+            self.type_params_in_scope = saved;
+            ty
+        };
+        let written = self_type
             .path
             .last()
             .cloned()
             .unwrap_or_else(|| self_type.name.clone());
+        let target = match self_type.path.len() >= 2 {
+            true => crate::types::nominal_name(&target_type).unwrap_or(written),
+            false => written,
+        };
         let trait_name = trait_path.map(|path| path.path.join("::"));
         let trait_args = self.impl_trait_args(trait_path, impl_type_params);
-        let effective_methods = self.effective_impl_methods(methods, trait_name.as_deref());
+        let effective_methods = self.adopted_impl_methods(methods, trait_name.as_deref(), &target);
         let saved_impl_self = self
             .current_impl_self
             .replace(InferType::Struct(target.clone()));
@@ -239,14 +251,7 @@ impl TypeInference {
             target,
             trait_name,
             type_params: impl_type_params.to_vec(),
-            target_type: {
-                let saved =
-                    std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
-                let ty = self
-                    .type_from_annotation_as(crate::infer::OccurrenceRole::ImplHeader, self_type);
-                self.type_params_in_scope = saved;
-                ty
-            },
+            target_type,
             trait_args,
             methods: typed_methods,
         }

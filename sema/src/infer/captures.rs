@@ -115,7 +115,11 @@ impl TypeInference {
             TypedExprKind::Identifier(name) => {
                 if !bound.contains(name)
                     && !seen.contains(name)
-                    && let Some(ty) = self.env.captures().get(name)
+                    && let Some(ty) = self.env.captures().get(name).or_else(|| {
+                        self.env
+                            .captures()
+                            .get(crate::infer::unscoped_global_name(name))
+                    })
                 {
                     captures.push((name.clone(), ty.clone()));
                     seen.insert(name.clone());

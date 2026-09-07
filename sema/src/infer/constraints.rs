@@ -137,7 +137,7 @@ impl TypeInference {
                 let normalized = self.normalize_projection_types_bounded(&resolved, state);
                 state.visiting.pop();
                 if type_node_count(&normalized) > MAX_PROJECTION_NODES {
-                    state.overflowed = Some((self_ty.to_string(), item.clone()));
+                    state.overflowed = Some((self_ty.source_spelling(), item.clone()));
                     return InferType::Poison;
                 }
                 state.cache.insert(ty.clone(), normalized.clone());

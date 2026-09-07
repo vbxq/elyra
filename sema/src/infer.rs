@@ -39,6 +39,10 @@ pub fn is_mangled_symbol(symbol: &str) -> bool {
     bytes.len() > 8 && bytes[8] == b':' && bytes[..8].iter().all(u8::is_ascii_hexdigit)
 }
 
+pub use aelys_common::naming::{
+    MODULE_GLOBAL_PREFIX, is_module_scoped_global, module_scoped_global, unscoped_global_name,
+};
+
 #[cfg(test)]
 mod mangled_symbol_tests {
     use super::is_mangled_symbol;
@@ -123,6 +127,11 @@ pub(crate) enum ConstResolution {
     Value(i64),
     Missing,
     Ambiguous(Vec<String>),
+    AmbiguousInstantiations {
+        trait_name: String,
+        constructor: String,
+        instantiations: Vec<String>,
+    },
     Cyclic,
     /// checked arithmetic refused: overflow, or division/modulo by zero.
     NotComputable,
@@ -186,11 +195,17 @@ pub struct TypeInference {
     pub(crate) current_module: ModuleId,
     collection_iter_allowed: bool,
     withheld_nominals: std::collections::BTreeMap<String, String>,
+    private_nominals: std::collections::BTreeMap<String, String>,
+    unexported_nominals: std::collections::BTreeSet<String>,
+    root_module: ModuleId,
     module_globals:
         std::collections::BTreeMap<String, std::collections::BTreeMap<String, InferType>>,
+    module_scoped_globals: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    scope_own_globals: bool,
     pub(crate) monomorphization_active: Vec<(String, Vec<InferType>)>,
     current_trait_name: Option<String>,
     current_trait_associated_items: Vec<String>,
+    projected_associated_const_types: Vec<ProjectedAssociatedConstType>,
     nominal_parameter_scope: bool,
     /// bounds of the function currently being collected, for `t::item` projections.
     current_function_bounds: Vec<(String, String, Vec<InferType>)>,
@@ -198,6 +213,7 @@ pub struct TypeInference {
     /// associated bindings per (function, subject param): `item = int` bounds.
     generic_function_bindings: HashMap<String, AssociatedBindings>,
     impl_method_signatures: HashMap<String, ImplMethodSignature>,
+    impl_method_symbol_targets: HashMap<String, InferType>,
     /// deeply nested typed tree cannot overflow the stack.
     substitution_depth: std::cell::Cell<usize>,
     associated_type_definitions: Vec<AssociatedTypeDefinition>,
@@ -212,6 +228,8 @@ pub struct TypeInference {
     occurrence_role: Option<OccurrenceRole>,
     current_impl_self: Option<InferType>,
     in_trait_default_body: bool,
+    impls_missing_supertraits:
+        std::collections::BTreeMap<(String, String), (InferType, Vec<String>)>,
     /// reject, so the compile reports it instead of yielding a poisoned type.
     projection_cycle_escaped: std::cell::Cell<bool>,
     /// compile reports a recursion-limit error instead of silently emitting a
@@ -224,6 +242,13 @@ struct AssociatedTypeDefinition {
     namespace: crate::constraint::ItemNamespace,
     edges: Vec<(String, String)>,
     span: aelys_syntax::Span,
+}
+
+pub(crate) struct ProjectedAssociatedConstType {
+    pub(crate) trait_name: String,
+    pub(crate) item: String,
+    pub(crate) declared: InferType,
+    pub(crate) span: aelys_syntax::Span,
 }
 
 struct DynamicResidual {
