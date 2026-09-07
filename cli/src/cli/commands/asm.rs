@@ -173,6 +173,7 @@ fn compile_source(
         resolved.known_native_globals,
         resolved.symbol_origins,
     )
+    .with_module_sources(imports.module_sources.clone())
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;
 

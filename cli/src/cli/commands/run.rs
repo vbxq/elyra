@@ -223,7 +223,7 @@ fn collect_required_modules_rec(
     modules: &mut HashSet<String>,
 ) {
     for name in function.global_layout.names() {
-        if aelys_sema::is_mangled_symbol(name) {
+        if aelys_sema::is_mangled_symbol(name) || aelys_sema::is_module_scoped_global(name) {
             continue;
         }
         if let Some(module_name) = name.split("::").next()
