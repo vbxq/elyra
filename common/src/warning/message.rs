@@ -36,7 +36,10 @@ impl WarningKind {
             }
 
             Self::UnusedVariable { name: var } => {
-                format!("unused variable '{}'", var)
+                format!(
+                    "unused variable '{}'",
+                    crate::naming::unscoped_global_name(var)
+                )
             }
 
             Self::UnusedFunction { name: func } => {
@@ -56,7 +59,10 @@ impl WarningKind {
             },
 
             Self::ShadowedVariable { name: var } => {
-                format!("variable '{}' shadows a previous binding", var)
+                format!(
+                    "variable '{}' shadows a previous binding",
+                    crate::naming::unscoped_global_name(var)
+                )
             }
 
             Self::UnknownType { name: ty } => {

@@ -103,6 +103,9 @@ pub enum CompileErrorKind {
     SymbolConflict {
         symbol: String,
         modules: Vec<String>,
+        // the modules this file named that bring a declaration it never named
+        carried_by: Vec<String>,
+        repair: SymbolConflictRepair,
     },
     TypeNotExportable {
         module: String,
@@ -155,4 +158,12 @@ pub struct PrivateFieldDetail {
     pub current: String,
     pub operation: String,
     pub reason: String,
+}
+
+/// a selective `needs` has no `as` form, so only the whole-module clash is aliasable
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SymbolConflictRepair {
+    Alias,
+    NameOne,
+    RenameLocal,
 }

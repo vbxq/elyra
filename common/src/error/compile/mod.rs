@@ -7,7 +7,7 @@ mod format;
 mod kind;
 mod message;
 
-pub use kind::{CompileErrorKind, PrivateFieldDetail};
+pub use kind::{CompileErrorKind, PrivateFieldDetail, SymbolConflictRepair};
 
 #[derive(Debug)]
 pub struct CompileError {

@@ -53,7 +53,10 @@ impl CompileErrorKind {
                  = help: write one plain 'fn' per impl"
                     .to_string()
             }
-            Self::UndefinedVariable(name) => format!("undefined variable '{}'", name),
+            Self::UndefinedVariable(name) => format!(
+                "undefined variable '{}'",
+                crate::naming::unscoped_global_name(name)
+            ),
             Self::VariableAlreadyDefined(name) => {
                 format!("variable '{}' already defined in this scope", name)
             }
@@ -138,11 +141,39 @@ impl CompileErrorKind {
                 )
             }
             Self::TypeInferenceError(msg) => format!("type error: {}", msg),
-            Self::SymbolConflict { symbol, modules } => {
+            Self::SymbolConflict {
+                symbol,
+                modules,
+                carried_by,
+                repair,
+            } => {
+                let note = if carried_by.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\n   = note: carried into this file by: {}",
+                        carried_by.join(", ")
+                    )
+                };
+                let hint = match repair {
+                    super::kind::SymbolConflictRepair::Alias => {
+                        "use 'as' alias to disambiguate".to_string()
+                    }
+                    super::kind::SymbolConflictRepair::NameOne => format!(
+                        "import '{}' from one module only; a selective import has no 'as' form",
+                        symbol
+                    ),
+                    super::kind::SymbolConflictRepair::RenameLocal => format!(
+                        "rename this file's '{}'; a selective import has no 'as' form to alias the other",
+                        symbol
+                    ),
+                };
                 format!(
-                    "symbol '{}' is exported by multiple modules: {}\n   = hint: use 'as' alias to disambiguate",
+                    "symbol '{}' is exported by multiple modules: {}{}\n   = hint: {}",
                     symbol,
-                    modules.join(", ")
+                    modules.join(", "),
+                    note,
+                    hint
                 )
             }
             Self::TypeNotExportable {
