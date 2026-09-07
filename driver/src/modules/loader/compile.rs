@@ -102,8 +102,18 @@ impl ModuleLoader {
         let mut imported_types = aelys_sema::infer::imports::ImportedTypes::default();
         let mut imported_impl_stmts: Vec<aelys_syntax::Stmt> = Vec::new();
         let mut nominal_scopes: Vec<super::exported_types::NominalScopeEntry> = Vec::new();
+        let mut own_nominals: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        let mut inherited_nominals: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        let mut nominal_origins: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
         let mut module_sources: std::collections::HashMap<String, Arc<Source>> =
             std::collections::HashMap::new();
+        let mut scoped_globals: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut qualified_imports: std::collections::BTreeMap<String, InferType> =
+            std::collections::BTreeMap::new();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -140,7 +150,11 @@ impl ModuleLoader {
                         | aelys_syntax::ImportKind::Wildcard => {
                             for name in module_info.exports.keys() {
                                 let module_alias = self.get_module_alias(nested_needs);
-                                known_globals.insert(format!("{}::{}", module_alias, name));
+                                let qualified = format!("{}::{}", module_alias, name);
+                                if let Some(ty) = module_info.exported_types.globals.get(name) {
+                                    qualified_imports.insert(qualified.clone(), ty.clone());
+                                }
+                                known_globals.insert(qualified);
                                 known_globals.insert(name.clone());
                                 if let Some(signature) = module_info
                                     .native_signatures
@@ -155,15 +169,50 @@ impl ModuleLoader {
                             for name in module_info.exports.keys() {
                                 let alias_qualified = format!("{}::{}", module_alias, name);
                                 let internal_qualified = format!("{}::{}", module_info.name, name);
+                                if let Some(ty) = module_info.exported_types.globals.get(name) {
+                                    qualified_imports.insert(alias_qualified.clone(), ty.clone());
+                                }
                                 known_globals.insert(alias_qualified.clone());
                                 if module_info.native_functions.contains(&alias_qualified)
                                     || module_info.native_functions.contains(&internal_qualified)
                                 {
-                                    known_native_globals.insert(alias_qualified);
+                                    known_native_globals.insert(alias_qualified.clone());
+                                }
+                                if let Some(signature) = module_info
+                                    .native_signatures
+                                    .get(&alias_qualified)
+                                    .or_else(|| {
+                                        module_info.native_signatures.get(&internal_qualified)
+                                    })
+                                    .or_else(|| module_info.native_signatures.get(name))
+                                {
+                                    native_signatures.insert(alias_qualified, signature.clone());
                                 }
                             }
                         }
-                        _ => {}
+                        aelys_syntax::ImportKind::Symbols(symbols) => {
+                            for symbol in symbols {
+                                if !module_info.exports.contains_key(symbol) {
+                                    continue;
+                                }
+                                let internal_qualified =
+                                    format!("{}::{}", module_info.name, symbol);
+                                if let Some(ty) = module_info.exported_types.globals.get(symbol) {
+                                    qualified_imports.insert(symbol.clone(), ty.clone());
+                                }
+                                known_globals.insert(symbol.clone());
+                                if module_info.native_functions.contains(&internal_qualified) {
+                                    known_native_globals.insert(symbol.clone());
+                                }
+                                if let Some(signature) = module_info
+                                    .native_signatures
+                                    .get(&internal_qualified)
+                                    .or_else(|| module_info.native_signatures.get(symbol))
+                                {
+                                    native_signatures.insert(symbol.clone(), signature.clone());
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -178,8 +227,35 @@ impl ModuleLoader {
                 &entry.module_path,
                 entry.scope(),
             );
+            for name in selected.nominal_names() {
+                match selected.private_nominals.get(&name) {
+                    Some(origin) => {
+                        inherited_nominals.insert(name.clone());
+                        nominal_origins.insert(name, origin.clone());
+                    }
+                    None => {
+                        own_nominals.insert(name.clone());
+                        nominal_origins.insert(name, entry.module_path.replace('.', "::"));
+                    }
+                }
+            }
+            let inherited_types = module_info.exported_types.private_types.clone();
+            let inherited_impls = module_info.exported_types.private_impls.clone();
+            module_sources.extend(
+                module_info
+                    .exported_types
+                    .private_module_sources
+                    .iter()
+                    .map(|(module, source)| (module.clone(), source.clone())),
+            );
+            for (name, origin) in &module_info.exported_types.private_origins {
+                nominal_origins.insert(name.clone(), origin.clone());
+                inherited_nominals.insert(name.clone());
+            }
+            imported_types.extend(inherited_types);
+            imported_impl_stmts.extend(inherited_impls);
             imported_types.extend(selected);
-            if !selected_impls.is_empty() {
+            {
                 if let Some(source) = &module_info.exported_types.source {
                     module_sources.insert(
                         ModuleId::new(entry.module_path.clone())
@@ -188,11 +264,36 @@ impl ModuleLoader {
                         source.clone(),
                     );
                 }
+                let module_id = ModuleId::new(entry.module_path.clone())
+                    .as_str()
+                    .to_string();
                 imported_types.module_globals.insert(
-                    ModuleId::new(entry.module_path.clone())
-                        .as_str()
-                        .to_string(),
+                    module_id.clone(),
                     module_info.exported_types.globals.clone(),
+                );
+                for name in &module_info.exported_types.scoped_globals {
+                    scoped_globals.insert(aelys_sema::module_scoped_global(&module_id, name));
+                }
+                imported_types
+                    .module_scoped_globals
+                    .insert(module_id, module_info.exported_types.scoped_globals.clone());
+            }
+            if !selected_impls.is_empty() {
+                for name in module_info.exported_types.own_private_types.nominal_names() {
+                    inherited_nominals.insert(name.clone());
+                    nominal_origins.insert(name.clone(), entry.module_path.replace('.', "::"));
+                    imported_types.unexported_nominals.insert(name);
+                }
+                imported_types.extend(module_info.exported_types.own_private_types.clone());
+                imported_impl_stmts.extend(
+                    module_info
+                        .exported_types
+                        .own_private_impls
+                        .iter()
+                        .cloned()
+                        .map(|stmt| {
+                            stmt.with_definition_module(ModuleId::new(entry.module_path.clone()))
+                        }),
                 );
             }
             imported_impl_stmts.extend(
@@ -204,6 +305,30 @@ impl ModuleLoader {
 
         self.base_dir = original_base_dir;
         self.base_root = original_base_root;
+
+        // reach this module by two routes, so the same body must not register twice
+        let mut seen_impls: std::collections::HashSet<(String, usize, usize)> =
+            std::collections::HashSet::new();
+        imported_impl_stmts.retain(|stmt| {
+            let module = stmt
+                .definition_module
+                .as_ref()
+                .map(|module| module.as_str().to_string())
+                .unwrap_or_default();
+            seen_impls.insert((module, stmt.span.start, stmt.span.end))
+        });
+        let private_types = imported_types.clone();
+        let private_impls = imported_impl_stmts.clone();
+        let private_nominals: std::collections::BTreeMap<String, String> = inherited_nominals
+            .iter()
+            .filter(|name| !own_nominals.contains(*name))
+            .filter_map(|name| {
+                nominal_origins
+                    .get(name)
+                    .map(|origin| (name.clone(), origin.clone()))
+            })
+            .collect();
+        imported_types.private_nominals = private_nominals;
 
         let declaration_stmts: Vec<_> = stmts
             .iter()
@@ -238,6 +363,7 @@ impl ModuleLoader {
                 known_native_signatures: native_signatures.clone(),
                 imported_types,
                 current_module: ModuleId::new(module_path_str),
+                scope_own_globals: true,
             },
         )
         .map_err(|errors| {
@@ -282,7 +408,8 @@ impl ModuleLoader {
                     var_type,
                     ..
                 } => {
-                    inferred_export_signatures.insert(name.clone(), var_type.clone());
+                    let name = aelys_sema::unscoped_global_name(name);
+                    inferred_export_signatures.insert(name.to_string(), var_type.clone());
                     inferred_export_signatures
                         .insert(format!("{}::{}", module_name, name), var_type.clone());
                 }
@@ -302,6 +429,11 @@ impl ModuleLoader {
             module_source.clone(),
         )?;
         exported_types.source = Some(module_source.clone());
+        exported_types.private_types = private_types;
+        exported_types.private_impls = private_impls;
+        exported_types.private_origins = nominal_origins;
+        exported_types.private_module_sources = module_sources.clone();
+        exported_types.globals.extend(qualified_imports);
         for name in &known_globals {
             if let Some(signature) = native_signatures.get(name) {
                 exported_types
@@ -312,9 +444,10 @@ impl ModuleLoader {
         for stmt in &typed_program.stmts {
             match &stmt.kind {
                 TypedStmtKind::Let { name, var_type, .. } => {
-                    exported_types
-                        .globals
-                        .insert(name.clone(), var_type.clone());
+                    exported_types.globals.insert(
+                        aelys_sema::unscoped_global_name(name).to_string(),
+                        var_type.clone(),
+                    );
                 }
                 TypedStmtKind::Function(function) => {
                     exported_types.globals.insert(
@@ -328,6 +461,7 @@ impl ModuleLoader {
                 _ => {}
             }
         }
+        let module_global_names: Vec<String> = exported_types.globals.keys().cloned().collect();
         if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
             module_info.native_signatures = inferred_export_signatures;
             module_info.exported_types = exported_types;
@@ -336,14 +470,17 @@ impl ModuleLoader {
         let mut optimizer = Optimizer::new(aelys_opt::OptimizationLevel::Standard);
         let typed_program = optimizer.optimize(typed_program);
 
+        let mut codegen_globals = known_globals.clone();
+        codegen_globals.extend(scoped_globals.iter().cloned());
         let compiler = Compiler::with_modules(
             Some(module_path_str.to_string()),
             module_source.clone(),
             module_aliases,
-            known_globals,
+            codegen_globals,
             known_native_globals,
             std::collections::HashMap::new(),
-        );
+        )
+        .with_module_sources(module_sources.clone());
         let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
         let global_layout = Arc::clone(&function.global_layout);
@@ -352,6 +489,27 @@ impl ModuleLoader {
         vm.execute(func_ref)?;
 
         vm.sync_globals_to_hashmap(global_layout.names());
+
+        let module_id = ModuleId::new(module_path_str).as_str().to_string();
+        let mut published = std::collections::BTreeSet::new();
+        for name in &module_global_names {
+            if name.contains("::") {
+                continue;
+            }
+            let scoped = aelys_sema::module_scoped_global(&module_id, name);
+            if vm.get_global(&scoped).is_some() {
+                published.insert(name.clone());
+                continue;
+            }
+            let Some(value) = vm.get_global(name) else {
+                continue;
+            };
+            vm.set_global(scoped, value);
+            published.insert(name.clone());
+        }
+        if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
+            module_info.exported_types.scoped_globals = published;
+        }
 
         self.register_exports(needs, &exports, vm)?;
 

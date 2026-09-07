@@ -3,12 +3,12 @@ use crate::modules::loader::{
     select_exported_nominals, widen_nominal_scope,
 };
 use aelys_common::Result;
-use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
+use aelys_common::error::{AelysError, CompileError, CompileErrorKind, SymbolConflictRepair};
 use aelys_runtime::VM;
 use aelys_sema::InferType;
 use aelys_syntax::Source;
 use aelys_syntax::{ImportKind, Stmt, StmtKind};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -33,6 +33,19 @@ fn resolve_loaded_module<'a>(
     (None, full_path, None)
 }
 
+fn surface_module(module_path: &str) -> String {
+    module_path.replace('.', "::")
+}
+
+type NominalCarriers =
+    std::collections::BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<String>>>;
+
+struct NominalClash {
+    symbol: String,
+    modules: Vec<String>,
+    carried_by: Vec<String>,
+}
+
 #[derive(Default)]
 struct NominalImports {
     types: aelys_sema::infer::imports::ImportedTypes,
@@ -40,6 +53,9 @@ struct NominalImports {
     origins: HashMap<String, String>,
     body_globals: std::collections::HashSet<String>,
     module_sources: HashMap<String, Arc<Source>>,
+    inherited: std::collections::BTreeMap<String, String>,
+    carriers: NominalCarriers,
+    needs_spans: BTreeMap<String, aelys_syntax::Span>,
 }
 
 impl NominalImports {
@@ -50,23 +66,67 @@ impl NominalImports {
         module_path: &str,
         scope: NominalScope<'_>,
         span: aelys_syntax::Span,
-        source: &Arc<Source>,
-    ) -> Result<()> {
+    ) {
         let (selected, impl_stmts) =
             select_exported_nominals(&module_info.exported_types, module_path, scope);
-        for name in selected.nominal_names() {
-            if let Some(existing) = self.origins.get(&name)
-                && existing != module_path
-            {
-                return Err(AelysError::Compile(CompileError::new(
-                    CompileErrorKind::SymbolConflict {
-                        symbol: name,
-                        modules: vec![existing.clone(), module_path.to_string()],
-                    },
-                    span,
-                    source.clone(),
-                )));
+        let exported = &module_info.exported_types;
+        let via = surface_module(module_path);
+        self.needs_spans.entry(via.clone()).or_insert(span);
+        for (name, origin) in &exported.private_origins {
+            self.inherited
+                .entry(name.clone())
+                .or_insert_with(|| origin.clone());
+            self.carriers
+                .entry(name.clone())
+                .or_default()
+                .entry(origin.clone())
+                .or_default()
+                .insert(via.clone());
+        }
+        self.types.extend(exported.private_types.clone());
+        self.impl_stmts.extend(exported.private_impls.clone());
+        self.module_sources.extend(
+            exported
+                .private_module_sources
+                .iter()
+                .map(|(module, source)| (module.clone(), source.clone())),
+        );
+        self.body_globals.extend(
+            exported
+                .private_types
+                .module_globals
+                .values()
+                .flat_map(|globals| globals.keys().cloned()),
+        );
+        // rewrite gave it, never under the bare one
+        for (module, names) in &exported.private_types.module_scoped_globals {
+            for name in names {
+                self.body_globals
+                    .insert(aelys_sema::module_scoped_global(module, name));
             }
+        }
+        for (name, origin) in &selected.private_nominals {
+            self.inherited
+                .entry(name.clone())
+                .or_insert_with(|| origin.clone());
+            self.carriers
+                .entry(name.clone())
+                .or_default()
+                .entry(origin.clone())
+                .or_default()
+                .insert(via.clone());
+        }
+        for name in selected.nominal_names() {
+            // file imported, so it never becomes one of its origins
+            if selected.private_nominals.contains_key(&name) {
+                continue;
+            }
+            self.carriers
+                .entry(name.clone())
+                .or_default()
+                .entry(via.clone())
+                .or_default()
+                .insert(via.clone());
             self.origins.insert(name, module_path.to_string());
         }
         self.types.extend(selected);
@@ -78,9 +138,37 @@ impl NominalImports {
                 self.module_sources
                     .insert(module.as_str().to_string(), defining.clone());
             }
+            for name in &module_info.exported_types.scoped_globals {
+                self.body_globals
+                    .insert(aelys_sema::module_scoped_global(module.as_str(), name));
+            }
             self.types.module_globals.insert(
                 module.as_str().to_string(),
                 module_info.exported_types.globals.clone(),
+            );
+            self.types.module_scoped_globals.insert(
+                module.as_str().to_string(),
+                module_info.exported_types.scoped_globals.clone(),
+            );
+            for name in exported.own_private_types.nominal_names() {
+                self.inherited
+                    .entry(name.clone())
+                    .or_insert_with(|| via.clone());
+                self.carriers
+                    .entry(name.clone())
+                    .or_default()
+                    .entry(via.clone())
+                    .or_default()
+                    .insert(via.clone());
+                self.types.unexported_nominals.insert(name);
+            }
+            self.types.extend(exported.own_private_types.clone());
+            self.impl_stmts.extend(
+                exported
+                    .own_private_impls
+                    .iter()
+                    .cloned()
+                    .map(|stmt| stmt.with_definition_module(module.clone())),
             );
             self.impl_stmts.extend(
                 impl_stmts
@@ -88,35 +176,103 @@ impl NominalImports {
                     .map(|stmt| stmt.with_definition_module(module.clone())),
             );
         }
-        Ok(())
+    }
+
+    fn first_clash(&self) -> Option<(NominalClash, aelys_syntax::Span)> {
+        for (symbol, declaring) in &self.carriers {
+            if declaring.len() < 2 {
+                continue;
+            }
+            let modules: Vec<String> = declaring.keys().cloned().collect();
+            let carried_by: Vec<String> = declaring
+                .iter()
+                .flat_map(|(module, vias)| vias.iter().filter(move |via| *via != module))
+                .cloned()
+                .collect::<std::collections::BTreeSet<String>>()
+                .into_iter()
+                .collect();
+            // the caret follows the declaring module that sorts last, never the order the
+            let span = declaring
+                .values()
+                .next_back()
+                .and_then(|vias| vias.iter().next_back())
+                .and_then(|via| self.needs_spans.get(via))
+                .copied()
+                .unwrap_or_else(aelys_syntax::Span::dummy);
+            return Some((
+                NominalClash {
+                    symbol: symbol.clone(),
+                    modules,
+                    carried_by,
+                },
+                span,
+            ));
+        }
+        None
+    }
+
+    fn local_clash(&self, name: &str) -> Option<NominalClash> {
+        let declaring = self.carriers.get(name)?;
+        let mut modules: Vec<String> = declaring.keys().cloned().collect();
+        modules.push("this module".to_string());
+        let carried_by: Vec<String> = declaring
+            .iter()
+            .flat_map(|(module, vias)| vias.iter().filter(move |via| *via != module))
+            .cloned()
+            .collect::<std::collections::BTreeSet<String>>()
+            .into_iter()
+            .collect();
+        Some(NominalClash {
+            symbol: name.to_string(),
+            modules,
+            carried_by,
+        })
+    }
+}
+
+impl NominalClash {
+    fn into_error(
+        self,
+        repair: SymbolConflictRepair,
+        span: aelys_syntax::Span,
+        source: &Arc<Source>,
+    ) -> AelysError {
+        AelysError::Compile(CompileError::new(
+            CompileErrorKind::SymbolConflict {
+                symbol: self.symbol,
+                modules: self.modules,
+                carried_by: self.carried_by,
+                repair,
+            },
+            span,
+            source.clone(),
+        ))
     }
 }
 
 /// silently shadow it is rejected instead.
 fn reject_local_nominal_conflicts(
     stmts: &[Stmt],
-    nominal_origins: &HashMap<String, String>,
+    imports: &NominalImports,
     source: &Arc<Source>,
 ) -> Result<()> {
-    for stmt in stmts {
-        let name = match &stmt.kind {
+    let first = stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
             StmtKind::EnumDecl { name, .. }
             | StmtKind::StructDecl { name, .. }
-            | StmtKind::TraitDecl { name, .. } => name,
-            _ => continue,
-        };
-        if let Some(origin) = nominal_origins.get(name) {
-            return Err(AelysError::Compile(CompileError::new(
-                CompileErrorKind::SymbolConflict {
-                    symbol: name.clone(),
-                    modules: vec![origin.clone(), "this module".to_string()],
-                },
-                stmt.span,
-                source.clone(),
-            )));
+            | StmtKind::TraitDecl { name, .. } => {
+                imports.local_clash(name).map(|clash| (clash, stmt.span))
+            }
+            _ => None,
+        })
+        .min_by(|left, right| left.0.symbol.cmp(&right.0.symbol));
+    match first {
+        Some((clash, span)) => {
+            Err(clash.into_error(SymbolConflictRepair::RenameLocal, span, source))
         }
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn load_modules(
@@ -186,6 +342,8 @@ fn load_modules(
                                 CompileErrorKind::SymbolConflict {
                                     symbol: name.clone(),
                                     modules: vec![existing.clone(), module_path.clone()],
+                                    carried_by: Vec::new(),
+                                    repair: SymbolConflictRepair::Alias,
                                 },
                                 needs.span,
                                 source.clone(),
@@ -293,10 +451,32 @@ fn load_modules(
             continue;
         };
         let scope = entry.scope();
-        nominal_imports.absorb(module_info, &entry.module_path, scope, entry.span, &source)?;
+        nominal_imports.absorb(module_info, &entry.module_path, scope, entry.span);
     }
 
-    reject_local_nominal_conflicts(stmts, &nominal_imports.origins, &source)?;
+    if let Some((clash, span)) = nominal_imports.first_clash() {
+        return Err(clash.into_error(SymbolConflictRepair::NameOne, span, &source));
+    }
+
+    reject_local_nominal_conflicts(stmts, &nominal_imports, &source)?;
+
+    // reach a module by two routes, so the same imported body must not register twice
+    let mut seen_impls: std::collections::HashSet<(String, usize, usize)> =
+        std::collections::HashSet::new();
+    nominal_imports.impl_stmts.retain(|stmt| {
+        let module = stmt
+            .definition_module
+            .as_ref()
+            .map(|module| module.as_str().to_string())
+            .unwrap_or_default();
+        seen_impls.insert((module, stmt.span.start, stmt.span.end))
+    });
+    nominal_imports.types.private_nominals = nominal_imports
+        .inherited
+        .iter()
+        .filter(|(name, _)| !nominal_imports.origins.contains_key(*name))
+        .map(|(name, origin)| (name.clone(), origin.clone()))
+        .collect();
 
     Ok((
         ModuleImports {

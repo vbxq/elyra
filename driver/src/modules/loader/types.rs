@@ -39,7 +39,6 @@ pub struct ModuleImports {
     pub symbol_origins: HashMap<String, String>, // symbol -> module_path
     pub imported_types: aelys_sema::infer::imports::ImportedTypes,
     pub imported_impl_stmts: Vec<aelys_syntax::Stmt>,
-    /// resolve the names those bodies read; the importer's own scope must not.
     pub impl_body_globals: HashSet<String>,
     pub module_sources: HashMap<String, Arc<Source>>,
 }

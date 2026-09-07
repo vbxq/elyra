@@ -162,7 +162,8 @@ pub fn run_file_full_with_control(
         resolved.codegen_globals,
         resolved.known_native_globals,
         resolved.symbol_origins,
-    );
+    )
+    .with_module_sources(imports.module_sources.clone());
     let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
     let func_ref = vm.alloc_function(function).map_err(AelysError::Runtime)?;

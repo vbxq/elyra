@@ -3,7 +3,7 @@ use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_sema::infer::imports::ImportedTypes;
 use aelys_sema::types::TypeTable;
 use aelys_syntax::{Source, Span, Stmt, StmtKind};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Default)]
@@ -12,7 +12,14 @@ pub struct ExportedTypes {
     pub impl_stmts: Vec<Stmt>,
     pub private_names: HashSet<String>,
     pub globals: BTreeMap<String, aelys_sema::types::InferType>,
+    pub scoped_globals: BTreeSet<String>,
     pub source: Option<Arc<Source>>,
+    pub private_types: ImportedTypes,
+    pub private_impls: Vec<Stmt>,
+    pub private_origins: BTreeMap<String, String>,
+    pub private_module_sources: std::collections::HashMap<String, Arc<Source>>,
+    pub own_private_types: ImportedTypes,
+    pub own_private_impls: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -80,6 +87,73 @@ fn impl_ends(stmt: &Stmt) -> Option<(String, Option<String>)> {
     Some((target, trait_name))
 }
 
+/// every word, so a name the carried text mentions is never missed; a word that
+fn collect_identifiers(text: &str, out: &mut HashSet<String>) -> bool {
+    let mut grew = false;
+    let mut word = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+            continue;
+        }
+        if !word.is_empty() {
+            grew |= out.insert(std::mem::take(&mut word));
+        }
+    }
+    if !word.is_empty() {
+        grew |= out.insert(word);
+    }
+    grew
+}
+
+fn field_types(def: &aelys_sema::types::EnumVariantFieldsDef) -> Vec<String> {
+    match def {
+        aelys_sema::types::EnumVariantFieldsDef::Unit => Vec::new(),
+        aelys_sema::types::EnumVariantFieldsDef::Tuple(types) => {
+            types.iter().map(ToString::to_string).collect()
+        }
+        aelys_sema::types::EnumVariantFieldsDef::Named(fields) => {
+            fields.iter().map(|field| field.ty.to_string()).collect()
+        }
+    }
+}
+
+fn names_the_impls_reach(exported: &ExportedTypes, impls: &[Stmt]) -> HashSet<String> {
+    let mut reached = HashSet::new();
+    let Some(source) = exported.source.as_ref() else {
+        return reached;
+    };
+    for stmt in impls {
+        if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
+            collect_identifiers(text, &mut reached);
+        }
+    }
+    loop {
+        let mut grew = false;
+        for def in &exported.types.structs {
+            if !reached.contains(&def.name) {
+                continue;
+            }
+            for field in &def.fields {
+                grew |= collect_identifiers(&field.ty.to_string(), &mut reached);
+            }
+        }
+        for def in &exported.types.enums {
+            if !reached.contains(&def.name) {
+                continue;
+            }
+            for variant in &def.variants {
+                for ty in field_types(&variant.fields) {
+                    grew |= collect_identifiers(&ty, &mut reached);
+                }
+            }
+        }
+        if !grew {
+            return reached;
+        }
+    }
+}
+
 pub fn select_exported_nominals(
     exported: &ExportedTypes,
     module_path: &str,
@@ -92,37 +166,8 @@ pub fn select_exported_nominals(
     let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
     let exported_names: HashSet<String> = exported.types.nominal_names().into_iter().collect();
 
-    let mut selected = ImportedTypes::default();
-    let surface_path = module_path.replace('.', "::");
-    let withhold = |selected: &mut ImportedTypes, name: &str| {
-        selected
-            .withheld
-            .insert(name.to_string(), surface_path.clone());
-    };
-    for def in &exported.types.enums {
-        if wanted.contains(def.name.as_str()) {
-            selected.enums.push(def.clone());
-        } else {
-            withhold(&mut selected, &def.name);
-        }
-    }
-    for def in &exported.types.structs {
-        if wanted.contains(def.name.as_str()) {
-            selected.structs.push(def.clone());
-        } else {
-            withhold(&mut selected, &def.name);
-        }
-    }
-    for def in &exported.types.traits {
-        if wanted.contains(def.name.as_str()) {
-            selected.traits.push(def.clone());
-        } else {
-            withhold(&mut selected, &def.name);
-        }
-    }
-
     let in_scope = |name: &String| !exported_names.contains(name) || wanted.contains(name.as_str());
-    let impls = exported
+    let impls: Vec<Stmt> = exported
         .impl_stmts
         .iter()
         .filter(|stmt| match impl_ends(stmt) {
@@ -133,8 +178,49 @@ pub fn select_exported_nominals(
         })
         .cloned()
         .collect();
+    let reached = names_the_impls_reach(exported, &impls);
+
+    let mut selected = ImportedTypes::default();
+    let surface_path = module_path.replace('.', "::");
+    let place = |selected: &mut ImportedTypes, name: &str| -> Placement {
+        if wanted.contains(name) {
+            return Placement::Named;
+        }
+        if reached.contains(name) {
+            selected
+                .private_nominals
+                .insert(name.to_string(), surface_path.clone());
+            return Placement::Private;
+        }
+        selected
+            .withheld
+            .insert(name.to_string(), surface_path.clone());
+        Placement::Withheld
+    };
+    for def in &exported.types.enums {
+        if place(&mut selected, &def.name) != Placement::Withheld {
+            selected.enums.push(def.clone());
+        }
+    }
+    for def in &exported.types.structs {
+        if place(&mut selected, &def.name) != Placement::Withheld {
+            selected.structs.push(def.clone());
+        }
+    }
+    for def in &exported.types.traits {
+        if place(&mut selected, &def.name) != Placement::Withheld {
+            selected.traits.push(def.clone());
+        }
+    }
 
     (selected, impls)
+}
+
+#[derive(PartialEq, Eq)]
+enum Placement {
+    Named,
+    Private,
+    Withheld,
 }
 
 fn not_exportable(
@@ -167,6 +253,7 @@ pub fn collect_exported_types(
     source: Arc<Source>,
 ) -> Result<ExportedTypes> {
     let mut exported = ExportedTypes::default();
+    let mut private_generics: BTreeMap<String, Span> = BTreeMap::new();
 
     for stmt in stmts {
         let (name, type_params, is_pub) = match &stmt.kind {
@@ -193,6 +280,28 @@ pub fn collect_exported_types(
 
         if !is_pub {
             exported.private_names.insert(name.clone());
+            if !type_params.is_empty() {
+                // monomorphization erased it in this module, so it has no definition to send
+                private_generics.insert(name.clone(), stmt.span);
+                continue;
+            }
+            match &stmt.kind {
+                StmtKind::EnumDecl { .. } => {
+                    if let Some(def) = type_table.get_enum(name) {
+                        exported.own_private_types.enums.push(def.clone());
+                    }
+                }
+                StmtKind::StructDecl { .. } => {
+                    if let Some(def) = type_table.get_struct(name) {
+                        exported.own_private_types.structs.push(def.clone());
+                    }
+                }
+                _ => {
+                    if let Some(def) = type_table.get_trait(name) {
+                        exported.own_private_types.traits.push(def.clone());
+                    }
+                }
+            }
             continue;
         }
         if !type_params.is_empty() {
@@ -247,9 +356,35 @@ pub fn collect_exported_types(
                 .as_ref()
                 .is_some_and(|name| exported.private_names.contains(name))
         {
+            exported.own_private_impls.push(stmt.clone());
             continue;
         }
         exported.impl_stmts.push(stmt.clone());
+    }
+
+    // a body that travels reaches the module's private declarations, and a generic one has
+    if !private_generics.is_empty() {
+        let mut named = HashSet::new();
+        for stmt in exported
+            .impl_stmts
+            .iter()
+            .chain(&exported.own_private_impls)
+        {
+            if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
+                collect_identifiers(text, &mut named);
+            }
+        }
+        for (name, span) in private_generics {
+            if named.contains(&name) {
+                return Err(not_exportable(
+                    module_path,
+                    &name,
+                    GENERIC_REASON,
+                    span,
+                    source,
+                ));
+            }
+        }
     }
 
     Ok(exported)

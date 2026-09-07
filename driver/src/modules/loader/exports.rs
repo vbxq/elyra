@@ -57,12 +57,18 @@ impl ModuleLoader {
     ) -> Result<()> {
         let module_alias = self.get_module_alias(needs);
         let module_path_str = needs.path.join(".");
+        let module_id = aelys_syntax::ModuleId::new(module_path_str.as_str());
+        // stdlib constant this module never wrote
+        let read = |vm: &VM, name: &str| {
+            vm.get_global(&aelys_sema::module_scoped_global(module_id.as_str(), name))
+                .or_else(|| vm.get_global(name))
+        };
 
         match &needs.kind {
             ImportKind::Module { alias } => {
                 for name in exports.keys() {
                     let qualified_name = format!("{}::{}", module_alias, name);
-                    let value = vm.get_global(name).ok_or_else(|| {
+                    let value = read(vm, name).ok_or_else(|| {
                         AelysError::Compile(CompileError::new(
                             CompileErrorKind::SymbolNotFound {
                                 symbol: name.clone(),
@@ -84,7 +90,7 @@ impl ModuleLoader {
                         self.reject_unimportable_symbol(&module_path_str, symbol, needs.span)?;
                         continue;
                     }
-                    let value = vm.get_global(symbol).ok_or_else(|| {
+                    let value = read(vm, symbol).ok_or_else(|| {
                         AelysError::Compile(CompileError::new(
                             CompileErrorKind::SymbolNotFound {
                                 symbol: symbol.clone(),
@@ -99,7 +105,7 @@ impl ModuleLoader {
             }
             ImportKind::Wildcard => {
                 for name in exports.keys() {
-                    let value = vm.get_global(name).ok_or_else(|| {
+                    let value = read(vm, name).ok_or_else(|| {
                         AelysError::Compile(CompileError::new(
                             CompileErrorKind::SymbolNotFound {
                                 symbol: name.clone(),
