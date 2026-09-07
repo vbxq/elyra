@@ -739,6 +739,15 @@ needs lib::helper        // imports lib/helper.aelys
 
 Top-level definitions in a file become the module's exports.
 
+A top-level `let` is a variable of the module that declares it, and it has one
+slot per module. Every reference inside that module resolves to that slot: the
+module's own top-level code, its free functions, and the bodies of its impls,
+whether such a body runs in the module or in a file that imported it. Two modules
+that each declare `v` hold two variables, and a file that imports one of them and
+also declares its own `v` holds a third. An importer's binding of an imported
+`pub let mut` holds the value the module had when it was imported; assigning to
+that binding moves the importer's binding and not the module's variable.
+
 ### Visibility
 
 The `pub` keyword marks something as explicitly public:
@@ -808,6 +817,37 @@ println(Local { n: 5 }.score())
 
 Importing a type that is not `pub` is E0403 `'Point' is not public in module
 'shapes'`.
+
+An impl body the importer inlines is still checked and compiled in its defining
+module's terms. Everything that body reads travels with it: the types, traits and
+free functions the defining module imported, the names it reaches through a module
+path or through a module alias, the module's own globals, public or not, and the
+module's **own private `struct`, `enum` and `trait` declarations together with the
+impls over them**, on the same gate as its private globals. The
+importer never has to write those `needs` lines, and never sees the names they
+bind: naming one itself is E0403 `'Hidden' is not public in module 'support'`,
+which offers no `needs` line, there being none that would reach it. A diagnostic
+about such a body reports against the file that owns the
+statement, however many modules deep it lies, not against the importing file, and
+a repair it offers is written in the terms of that file: an ambiguity raised
+inside a carried body names a trait that file can write, never one the importing
+file declared.
+
+A private declaration that travels still occupies the importing file's namespace,
+because one flat table holds them all. A file that declares the same name is
+E0410, exactly as it is for a public one, rather than having the carried body
+silently rebound to its declaration. A **generic** private declaration has nothing
+left to send, monomorphization having erased it inside its own module, so a body
+that names one is E0407, the refusal its public twin already gets.
+
+A file binds each nominal name once. Two declarations of one name reaching one
+file is E0410 `symbol 'K' is exported by multiple modules: cored, corec`, reported
+at the importer whether or not the file named either declaring module; when the
+declaration only arrives with a body the file inlines, the report adds
+`note: carried into this file by:` and the modules the file did write. The report
+does not depend on the order of the `needs` lines. A selective import has no `as`
+form, so the repair E0410 names is to import the name from one module only, or,
+when the file declared the other itself, to rename its own declaration.
 
 A public nominal type may cross a module boundary, including when some of its
 fields are private. A private nominal type in a public signature is still rejected
@@ -1516,19 +1556,32 @@ impl Source for Counter {
 ```
 
 An impl must define **every** required item **exactly once**. Omitting one is
-E0421, which names the item and the spelling that would define it. Defining one
+E0421, which names the item and offers the spelling that would define it, a
+spelling the impl body accepts as written: `type Item = <type>` for an
+associated type and `const LIMIT: int = <value>` for an associated constant,
+the constant repeating the type the trait declared **in source syntax**, so a
+trait declaring `const LIMIT: Self::Item` is offered `const LIMIT: Self::Item =
+<value>`, in the two segments a projection is written with and never in the
+compiler's own `<Self as Source>::Item`, which is E0101 where it is offered.
+Defining one
 twice is E0426. Defining one the implemented trait does not declare is E0425,
 and so is writing any associated item in an inherent `impl Counter { ... }`,
 which declares nothing: the only home the language offers an associated item is
 the impl of a trait that declares it.
 
 The constant's value is folded at compile time, so an expression is allowed
-where it folds, and `const LIMIT: int = 2 + 1` is accepted. Two disagreements
-are E0422, and they are distinct: a declared type that differs from the trait's,
-as in `const LIMIT: string` against the trait's `const LIMIT: int`, and an
+where it folds, and `const LIMIT: int = 2 + 1` is accepted. Three shapes are
+E0422, and they are distinct: a declared type that differs from the trait's,
+as in `const LIMIT: string` against the trait's `const LIMIT: int`, which names
+both, the trait's side substituted as this impl instantiates it; an
 initialiser whose type differs from the declaration the impl itself wrote, as in
-`const LIMIT: int = "x"`. E0422 reaches associated constants only, since an
-associated type has no declared type to disagree with.
+`const LIMIT: int = "x"`; and an initialiser no rule gives a type at all, as in
+`const LIMIT: int = vec![1, 2]`. The third names no type for the
+initialiser, because none was established; only the first two can say what the
+initialiser produced. E0422 reaches associated constants only, since an
+associated type has no declared type to disagree with. An item the impl defines
+twice is E0426 and its initialiser is not examined, since neither of the two
+definitions is the one the impl meant.
 
 ### Projections
 
@@ -1538,13 +1591,35 @@ A projection is exactly two segments, a receiver and an item name, written
 | Receiver | Example | Resolves to |
 |----------|---------|-------------|
 | a nominal type | `Counter::Item`, `Counter::LIMIT` | the item of whichever impl for `Counter` defines it |
-| a generic nominal type | `Wrap::<int>::LIMIT` | the item of the impl for that instantiation |
+| a generic nominal type, written bare | `Wrap::Item`, `Wrap::LIMIT` | the item of the single impl for `Wrap`, in both namespaces; two instantiations of `Wrap` that each define the item are E0423 |
 | a trait | `Source::Item` | the item of the single impl of `Source` that defines it |
 | `Self` | `Self::Item`, inside a trait declaration or an impl | the item of the implementing type |
 | a bounded type parameter | `T::Item` under `T: Source` | the item of the impl selected at the call site |
 
 `Self` outside an impl and outside a trait declaration is E0423, and a type
 parameter whose bounds declare no such item is E0423 asking for the bound.
+
+A generic receiver is written **without its arguments**. `Wrap::Item` and
+`Wrap::LIMIT` both name the impl for `Wrap`, whether that impl is written
+`impl<T> Source for Wrap<T>` or `impl Source for Wrap<int>`, and they answer the
+same inside a method body as in the signature above it. The one thing the bare
+receiver cannot reach is an associated type the impl defines *as* one of its own
+parameters, as in `impl<T> Source for Wrap<T> { type Item = T }`: the receiver
+says nothing about `T`, so `Wrap::Item` is E0423 saying exactly that. There is no
+spelling that supplies the arguments: `Wrap::<int>::Item` is E0101 in a type,
+a parameter and an array length alike, and `Wrap<int>::Item` is E0101 anywhere.
+The turbofished form parses in **value position only**, where its arguments
+select nothing at all: `Wrap::<int>::LIMIT`, `Wrap::<string>::LIMIT` and
+`Wrap::<Nope>::LIMIT` all read the same constant, so the bare spelling is the
+one to write. Because no spelling supplies the arguments, one trait implemented
+for two instantiations of one type constructor, `impl Source for Wrap<int>` and
+`impl Source for Wrap<string>` both defining `LIMIT`, leaves the receiver naming
+two definitions and is E0423 rather than an answer picked by file order.
+
+A **built-in type is not a receiver**. `int::Item`, `string::Item` and
+`Vec::Item` are E0423 saying that a built-in type can hold no impl and so
+declares no associated item; they are not unknown types. Only a struct, an enum,
+a trait, `Self`, or a bounded type parameter names associated items.
 
 A **module-qualified receiver is not implemented**. `support::Counter::Item` is
 E0372 `unknown type 'support'`, and so is `support::Counter` on its own: a module
@@ -1553,17 +1628,48 @@ The bare receiver is the working spelling, and it works under every import form,
 selective, whole-module, and aliased, because an import brings the type itself
 into scope rather than a path to it.
 
-A projection fails to resolve for four reasons, all E0423:
+A projection fails to resolve for these reasons, all E0423:
 
 - no impl for the receiver defines the name;
+- the receiver is a built-in type, which can hold no impl;
 - the name exists in the other namespace, which the message says outright,
   naming the namespace written and the one the position wanted;
-- two impls define it for the receiver, whether two impls of one trait or impls
-  of two traits that both declare the name. Naming the trait instead of the
-  nominal type disambiguates when a single impl of that trait defines the item;
+- the impl defines the item as one of its own type parameters, and the bare
+  receiver says nothing about that parameter;
+- the receiver is ambiguous, in one of three shapes. **Two traits, one type**:
+  `Counter::Item` where two impls for `Counter` define `Item`. The repair that
+  changes nothing else is to name the trait, `Alpha::Item`, and it works in both
+  namespaces. **One trait, two types**: `Source::Item` where two types implement
+  `Source`. There the repair is to name the type, `Counter::Item`; renaming the
+  item would change nothing, since a single trait already provides it. **One
+  trait, one type constructor, two instantiations**: `Wrap::LIMIT` where
+  `impl Source for Wrap<int>` and `impl Source for Wrap<string>` both define
+  `LIMIT`. Neither of the first two repairs applies, since there is one trait and
+  one type, and a projection writes `Wrap` without its arguments; the repair is
+  to keep a single impl of the trait for that type constructor, or to declare the
+  item in a second trait and name that trait. `Source::LIMIT` and `Wrap::LIMIT`
+  reach the same sentence. The three shapes carry different sentences;
 - the definition resolves back to itself. A cycle is rejected when the impls are
   collected, so it is a diagnostic whether or not any program names the
-  projection.
+  projection;
+- the constant is defined but its value cannot be computed, because the
+  arithmetic overflows or divides by zero;
+- the constant is defined but its initialiser is not a constant integer
+  expression. A constant is declared only with a type the compiler folds a
+  constant of, which E0434 enforces at the declaration and at each impl, so the
+  declared type is one of those and the message prescribes integer literals.
+  Where the foldable set widens, a constant of a type the folder accepts but
+  this initialiser does not produce names the declared type instead, in the
+  spelling the impl wrote it;
+- `Self` is written where no impl and no trait declaration is open;
+- the receiver is a type parameter whose bounds declare no such item, or a
+  parameter of a struct or an enum, which carries no bound at all;
+- a fixed-array length is taken from a type parameter, or a constant is read on
+  a method's own type parameter.
+
+A length that resolves and is **negative** is not in that list: the projection
+resolved, so it is E0315, the same code and the same sentence a negative literal
+length takes, naming the constant that produced it.
 
 Because a nominal receiver and a trait receiver share one spelling, a trait may
 not share its name with a struct or an enum; that is E0326, stated above under
@@ -1571,21 +1677,54 @@ not share its name with a struct or an enum; that is E0326, stated above under
 
 ### Where a projection may be written
 
-A projection is written where its namespace belongs, and nowhere else. Both
-columns below are measured, and every refusal is E0423 naming the mismatch:
+A projection is written where its namespace belongs, and nowhere else. The rule
+is uniform: **every type position accepts the type and refuses the constant, and
+every value position the reverse.** A bound is one role holding both, and it takes
+its namespace from the position like every other role: a type on the right
+selects the associated type and a value the associated constant, so
+`Source<Item = Counter::Item>` and `Source<LIMIT = Counter::LIMIT>` are both
+accepted and both crossings are E0423. A trait declaring one name in both
+namespaces therefore admits both spellings of a binding on it, each checked
+against the item its own side names. The compiler names the position it
+refused in, and the names it can print are fixed: `OccurrenceRole` in
+`sema/src/infer.rs`
+enumerates a parameter type, a return type, a struct field, an enum variant
+field, a bound, an impl header and an associated item definition, and a
+projection written outside any of them is reported as a type annotation, a value
+expression or an array length. The grid below is that enumeration, and every
+refusal is E0423 naming the mismatch:
 
 | Position | `Counter::Item`, a type | `Counter::LIMIT`, a constant |
 |----------|-------------------------|------------------------------|
-| variable annotation | accepted | E0423 |
+| variable annotation, at top level or in a body | accepted | E0423 |
 | parameter type | accepted | E0423 |
 | return type | accepted | E0423 |
 | struct field type | accepted | E0423 |
-| array element type | accepted | E0423 |
+| enum variant payload | accepted | E0423 *(an enum variant field)* |
+| enum struct-variant field | accepted | E0423 *(an enum variant field)* |
+| an associated type binding in a bound, `Source<Item = ..>` | accepted | E0423 *(a bound)* |
+| an associated constant binding in a bound, `Source<LIMIT = ..>` | E0423 *(a bound)* | accepted |
+| impl header target | resolves, then E0339 for a non-local target | E0423 *(an impl header)* |
+| associated item definition | accepted | E0423 *(an associated item definition)* |
+| the declared type of an associated constant | accepted | E0423 *(an associated item definition)* |
+| array element type, nested to any depth | accepted | E0423 |
+| a generic type argument, `Holder<Counter::Item>` | accepted | E0423 |
+| an `fn(..) -> ..` annotation, either half | accepted | E0423 |
 | value expression | E0423 | accepted |
 | fixed-array length | E0423 | accepted |
 | array repeat count | E0423 | accepted |
 | lambda body | accepted, as an annotation | accepted, as a value |
 | across an imported module | accepted | accepted |
+
+An impl header is the one row where acceptance is not the end of the story:
+under `type Item = int`, `impl Mark for Counter::Item` resolves the projection to
+`int` and is then refused by E0339, because a trait may not be implemented for a
+type that is not local. The projection did its work; the orphan rule is a
+separate refusal. Under `type Item = Payload`, a struct or an enum the program
+declares, the same header resolves to that local type and the impl is registered
+for it, so `Payload { n: 6 }.tag()` runs the body written under the projected
+header. The header names the type the item resolves to, never the item's own
+name, in the diagnostics and in the symbols alike.
 
 The last row is not a weaker case. Every position above holds for a type
 imported from another module, the struct field and both halves of a signature
@@ -1647,10 +1786,14 @@ checked against the impl selected at the call site, and four things go wrong:
   `int`, or `LIMIT = 4` against an impl providing `3`, is E0424, which prints
   both sides;
 - the trait declares no such item. `Nope = int` is E0424 saying the binding
-  constrains nothing;
+  constrains nothing, reported on the bound itself: an uncalled function whose
+  bound names nothing the trait declares is refused all the same;
 - the binding crosses the namespaces. `Item = 3` binds a value to an associated
   type and `LIMIT = int` binds a type to an associated constant, both E0424,
-  reported on the bound itself rather than at the call site;
+  reported on the bound itself rather than at the call site. A crossing needs
+  the trait to declare that name in the other namespace **alone**: where the
+  trait declares it in both, the right side decides and neither spelling
+  crosses;
 - a side has no value the compiler can compute. Against an impl whose
   `const LIMIT: int = 1 / 0`, the comparison never happens, and reporting a
   disagreement would assert a cause nobody established. That is E0429, distinct
@@ -1725,9 +1868,26 @@ uninhabitation ban.
 
 ### Impl type parameters
 
-An impl instance is mangled from its substituted target type and nothing else,
-so a type parameter the target type never mentions leaves no trace in the
-symbol. `impl<T, U> W<T>` is rejected at the header with E0430, the caret on the
+An impl method's symbol is mangled from three names, each written as the byte
+length of the text in eight hexadecimal digits, a colon and the text: the trait,
+the **bare name** of the target type, and the method. The trait's own type
+arguments follow in the same encoding, rendered with the impl's type parameters
+spelled as the impl wrote them, and a generic impl then carries one suffix per
+instance holding the substituted target type. The target type's own type
+arguments never enter the three names, so `impl Source for Wrap<int>` mangles
+`next` to `__aelys_trait::00000006:Source00000004:Wrap00000004:next`. A type
+parameter the target type never mentions therefore leaves no trace in the
+symbol. Two impls of one trait for two instantiations of one constructor
+therefore write one slot, so they are refused with E0355 as the second impl
+registers its method, the caret on that method, or on the impl's target type
+when the method is a default body adopted from the trait. The check compares the
+substituted target type held against the symbol, so one impl inlined into
+several importers stays equal to itself; a generic impl carries no target
+arguments in the symbol at all and is left to the monomorphizer, which raises
+the same code on the per-instance suffix. Renaming the method in one impl, or
+declaring it in a second trait, separates the two slots.
+
+`impl<T, U> W<T>` is rejected at the header with E0430, the caret on the
 target type, naming the parameter and the two repairs: mention it in the target
 type, or move it onto the method. The constrained set is exactly "appears in the
 impl target type", which deliberately excludes a parameter appearing only in a
@@ -1738,19 +1898,35 @@ trait argument, only in a method signature, or only in a `where` clause.
 Ten codes carry this material. The registry gives each its name; the condition
 is here.
 
+Every type any of them names is written in the spelling a program could have
+written: `int` and not `i64`, `float` and not `f64`, `Vec<int>` and not
+`vec[i64]`, `fn(int) -> int` and not `(i64) -> i64`, `Counter::Item` and not
+`<Counter as Source>::Item`. A message that told the reader to write a type
+would otherwise offer one the grammar refuses.
+
 - **E0421** fires when an impl of a trait omits an associated type or constant
   the trait requires.
 - **E0422** fires when an impl's associated constant declares a type the trait
-  does not, or is initialised with a value of a type its own declaration does
-  not.
+  does not, is initialised with a value of a type its own declaration does
+  not, or is initialised with an expression whose type no rule establishes. In
+  the last shape the message states that no type was established rather than
+  naming one.
 - **E0423** fires when a projection resolves to nothing, to more than one thing,
-  or to itself: no impl defines the name, the name is in the other namespace,
-  two impls define it, the definition cycles, `Self` is written where no impl or
-  trait declaration is open, a fixed-array length is taken from a type
-  parameter, or a constant is read on a method's own type parameter.
+  or to itself: no impl defines the name, the receiver is a built-in type, the
+  name is in the other namespace, the impl defines the item as one of its own
+  type parameters, two impls define it, the definition cycles, the constant is
+  defined but cannot be folded or is not a constant integer expression, `Self`
+  is written where no impl or trait declaration is open, the receiver is a
+  parameter no bound covers, a fixed-array length is taken from a type
+  parameter, or a constant is read on a method's own type parameter. A length
+  that folds to a negative value is **not** E0423: the projection resolved, so
+  it is E0315.
 - **E0424** fires when an associated binding in a bound disagrees with the
   selected impl, names an item the trait does not declare, or binds a value to a
-  type or a type to a value.
+  type or a type to a value. The last two are decided by the bound alone, so
+  both are reported where the bound is written, whether or not anything calls
+  the function; only the disagreement with a selected impl waits for an
+  instantiation.
 - **E0425** fires when an impl defines an associated item the trait it
   implements does not declare, and when an inherent impl defines one at all.
 - **E0426** fires when one impl defines the same required associated item more
@@ -1769,6 +1945,22 @@ is here.
   cannot fold, so no comparison happened.
 - **E0430** fires when an impl header declares a type parameter its target type
   never mentions.
+- **E0434** fires when an associated constant is declared with a type the
+  compiler folds no constant of, and names the foldable set in the message
+  rather than a fixed sentence, so a later stage that folds another kind widens
+  the set and the diagnostic follows. Today the folder yields an `i64`, so
+  `int` is the whole set. It is checked wherever the type is settled. **At the
+  trait declaration** a projection is resolved first and then checked, since it
+  is settled there, and any other type that is neither a type parameter nor an
+  unsettled projection must fold. **At each impl** the trait's declared type is
+  substituted, the parameter by the argument the impl instantiates and `Self` by
+  the target; the result must fold, and the refusal lands on the impl's own
+  definition naming the **instantiated** type. So
+  `trait Bounds<T> { const LIMIT: T; }` with `impl Bounds<int>` reads back and
+  the same trait with `impl Bounds<string>` is E0434 at the impl, and
+  `trait T3 { const Y: Counter::Item; }` where `Counter::Item` is a `string` is
+  E0434 at the declaration. Nothing declarable is left definable and readable
+  nowhere.
 
 ## Compiler Warnings
 
@@ -2118,7 +2310,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0407 | TypeNotExportable | a nominal value cannot cross a module boundary |
 | E0408 | NativeChecksumMismatch | the native module checksum does not match |
 | E0409 | NativeVersionMismatch | the native module version does not match |
-| E0410 | SymbolConflict | two imports bring in the same name |
+| E0410 | SymbolConflict | two declarations of one name reach one file |
 | E0411 | ModulePathSeparator | a module path uses the wrong separator |
 | E0412 | PrivateFieldAccess | a private field is read or written outside its owner module |
 | E0413 | PrivateFieldConstruction | a private field is named in a literal or pattern outside its owner module |
@@ -2138,3 +2330,4 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0428 | UninhabitedNominalCycle | the inhabitation fixpoint fails for a type on a cycle of the constructor graph |
 | E0429 | UnevaluatedAssociatedConstBinding | an associated-constant binding has a side the compiler cannot evaluate |
 | E0430 | UnconstrainedImplTypeParam | an impl declares a type parameter its target type never mentions |
+| E0434 | UnfoldableAssociatedConstType | an associated constant is declared, or an impl instantiates its declaration, with a type the compiler folds no constant of |

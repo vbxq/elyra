@@ -175,14 +175,20 @@ fn an_inherent_impl_with_no_method_survives_its_own_bytecode() {
 fn a_trait_impl_with_no_method_survives_its_own_bytecode() {
     let (stdout, stderr, code) = compile_and_run_capturing_stdout(
         "trait_impl_no_method",
-        "trait Holder {\n    type Item\n}\n\
+        "trait Holder {\n    type Item\n    const CAP: int\n}\n\
          struct Point { x: int }\n\
-         impl Holder for Point {\n    type Item = int\n}\n\
-         Point { x: 7 }.x + 1\n",
+         impl Holder for Point {\n    type Item = int\n    const CAP: int = 34\n}\n\
+         fn widen(v: Point::Item) -> int {\n    return v + Point::CAP\n}\n\
+         widen(Point { x: 7 }.x) + 1\n",
     );
 
     assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
-    assert_eq!(stdout.trim(), "8", "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(
+        stdout.trim(),
+        "42",
+        "42 is 7 through 'Point::Item' plus the 34 of 'Point::CAP' plus 1; \
+         stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
 }
 
 #[test]
