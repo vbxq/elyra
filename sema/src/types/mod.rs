@@ -9,5 +9,5 @@ pub use type_table::{
     BoundSelection, EnumDef, EnumVariantDef, EnumVariantFieldsDef, FromSelection, StructDef,
     StructField, StructMethod, TraitDef, TraitImplDef, TraitMethod, TypeTable,
 };
-pub(crate) use type_table::{headers_unify, nominal_name};
+pub(crate) use type_table::{headers_unify, instantiate_impl_definition, nominal_name};
 pub use type_var::{TypeVarGen, TypeVarId};

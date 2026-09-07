@@ -28,9 +28,10 @@ impl TypeInference {
                 ));
             }
 
+            let resolved = self.env.lookup_alias(name).unwrap_or(name).to_string();
             (
                 TypedExprKind::Assign {
-                    name: name.to_string(),
+                    name: resolved,
                     value: Box::new(typed_value),
                 },
                 var_type,

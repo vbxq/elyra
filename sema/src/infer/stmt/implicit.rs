@@ -53,6 +53,7 @@ impl TypeInference {
                 TypedStmt {
                     kind: TypedStmtKind::Expression(typed_expr),
                     span: stmt.span,
+                    definition_module: stmt.definition_module.clone(),
                 }
             }
 
@@ -93,6 +94,7 @@ impl TypeInference {
                         else_branch: Some(Box::new(typed_else)),
                     },
                     span: stmt.span,
+                    definition_module: stmt.definition_module.clone(),
                 }
             }
 
@@ -113,6 +115,7 @@ impl TypeInference {
                 TypedStmt {
                     kind: TypedStmtKind::Block(typed_stmts),
                     span: stmt.span,
+                    definition_module: stmt.definition_module.clone(),
                 }
             }
 

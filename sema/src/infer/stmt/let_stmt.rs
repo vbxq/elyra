@@ -135,8 +135,10 @@ impl TypeInference {
             }
         }
 
+        let resolved = self.env.lookup_alias(name).unwrap_or(name).to_string();
+
         TypedStmtKind::Let {
-            name: name.to_string(),
+            name: resolved,
             mutable,
             initializer: typed_init,
             var_type,

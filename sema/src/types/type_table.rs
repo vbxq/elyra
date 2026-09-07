@@ -45,6 +45,7 @@ pub struct TraitMethod {
 #[derive(Debug, Clone)]
 pub struct TraitDef {
     pub name: String,
+    pub owner: ModuleId,
     pub type_params: Vec<String>,
     pub super_bounds: Vec<String>,
     pub methods: Vec<TraitMethod>,
@@ -514,7 +515,11 @@ impl TypeTable {
                 .iter()
                 .find(|(name, _)| name == item)
             {
-                found.push(ty.clone());
+                found.push(instantiate_impl_definition(
+                    &implementation.self_type,
+                    self_ty,
+                    ty,
+                ));
             }
         }
         if found.len() == 1 {
@@ -815,6 +820,84 @@ fn type_args_key(args: &[InferType]) -> String {
         let _ = write!(key, "{}:{}", rendered.len(), rendered);
     }
     key
+}
+
+pub(crate) fn instantiate_impl_definition(
+    impl_self_type: &InferType,
+    actual_self_ty: &InferType,
+    definition: &InferType,
+) -> InferType {
+    let mut bindings = std::collections::HashMap::new();
+    bind_pattern_params(impl_self_type, actual_self_ty, &mut bindings);
+    if bindings.is_empty() {
+        return definition.clone();
+    }
+    definition.substitute_params(&bindings)
+}
+
+fn bind_pattern_params(
+    pattern: &InferType,
+    actual: &InferType,
+    out: &mut std::collections::HashMap<String, InferType>,
+) {
+    match (pattern, actual) {
+        (InferType::Param(name), actual) => {
+            out.entry(name.clone()).or_insert_with(|| actual.clone());
+        }
+        (
+            InferType::Applied {
+                name: expected,
+                args: expected_args,
+            },
+            InferType::Applied {
+                name: found,
+                args: found_args,
+            },
+        ) if expected == found && expected_args.len() == found_args.len() => {
+            for (expected, found) in expected_args.iter().zip(found_args) {
+                bind_pattern_params(expected, found, out);
+            }
+        }
+        (InferType::Option(expected), InferType::Option(found))
+        | (InferType::Array(expected), InferType::Array(found))
+        | (InferType::Vec(expected), InferType::Vec(found)) => {
+            bind_pattern_params(expected, found, out);
+        }
+        (InferType::FixedArray(expected, _), InferType::FixedArray(found, _)) => {
+            bind_pattern_params(expected, found, out);
+        }
+        (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err)) => {
+            bind_pattern_params(expected_ok, found_ok, out);
+            bind_pattern_params(expected_err, found_err, out);
+        }
+        (InferType::Tuple(expected), InferType::Tuple(found)) if expected.len() == found.len() => {
+            for (expected, found) in expected.iter().zip(found) {
+                bind_pattern_params(expected, found, out);
+            }
+        }
+        (
+            InferType::Function {
+                params: expected_params,
+                ret: expected_ret,
+            },
+            InferType::Function {
+                params: found_params,
+                ret: found_ret,
+            },
+        ) if expected_params.len() == found_params.len() => {
+            for (expected, found) in expected_params.iter().zip(found_params) {
+                bind_pattern_params(expected, found, out);
+            }
+            bind_pattern_params(expected_ret, found_ret, out);
+        }
+        (
+            InferType::Projection {
+                self_ty: expected, ..
+            },
+            InferType::Projection { self_ty: found, .. },
+        ) => bind_pattern_params(expected, found, out),
+        _ => {}
+    }
 }
 
 fn type_matches(pattern: &InferType, actual: &InferType) -> bool {

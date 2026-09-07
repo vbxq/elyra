@@ -90,7 +90,10 @@ impl TypeInference {
             && value < 0
         {
             self.errors.push(TypeError {
-                kind: TypeErrorKind::NegativeArraySize { size: value },
+                kind: TypeErrorKind::NegativeArraySize {
+                    size: value,
+                    constant: self.constant_length_origin(size),
+                },
                 span: size.span,
                 reason: ConstraintReason::ArrayIndex,
             });
@@ -245,7 +248,10 @@ impl TypeInference {
             && value < 0
         {
             self.errors.push(TypeError {
-                kind: TypeErrorKind::NegativeArraySize { size: value },
+                kind: TypeErrorKind::NegativeArraySize {
+                    size: value,
+                    constant: self.constant_length_origin(count),
+                },
                 span: count.span,
                 reason: ConstraintReason::ArrayIndex,
             });

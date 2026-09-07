@@ -133,6 +133,7 @@ impl TypeInference {
         TypedStmt {
             kind,
             span: stmt.span,
+            definition_module: stmt.definition_module.clone(),
         }
     }
 }

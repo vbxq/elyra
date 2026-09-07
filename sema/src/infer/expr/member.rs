@@ -78,6 +78,14 @@ impl TypeInference {
         }
     }
 
+    pub(crate) fn constant_length_origin(&self, expr: &Expr) -> Option<String> {
+        let (receiver, item) = self.projection_path_parts(expr)?;
+        if !self.names_associated_items(&receiver) {
+            return None;
+        }
+        Some(format!("{}::{item}", self.projection_receiver(&receiver)))
+    }
+
     fn names_associated_items(&self, receiver: &str) -> bool {
         receiver == "Self"
             || self.type_table.has_nominal(receiver)
@@ -90,6 +98,16 @@ impl TypeInference {
         member: &str,
         span: Span,
     ) -> InferType {
+        let nominal = match receiver {
+            InferType::Struct(name) | InferType::Applied { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
+        if let Some(target) = nominal
+            && let Some(gated) = self.supertrait_gate_error(target, member, span)
+        {
+            self.errors.push(gated);
+            return InferType::Poison;
+        }
         let kind = match receiver {
             InferType::Poison => return InferType::Poison,
             InferType::Var(_) => TypeErrorKind::UnresolvedTypeVariable,
@@ -290,7 +308,14 @@ impl TypeInference {
                 }
                 failure => {
                     let reason = self.occurrence_reason("a value expression");
-                    let cause = projection_failure_for(&failure, &receiver, member);
+                    let cause = projection_failure_for(
+                        &failure,
+                        &receiver,
+                        member,
+                        self.type_table.get_trait(&receiver).is_some()
+                            && !self.type_table.has_nominal(&receiver),
+                        self.non_integer_const_type(&receiver, member),
+                    );
                     let named = match cause {
                         crate::constraint::ProjectionFailure::Cyclic { .. } => receiver.clone(),
                         _ => self.projection_receiver(&receiver),
@@ -311,7 +336,10 @@ impl TypeInference {
 
         if separator == MemberSeparator::Path
             && let Some(path_name) = source_path_name(object)
-            && let Some(module) = self.withholding_module(&path_name).map(str::to_string)
+            && let Some(module) = self
+                .withholding_module(&path_name)
+                .or_else(|| self.refused_private_nominal(&path_name))
+                .map(str::to_string)
         {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::TypeNotImported {
@@ -861,6 +889,9 @@ impl TypeInference {
                             },
                             field.ty.substitute_params(&substitutions),
                         );
+                    } else if let Some(gated) = self.supertrait_gate_error(&name, member, _span) {
+                        self.errors.push(gated);
+                        InferType::Poison
                     } else {
                         self.errors.push(TypeError {
                             kind: TypeErrorKind::UnknownField {
@@ -896,6 +927,10 @@ impl TypeInference {
         fields: &[StructFieldInit],
         _span: Span,
     ) -> (TypedExprKind, InferType) {
+        if let Some(error) = self.private_nominal_error(name, _span) {
+            self.errors.push(error);
+            return (TypedExprKind::Null, InferType::Poison);
+        }
         let def = self.type_table.get_struct(name).cloned();
         if def.is_none() {
             self.errors.push(TypeError {
@@ -1695,15 +1730,33 @@ pub(crate) fn projection_failure_for(
     failure: &crate::infer::ConstResolution,
     receiver: &str,
     item: &str,
+    receiver_is_trait: bool,
+    non_integer: Option<String>,
 ) -> crate::constraint::ProjectionFailure {
     use crate::constraint::ProjectionFailure;
     use crate::infer::ConstResolution;
     match failure {
+        ConstResolution::Ambiguous(names) if receiver_is_trait => {
+            ProjectionFailure::AmbiguousImplementors {
+                types: names.clone(),
+            }
+        }
         ConstResolution::Ambiguous(traits) => ProjectionFailure::Ambiguous {
             traits: traits.clone(),
         },
+        ConstResolution::AmbiguousInstantiations {
+            trait_name,
+            constructor,
+            instantiations,
+        } => ProjectionFailure::AmbiguousInstantiations {
+            trait_name: trait_name.clone(),
+            constructor: constructor.clone(),
+            instantiations: instantiations.clone(),
+        },
         ConstResolution::NotComputable => ProjectionFailure::NotComputable,
-        ConstResolution::NotConstant => ProjectionFailure::NotConstant,
+        ConstResolution::NotConstant => ProjectionFailure::NotConstant {
+            declared: non_integer,
+        },
         ConstResolution::Cyclic => ProjectionFailure::Cyclic {
             path: vec![format!("{receiver}::{item}")],
             namespace: crate::constraint::ItemNamespace::Const,

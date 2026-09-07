@@ -18,9 +18,11 @@ impl TypeInference {
         let previous_module = self.current_module.clone();
         let mut definition_scope = false;
         let mut definition_mark = None;
+        let mut definition_qualified: Vec<String> = Vec::new();
         if let Some(definition_module) = &stmt.definition_module {
             self.current_module = definition_module.clone();
             definition_scope = self.push_definition_module_globals(definition_module);
+            definition_qualified = self.push_definition_module_imports(definition_module);
             definition_mark = Some((
                 self.errors.len(),
                 self.constraints.len(),
@@ -130,6 +132,9 @@ impl TypeInference {
         if definition_scope {
             self.env.pop_scope();
         }
+        for name in definition_qualified {
+            self.known_native_signatures.remove(&name);
+        }
         if let Some((errors_mark, constraints_mark, module)) = definition_mark {
             for error in &mut self.errors[errors_mark..] {
                 error.reason.wrap_in_module(&module);
@@ -143,7 +148,29 @@ impl TypeInference {
         TypedStmt {
             kind,
             span: stmt.span,
+            definition_module: stmt.definition_module.clone(),
         }
+    }
+
+    // a module its own importer never named, so the qualified name is in scope
+    fn push_definition_module_imports(&mut self, module: &aelys_syntax::ModuleId) -> Vec<String> {
+        let Some(globals) = self.module_globals.get(module.as_str()) else {
+            return Vec::new();
+        };
+        let qualified: Vec<(String, crate::types::InferType)> = globals
+            .iter()
+            .filter(|(name, _)| name.contains("::"))
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect();
+        let mut installed = Vec::new();
+        for (name, ty) in qualified {
+            if self.known_native_signatures.contains_key(&name) {
+                continue;
+            }
+            self.known_native_signatures.insert(name.clone(), ty);
+            installed.push(name);
+        }
+        installed
     }
 
     // names it reads are that module's globals, which the importer never bound.
@@ -155,8 +182,19 @@ impl TypeInference {
             .iter()
             .map(|(name, ty)| (name.clone(), ty.clone()))
             .collect();
+        let scoped = self
+            .module_scoped_globals
+            .get(module.as_str())
+            .cloned()
+            .unwrap_or_default();
         self.env.push_scope();
         for (name, ty) in globals {
+            if scoped.contains(&name) {
+                self.env.define_local_alias(
+                    name.clone(),
+                    crate::infer::module_scoped_global(module.as_str(), &name),
+                );
+            }
             self.env.define_local(name, ty);
         }
         true

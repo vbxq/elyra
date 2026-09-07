@@ -21,7 +21,9 @@ impl TypeInference {
             .lookup(name)
             .or_else(|| self.env.lookup_function_ref(name))
         {
-            return (TypedExprKind::Identifier(name.to_string()), ty.clone());
+            let ty = ty.clone();
+            let resolved = self.env.lookup_alias(name).unwrap_or(name).to_string();
+            return (TypedExprKind::Identifier(resolved), ty);
         }
 
         if self.env.is_namespace(name) {

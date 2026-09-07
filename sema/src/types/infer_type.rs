@@ -117,6 +117,20 @@ impl InferType {
         }
     }
 
+    pub const FOLDABLE_ASSOCIATED_CONST_TYPES: [InferType; 1] = [InferType::I64];
+
+    pub fn folds_an_associated_constant(&self) -> bool {
+        Self::FOLDABLE_ASSOCIATED_CONST_TYPES.contains(self)
+    }
+
+    pub fn foldable_associated_const_types() -> String {
+        Self::FOLDABLE_ASSOCIATED_CONST_TYPES
+            .iter()
+            .map(InferType::source_spelling)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -506,6 +520,76 @@ impl fmt::Display for InferType {
             InferType::Var(_) => write!(f, "inferred type"),
             InferType::Dynamic => write!(f, "dynamic"),
             InferType::Poison => write!(f, "poisoned type"),
+        }
+    }
+}
+
+impl InferType {
+    /// new type cannot reach a message under its internal spelling
+    pub fn source_spelling(&self) -> String {
+        match self {
+            InferType::I64 => "int".to_string(),
+            InferType::F64 => "float".to_string(),
+            InferType::Vec(inner) => format!("Vec<{}>", inner.source_spelling()),
+            InferType::Option(inner) => format!("Option<{}>", inner.source_spelling()),
+            InferType::Result(ok, err) => format!(
+                "Result<{}, {}>",
+                ok.source_spelling(),
+                err.source_spelling()
+            ),
+            InferType::Array(inner) => format!("[{}]", inner.source_spelling()),
+            InferType::FixedArray(inner, length) => {
+                format!("[{}; {length}]", inner.source_spelling())
+            }
+            InferType::Function { params, ret } => format!(
+                "fn({}) -> {}",
+                params
+                    .iter()
+                    .map(InferType::source_spelling)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ret.source_spelling()
+            ),
+            InferType::Applied { name, args } => format!(
+                "{name}<{}>",
+                args.iter()
+                    .map(InferType::source_spelling)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            InferType::Tuple(elements) => format!(
+                "({})",
+                elements
+                    .iter()
+                    .map(InferType::source_spelling)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            InferType::Projection { item, self_ty, .. } => {
+                format!("{}::{}", self_ty.source_spelling(), item)
+            }
+            InferType::I8
+            | InferType::I16
+            | InferType::I32
+            | InferType::U8
+            | InferType::U16
+            | InferType::U32
+            | InferType::U64
+            | InferType::F32
+            | InferType::Bool
+            | InferType::String
+            | InferType::Unit
+            | InferType::Null
+            | InferType::Error
+            | InferType::Never
+            | InferType::Numeric
+            | InferType::UntypedNative(_)
+            | InferType::Range
+            | InferType::Struct(_)
+            | InferType::Param(_)
+            | InferType::Var(_)
+            | InferType::Dynamic
+            | InferType::Poison => self.to_string(),
         }
     }
 }

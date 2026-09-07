@@ -18,6 +18,8 @@ pub struct TypedProgram {
 pub struct TypedStmt {
     pub kind: TypedStmtKind,
     pub span: Span,
+    // the module that owns the statement when an importer inlined it, so a diagnostic can
+    pub definition_module: Option<aelys_syntax::ModuleId>,
 }
 
 #[derive(Debug, Clone)]
@@ -355,6 +357,10 @@ impl TypedExpr {
 
 impl TypedStmt {
     pub fn new(kind: TypedStmtKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            definition_module: None,
+        }
     }
 }

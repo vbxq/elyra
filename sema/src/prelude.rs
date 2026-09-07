@@ -11,6 +11,7 @@ pub const STRING_TO_ERROR_SYMBOL: &str = "__aelys_from::string_to_error";
 
 pub fn register(table: &mut TypeTable) {
     table.register_trait(TraitDef {
+        owner: aelys_syntax::ModuleId::new("<prelude>"),
         name: DISPLAY_TRAIT.to_string(),
         type_params: Vec::new(),
         super_bounds: Vec::new(),
@@ -27,6 +28,7 @@ pub fn register(table: &mut TypeTable) {
         associated_consts: Vec::new(),
     });
     table.register_trait(TraitDef {
+        owner: aelys_syntax::ModuleId::new("<prelude>"),
         name: FROM_TRAIT.to_string(),
         type_params: vec![FROM_SOURCE_PARAM.to_string()],
         super_bounds: Vec::new(),
