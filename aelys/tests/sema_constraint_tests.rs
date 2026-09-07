@@ -600,7 +600,7 @@ fn an_item_no_trait_declares_is_rejected_in_a_trait_impl_too() {
 
 #[test]
 fn a_long_acyclic_projection_chain_compiles() {
-    // worse, hand the poisoned type to a later stage as if it had type-checked.
+    // hand the poisoned type to a later stage as if it had type-checked
     let depth = 80;
     let mut source = String::new();
     for index in 0..=depth {
@@ -638,7 +638,7 @@ fn a_deep_acyclic_projection_diamond_does_not_blow_up() {
     source.push_str(&format!(
         "impl Fan{depth} for Node {{ type Item{depth} = int }}\n"
     ));
-    // the projection must be *used*: an unused diamond never enters the
+    // the projection must be *used*: an unused diamond never enters the normalizer, so the
     source.push_str("fn probe() -> int {\n    let value: Node::Item0 = 1\n    1\n}\nprobe()\n");
     let message = compile_message(&source);
     assert_associated_diagnostic(
@@ -831,7 +831,7 @@ probe()
         "E0422",
         "LIMIT",
         "constant value in the impl for 'Bounds'",
-        "write an initialiser of type 'i64'",
+        "write an initialiser of type 'int'",
     );
 }
 
@@ -875,7 +875,7 @@ fn a_shallow_projection_diamond_still_compiles() {
     source.push_str(&format!(
         "impl Small{depth} for Leaf {{ type Item{depth} = int }}\n"
     ));
-    // the projection must be *used*. an unused one never enters the normalizer,
+    // the projection must be *used*: an unused one never enters the normalizer, so the
     source.push_str(
         "fn probe() -> int {\n    let value: Leaf::Item0 = Ok(Ok(Ok(Ok(Ok(Ok(Ok(Ok(1))))))))\n    match value {\n        Ok(_) => 1\n        Err(_) => 0\n    }\n}\nprobe()\n",
     );
@@ -1000,31 +1000,274 @@ probe()
     assert_eq!(result.as_int(), Some(10));
 }
 
+fn negative_length_program(binding: &str) -> String {
+    format!(
+        r#"
+trait Limits {{
+    const LIMIT: int
+}}
+struct Bounds {{}}
+impl Limits for Bounds {{
+    const LIMIT: int = 0 - 3
+}}
+fn probe() -> int {{
+    {binding}
+    values.len()
+}}
+probe()
+"#
+    )
+}
+
 #[test]
 fn a_constant_that_cannot_be_an_array_length_says_so() {
-    let message = compile_message(
-        r#"
-trait Limits {
-    const LIMIT: int
-}
-struct Bounds {}
-impl Limits for Bounds {
-    const LIMIT: int = 0 - 3
-}
-fn probe() -> int {
-    let values: [int; Bounds::LIMIT] = [1, 2]
-    values.len()
-}
-probe()
-"#,
+    let annotation = compile_message(&negative_length_program(
+        "let values: [int; Bounds::LIMIT] = [1, 2]",
+    ));
+    let repeat = compile_message(&negative_length_program("let values = [1; Bounds::LIMIT]"));
+    for message in [&annotation, &repeat] {
+        assert!(message.contains("E0315"), "expected E0315, got: {message}");
+        assert!(
+            message.contains("array size cannot be negative: -3"),
+            "the value the constant folded to must be printed: {message}"
+        );
+        assert!(
+            message.contains("'Bounds::LIMIT'"),
+            "the constant that produced the length must be named: {message}"
+        );
+        assert!(
+            !message.contains("E0423"),
+            "the projection resolved, so no resolution failure may be reported: {message}"
+        );
+    }
+    assert_eq!(
+        annotation.lines().next(),
+        repeat.lines().next(),
+        "one condition takes one code and one sentence:\n{annotation}\n----\n{repeat}"
     );
+}
+
+fn generic_bare_receiver_program(item_definition: &str) -> String {
+    format!(
+        "struct Wrap<T> {{ w: T }}\ntrait Source {{\n    type Item\n    const LIMIT: int\n}}\nimpl<T> Source for Wrap<T> {{\n    type Item = {item_definition}\n    const LIMIT: int = 6\n}}\nfn probe(x: Wrap::Item) -> Wrap::Item {{\n    return x\n}}\nfn main() -> int {{\n    return probe(5) * Wrap::LIMIT\n}}\nmain()\n"
+    )
+}
+
+#[test]
+fn a_generic_receiver_written_bare_answers_in_both_namespaces() {
+    assert_eq!(
+        run_ok(&generic_bare_receiver_program("int")).as_int(),
+        Some(30),
+        "30 is 5 through 'Wrap::Item' times the 6 of 'Wrap::LIMIT'; either half unresolved \
+         changes it"
+    );
+    let mismatched = compile_message(&generic_bare_receiver_program("string"));
+    assert!(
+        mismatched.contains("E0301"),
+        "'Wrap::Item' must carry the definition the impl wrote, not a fresh variable: {mismatched}"
+    );
+    let parameterised = compile_message(&generic_bare_receiver_program("T"));
     assert_associated_diagnostic(
-        &message,
+        &parameterised,
         "E0423",
-        "Bounds::LIMIT",
-        "an array length",
-        "cannot be an array length",
+        "Wrap::Item",
+        "a parameter type",
+        "its own type parameter 'T'",
     );
+    assert!(
+        !parameterised.contains("no impl for 'Wrap' defines"),
+        "an impl defines 'Item'; the refusal must not deny it: {parameterised}"
+    );
+}
+
+#[test]
+fn a_non_generic_impl_of_a_generic_type_answers_the_bare_receiver_too() {
+    let value = run_ok(
+        "struct Wrap<T> { w: T }\ntrait Source {\n    type Item\n    const LIMIT: int\n}\nimpl Source for Wrap<int> {\n    type Item = int\n    const LIMIT: int = 9\n}\nfn probe(x: Wrap::Item) -> int {\n    return x + Wrap::LIMIT\n}\nfn main() -> int {\n    return probe(4)\n}\nmain()\n",
+    );
+    assert_eq!(
+        value.as_int(),
+        Some(13),
+        "13 is 4 through 'Wrap::Item' plus the 9 of 'Wrap::LIMIT'"
+    );
+}
+
+fn builtin_receiver_program(receiver: &str) -> String {
+    format!("fn probe(x: {receiver}::Item) -> int {{\n    return 1\n}}\nprobe(1)\n")
+}
+
+#[test]
+fn a_built_in_receiver_is_a_type_in_scope_and_says_why_it_has_no_items() {
+    for receiver in ["int", "string", "bool", "float", "Vec"] {
+        let message = compile_message(&builtin_receiver_program(receiver));
+        assert_associated_diagnostic(
+            &message,
+            "E0423",
+            &format!("{receiver}::Item"),
+            "a parameter type",
+            "is a built-in type",
+        );
+        assert!(
+            !message.contains("E0372"),
+            "'{receiver}' is in scope, so it is not an unknown type: {message}"
+        );
+    }
+    let unknown = compile_message(&builtin_receiver_program("Nope"));
+    assert!(
+        unknown.contains("E0372") && unknown.contains("unknown type 'Nope'"),
+        "a receiver that really is absent keeps its own diagnostic: {unknown}"
+    );
+}
+
+fn two_traits_one_type_program(receiver: &str) -> String {
+    format!(
+        "struct Counter {{ v: int }}\ntrait Alpha {{\n    type Item\n    const LIMIT: int\n}}\ntrait Beta {{\n    type Item\n    const LIMIT: int\n}}\nimpl Alpha for Counter {{\n    type Item = int\n    const LIMIT: int = 3\n}}\nimpl Beta for Counter {{\n    type Item = string\n    const LIMIT: int = 7\n}}\nfn probe(x: {receiver}::Item) -> int {{\n    return x + {receiver}::LIMIT\n}}\nfn main() -> int {{\n    return probe(10)\n}}\nmain()\n"
+    )
+}
+
+fn one_trait_two_types_program(receiver: &str) -> String {
+    format!(
+        "struct Counter {{ v: int }}\nstruct Other {{ v: int }}\ntrait Source {{\n    type Item\n    const LIMIT: int\n}}\nimpl Source for Counter {{\n    type Item = int\n    const LIMIT: int = 3\n}}\nimpl Source for Other {{\n    type Item = string\n    const LIMIT: int = 7\n}}\nfn probe(x: {receiver}::Item) -> int {{\n    return x + {receiver}::LIMIT\n}}\nfn main() -> int {{\n    return probe(10)\n}}\nmain()\n"
+    )
+}
+
+#[test]
+fn each_shape_of_an_ambiguous_projection_offers_the_repair_that_works() {
+    let two_traits = compile_message(&two_traits_one_type_program("Counter"));
+    assert_associated_diagnostic(
+        &two_traits,
+        "E0423",
+        "Counter::Item",
+        "a parameter type",
+        "name the trait that declares the one you mean, as in 'Alpha::Item'",
+    );
+    assert_eq!(
+        run_ok(&two_traits_one_type_program("Alpha")).as_int(),
+        Some(13),
+        "13 is 10 through Alpha's int 'Item' plus Alpha's 3; Beta's impl gives neither"
+    );
+
+    let two_types = compile_message(&one_trait_two_types_program("Source"));
+    assert_associated_diagnostic(
+        &two_types,
+        "E0423",
+        "Source::Item",
+        "a parameter type",
+        "name the type that owns the one you mean, as in 'Counter::Item'",
+    );
+    assert!(
+        !two_types.contains("rename the item"),
+        "one trait already provides the item, so renaming it repairs nothing: {two_types}"
+    );
+    assert!(
+        two_types.contains("both implement 'Source'"),
+        "the mirror shape must say the two names are the implementing types: {two_types}"
+    );
+    assert_eq!(
+        run_ok(&one_trait_two_types_program("Counter")).as_int(),
+        Some(13),
+        "13 is 10 through Counter's int 'Item' plus Counter's 3; Other's impl gives neither"
+    );
+}
+
+// impl header, an enum variant field and a bound the grid never listed.
+fn projection_position_program(position: &str, item: &str) -> String {
+    let prelude = "struct Counter { v: int }\ntrait Source {\n    type Item\n    const LIMIT: int\n}\nimpl Source for Counter {\n    type Item = int\n    const LIMIT: int = 6\n}\n";
+    let body = match position {
+        "enum payload" => format!(
+            "enum Box {{ Full(Counter::{item}), Empty }}\nfn main() -> int {{\n    let b = Box::Full(7)\n    return match b {{\n        Box::Full(v) => v * Counter::LIMIT,\n        Box::Empty => 0,\n    }}\n}}\n"
+        ),
+        "enum struct variant field" => format!(
+            "enum Box {{ Full {{ v: Counter::{item} }}, Empty }}\nfn main() -> int {{\n    let b = Box::Full {{ v: 7 }}\n    return match b {{\n        Box::Full {{ v }} => v * Counter::LIMIT,\n        Box::Empty => 0,\n    }}\n}}\n"
+        ),
+        "impl header" => format!(
+            "trait Mark {{\n    fn mark(self) -> int\n}}\nimpl Mark for Counter::{item} {{\n    fn mark(self) -> int {{ return 1 }}\n}}\nfn main() -> int {{\n    return 42\n}}\n"
+        ),
+        "associated item definition" => format!(
+            "trait Twin {{\n    type Echo\n    fn echo(self) -> Self::Echo\n}}\nimpl Twin for Counter {{\n    type Echo = Counter::{item}\n    fn echo(self) -> int {{ return self.v }}\n}}\nfn main() -> int {{\n    let c = Counter {{ v: 7 }}\n    return c.echo() * Counter::LIMIT\n}}\n"
+        ),
+        "associated constant type" => format!(
+            "trait Cap {{\n    const CAP: int\n}}\nimpl Cap for Counter {{\n    const CAP: Counter::{item} = 7\n}}\nfn main() -> int {{\n    return Counter::CAP * Counter::LIMIT\n}}\n"
+        ),
+        "bound" => format!(
+            "fn take<T: Source<Item = Counter::{item}>>(v: T) -> int {{\n    return 7\n}}\nfn main() -> int {{\n    return take(Counter {{ v: 1 }}) * Counter::LIMIT\n}}\n"
+        ),
+        "constant bound" => format!(
+            "fn take<T: Source<LIMIT = Counter::{item}>>(v: T) -> int {{\n    return T::LIMIT * 7\n}}\nfn main() -> int {{\n    return take(Counter {{ v: 1 }})\n}}\n"
+        ),
+        "constant bound in a where clause" => format!(
+            "fn take<T>(v: T) -> int where T: Source<LIMIT = Counter::{item}> {{\n    return T::LIMIT * 7\n}}\nfn main() -> int {{\n    return take(Counter {{ v: 1 }})\n}}\n"
+        ),
+        "generic argument" => format!(
+            "struct Holder<T> {{ item: T }}\nfn main() -> int {{\n    let h: Holder<Counter::{item}> = Holder {{ item: 7 }}\n    return h.item * Counter::LIMIT\n}}\n"
+        ),
+        "fn annotation" => format!(
+            "fn main() -> int {{\n    let f: fn(Counter::{item}) -> Counter::{item} = fn(v: int) -> int {{ return v }}\n    return f(7) * Counter::LIMIT\n}}\n"
+        ),
+        "nested array element" => format!(
+            "fn main() -> int {{\n    let xs: [[Counter::{item}; 2]; 2] = [[1, 2], [3, 7]]\n    return xs[1][1] * Counter::LIMIT\n}}\n"
+        ),
+        _ => format!(
+            "let top: Counter::{item} = 7\nfn main() -> int {{\n    return top * Counter::LIMIT\n}}\n"
+        ),
+    };
+    format!("{prelude}{body}main()\n")
+}
+
+const EVERY_UNLISTED_POSITION: [(&str, &str); 12] = [
+    ("enum payload", "an enum variant field"),
+    ("enum struct variant field", "an enum variant field"),
+    ("impl header", "an impl header"),
+    (
+        "associated item definition",
+        "an associated item definition",
+    ),
+    ("associated constant type", "an associated item definition"),
+    ("bound", "a bound"),
+    ("constant bound", "a bound"),
+    ("constant bound in a where clause", "a bound"),
+    ("generic argument", "a type annotation"),
+    ("fn annotation", "a type annotation"),
+    ("nested array element", "a type annotation"),
+    ("top level annotation", "a type annotation"),
+];
+
+// the trait's declaration decides which namespace a binding stands in
+fn accepted_item(position: &str) -> (&'static str, &'static str, &'static str) {
+    if position.starts_with("constant bound") {
+        ("LIMIT", "Item", "not an associated constant")
+    } else {
+        ("Item", "LIMIT", "not an associated type")
+    }
+}
+
+#[test]
+fn every_position_the_compiler_can_name_holds_the_same_rule() {
+    for (position, role) in EVERY_UNLISTED_POSITION {
+        let (accepted, refused_item, help) = accepted_item(position);
+        if position == "impl header" {
+            // the projection resolved to i64 and the orphan rule refused it after
+            let orphan = compile_message(&projection_position_program(position, accepted));
+            assert!(
+                orphan.contains("E0339") && !orphan.contains("E0423"),
+                "the '{role}' type half must resolve before the orphan rule speaks: {orphan}"
+            );
+        } else {
+            assert_eq!(
+                run_ok(&projection_position_program(position, accepted)).as_int(),
+                Some(42),
+                "the accepted half of '{position}' must run its projection times seven"
+            );
+        }
+        let refused = compile_message(&projection_position_program(position, refused_item));
+        assert_associated_diagnostic(
+            &refused,
+            "E0423",
+            &format!("Counter::{refused_item}"),
+            role,
+            help,
+        );
+    }
 }
 
 fn projection_diamond(depth: usize) -> String {
@@ -2319,7 +2562,7 @@ struct Bounds {{}}
 impl Limits for Bounds {{
     const LIMIT: {declared} = {value}
 }}
-fn probe() -> int {{ 7 }}
+fn probe() -> int {{ return Bounds::LIMIT + 4 }}
 probe()
 "#
     )
@@ -2330,7 +2573,17 @@ fn an_associated_constant_reports_which_half_of_the_impl_disagrees() {
     assert_eq!(
         run_ok(&associated_const_program("int", "3")).as_int(),
         Some(7),
-        "the agreeing constant must keep compiling"
+        "7 is the impl's 3 read back through 'Bounds::LIMIT'; any other value gives another sum"
+    );
+    assert_eq!(
+        run_ok(&associated_const_program("int", "999")).as_int(),
+        Some(1003),
+        "the accepted half must read the constant the impl wrote, not a literal beside it"
+    );
+    assert_eq!(
+        run_ok(&associated_const_program("int", "1 + 1 + 1")).as_int(),
+        Some(7),
+        "a folded initialiser reaches the reader as the value it folds to"
     );
     let declared = compile_message(&associated_const_program("string", "\"ten\""));
     assert_associated_diagnostic(
@@ -2346,7 +2599,7 @@ fn an_associated_constant_reports_which_half_of_the_impl_disagrees() {
         "E0422",
         "LIMIT",
         "constant value in the impl for 'Bounds'",
-        "write an initialiser of type 'i64'",
+        "write an initialiser of type 'int'",
     );
 }
 
@@ -2692,6 +2945,155 @@ fn a_type_bound_to_an_associated_constant_names_the_namespace_it_is_not() {
         !message.contains("i64"),
         "the message must spell the type the source wrote: {message}"
     );
+}
+
+#[derive(Clone, Copy)]
+enum DeclaredNamespaces {
+    TypeOnly,
+    ConstOnly,
+    Both,
+}
+
+const EVERY_DECLARED_NAMESPACE: &[DeclaredNamespaces] = &[
+    DeclaredNamespaces::TypeOnly,
+    DeclaredNamespaces::ConstOnly,
+    DeclaredNamespaces::Both,
+];
+
+fn declaration_name(declared: DeclaredNamespaces) -> &'static str {
+    match declared {
+        DeclaredNamespaces::TypeOnly => "type X alone",
+        DeclaredNamespaces::ConstOnly => "const X alone",
+        DeclaredNamespaces::Both => "type X and const X",
+    }
+}
+
+fn declared_lines(
+    declared: DeclaredNamespaces,
+    const_first: bool,
+    type_value: &str,
+    const_value: Option<&str>,
+) -> String {
+    let type_line = match const_value {
+        Some(_) => format!("    type X = {type_value}\n"),
+        None => "    type X\n".to_string(),
+    };
+    let const_line = match const_value {
+        Some(value) => format!("    const X: int = {value}\n"),
+        None => "    const X: int\n".to_string(),
+    };
+    match (declared, const_first) {
+        (DeclaredNamespaces::TypeOnly, _) => type_line,
+        (DeclaredNamespaces::ConstOnly, _) => const_line,
+        (DeclaredNamespaces::Both, false) => format!("{type_line}{const_line}"),
+        (DeclaredNamespaces::Both, true) => format!("{const_line}{type_line}"),
+    }
+}
+
+fn namespace_bound_program(
+    declared: DeclaredNamespaces,
+    right_is_a_type: bool,
+    where_form: bool,
+    const_first: bool,
+    matching_argument: bool,
+) -> String {
+    let right = if right_is_a_type { "int" } else { "3" };
+    let bound = if where_form {
+        format!(
+            "fn take<T>(v: T) -> int where T: Source<X = {right}> {{\n    return v.next()\n}}\n"
+        )
+    } else {
+        format!("fn take<T: Source<X = {right}>>(v: T) -> int {{\n    return v.next()\n}}\n")
+    };
+    let argument = if matching_argument {
+        "Counter { v: 5 }"
+    } else {
+        "Other { v: 5 }"
+    };
+    format!(
+        "trait Source {{\n{declaration}    fn next(self) -> int\n}}\n\
+struct Counter {{ v: int }}\n\
+impl Source for Counter {{\n{counter}    fn next(self) -> int {{\n        return self.v\n    }}\n}}\n\
+struct Other {{ v: int }}\n\
+impl Source for Other {{\n{other}    fn next(self) -> int {{\n        return self.v + 1\n    }}\n}}\n\
+{bound}\
+fn go() -> int {{\n    let subject = {argument}\n    return take(subject) * 2\n}}\n\
+go()\n",
+        declaration = declared_lines(declared, const_first, "", None),
+        counter = declared_lines(declared, const_first, "int", Some("3")),
+        other = declared_lines(declared, const_first, "string", Some("9")),
+    )
+}
+
+#[test]
+fn a_bound_reads_the_namespace_the_right_side_writes() {
+    for declared in EVERY_DECLARED_NAMESPACE {
+        for right_is_a_type in [true, false] {
+            for where_form in [true, false] {
+                for const_first in [true, false] {
+                    let label = format!(
+                        "{} bound '{}' with {} declaring {}",
+                        if where_form { "where" } else { "inline" },
+                        if right_is_a_type { "X = int" } else { "X = 3" },
+                        if const_first {
+                            "const first"
+                        } else {
+                            "type first"
+                        },
+                        declaration_name(*declared)
+                    );
+                    let crosses = match declared {
+                        DeclaredNamespaces::TypeOnly => !right_is_a_type,
+                        DeclaredNamespaces::ConstOnly => right_is_a_type,
+                        DeclaredNamespaces::Both => false,
+                    };
+                    let accepting = namespace_bound_program(
+                        *declared,
+                        right_is_a_type,
+                        where_form,
+                        const_first,
+                        true,
+                    );
+                    if crosses {
+                        let message = compile_message(&accepting);
+                        let expected = if right_is_a_type {
+                            "bind a value, or name an associated type"
+                        } else {
+                            "bind a type, or name an associated constant"
+                        };
+                        assert_associated_diagnostic(
+                            &message,
+                            "E0424",
+                            "associated binding 'Source::X",
+                            "a bound",
+                            expected,
+                        );
+                        continue;
+                    }
+                    assert_eq!(
+                        run_ok(&accepting).as_int(),
+                        Some(10),
+                        "{label} must accept the impl that matches it"
+                    );
+                    let message = compile_message(&namespace_bound_program(
+                        *declared,
+                        right_is_a_type,
+                        where_form,
+                        const_first,
+                        false,
+                    ));
+                    let provided = if right_is_a_type { "string" } else { "9" };
+                    assert_associated_diagnostic(
+                        &message,
+                        "E0424",
+                        &format!("which provides {provided}"),
+                        "a bound on 'T'",
+                        "change the requested binding or the impl",
+                    );
+                }
+            }
+        }
+    }
 }
 
 // rejected, and the same duplication of an item no trait declares is not.
@@ -3516,9 +3918,9 @@ fn an_unconstrained_type_parameter_is_rejected_on_a_trait_impl_as_well() {
         );
         let message = compile_message(&unconstrained_impl_parameter_program(on_trait, false));
         let reason = if on_trait {
-            "impl of trait 'Source' for 'Wrap<i64>'"
+            "impl of trait 'Source' for 'Wrap<int>'"
         } else {
-            "inherent impl of 'Wrap<i64>'"
+            "inherent impl of 'Wrap<int>'"
         };
         assert_associated_diagnostic(&message, "E0430", "'T'", reason, "move it onto the method");
     }
@@ -3568,18 +3970,18 @@ fn e0430_states_the_reason_that_holds_where_the_parameter_stands() {
     for placement in ["trait argument", "method signature"] {
         let message = compile_message(&impl_parameter_placement(placement));
         let reason = match placement {
-            "trait argument" => "impl of trait 'Take' for 'Wrap<i64>'",
-            _ => "inherent impl of 'Wrap<i64>'",
+            "trait argument" => "impl of trait 'Take' for 'Wrap<int>'",
+            _ => "inherent impl of 'Wrap<int>'",
         };
         assert_associated_diagnostic(
             &message,
             "E0430",
-            "does not appear in the impl target type 'Wrap<i64>', though a call site determines it",
+            "does not appear in the impl target type 'Wrap<int>', though a call site determines it",
             reason,
             "move it onto the method",
         );
         assert!(
-            message.contains("named by its target type alone"),
+            message.contains("by nothing that records 'T'"),
             "the {placement} shape must state the symbol that refuses it: {message}"
         );
         assert!(
@@ -3591,8 +3993,8 @@ fn e0430_states_the_reason_that_holds_where_the_parameter_stands() {
     assert_associated_diagnostic(
         &confined,
         "E0430",
-        "does not appear in the impl target type 'Wrap<i64>', so no call site can determine it",
-        "inherent impl of 'Wrap<i64>'",
+        "does not appear in the impl target type 'Wrap<int>', so no call site can determine it",
+        "inherent impl of 'Wrap<int>'",
         "move it onto the method",
     );
     assert!(
@@ -3723,7 +4125,7 @@ fn a_supertrait_declared_constant_is_checked_against_its_declaration() {
         "E0422",
         "'LIMIT'",
         "constant value in the impl for 'Counter'",
-        "write an initialiser of type 'i64'",
+        "write an initialiser of type 'int'",
     );
 }
 
@@ -3951,7 +4353,7 @@ fn projection_cause_clause(arm: &str) -> &'static str {
         "namespace" => "is an associated",
         "ambiguous" => "is ambiguous",
         "unevaluable" => "its value cannot be computed",
-        "out of range" => "cannot be an array length",
+        "out of range" => "array size cannot be negative",
         _ => "is not a constant integer expression",
     }
 }
@@ -4436,6 +4838,71 @@ fn the_missing_associated_item_help_names_the_declared_namespace() {
         assert!(
             !message.contains(wrong),
             "E0421 must not offer '{wrong}': {message}"
+        );
+    }
+}
+
+fn required_item_impl_program(items: &str) -> String {
+    format!(
+        "trait Source {{\n    type Item\n    const LIMIT: int\n    fn next(self) -> int\n}}\n\
+struct Node {{ v: int }}\n\
+impl Source for Node {{\n{items}    fn next(self) -> int {{\n        return self.v\n    }}\n}}\n\
+fn go() -> int {{\n    let n = Node {{ v: 5 }}\n    let cap: Node::Item = 4\n    return n.next() + Node::LIMIT + cap\n}}\n\
+go()\n"
+    )
+}
+
+fn offered_spelling(message: &str) -> String {
+    let after = message
+        .split_once("written '")
+        .unwrap_or_else(|| panic!("E0421 must offer a spelling: {message}"))
+        .1;
+    after
+        .split_once('\'')
+        .unwrap_or_else(|| panic!("the offered spelling must be quoted: {message}"))
+        .0
+        .to_string()
+}
+
+#[test]
+fn the_missing_item_help_offers_a_spelling_the_impl_body_accepts() {
+    for (item, present) in [
+        ("Item", "    const LIMIT: int = 4\n"),
+        ("LIMIT", "    type Item = int\n"),
+    ] {
+        let message = compile_message(&required_item_impl_program(present));
+        assert_associated_diagnostic(
+            &message,
+            "E0421",
+            &format!("missing required associated item '{item}'"),
+            "impl of trait 'Source' for 'Node'",
+            "in the impl body, written '",
+        );
+        let offered = offered_spelling(&message);
+        let filled = offered.replace("<type>", "int").replace("<value>", "4");
+        assert_ne!(
+            filled, offered,
+            "the offered spelling for '{item}' must hold a placeholder: {message}"
+        );
+        assert_eq!(
+            run_ok(&required_item_impl_program(&format!(
+                "{present}    {filled}\n"
+            )))
+            .as_int(),
+            Some(13),
+            "the spelling E0421 offered for '{item}' must define it and run"
+        );
+        let bare = offered
+            .split_once(" = ")
+            .expect("the offered spelling must carry a value")
+            .0;
+        let bare = bare.split_once(':').map_or(bare, |(head, _)| head);
+        let refused = compile_message(&required_item_impl_program(&format!(
+            "{present}    {bare}\n"
+        )));
+        assert!(
+            refused.contains("E0101"),
+            "the name alone is not a definition, so the help may not stop there: {refused}"
         );
     }
 }
@@ -5238,7 +5705,7 @@ fn an_associated_constant_value_mismatch_accuses_the_initialiser_and_not_the_dec
     assert_eq!(
         run_ok(&associated_const_program("int", "3")).as_int(),
         Some(7),
-        "the agreeing constant must keep compiling"
+        "7 is the impl's 3 read back through 'Bounds::LIMIT'; any other value gives another sum"
     );
     let value = compile_message(&associated_const_program("int", "\"ten\""));
     assert_associated_diagnostic(
@@ -5246,7 +5713,7 @@ fn an_associated_constant_value_mismatch_accuses_the_initialiser_and_not_the_dec
         "E0422",
         "LIMIT",
         "constant value in the impl for 'Bounds'",
-        "write an initialiser of type 'i64'",
+        "write an initialiser of type 'int'",
     );
     assert!(
         value.contains("is initialised with a value of type 'string'"),
@@ -5305,11 +5772,25 @@ fn an_array_repeat_count_that_no_constant_resolves_keeps_its_own_diagnostic() {
         "a constant that folds to a negative length names the value: {negative}"
     );
     let non_integer = compile_message(
+        "struct Node { v: int }\ntrait Cap<T> { const LABEL: T; }\nimpl Cap<string> for Node { const LABEL: string = \"x\"; }\nfn main() -> int {\n    let xs: [int; Node::LABEL] = [1; Node::LABEL]\n    return xs[0]\n}\nmain()\n",
+    );
+    assert!(
+        non_integer.contains("E0434") && !non_integer.contains("E0423"),
+        "a 'string' the impl put in for the trait's parameter is refused before a length ever \
+         asks for it: {non_integer}"
+    );
+    assert!(
+        non_integer.contains("declared type in the impl for 'Node'"),
+        "the impl is where the instantiation is decided and where the refusal lands: \
+         {non_integer}"
+    );
+    let declared_concretely = compile_message(
         "struct Node { v: int }\ntrait Cap { const LABEL: string; }\nimpl Cap for Node { const LABEL: string = \"x\"; }\nfn main() -> int {\n    let xs = [1; Node::LABEL]\n    return xs[0]\n}\nmain()\n",
     );
     assert!(
-        non_integer.contains("E0423") && non_integer.contains("not a constant integer expression"),
-        "a constant that is not an integer answers as the annotation does: {non_integer}"
+        declared_concretely.contains("E0434") && !declared_concretely.contains("E0423"),
+        "a 'string' written in the trait is refused before a length ever asks for it: \
+         {declared_concretely}"
     );
     let through_bound = compile_message(
         "struct Node { v: int }\ntrait Cap { const LIMIT: int; }\nimpl Cap for Node { const LIMIT: int = 3; }\nstruct Wrap<T> { inner: T }\nimpl<T: Cap> Wrap<T> {\n    fn row(self) -> int {\n        let xs = [1; T::LIMIT]\n        return xs[0]\n    }\n}\nfn main() -> int {\n    let w = Wrap { inner: Node { v: 1 } }\n    return w.row()\n}\nmain()\n",
@@ -5318,4 +5799,897 @@ fn an_array_repeat_count_that_no_constant_resolves_keeps_its_own_diagnostic() {
         through_bound.contains("E0423") && through_bound.contains("type parameter 'T'"),
         "a constant reached through a bound is not a dynamic count: {through_bound}"
     );
+}
+
+// the target type's own arguments never enter the mangled symbol, so these two
+fn colliding_instantiation_program(int_first: bool) -> String {
+    let on_int = "impl Source for Wrap<int> {\n    fn next(self) -> int { return 1 }\n}\n";
+    let on_bool = "impl Source for Wrap<bool> {\n    fn next(self) -> int { return 1 }\n}\n";
+    let (first, second) = if int_first {
+        (on_int, on_bool)
+    } else {
+        (on_bool, on_int)
+    };
+    format!(
+        "trait Source {{\n    fn next(self) -> int\n}}\n\
+struct Wrap<T> {{ v: T }}\n\
+{first}{second}\
+fn probe() -> int {{\n    let w = Wrap {{ v: 3 }}\n    return Source::next(w)\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn two_instantiations_of_one_constructor_collide_on_one_symbol() {
+    let message = compile_message(&colliding_instantiation_program(true));
+    assert!(
+        message.contains("E0355"),
+        "two impls that mangle to one symbol must be named, not silently resolved: {message}"
+    );
+    assert_located_at("E0355", &message, 9);
+    assert!(
+        message.contains("two instances of 'Wrap::next'"),
+        "E0355 must name the method whose slot is shared: {message}"
+    );
+    assert!(
+        message.contains("mangle to one symbol"),
+        "E0355 must say what the two instances did: {message}"
+    );
+}
+
+#[test]
+fn the_symbol_collision_reads_the_same_under_either_declaration_order() {
+    let int_first = compile_message(&colliding_instantiation_program(true));
+    let bool_first = compile_message(&colliding_instantiation_program(false));
+    assert_eq!(
+        int_first, bool_first,
+        "E0355 must not depend on which impl was written first:\n{int_first}\n----\n{bool_first}"
+    );
+    assert_renders_identically(
+        &colliding_instantiation_program(true),
+        "the impl symbol collision",
+    );
+}
+
+#[test]
+fn two_traits_over_two_instantiations_each_reach_their_own_body() {
+    let value = run_ok(
+        "trait Left {\n    fn next(self) -> int\n}\n\
+trait Right {\n    fn next(self) -> int\n}\n\
+struct Wrap<T> { v: T }\n\
+impl Left for Wrap<int> {\n    fn next(self) -> int { return 1 }\n}\n\
+impl Right for Wrap<bool> {\n    fn next(self) -> int { return 2 }\n}\n\
+fn probe() -> int {\n    let a = Wrap { v: 5 }\n    let b = Wrap { v: true }\n    return Left::next(a) * 10 + Right::next(b)\n}\n\
+probe()\n",
+    );
+    assert_eq!(
+        value.as_int(),
+        Some(12),
+        "12 pins each trait to its own body; one shared slot answers 11 or 22"
+    );
+}
+
+#[test]
+fn two_method_names_over_two_instantiations_each_reach_their_own_body() {
+    let value = run_ok(
+        "trait Left {\n    fn a(self) -> int\n}\n\
+trait Right {\n    fn b(self) -> int\n}\n\
+struct Wrap<T> { v: T }\n\
+impl Left for Wrap<int> {\n    fn a(self) -> int { return 1 }\n}\n\
+impl Right for Wrap<bool> {\n    fn b(self) -> int { return 2 }\n}\n\
+fn probe() -> int {\n    let x = Wrap { v: 5 }\n    let y = Wrap { v: true }\n    return x.a() * 10 + y.b()\n}\n\
+probe()\n",
+    );
+    assert_eq!(
+        value.as_int(),
+        Some(12),
+        "12 pins two method names to two slots"
+    );
+}
+
+#[test]
+fn one_generic_impl_over_two_instantiations_still_monomorphizes() {
+    let value = run_ok(
+        "trait Source {\n    fn next(self) -> int\n    fn tag(self) -> string\n}\n\
+struct Wrap<T> { v: T }\n\
+impl<T> Source for Wrap<T> {\n    fn next(self) -> int { return 7 }\n    fn tag(self) -> string { return \"w\" }\n}\n\
+fn probe() -> int {\n    let a = Wrap { v: 5 }\n    let b = Wrap { v: true }\n    let widened: int = a.v\n    let flagged: bool = b.v\n    let carried = a.tag() + b.tag()\n    if flagged && carried == \"ww\" {\n        return a.next() * 10 + b.next() + widened\n    }\n    return 0\n}\n\
+probe()\n",
+    );
+    assert_eq!(
+        value.as_int(),
+        Some(82),
+        "82 is 77 plus the 5 only the int instantiation holds; the per-instance suffix is the \
+         monomorphizer's, and this guard must not claim it"
+    );
+    assert_eq!(
+        run_ok(
+            "trait Source {\n    fn next(self) -> int\n}\n\
+struct Wrap<T> { v: T }\n\
+impl<T> Source for Wrap<T> {\n    fn next(self) -> int { return 7 }\n}\n\
+fn probe() -> int {\n    let a = Wrap { v: 5 }\n    let b = Wrap { v: true }\n    return a.next() * 10 + b.next()\n}\n\
+probe()\n",
+        )
+        .as_int(),
+        Some(77),
+        "the shape without the per-instantiation reads keeps answering as it did"
+    );
+}
+
+#[test]
+fn an_adopted_default_body_reports_the_collision_on_the_impl() {
+    let message = compile_message(
+        "trait Source {\n    fn a(self) -> int {\n        return 3\n    }\n    fn b(self) -> int {\n        return 4\n    }\n}\n\
+struct Wrap<T> { v: T }\n\
+impl Source for Wrap<int> {\n    fn a(self) -> int { return 1 }\n}\n\
+impl Source for Wrap<bool> {\n    fn b(self) -> int { return 2 }\n}\n\
+fn probe() -> int {\n    let x = Wrap { v: 5 }\n    let y = Wrap { v: true }\n    return x.a() * 10 + y.b()\n}\n\
+probe()\n",
+    );
+    assert!(
+        message.contains("E0355"),
+        "a default body adopted into both impls shares the slot as a written one does: {message}"
+    );
+    assert_located_at("E0355", &message, 13);
+}
+
+#[test]
+fn two_inherent_impls_over_two_instantiations_keep_their_own_diagnostic() {
+    let message = compile_message(
+        "struct Wrap<T> { v: T }\n\
+impl Wrap<int> {\n    fn get(self) -> int { return 1 }\n}\n\
+impl Wrap<bool> {\n    fn get(self) -> int { return 2 }\n}\n\
+fn probe() -> int {\n    let w = Wrap { v: 3 }\n    return w.get()\n}\n\
+probe()\n",
+    );
+    assert!(
+        message.contains("E0329"),
+        "the inherent namespace refuses the second method before a symbol is minted: {message}"
+    );
+    assert_located_at("E0329", &message, 6);
+}
+
+#[test]
+fn the_symbol_collision_wording_holds_for_a_generic_instance_too() {
+    let error = aelys_sema::constraint::TypeError {
+        kind: TypeErrorKind::MangledSymbolCollision {
+            name: "probe$i64".to_string(),
+        },
+        span: Span::dummy(),
+        reason: ConstraintReason::Other("generic instance symbol collision".to_string()),
+    };
+    assert_eq!(
+        error.to_string(),
+        "two instances of 'probe$i64' mangle to one symbol",
+        "the monomorphizer raises E0355 on the same shape and must read as truly"
+    );
+}
+
+fn compile_outcome(source: &str) -> String {
+    match Runtime::new().compile(source, CompileOptions::default()) {
+        Ok(_) => String::new(),
+        Err(error) => error.to_string(),
+    }
+}
+
+const DECLARABLE_CONSTANT_TYPES: [&str; 18] = [
+    "int",
+    "i64",
+    "float",
+    "bool",
+    "string",
+    "unit",
+    "i8",
+    "i32",
+    "u8",
+    "u64",
+    "f32",
+    "Vec<int>",
+    "Vec<Vec<int>>",
+    "Option<int>",
+    "Result<int, string>",
+    "[int; 3]",
+    "fn(int, string) -> bool",
+    "fn() -> unit",
+];
+
+// a nominal and a generic nominal complete the enumeration; they are kept apart
+const DECLARABLE_NOMINAL_TYPES: [&str; 2] = ["Payload", "Shade"];
+
+fn constant_type_program(declared: &str, definition: &str) -> String {
+    format!(
+        "struct Payload {{ n: int }}\nenum Shade {{ Red, Blue }}\n\
+struct Node {{ v: int }}\n\
+trait Cap {{\n    const LIMIT: {declared}\n    fn next(self) -> int\n}}\n\
+impl Cap for Node {{\n{definition}    fn next(self) -> int {{\n        return self.v\n    }}\n}}\n\
+fn probe() -> int {{\n    return Node {{ v: 5 }}.next()\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn the_missing_item_help_offers_a_spelling_every_declarable_type_accepts() {
+    for declared in DECLARABLE_CONSTANT_TYPES
+        .iter()
+        .chain(DECLARABLE_NOMINAL_TYPES.iter())
+    {
+        let message = compile_message(&constant_type_program(declared, ""));
+        if !FOLDABLE_DECLARED_CONSTANT_TYPES.contains(declared) {
+            assert!(
+                message.contains("E0434") && !message.contains("E0421"),
+                "'{declared}' is refused at the declaration, so no impl of it reaches a missing \
+                 item: {message}"
+            );
+            continue;
+        }
+        assert_associated_diagnostic(
+            &message,
+            "E0421",
+            "missing required associated item 'LIMIT'",
+            "impl of trait 'Cap' for 'Node'",
+            "in the impl body, written '",
+        );
+        let offered = offered_spelling(&message);
+        let written = offered
+            .strip_prefix("const LIMIT: ")
+            .and_then(|rest| rest.strip_suffix(" = <value>"))
+            .unwrap_or_else(|| panic!("E0421 must offer a definable spelling: {message}"));
+        let filled = compile_outcome(&constant_type_program(
+            declared,
+            &format!("    {} = 0\n", offered.replace(" = <value>", "")),
+        ));
+        assert!(
+            !filled.contains("E0101") && !filled.contains("E0347"),
+            "the spelling '{written}' E0421 offered for '{declared}' must parse where it is \
+             offered: {filled}"
+        );
+        assert!(
+            !filled.contains("has a different type than the trait declaration"),
+            "the spelling '{written}' E0421 offered for '{declared}' must repeat the type the \
+             trait declared: {filled}"
+        );
+    }
+}
+
+#[test]
+fn the_offered_spelling_still_defines_the_item_and_runs() {
+    let message = compile_message(&constant_type_program("int", ""));
+    let offered = offered_spelling(&message);
+    assert_eq!(
+        offered, "const LIMIT: int = <value>",
+        "the spelling must be written the way the trait declared it: {message}"
+    );
+    let filled = offered.replace("<value>", "4");
+    assert_eq!(
+        run_ok(&constant_type_program("int", &format!("    {filled}\n"))).as_int(),
+        Some(5),
+        "the spelling E0421 offered must define the item and leave the program running"
+    );
+}
+
+fn established_constant_program(declared: &str, value: &str) -> String {
+    format!(
+        "struct Payload {{ n: int }}\n\
+struct Node {{ v: int }}\n\
+trait Cap {{\n    const LIMIT: {declared}\n}}\n\
+impl Cap for Node {{\n    const LIMIT: {declared} = {value}\n}}\n\
+fn probe() -> int {{\n    return 1\n}}\n\
+probe()\n"
+    )
+}
+
+fn established_parameter_program(declared: &str, value: &str) -> String {
+    format!(
+        "struct Payload {{ n: int }}\n\
+struct Node {{ v: int }}\n\
+trait Cap<T> {{\n    const LIMIT: T\n}}\n\
+impl Cap<{declared}> for Node {{\n    const LIMIT: {declared} = {value}\n}}\n\
+fn probe() -> int {{\n    return 1\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn an_initialiser_no_rule_types_makes_e0422_name_no_type() {
+    for (declared, value) in [
+        ("Vec<int>", "vec![1, 2]"),
+        ("string", "\"a\" + \"b\""),
+        ("Payload", "Payload { n: 1 }"),
+        ("fn(int) -> int", "fn(x: int) -> int { x }"),
+        ("bool", "true && false"),
+        ("int", "[1, 2][0]"),
+    ] {
+        let message = compile_message(&established_constant_program("int", value));
+        assert_associated_diagnostic(
+            &message,
+            "E0422",
+            "associated item 'LIMIT'",
+            "constant value in the impl for 'Node'",
+            "whose type no rule establishes",
+        );
+        for fabricated in [
+            "value of type 'int'",
+            "value of type 'float'",
+            "value of type 'i64'",
+            "value of type 'f64'",
+        ] {
+            assert!(
+                !message.contains(fabricated),
+                "'{value}' establishes no type, so E0422 may not print '{fabricated}': {message}"
+            );
+        }
+        assert_renders_identically(
+            &established_constant_program("int", value),
+            &format!("E0422 over 'int = {value}'"),
+        );
+        let instantiated = compile_message(&established_parameter_program(declared, value));
+        let through_the_parameter = match FOLDABLE_DECLARED_CONSTANT_TYPES.contains(&declared) {
+            true => "E0422",
+            false => "E0434",
+        };
+        assert!(
+            instantiated.contains(through_the_parameter),
+            "'{declared}' put in for the trait's parameter answers {through_the_parameter} at \
+             the impl: {instantiated}"
+        );
+        let written_in_the_trait = compile_message(&established_constant_program(declared, value));
+        let expected = match FOLDABLE_DECLARED_CONSTANT_TYPES.contains(&declared) {
+            true => "E0422",
+            false => "E0434",
+        };
+        assert!(
+            written_in_the_trait.contains(expected),
+            "'{declared}' written in the trait itself answers {expected}: {written_in_the_trait}"
+        );
+    }
+}
+
+#[test]
+fn an_initialiser_a_rule_does_type_still_names_the_type_it_produced() {
+    for (declared, value, found) in [
+        ("int", "\"ten\"", "string"),
+        ("int", "1.5", "float"),
+        ("int", "true", "bool"),
+    ] {
+        let message = compile_message(&established_constant_program(declared, value));
+        assert!(
+            message.contains(&format!("is initialised with a value of type '{found}'")),
+            "'{value}' has an established type and E0422 must name it: {message}"
+        );
+        assert!(
+            !message.contains("'i64'") && !message.contains("'f64'"),
+            "E0422 names a type in the spelling the program could have written: {message}"
+        );
+        let written_in_the_trait = compile_message(&established_constant_program(declared, value));
+        let expected = match FOLDABLE_DECLARED_CONSTANT_TYPES.contains(&declared) {
+            true => "E0422",
+            false => "E0434",
+        };
+        assert!(
+            written_in_the_trait.contains(expected),
+            "'{declared}' written in the trait itself answers {expected}: {written_in_the_trait}"
+        );
+    }
+    assert_eq!(
+        run_ok(&established_constant_program("int", "2 + 1 + 4")).as_int(),
+        Some(1),
+        "an initialiser the folder accepts must keep compiling"
+    );
+}
+
+fn header_projection_program(item: &str, extra: &str) -> String {
+    format!(
+        "struct Payload {{ n: int }}\nenum Shade {{ Red, Blue }}\n\
+struct Counter {{ c: int }}\n\
+trait Source {{\n    type Item\n}}\n\
+trait Mark {{\n    fn tag(self) -> int\n}}\n\
+impl Source for Counter {{\n    type Item = {item}\n}}\n\
+impl Mark for Counter::Item {{\n    fn tag(self) -> int {{\n        return {extra}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn an_impl_header_projection_reaches_a_local_nominal_and_the_body_runs() {
+    let value = run_ok(&format!(
+        "{}fn probe() -> int {{\n    return Payload {{ n: 6 }}.tag()\n}}\nprobe()\n",
+        header_projection_program("Payload", "self.n * 7")
+    ));
+    assert_eq!(
+        value.as_int(),
+        Some(42),
+        "the header resolved 'Counter::Item' to 'Payload' and 6 * 7 is the product only that \
+         body under that resolution gives"
+    );
+    let over_an_enum = run_ok(&format!(
+        "{}fn probe() -> int {{\n    return Shade::Blue.tag()\n}}\nprobe()\n",
+        header_projection_program("Shade", "9")
+    ));
+    assert_eq!(
+        over_an_enum.as_int(),
+        Some(9),
+        "an enum reached through the same header carries its own body"
+    );
+}
+
+#[test]
+fn an_impl_header_projection_onto_a_built_in_keeps_the_orphan_refusal() {
+    let message = compile_message(&format!(
+        "{}fn probe() -> int {{\n    return 1\n}}\nprobe()\n",
+        header_projection_program("int", "1")
+    ));
+    assert!(
+        message.contains("E0339") && message.contains("cannot implement trait 'Mark' for i64"),
+        "the projection resolves and the orphan rule is the separate refusal: {message}"
+    );
+    assert!(
+        !message.contains("unknown struct 'Item'"),
+        "the header names the type the item resolves to, never the item: {message}"
+    );
+}
+
+fn readable_constant_program(declared: &str, value: &str) -> String {
+    format!(
+        "struct Node {{ v: int }}\n\
+trait Cap {{\n    const LIMIT: {declared}\n}}\n\
+impl Cap for Node {{\n    const LIMIT: {declared} = {value}\n}}\n\
+fn probe() -> int {{\n    let held: {declared} = Node::LIMIT\n    return 1\n}}\n\
+probe()\n"
+    )
+}
+
+fn parameter_constant_program(param: &str, instantiated: &str, value: &str) -> String {
+    format!(
+        "struct Node {{ v: int }}\n\
+trait Cap<{param}> {{\n    const LIMIT: {param}\n}}\n\
+impl Cap<{instantiated}> for Node {{\n    const LIMIT: {instantiated} = {value}\n}}\n\
+fn probe() -> int {{\n    let held: {instantiated} = Node::LIMIT\n    return 1\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn a_constant_no_integer_fold_can_produce_names_its_declared_type() {
+    for (param, instantiated, value) in [
+        ("T", "string", "\"ab\""),
+        ("Held", "bool", "true"),
+        ("Bound", "float", "1.5"),
+    ] {
+        let message = compile_message(&parameter_constant_program(param, instantiated, value));
+        assert_associated_diagnostic(
+            &message,
+            "E0434",
+            &format!("declared with type '{instantiated}'"),
+            "declared type in the impl for 'Node'",
+            "declare it with a type the compiler folds a constant of",
+        );
+        assert!(
+            !message.contains(&format!("declared with type '{param}'")),
+            "the impl put '{instantiated}' in for '{param}', and the refusal names what the \
+             impl instantiated: {message}"
+        );
+        assert_renders_identically(
+            &parameter_constant_program(param, instantiated, value),
+            &format!("E0434 over a '{param}' constant instantiated with '{instantiated}'"),
+        );
+        let concrete = compile_message(&readable_constant_program(instantiated, value));
+        assert_associated_diagnostic(
+            &concrete,
+            "E0434",
+            &format!("declared with type '{instantiated}'"),
+            "declared type in trait 'Cap'",
+            "declare it with a type the compiler folds a constant of",
+        );
+    }
+    assert_eq!(
+        run_ok(&readable_constant_program("int", "7")).as_int(),
+        Some(1),
+        "an int constant still reads back"
+    );
+    let integer_shape = compile_message(&readable_constant_program("int", "1 < 2"));
+    assert!(
+        integer_shape.contains("use integer literals and '+ - * / %' only"),
+        "a constant the trait declared as an int keeps the sentence that repairs it: \
+         {integer_shape}"
+    );
+}
+
+fn swapped_declaration_program(trait_first: bool, declared: &str, definition: &str) -> String {
+    let trait_decl = format!("trait Cap {{\n    const LIMIT: {declared}\n}}\n");
+    let other = "struct Filler { f: int }\ntrait Spare {\n    fn spare(self) -> int\n}\nimpl Spare for Filler {\n    fn spare(self) -> int {\n        return 1\n    }\n}\n";
+    let head = match trait_first {
+        true => format!("{trait_decl}{other}"),
+        false => format!("{other}{trait_decl}"),
+    };
+    format!(
+        "struct Payload {{ n: int }}\nstruct Node {{ v: int }}\n{head}\
+impl Cap for Node {{\n{definition}}}\n\
+fn probe() -> int {{\n    let held: {declared} = Node::LIMIT\n    return 1\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn the_associated_constant_diagnostics_read_the_same_under_either_declaration_order() {
+    for (label, declared, definition) in [
+        (
+            "E0422 with no established type",
+            "Vec<int>",
+            "    const LIMIT: Vec<int> = vec![1, 2]\n",
+        ),
+        (
+            "E0423 over a non-integer constant",
+            "string",
+            "    const LIMIT: string = \"ab\"\n",
+        ),
+        ("E0421 over a missing constant", "Vec<int>", ""),
+    ] {
+        let first = compile_message(&swapped_declaration_program(true, declared, definition));
+        let second = compile_message(&swapped_declaration_program(false, declared, definition));
+        let strip = |text: &str| {
+            text.lines()
+                .filter(|line| !line.trim_start().starts_with("-->"))
+                .filter(|line| !line.contains('|'))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(
+            strip(&first),
+            strip(&second),
+            "{label} must render one text whichever declaration was written first"
+        );
+        assert_renders_identically(
+            &swapped_declaration_program(true, declared, definition),
+            label,
+        );
+    }
+}
+
+const FOLDABLE_DECLARED_CONSTANT_TYPES: [&str; 2] = ["int", "i64"];
+
+const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
+    ("float", "float"),
+    ("bool", "bool"),
+    ("string", "string"),
+    ("unit", "unit"),
+    ("i8", "i8"),
+    ("i16", "i16"),
+    ("i32", "i32"),
+    ("u8", "u8"),
+    ("u32", "u32"),
+    ("u64", "u64"),
+    ("f32", "f32"),
+    ("f64", "float"),
+    ("Vec<int>", "Vec<int>"),
+    ("Option<int>", "Option<int>"),
+    ("Result<int, string>", "Result<int, string>"),
+    ("[int; 3]", "[int; 3]"),
+    ("fn(int, string) -> bool", "fn(int, string) -> bool"),
+];
+
+// a nominal and a generic nominal complete the enumeration; they are kept apart
+const UNFOLDABLE_DECLARED_NOMINAL_TYPES: [(&str, &str); 3] = [
+    ("Payload", "Payload"),
+    ("Shade", "Shade"),
+    ("Cell<int>", "Cell<int>"),
+];
+
+// refused before the declaration is typed, so e0434 never sees them
+const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 4] = [
+    ("[int]", "E0101"),
+    ("(int, int)", "E0101"),
+    ("array<int>", "E0101"),
+    ("dynamic", "E0347"),
+];
+
+fn declared_constant_type_program(declared: &str) -> String {
+    format!(
+        "struct Payload {{ n: int }}\nenum Shade {{ Red, Blue }}\nstruct Cell<T> {{ c: T }}\n\
+struct Gauge {{ v: int }}\n\
+trait Ceiling {{\n    const LIMIT: {declared}\n}}\n\
+impl Ceiling for Gauge {{\n    const LIMIT: {declared} = 3\n}}\n\
+fn probe() -> int {{\n    let xs: [int; Gauge::LIMIT] = [7; Gauge::LIMIT]\n    return xs[0] + xs[2]\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn a_trait_declares_an_associated_constant_only_of_a_type_the_compiler_folds() {
+    for declared in FOLDABLE_DECLARED_CONSTANT_TYPES {
+        assert_eq!(
+            run_ok(&declared_constant_type_program(declared)).as_int(),
+            Some(14),
+            "a '{declared}' constant folds to three, which is the length that gives 'xs[2]' and \
+             the sum 14"
+        );
+    }
+    for (declared, rendered) in UNFOLDABLE_DECLARED_CONSTANT_TYPES
+        .iter()
+        .chain(UNFOLDABLE_DECLARED_NOMINAL_TYPES.iter())
+    {
+        let message = compile_message(&declared_constant_type_program(declared));
+        assert_associated_diagnostic(
+            &message,
+            "E0434",
+            &format!(
+                "associated constant 'LIMIT' of trait 'Ceiling' is declared with type '{rendered}'"
+            ),
+            "declared type in trait 'Ceiling'",
+            "declare it with a type the compiler folds a constant of",
+        );
+        assert_located_at("E0434", &message, 6);
+    }
+}
+
+#[test]
+fn e0434_names_the_foldable_set_the_compiler_holds_rather_than_a_fixed_sentence() {
+    let foldable = InferType::foldable_associated_const_types();
+    assert_eq!(
+        foldable, "int",
+        "today the folder yields an i64 and the set is 'int' alone"
+    );
+    let message = compile_message(&declared_constant_type_program("string"));
+    assert!(
+        message.contains(&format!("folds a constant of: {foldable}")),
+        "the message must close on the set the compiler holds, not on a sentence: {message}"
+    );
+    for withheld in ["string", "float", "bool"] {
+        assert!(
+            !message.contains(&format!("folds a constant of: {withheld}")),
+            "'{withheld}' is outside the set and may not be offered: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_type_the_declaration_never_settles_is_left_to_the_pass_that_settles_it() {
+    let through_a_parameter = "struct Gauge { v: int }\n\
+trait Ceiling<T> {\n    const LIMIT: T\n}\n\
+impl Ceiling<int> for Gauge {\n    const LIMIT: int = 3\n}\n\
+fn probe() -> int {\n    let xs: [int; Gauge::LIMIT] = [7; Gauge::LIMIT]\n    return xs[0] + xs[2]\n}\n\
+probe()\n";
+    assert_eq!(
+        run_ok(through_a_parameter).as_int(),
+        Some(14),
+        "the impl instantiates 'T' with the foldable type, so the declaration decides nothing"
+    );
+    for (declared, code) in [("Nope", "E0372"), ("Self", "E0372")] {
+        let message = compile_message(&format!(
+            "struct Gauge {{ v: int }}\ntrait Ceiling {{\n    const LIMIT: {declared}\n}}\nfn probe() -> int {{\n    return 1\n}}\nprobe()\n"
+        ));
+        assert!(
+            message.contains(code) && !message.contains("E0434"),
+            "'{declared}' names no type, and {code} says so better than a folding verdict: \
+             {message}"
+        );
+    }
+}
+
+#[test]
+fn a_type_refused_before_the_declaration_is_typed_never_reaches_e0434() {
+    for (declared, code) in UNDECLARABLE_CONSTANT_TYPES {
+        let message = compile_message(&declared_constant_type_program(declared));
+        assert!(
+            message.contains(code) && !message.contains("E0434"),
+            "'{declared}' is refused as {code} before the declaration is typed: {message}"
+        );
+    }
+}
+
+#[test]
+fn e0434_reads_the_same_under_either_declaration_order_and_every_compilation() {
+    let label = "E0434 over an unfoldable declared type";
+    let first = compile_message(&swapped_declaration_program(true, "string", ""));
+    let second = compile_message(&swapped_declaration_program(false, "string", ""));
+    let strip = |text: &str| {
+        text.lines()
+            .filter(|line| !line.trim_start().starts_with("-->"))
+            .filter(|line| !line.contains('|'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(
+        strip(&first),
+        strip(&second),
+        "{label} must render one text whichever declaration was written first"
+    );
+    assert!(first.contains("E0434"), "the label names the code: {first}");
+    assert_renders_identically(&swapped_declaration_program(true, "string", ""), label);
+}
+
+fn instantiated_constant_program(
+    trait_params: &str,
+    declared: &str,
+    trait_args: &str,
+    defined: &str,
+    value: &str,
+) -> String {
+    format!(
+        "struct Node {{ v: int }}\n\
+struct Gauge {{ g: int }}\n\
+trait Feed {{\n    type Unit\n    fn feed(self) -> int\n}}\n\
+impl Feed for Gauge {{\n    type Unit = {defined}\n    fn feed(self) -> int {{\n        return 1\n    }}\n}}\n\
+trait Cap{trait_params} {{\n    const LIMIT: {declared}\n}}\n\
+impl Cap{trait_args} for Node {{\n    const LIMIT: {defined} = {value}\n}}\n\
+fn probe() -> int {{\n    return 1\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn a_declared_constant_type_is_checked_where_whatever_decides_it_decides_it() {
+    for (label, trait_params, declared, trait_args, defined, value, expected) in [
+        ("concrete, foldable", "", "int", "", "int", "7", ""),
+        (
+            "concrete, unfoldable",
+            "",
+            "string",
+            "",
+            "string",
+            "\"x\"",
+            "declared type in trait 'Cap'",
+        ),
+        ("parameter, foldable", "<T>", "T", "<int>", "int", "7", ""),
+        (
+            "parameter, unfoldable",
+            "<T>",
+            "T",
+            "<string>",
+            "string",
+            "\"x\"",
+            "declared type in the impl for 'Node'",
+        ),
+        (
+            "projection, foldable",
+            "",
+            "Gauge::Unit",
+            "",
+            "int",
+            "7",
+            "",
+        ),
+        (
+            "projection, unfoldable",
+            "",
+            "Gauge::Unit",
+            "",
+            "string",
+            "\"x\"",
+            "declared type in trait 'Cap'",
+        ),
+    ] {
+        let program =
+            instantiated_constant_program(trait_params, declared, trait_args, defined, value);
+        let outcome = compile_outcome(&program);
+        if expected.is_empty() {
+            assert!(
+                outcome.is_empty(),
+                "{label}: a constant of this type folds and must be accepted: {outcome}"
+            );
+            continue;
+        }
+        assert_associated_diagnostic(
+            &outcome,
+            "E0434",
+            &format!("declared with type '{defined}'"),
+            expected,
+            "declare it with a type the compiler folds a constant of",
+        );
+        assert_renders_identically(&program, label);
+    }
+}
+
+fn self_projection_constant_program(unit: &str, declared: &str, value: &str) -> String {
+    format!(
+        "struct Counter {{ c: int }}\n\
+trait Source {{\n    type Item\n    const LIMIT: Self::Item\n    fn next(self) -> int\n}}\n\
+impl Source for Counter {{\n    type Item = {unit}\n    const LIMIT: {declared} = {value}\n    \
+fn next(self) -> int {{\n        return 1\n    }}\n}}\n\
+fn probe() -> int {{\n    return Counter::LIMIT\n}}\n\
+probe()\n"
+    )
+}
+
+#[test]
+fn a_constant_declared_as_self_projection_is_definable_and_reads_back() {
+    for declared in ["int", "Self::Item", "Counter::Item"] {
+        let program = self_projection_constant_program("int", declared, "7");
+        assert_eq!(
+            run_ok(&program).as_int(),
+            Some(7),
+            "'const LIMIT: {declared}' defines the item the trait declared"
+        );
+    }
+    let unfoldable = compile_message(&self_projection_constant_program(
+        "string",
+        "Self::Item",
+        "\"x\"",
+    ));
+    assert_associated_diagnostic(
+        &unfoldable,
+        "E0434",
+        "declared with type 'string'",
+        "declared type in the impl for 'Counter'",
+        "declare it with a type the compiler folds a constant of",
+    );
+    let disagreeing = compile_message(&self_projection_constant_program("int", "float", "7"));
+    assert_associated_diagnostic(
+        &disagreeing,
+        "E0422",
+        "declares type 'float', and the trait declares 'int' here",
+        "declared type in the impl for 'Counter'",
+        "declare the same type as the trait",
+    );
+}
+
+#[test]
+fn a_parameter_the_impl_binds_to_an_integer_still_reads_its_constant_back() {
+    assert_eq!(
+        run_ok(
+            "struct Holder { h: int }\n\
+trait Bounds<T> {\n    const LIMIT: T\n    fn seed(self) -> int\n}\n\
+impl Bounds<int> for Holder {\n    const LIMIT: int = 14\n    fn seed(self) -> int {\n        return 2\n    }\n}\n\
+fn probe() -> int {\n    return Holder::LIMIT\n}\n\
+probe()\n"
+        )
+        .as_int(),
+        Some(14),
+        "scoping the check to the instantiation is what keeps this shape working"
+    );
+}
+
+#[test]
+fn the_missing_item_help_offers_a_projection_the_annotation_grammar_writes() {
+    let message = compile_message(
+        "struct Counter { c: int }\n\
+trait Source {\n    type Item\n    const LIMIT: Self::Item\n    fn next(self) -> int\n}\n\
+impl Source for Counter {\n    type Item = int\n    fn next(self) -> int {\n        return 1\n    }\n}\n\
+fn probe() -> int {\n    return 1\n}\n\
+probe()\n",
+    );
+    let offered = offered_spelling(&message);
+    assert_eq!(
+        offered, "const LIMIT: Self::Item = <value>",
+        "the offer is written in the two segments the annotation grammar has: {message}"
+    );
+    assert!(
+        !message.contains(" as "),
+        "the internal `<x as t>::i` spelling never reaches a message: {message}"
+    );
+    let filled = compile_outcome(
+        "struct Counter { c: int }\n\
+trait Source {\n    type Item\n    const LIMIT: Self::Item\n    fn next(self) -> int\n}\n\
+impl Source for Counter {\n    type Item = int\n    const LIMIT: Self::Item = 7\n    \
+fn next(self) -> int {\n        return 1\n    }\n}\n\
+fn probe() -> int {\n    return 1\n}\n\
+probe()\n",
+    );
+    assert!(
+        filled.is_empty(),
+        "the offered spelling must be accepted where it is offered: {filled}"
+    );
+}
+
+#[test]
+fn a_binding_the_trait_never_declares_is_refused_without_a_call() {
+    let uncalled = compile_message(
+        "struct Counter { c: int }\n\
+trait Source {\n    type Item\n    fn next(self) -> int\n}\n\
+impl Source for Counter {\n    type Item = int\n    fn next(self) -> int {\n        return 4\n    }\n}\n\
+fn take<T: Source<Nope = int>>(value: T) -> int {\n    return 1\n}\n\
+fn probe() -> int {\n    return 3\n}\n\
+probe()\n",
+    );
+    assert_associated_diagnostic(
+        &uncalled,
+        "E0424",
+        "'Source::Nope' constrains nothing",
+        "a bound on 'T'",
+        "name an item the trait declares",
+    );
+    assert_eq!(
+        uncalled.matches("E0424").count(),
+        1,
+        "the bound is refused once, where it is written: {uncalled}"
+    );
+    assert_located_at("E0424", &uncalled, 12);
 }

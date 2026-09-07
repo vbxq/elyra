@@ -139,7 +139,7 @@ pub fn assert_associated_diagnostic(
     let states_its_reason = code
         .strip_prefix("E0")
         .and_then(|digits| digits.parse::<u16>().ok())
-        .is_some_and(|code| (421..=430).contains(&code));
+        .is_some_and(|code| (421..=430).contains(&code) || code == 434);
     assert_eq!(
         states_its_reason,
         !reason.is_empty(),

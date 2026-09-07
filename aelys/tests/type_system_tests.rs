@@ -12,6 +12,82 @@ fn run_err(source: &str) -> String {
         .to_string()
 }
 
+fn emitted_trait_symbols(source: &str) -> Vec<String> {
+    let module = aelys::Runtime::new()
+        .compile(source, aelys::CompileOptions::default())
+        .expect("the program must compile");
+    let function = aelys_bytecode::asm::deserialize(module.avbc())
+        .expect("the compiled module must deserialize");
+    let mut names = Vec::new();
+    fn walk(function: &aelys_bytecode::Function, names: &mut Vec<String>) {
+        if let Some(name) = &function.name
+            && name.starts_with("__aelys_trait::")
+        {
+            names.push(name.clone());
+        }
+        for nested in &function.nested_functions {
+            walk(nested, names);
+        }
+    }
+    walk(&function, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[test]
+fn an_impl_symbol_mangles_the_trait_the_bare_target_and_the_method() {
+    let plain = emitted_trait_symbols(
+        "trait Source {\n    fn next(self) -> int\n}\n\
+struct Wrap<T> {  v: T }\n\
+impl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\n\
+fn go() -> int {\n    let a = Wrap { v: 5 }\n    return a.next()\n}\ngo()\n",
+    );
+    assert_eq!(
+        plain,
+        ["__aelys_trait::00000006:Source00000004:Wrap00000004:next"],
+        "the target type's own argument leaves no trace in the three names"
+    );
+
+    let generic = emitted_trait_symbols(
+        "trait Source {\n    fn next(self) -> int\n}\n\
+struct Wrap<T> { v: T }\n\
+impl<T> Source for Wrap<T> {\n    fn next(self) -> int {\n        return 1\n    }\n}\n\
+fn go() -> int {\n    let a = Wrap { v: 5 }\n    let b = Wrap { v: true }\n    return a.next() + b.next()\n}\ngo()\n",
+    );
+    assert_eq!(
+        generic.len(),
+        2,
+        "a generic impl carries one suffix per instance: {generic:?}"
+    );
+    for symbol in &generic {
+        let (head, encoded) = symbol
+            .split_once("$s2$")
+            .unwrap_or_else(|| panic!("no instance suffix on '{symbol}'"));
+        assert_eq!(
+            head, "__aelys_trait::00000006:Source00000004:Wrap00000004:next",
+            "the three names are the same for every instance"
+        );
+        let decoded: String = String::from_utf8_lossy(
+            &encoded
+                .as_bytes()
+                .chunks(2)
+                .filter_map(|pair| std::str::from_utf8(pair).ok())
+                .filter_map(|pair| u8::from_str_radix(pair, 16).ok())
+                .collect::<Vec<u8>>(),
+        )
+        .into_owned();
+        assert!(
+            decoded.contains("Wrap"),
+            "the suffix holds the substituted target type: {decoded}"
+        );
+    }
+    assert_ne!(
+        generic[0], generic[1],
+        "two instances of a generic impl are two symbols"
+    );
+}
+
 #[test]
 fn test_let_with_int_type() {
     let result = run_ok(
@@ -2393,7 +2469,8 @@ ident(7)"#;
 
     let expected = concat!(
         "error[E0423]: projection 'Counter::Item' is ambiguous: Alpha and Beta both define 'Item'",
-        " for Counter; remove one of the competing impls, or rename the item so a single trait",
+        " for Counter; name the trait that declares the one you mean, as in 'Alpha::Item',",
+        " or remove one of the competing impls, or rename the item so a single trait",
         " provides it (a parameter type)\n",
         "  --> test.aelys:5:16\n",
         "   |\n",
@@ -2443,7 +2520,8 @@ Counter { v: 7 }.probe()"#;
 
     let expected = concat!(
         "error[E0423]: projection 'Counter::Item' is ambiguous: Alpha and Beta both define",
-        " 'Item' for Counter; remove one of the competing impls, or rename the item so a",
+        " 'Item' for Counter; name the trait that declares the one you mean, as in",
+        " 'Alpha::Item', or remove one of the competing impls, or rename the item so a",
         " single trait provides it (a return type)\n",
         "  --> test.aelys:6:44\n",
         "   |\n",
@@ -2671,7 +2749,8 @@ fn an_impl_internal_projection_accepts_or_rejects_the_same_whatever_the_file_ord
 
     let expected = concat!(
         "error[E0423]: projection 'Counter::Item' is ambiguous: Alpha and Beta both define 'Item'",
-        " for Counter; remove one of the competing impls, or rename the item so a single trait",
+        " for Counter; name the trait that declares the one you mean, as in 'Alpha::Item', or",
+        " remove one of the competing impls, or rename the item so a single trait",
         " provides it (a return type)\n",
         "  --> test.aelys:6:34\n",
         "   |\n",
@@ -2695,7 +2774,8 @@ fn an_impl_internal_projection_names_the_same_type_whatever_the_file_order() {
 
     let expected = concat!(
         "error[E0423]: projection 'Counter::Item' is ambiguous: Alpha and Beta both define 'Item'",
-        " for Counter; remove one of the competing impls, or rename the item so a single trait",
+        " for Counter; name the trait that declares the one you mean, as in 'Alpha::Item', or",
+        " remove one of the competing impls, or rename the item so a single trait",
         " provides it (a return type)\n",
         "  --> test.aelys:5:34\n",
         "   |\n",
@@ -2728,7 +2808,8 @@ fn an_impl_internal_array_length_reads_the_same_constant_whatever_the_file_order
     );
     let expected = concat!(
         "error[E0423]: projection 'Counter::LIMIT' is ambiguous: Alpha and Beta both define",
-        " 'LIMIT' for Counter; remove one of the competing impls, or rename the item so a single",
+        " 'LIMIT' for Counter; name the trait that declares the one you mean, as in",
+        " 'Alpha::LIMIT', or remove one of the competing impls, or rename the item so a single",
         " trait provides it (an array length)\n",
         "  --> test.aelys:5:35\n",
         "   |\n",
@@ -2747,7 +2828,8 @@ fn an_associated_item_definition_sees_every_impl_whatever_the_file_order() {
 
     let expected = concat!(
         "error[E0423]: projection 'Counter::Other' is ambiguous: Beta and Gamma both define",
-        " 'Other' for Counter; remove one of the competing impls, or rename the item so a single",
+        " 'Other' for Counter; name the trait that declares the one you mean, as in",
+        " 'Beta::Other', or remove one of the competing impls, or rename the item so a single",
         " trait provides it (an associated item definition)\n",
         "  --> test.aelys:7:38\n",
         "   |\n",
@@ -2765,7 +2847,7 @@ fn an_associated_item_definition_sees_every_impl_whatever_the_file_order() {
 
 const LATE_GHOST: &str = "error[E0423]: projection 'Counter::Ghost' cannot be resolved: no impl for 'Counter' defines 'Ghost'; define it in an impl of a trait that declares 'Ghost' (an impl header)\n  --> test.aelys:8:11\n   |\n 8 | impl From<Counter::Ghost> for Wrapper { fn from(x: Counter::Ghost) -> Wrapper { Wrapper { w: x } } }\n   |           ^^^^^^^ the type checker rejected this program\n";
 
-const LATE_CONST_WRONG: &str = "error[E0422]: associated item 'K' in impl of trait 'Alpha' has a different type than the trait declaration; declare the same type as the trait (declared type in the impl for 'Counter')\n  --> test.aelys:8:26\n   |\n 8 | impl Alpha for Counter { const K: Counter::Item = 5; }\n   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
+const LATE_CONST_WRONG: &str = "error[E0422]: associated item 'K' in impl of trait 'Alpha' declares type 'string', and the trait declares 'int' here; declare the same type as the trait (declared type in the impl for 'Counter')\n  --> test.aelys:8:26\n   |\n 8 | impl Alpha for Counter { const K: Counter::Item = 5; }\n   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
 
 const DUPLICATE_PLAIN_SECOND: &str = "error[E0334]: duplicate implementation of trait 'Echo' for type 'Wrapper'\n  --> test.aelys:10:30\n   |\n10 | impl Echo<int> for Wrapper { fn echo(self, value: int) -> int { value } }\n   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
 
@@ -2948,9 +3030,9 @@ fn an_associated_constant_declared_type_resolves_whatever_the_file_order() {
         "file order decided the rejection:\n{first_wrong}\n----\n{second_wrong}"
     );
     let expected_wrong = concat!(
-        "error[E0422]: associated item 'K' in impl of trait 'Alpha' has a different type than",
-        " the trait declaration; declare the same type as the trait (declared type in the impl",
-        " for 'Counter')\n",
+        "error[E0422]: associated item 'K' in impl of trait 'Alpha' declares type 'string', and",
+        " the trait declares 'int' here; declare the same type as the trait (declared type in",
+        " the impl for 'Counter')\n",
         "  --> test.aelys:5:26\n",
         "   |\n",
         " 5 | impl Alpha for Counter { const K: Counter::Item = 5; }\n",
@@ -3278,40 +3360,81 @@ fn the_namespace_diagnostic_does_not_depend_on_declaration_order() {
 
 const GENERIC_NAMESPACE_PRELUDE: &str = concat!(
     "struct Wrap<T> { w: T }\n",
-    "trait Source { type Item; const LIMIT: int; }\n",
-    "impl Source for Wrap<int> { type Item = int; const LIMIT: int = 4; }\n",
+    "trait Source { type Item; const LIMIT: int; fn take(self, x: Self::Item) -> int; }\n",
+    "impl Source for Wrap<int> { type Item = int; const LIMIT: int = 4; fn take(self, x: int) -> int { return x } }\n",
 );
 
 fn generic_namespace_grid_source(receiver: &str, item: &str, position: &str) -> String {
     let p = format!("{receiver}::{item}");
-    let line = match (position, receiver) {
-        ("parameter", "Self") => {
-            format!("impl Wrap<int> {{ fn probe(self, x: {p}) -> int {{ return 1 }} }}")
-        }
-        ("parameter", "T") => format!("fn probe<T: Source>(s: T, x: {p}) -> int {{ return 1 }}"),
-        ("parameter", _) => format!("fn probe(x: {p}) -> int {{ return 1 }}"),
-        ("return", "Self") => {
-            format!("impl Wrap<int> {{ fn probe(self) -> {p} {{ return self.w }} }}")
-        }
-        ("return", "T") => format!("fn probe<T: Source>(s: T, x: {p}) -> {p} {{ return x }}"),
-        ("return", _) => format!("fn probe(x: {p}) -> {p} {{ return x }}"),
-        ("annotation", "Self") => {
-            format!("impl Wrap<int> {{ fn probe(self) -> int {{ let z: {p} = 3\n return 1 }} }}")
-        }
-        ("annotation", "T") => {
-            format!("fn probe<T: Source>(s: T, x: {p}) -> int {{ let z: {p} = x\n return 1 }}")
-        }
-        ("annotation", _) => {
-            format!("fn probe(x: {p}) -> int {{ let z: {p} = x\n return 1 }}")
-        }
-        ("value", "Self") => {
-            format!("impl Wrap<int> {{ fn probe(self) -> int {{ return {p} + 1 }} }}")
-        }
-        ("value", "T") => format!("fn probe<T: Source>(s: T) -> int {{ return {p} + 1 }}"),
-        ("value", _) => format!("fn probe() -> int {{ return {p} + 1 }}"),
+    // 'take' is the only way a generic body can consume a value of the projected
+    let (line, call) = match (position, receiver) {
+        ("parameter", "Self") => (
+            format!("impl Wrap<int> {{ fn probe(self, x: {p}) -> int {{ return x + 1 }} }}"),
+            "Wrap { w: 0 }.probe(6)".to_string(),
+        ),
+        ("parameter", "T") => (
+            format!("fn probe<T: Source>(s: T, x: {p}) -> int {{ return s.take(x) + 1 }}"),
+            "probe(Wrap { w: 0 }, 6)".to_string(),
+        ),
+        ("parameter", _) => (
+            format!("fn probe(x: {p}) -> int {{ return x + 1 }}"),
+            "probe(6)".to_string(),
+        ),
+        ("return", "Self") => (
+            format!("impl Wrap<int> {{ fn probe(self) -> {p} {{ return self.w }} }}"),
+            "Wrap { w: 6 }.probe() + 2".to_string(),
+        ),
+        ("return", "T") => (
+            format!("fn probe<T: Source>(s: T, x: {p}) -> {p} {{ return x }}"),
+            "probe(Wrap { w: 0 }, 6) + 2".to_string(),
+        ),
+        ("return", _) => (
+            format!("fn probe(x: {p}) -> {p} {{ return x }}"),
+            "probe(6) + 2".to_string(),
+        ),
+        ("annotation", "Self") => (
+            format!(
+                "impl Wrap<int> {{ fn probe(self) -> int {{ let z: {p} = self.w\n return z + 3 }} }}"
+            ),
+            "Wrap { w: 6 }.probe()".to_string(),
+        ),
+        ("annotation", "T") => (
+            format!(
+                "fn probe<T: Source>(s: T, x: {p}) -> int {{ let z: {p} = x\n return s.take(z) + 3 }}"
+            ),
+            "probe(Wrap { w: 0 }, 6)".to_string(),
+        ),
+        ("annotation", _) => (
+            format!("fn probe(x: {p}) -> int {{ let z: {p} = x\n return z + 3 }}"),
+            "probe(6)".to_string(),
+        ),
+        ("value", "Self") => (
+            format!("impl Wrap<int> {{ fn probe(self) -> int {{ return {p} + 1 }} }}"),
+            "Wrap { w: 0 }.probe()".to_string(),
+        ),
+        ("value", "T") => (
+            format!("fn probe<T: Source>(s: T) -> int {{ return {p} + 1 }}"),
+            "probe(Wrap { w: 0 })".to_string(),
+        ),
+        ("value", _) => (
+            format!("fn probe() -> int {{ return {p} + 1 }}"),
+            "probe()".to_string(),
+        ),
         _ => unreachable!("no generic grid cell for {position} at {receiver}"),
     };
-    format!("{GENERIC_NAMESPACE_PRELUDE}{line}\n1")
+    format!("{GENERIC_NAMESPACE_PRELUDE}{line}\n{call}")
+}
+
+// each value is what calling probe produces, so a cell that only declares cannot pass
+fn generic_grid_accepted(position: &str) -> String {
+    let value = match position {
+        "parameter" => 7,
+        "return" => 8,
+        "annotation" => 9,
+        "value" => 5,
+        _ => unreachable!("no accepted value for {position} position"),
+    };
+    format!("accepted, value Some({value})")
 }
 
 fn generic_grid_message(receiver: &str, item: &str, position: &str) -> String {
@@ -3334,7 +3457,7 @@ const GENERIC_SIGNATURE_POSITIONS: [&str; 2] = ["parameter", "return"];
 fn rendered_receiver(receiver: &'static str, position: &str, generic: bool) -> &'static str {
     match (receiver, generic, position) {
         ("Self", false, _) => "Counter",
-        ("Self", true, "parameter" | "return") => "Wrap<i64>",
+        ("Self", true, "parameter" | "return") => "Wrap<int>",
         ("Self", true, _) => "Wrap",
         _ => receiver,
     }
@@ -3383,19 +3506,13 @@ fn an_absent_item_over_a_generic_target_is_reported_absent_not_unmaterialized() 
 #[test]
 fn the_accepted_half_of_type_position_survives_a_generic_target() {
     for position in GENERIC_SIGNATURE_POSITIONS {
-        for receiver in ["Source", "Self", "T"] {
+        for receiver in ["Wrap", "Source", "Self", "T"] {
             assert_eq!(
                 generic_grid_accepts(receiver, "Item", position),
-                "accepted, value Some(1)",
+                generic_grid_accepted(position),
                 "cell {receiver}::Item in {position} position must keep working"
             );
         }
-        // a generic head written without its arguments never names the impl target.
-        assert_eq!(
-            generic_grid_message("Wrap", "Item", position),
-            absent_line("Wrap", "Item", position_reason(position, "Wrap")),
-            "cell Wrap::Item in {position} position over a generic target"
-        );
     }
 }
 
@@ -3411,26 +3528,29 @@ fn a_type_in_value_position_names_the_type_namespace_over_a_generic_target() {
     for receiver in ["Wrap", "Source", "Self", "T"] {
         assert_eq!(
             generic_grid_accepts(receiver, "LIMIT", "value"),
-            "accepted, value Some(1)",
+            generic_grid_accepted("value"),
             "cell {receiver}::LIMIT in value position must keep working"
         );
     }
 }
 
-// the signature pass above no longer does. pinned so the gap cannot widen.
 #[test]
-fn a_generic_target_still_loses_its_arguments_below_the_signature() {
+fn a_generic_target_resolves_below_the_signature_as_it_does_above() {
     assert_eq!(
-        generic_grid_message("Self", "Item", "annotation"),
-        absent_line("Wrap", "Item", "a type annotation")
+        generic_grid_accepts("Self", "Item", "annotation"),
+        generic_grid_accepted("annotation")
     );
     assert_eq!(
-        generic_grid_message("Self", "Item", "value"),
-        absent_line("Wrap", "Item", "a value expression")
+        generic_grid_accepts("Self", "LIMIT", "value"),
+        generic_grid_accepted("value")
     );
     assert_eq!(
         generic_grid_message("Self", "NOPE", "return"),
-        absent_line("Wrap<i64>", "NOPE", "a return type")
+        absent_line("Wrap<int>", "NOPE", "a return type")
+    );
+    assert_eq!(
+        generic_grid_message("Wrap", "NOPE", "return"),
+        absent_line("Wrap", "NOPE", "a parameter type")
     );
 }
 
@@ -4399,4 +4519,552 @@ fn a_projection_chain_in_field_position_compiles_on_both_sides_of_the_hop_bound(
             "a {links} link chain in field position must compile"
         );
     }
+}
+
+#[test]
+fn an_impl_type_parameter_is_in_scope_in_its_associated_type_definition() {
+    assert_eq!(
+        run_ok(
+            r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Wrap<T> {
+    type Item = T
+    fn next(self) -> Self::Item { self.v }
+}
+Wrap { v: 7 }.next()
+            "#
+        )
+        .as_int(),
+        Some(7)
+    );
+}
+
+#[test]
+fn an_impl_type_parameter_in_an_associated_type_answers_per_instantiation() {
+    run_ok_string(
+        r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Wrap<T> {
+    type Item = T
+    fn next(self) -> Self::Item { self.v }
+}
+fn probe() -> string {
+    let n: int = Wrap { v: 20 }.next()
+    let s: string = Wrap { v: "ab" }.next()
+    if n == 20 {
+        return s + "-20"
+    }
+    return s + "-no"
+}
+probe()
+        "#,
+        "ab-20",
+    );
+}
+
+#[test]
+fn an_impl_type_parameter_reaches_a_composite_associated_type() {
+    assert_eq!(
+        run_ok(
+            r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Wrap<T> {
+    type Item = Option<T>
+    fn next(self) -> Self::Item { return Some(self.v) }
+}
+Wrap { v: 7 }.next().unwrap()
+            "#
+        )
+        .as_int(),
+        Some(7)
+    );
+}
+
+#[test]
+fn both_impl_type_parameters_are_in_scope_in_their_item_definitions() {
+    // one side alone cannot tell `type right = b` from `type right = a`, so both are read
+    run_ok_string(
+        r#"
+struct Pair<A, B> { a: A, b: B }
+trait Sides { type Left; type Right; fn left(self) -> Self::Left; fn right(self) -> Self::Right; }
+impl<A, B> Sides for Pair<A, B> {
+    type Left = A
+    type Right = B
+    fn left(self) -> Self::Left { self.a }
+    fn right(self) -> Self::Right { self.b }
+}
+fn probe() -> string {
+    let p = Pair { a: 7, b: "x" }
+    let left: int = p.left()
+    let right: string = p.right()
+    let q = Pair { a: "y", b: 9 }
+    let swapped_left: string = q.left()
+    let swapped_right: int = q.right()
+    return right + swapped_left + "-" + (left + swapped_right).to_string()
+}
+probe()
+            "#,
+        "xy-16",
+    );
+}
+
+#[test]
+fn an_instantiation_the_impl_definition_refuses_is_still_a_mismatch() {
+    let error = run_err(
+        r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Wrap<T> {
+    type Item = T
+    fn next(self) -> Self::Item { self.v }
+}
+fn probe() -> int {
+    let n: string = Wrap { v: 12 }.next()
+    return 0
+}
+probe()
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0301]") && error.contains("expected string, found i64"),
+        "the projection must substitute the instantiation, not a wildcard: {error}"
+    );
+}
+
+#[test]
+fn a_type_parameter_only_in_an_item_definition_is_still_unconstrained() {
+    let error = run_err(
+        r#"
+struct Cell { c: int }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Cell {
+    type Item = T
+    fn next(self) -> Self::Item { return self.c }
+}
+Cell { c: 7 }.next()
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0430]") && error.contains("'T' does not appear in the impl"),
+        "a parameter the target type never mentions stays unconstrained: {error}"
+    );
+}
+
+#[test]
+fn an_associated_constant_declared_with_an_impl_parameter_names_the_disagreement() {
+    let error = run_err(
+        r#"
+struct Wrap<T> { v: T }
+trait HasSeed { const SEED: int; fn seed(self) -> int; }
+impl<T> HasSeed for Wrap<T> {
+    const SEED: T = 4
+    fn seed(self) -> int { Self::SEED }
+}
+Wrap { v: 7 }.seed()
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0422]")
+            && error.contains("declares type 'T', and the trait declares 'int' here"),
+        "the impl parameter is in scope, so the cause is the disagreement, and the message \
+         names each side: {error}"
+    );
+}
+
+#[test]
+fn an_inherent_impl_still_owns_no_associated_item_under_a_type_parameter() {
+    let error = run_err(
+        r#"
+struct Wrap<T> { v: T }
+impl<T> Wrap<T> {
+    type Item = T
+    fn get(self) -> T { self.v }
+}
+Wrap { v: 7 }.get()
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0425]") && error.contains("inherent impl of 'Wrap'"),
+        "an inherent impl defines no associated item at all: {error}"
+    );
+}
+
+#[test]
+fn a_concrete_impl_of_a_generic_target_keeps_its_associated_type() {
+    assert_eq!(
+        run_ok(
+            r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl Source for Wrap<int> {
+    type Item = int
+    fn next(self) -> Self::Item { self.v }
+}
+Wrap { v: 7 }.next()
+            "#
+        )
+        .as_int(),
+        Some(7)
+    );
+}
+
+#[test]
+fn an_inherited_item_written_in_the_inheriting_impl_is_reported_at_that_impl() {
+    // a projection, and the inheriting impl must not become a second definition.
+    let error = run_err(
+        r#"
+trait Base {
+    type Item
+    const LIMIT: int
+    fn base(self) -> Self::Item;
+}
+trait Derived: Base {
+    fn extra(self) -> Self::Item { self.base() }
+    fn cap(self) -> int { Self::LIMIT }
+}
+struct Bullet { n: int }
+impl Base for Bullet {
+    type Item = int
+    const LIMIT: int = 4
+    fn base(self) -> int { self.n }
+}
+impl Derived for Bullet {
+    type Item = int
+}
+Bullet { n: 3 }.extra() + Bullet { n: 3 }.cap()
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0425]")
+            && error.contains("impl of trait 'Derived' for 'Bullet', which does not declare it")
+            && error.contains("type Item = int"),
+        "the redundant definition is the offence, and it is where the caret goes: {error}"
+    );
+}
+
+#[test]
+fn a_missing_supertrait_impl_is_reported_before_the_projection_it_leaves_open() {
+    let error = run_err(
+        r#"
+trait Base {
+    type Item
+    const LIMIT: int
+    fn base(self) -> Self::Item;
+}
+trait Derived: Base {
+    fn extra(self) -> Self::Item { self.base() }
+    fn cap(self) -> int { Self::LIMIT }
+}
+struct Bullet { n: int }
+impl Derived for Bullet { }
+Bullet { n: 3 }.extra()
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0338]")
+            && error.contains("trait 'Base' is not implemented for Bullet")
+            && error.contains("impl Derived for Bullet"),
+        "the unmet obligation is the cause, not the projection it leaves open: {error}"
+    );
+}
+
+#[derive(Clone, Copy)]
+enum GateCallShape {
+    Direct,
+    Bound,
+}
+
+const EVERY_GATE_CALL_SHAPE: &[GateCallShape] = &[GateCallShape::Direct, GateCallShape::Bound];
+
+fn supertrait_gate_program(
+    base_impl: bool,
+    use_above: bool,
+    member: &str,
+    shape: GateCallShape,
+) -> String {
+    let head = concat!(
+        "struct Bullet { n: int }\n",
+        "trait Base {\n    fn base(self) -> int\n}\n",
+        "trait Derived: Base {\n    fn extra(self) -> int { self.base() * 7 }\n}\n",
+    );
+    let base = if base_impl {
+        "impl Base for Bullet {\n    fn base(self) -> int { self.n }\n}\n"
+    } else {
+        ""
+    };
+    let call = match shape {
+        GateCallShape::Direct => {
+            format!("fn call_it(x: Bullet) -> int {{ return x.{member}() }}\n")
+        }
+        GateCallShape::Bound => {
+            format!("fn call_it<T: Derived>(x: T) -> int {{ return x.{member}() }}\n")
+        }
+    };
+    let derived = "impl Derived for Bullet { }\n";
+    let body = if use_above {
+        format!("{call}{derived}")
+    } else {
+        format!("{derived}{call}")
+    };
+    format!("{head}{base}{body}call_it(Bullet {{ n: 6 }})\n")
+}
+
+#[test]
+fn a_missing_supertrait_impl_is_reported_wherever_the_use_stands() {
+    for use_above in [true, false] {
+        for shape in EVERY_GATE_CALL_SHAPE {
+            let error = run_err(&supertrait_gate_program(false, use_above, "extra", *shape));
+            assert!(
+                error.starts_with("error[E0338]")
+                    && error.contains("trait 'Base' is not implemented for Bullet")
+                    && error.contains("the impl of 'Derived' requires it"),
+                "the unmet obligation is the cause, with the use above the impl {use_above}: {error}"
+            );
+            assert_eq!(
+                run_ok(&supertrait_gate_program(true, use_above, "extra", *shape)).as_int(),
+                Some(42),
+                "the adopted default must run the 6 through 'base' times seven"
+            );
+        }
+        let absent = run_err(&supertrait_gate_program(
+            false,
+            use_above,
+            "nope",
+            GateCallShape::Direct,
+        ));
+        if use_above {
+            assert!(
+                absent.starts_with("error[E0363]") && absent.contains("'nope'"),
+                "a name no trait declares is absent, not an obligation: {absent}"
+            );
+        } else {
+            assert!(
+                absent.starts_with("error[E0338]"),
+                "the impl header still outranks a later absence by span: {absent}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_inherited_associated_item_block_of_the_specification_runs() {
+    assert_eq!(
+        run_ok(
+            r#"
+trait Base {
+    type Item
+    const LIMIT: int
+    fn base(self) -> Self::Item;
+}
+trait Derived: Base {
+    fn extra(self) -> Self::Item { self.base() }
+    fn cap(self) -> int { Self::LIMIT }
+}
+struct Bullet { n: int }
+impl Base for Bullet {
+    type Item = int
+    const LIMIT: int = 4
+    fn base(self) -> int { self.n }
+}
+impl Derived for Bullet { }
+Bullet { n: 3 }.extra() + Bullet { n: 3 }.cap()
+            "#
+        )
+        .as_int(),
+        Some(7)
+    );
+}
+
+#[test]
+fn an_associated_binding_reads_the_impl_definition_at_the_instantiation() {
+    assert_eq!(
+        run_ok(
+            r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Wrap<T> {
+    type Item = T
+    fn next(self) -> Self::Item { self.v }
+}
+fn takes<S: Source<Item = int>>(s: S) -> int { return 1 }
+takes(Wrap { v: 5 })
+            "#
+        )
+        .as_int(),
+        Some(1)
+    );
+}
+
+#[test]
+fn an_associated_binding_refuses_the_instantiation_the_impl_does_not_provide() {
+    let error = run_err(
+        r#"
+struct Wrap<T> { v: T }
+trait Source { type Item; fn next(self) -> Self::Item; }
+impl<T> Source for Wrap<T> {
+    type Item = T
+    fn next(self) -> Self::Item { self.v }
+}
+fn takes<S: Source<Item = int>>(s: S) -> int { return 1 }
+takes(Wrap { v: "x" })
+        "#,
+    );
+    assert!(
+        error.starts_with("error[E0424]") && error.contains("which provides string"),
+        "the impl definition must be read at the instantiation, not left a parameter: {error}"
+    );
+}
+
+fn one_trait_two_instantiations_const_source(order: usize) -> String {
+    let int_impl = "impl Source for Wrap<int> { const LIMIT: int = 20; }";
+    let string_impl = "impl Source for Wrap<string> { const LIMIT: int = 77; }";
+    let (before, after) = if order == 0 {
+        (int_impl, string_impl)
+    } else {
+        (string_impl, int_impl)
+    };
+    format!(
+        "trait Source {{ const LIMIT: int; }}\nstruct Wrap<T> {{ v: T }}\n{before}\n{after}\nfn probe() -> int {{ return Wrap::LIMIT }}\nprobe()"
+    )
+}
+
+fn one_trait_two_instantiations_type_source(order: usize) -> String {
+    let int_impl = "impl Source for Wrap<int> { type Item = int; }";
+    let string_impl = "impl Source for Wrap<string> { type Item = string; }";
+    let (before, after) = if order == 0 {
+        (int_impl, string_impl)
+    } else {
+        (string_impl, int_impl)
+    };
+    format!(
+        "trait Source {{ type Item; }}\nstruct Wrap<T> {{ v: T }}\n{before}\n{after}\nfn probe(x: Wrap::Item) -> int {{ return 1 }}\nprobe(3)"
+    )
+}
+
+#[test]
+fn a_constant_on_two_instantiations_of_one_type_answers_the_same_whatever_the_file_order() {
+    let first_source = one_trait_two_instantiations_const_source(0);
+    let second_source = one_trait_two_instantiations_const_source(1);
+    assert_same_lines(&first_source, &second_source);
+
+    let first = render(&first_source);
+    let second = render(&second_source);
+    assert_eq!(
+        first, second,
+        "file order decided the constant:\n{first}\n----\n{second}"
+    );
+    let expected = concat!(
+        "error[E0423]: projection 'Wrap::LIMIT' is ambiguous: 'Source' is implemented for",
+        " Wrap<int> and Wrap<string>, and each defines 'LIMIT'; a projection names 'Wrap'",
+        " without its type arguments and this language has no way to write them there, so",
+        " neither naming the trait nor naming the type separates the definitions; keep a",
+        " single impl of 'Source' for 'Wrap', or declare 'LIMIT' in a second trait and name",
+        " that trait, as in 'OtherTrait::LIMIT' (a value expression)\n",
+        "  --> test.aelys:5:28\n",
+        "   |\n",
+        " 5 | fn probe() -> int { return Wrap::LIMIT }\n",
+        "   |                            ^^^^^^^^^^^ the type checker rejected this program\n",
+    );
+    assert_eq!(first, expected);
+}
+
+#[test]
+fn an_associated_type_on_two_instantiations_of_one_type_names_the_instantiations() {
+    let first_source = one_trait_two_instantiations_type_source(0);
+    let second_source = one_trait_two_instantiations_type_source(1);
+    assert_same_lines(&first_source, &second_source);
+
+    let first = render(&first_source);
+    let second = render(&second_source);
+    assert_eq!(
+        first, second,
+        "file order decided the projection:\n{first}\n----\n{second}"
+    );
+    let expected = concat!(
+        "error[E0423]: projection 'Wrap::Item' is ambiguous: 'Source' is implemented for",
+        " Wrap<int> and Wrap<string>, and each defines 'Item'; a projection names 'Wrap'",
+        " without its type arguments and this language has no way to write them there, so",
+        " neither naming the trait nor naming the type separates the definitions; keep a",
+        " single impl of 'Source' for 'Wrap', or declare 'Item' in a second trait and name",
+        " that trait, as in 'OtherTrait::Item' (a parameter type)\n",
+        "  --> test.aelys:5:13\n",
+        "   |\n",
+        " 5 | fn probe(x: Wrap::Item) -> int { return 1 }\n",
+        "   |             ^^^^ the type checker rejected this program\n",
+    );
+    assert_eq!(first, expected);
+}
+
+#[test]
+fn naming_the_trait_does_not_separate_two_instantiations_of_one_type() {
+    let source = concat!(
+        "trait Source { const LIMIT: int; }\n",
+        "struct Wrap<T> { v: T }\n",
+        "impl Source for Wrap<int> { const LIMIT: int = 20; }\n",
+        "impl Source for Wrap<string> { const LIMIT: int = 77; }\n",
+        "fn probe() -> int { return Source::LIMIT }\n",
+        "probe()",
+    );
+    let rendered = render(source);
+    assert!(
+        rendered.contains("projection 'Source::LIMIT' is ambiguous: 'Source' is implemented for Wrap<int> and Wrap<string>"),
+        "the trait-qualified spelling must reach the same answer, not the first impl:\n{rendered}"
+    );
+}
+
+#[test]
+fn naming_the_trait_does_not_separate_two_instantiations_for_an_associated_type() {
+    let source = concat!(
+        "trait Source { type Item; }\n",
+        "struct Wrap<T> { v: T }\n",
+        "impl Source for Wrap<int> { type Item = int; }\n",
+        "impl Source for Wrap<string> { type Item = string; }\n",
+        "fn probe(x: Source::Item) -> int { return 1 }\n",
+        "probe(3)",
+    );
+    let rendered = render(source);
+    assert!(
+        rendered.contains("projection 'Source::Item' is ambiguous: 'Source' is implemented for Wrap<int> and Wrap<string>"),
+        "the trait-qualified spelling must name the instantiations, not say 'Wrap both implement':\n{rendered}"
+    );
+}
+
+#[test]
+fn keeping_a_single_impl_is_a_repair_that_runs() {
+    let result = run_ok(
+        r#"
+trait Source { const LIMIT: int; }
+struct Wrap<T> { v: T }
+impl Source for Wrap<int> { const LIMIT: int = 20; }
+fn probe() -> int { return Wrap::LIMIT }
+probe()
+"#,
+    );
+    assert_eq!(result.as_int(), Some(20));
+}
+
+#[test]
+fn a_second_trait_is_a_repair_that_runs_and_each_trait_answers_its_own_constant() {
+    let source = concat!(
+        "trait Source { const LIMIT: int; }\n",
+        "trait Ceiling { const LIMIT: int; }\n",
+        "struct Wrap<T> { v: T }\n",
+        "impl Source for Wrap<int> { const LIMIT: int = 20; }\n",
+        "impl Ceiling for Wrap<string> { const LIMIT: int = 77; }\n",
+    );
+    let from_source = run_ok(&format!(
+        "{source}fn probe() -> int {{ return Source::LIMIT }}\nprobe()"
+    ));
+    assert_eq!(from_source.as_int(), Some(20));
+    let from_ceiling = run_ok(&format!(
+        "{source}fn probe() -> int {{ return Ceiling::LIMIT }}\nprobe()"
+    ));
+    assert_eq!(
+        from_ceiling.as_int(),
+        Some(77),
+        "the second trait must answer its own definition, not the first impl's"
+    );
 }

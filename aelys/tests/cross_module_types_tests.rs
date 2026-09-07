@@ -599,26 +599,30 @@ fn a_diagnostic_from_an_imported_impl_body_points_at_the_defining_file() {
     write_file(
         &dir,
         "dials.aelys",
-        "struct Cell { n: int }\npub struct Dial { pub base: int }\nimpl Dial {\n    fn read(self) -> int {\n        let c = Cell { n: 3 }\n        return self.base + c.n\n    }\n}\n",
+        "pub struct Dial { pub base: int }\npub trait Gauge {\n    type Unit\n    fn g(self) -> int\n}\nimpl Gauge for Dial {\n    type Unit = int\n    fn g(self) -> int {\n        return 1\n    }\n}\nimpl Dial {\n    fn read(self) -> int {\n        let c: Dial::Unit = 3\n        return self.base + c\n    }\n}\n",
     );
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Dial from dials\n\n\n\n\nfn main() -> int {\n    let d = Dial { base: 1 }\n    return d.read()\n}\nmain()\n",
+        "needs Dial, Gauge from dials\ntrait Aaa {\n    type Unit\n    fn a(self) -> int\n}\nimpl Aaa for Dial {\n    type Unit = string\n    fn a(self) -> int {\n        return 2\n    }\n}\nfn main() -> int {\n    let d = Dial { base: 1 }\n    return d.read()\n}\nmain()\n",
     );
-    let error = run_file(&main_path).expect_err("a private nominal in the body must be rejected");
+    let error = run_file(&main_path).expect_err("the ambiguity the importer creates is rejected");
     let message = error.to_string();
     assert!(
-        message.contains("dials.aelys:5:17"),
+        message.contains("dials.aelys:14:16"),
         "the diagnostic must name the defining file and its real line: {message}"
     );
     assert!(
-        message.contains("let c = Cell { n: 3 }"),
+        message.contains("let c: Dial::Unit = 3"),
         "the rendered line must be the one the span indexes: {message}"
     );
     assert!(
         !message.contains("main.aelys"),
         "the importer's file must not be named: {message}"
+    );
+    assert!(
+        message.contains("as in 'Gauge::Unit'"),
+        "the repair offered inside a carried body names a trait that file can write: {message}"
     );
 }
 
@@ -640,5 +644,190 @@ fn an_imported_impl_body_writes_the_mutable_global_of_its_own_module() {
         value.as_int(),
         Some(9),
         "3 then 6 is the only sum a global carried across both calls gives"
+    );
+}
+
+#[test]
+fn a_generic_target_type_cannot_cross_a_module_boundary() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "wraps.aelys",
+        "pub struct Wrap<T> { pub v: T }\npub trait Source {\n    fn next(self) -> int\n}\nimpl Source for Wrap<bool> {\n    fn next(self) -> int {\n        return 2\n    }\n}\n",
+    );
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Wrap, Source from wraps\nimpl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\nfn main() -> int {\n    let w = Wrap { v: 7 }\n    return Source::next(w)\n}\nmain()\n",
+    );
+    let error = run_file(&main_path).expect_err("a generic export must be refused");
+    let message = error.to_string();
+    assert!(
+        message.contains("E0407") && message.contains("Wrap"),
+        "the export boundary, not the symbol guard, closes this shape, and it names the \
+         declaration it refuses: {message}"
+    );
+    assert!(
+        message.contains("monomorphization"),
+        "the refusal states why a generic declaration cannot cross: {message}"
+    );
+    for other in ["E0355", "E0334", "E0340"] {
+        assert!(
+            !message.contains(other),
+            "the boundary refuses the export before any symbol or coherence guard sees it, \
+             so {other} must not appear: {message}"
+        );
+    }
+
+    // the same two files with the target type made concrete cross and run, so the refusal
+    let concrete = create_module_env();
+    write_file(
+        &concrete,
+        "wraps.aelys",
+        "pub struct Wrap { pub v: bool }\npub trait Source {\n    fn next(self) -> int\n}\nimpl Source for Wrap {\n    fn next(self) -> int {\n        return 2\n    }\n}\n",
+    );
+    let concrete_main = write_file(
+        &concrete,
+        "main.aelys",
+        "needs Wrap, Source from wraps\nfn main() -> int {\n    let w = Wrap { v: true }\n    return Source::next(w)\n}\nmain()\n",
+    );
+    assert_eq!(
+        run_file(&concrete_main)
+            .expect("a concrete target type crosses the boundary")
+            .as_int(),
+        Some(2),
+        "2 is the imported body's own answer"
+    );
+}
+
+#[test]
+fn one_imported_impl_reaching_two_importers_is_registered_once() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "alpha.aelys",
+        "pub struct Point { pub x: int }\npub trait Norm {\n    fn norm(self) -> int\n}\nimpl Norm for Point {\n    fn norm(self) -> int {\n        return self.x * 3\n    }\n}\n",
+    );
+    write_file(
+        &dir,
+        "beta.aelys",
+        "needs Point, Norm from alpha\npub fn beta_norm(v: int) -> int {\n    let p = Point { x: v }\n    return p.norm()\n}\n",
+    );
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Point, Norm from alpha\nneeds beta_norm from beta\nfn main() -> int {\n    let p = Point { x: 2 }\n    return p.norm() * 100 + beta_norm(1)\n}\nmain()\n",
+    );
+    let value = run_file(&main_path).expect("one impl inlined twice must not collide with itself");
+    assert_eq!(
+        value.as_int(),
+        Some(603),
+        "603 pins both call sites to the one imported body"
+    );
+}
+
+const OWN_PRIVATE_KINDS: [(&str, &str, i64); 5] = [
+    (
+        "struct Held { pub h: int }",
+        "        let held = Held { h: 3 }\n        return held.h",
+        3,
+    ),
+    (
+        "enum Held { Small, Large }",
+        "        let held = Held::Large\n        match held {\n            Held::Small => { return 1 }\n            Held::Large => { return 21 }\n        }",
+        21,
+    ),
+    (
+        "trait Held {\n    fn held(self) -> int\n}\nimpl Held for Dial {\n    fn held(self) -> int {\n        return 31\n    }\n}",
+        "        return self.held()",
+        31,
+    ),
+    (
+        "fn held() -> int {\n    return 41\n}",
+        "        return held()",
+        41,
+    ),
+    ("let held = 51", "        return held", 51),
+];
+
+fn own_private_module(declaration: &str, body: &str) -> String {
+    format!(
+        "{declaration}\n\npub struct Dial {{ pub base: int }}\n\nimpl Dial {{\n    fn read(self) -> int {{\n{body}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn every_private_declaration_of_a_module_travels_with_the_body_that_reads_it() {
+    for (declaration, body, expected) in OWN_PRIVATE_KINDS {
+        let dir = create_module_env();
+        write_file(&dir, "dials.aelys", &own_private_module(declaration, body));
+        let main_path = write_file(
+            &dir,
+            "main.aelys",
+            "needs Dial from dials\nfn main() -> int {\n    let d = Dial { base: 0 }\n    return d.read()\n}\nmain()\n",
+        );
+        let value = run_file(&main_path)
+            .unwrap_or_else(|error| panic!("'{declaration}' must travel: {error}"));
+        assert_eq!(
+            value.as_int(),
+            Some(expected),
+            "only the module's own '{declaration}' produces {expected}"
+        );
+    }
+}
+
+#[test]
+fn a_private_declaration_of_a_module_is_never_answered_by_the_importer_s_own() {
+    for (declaration, body, expected) in OWN_PRIVATE_KINDS {
+        let dir = create_module_env();
+        write_file(&dir, "dials.aelys", &own_private_module(declaration, body));
+        // a nominal reaches one flat table and is refused; a function and a global have a
+        let rival = match declaration.starts_with("fn ") || declaration.starts_with("let ") {
+            true => format!("{}\n", declaration.replace(&expected.to_string(), "99")),
+            false => "struct Held { pub other: int }\n".to_string(),
+        };
+        let main_path = write_file(
+            &dir,
+            "main.aelys",
+            &format!(
+                "needs Dial from dials\n{rival}fn main() -> int {{\n    let d = Dial {{ base: 0 }}\n    return d.read()\n}}\nmain()\n"
+            ),
+        );
+        match run_file(&main_path) {
+            Ok(value) => assert_eq!(
+                value.as_int(),
+                Some(expected),
+                "the carried body reads its own module's '{declaration}', not the importer's"
+            ),
+            Err(error) => {
+                let message = error.to_string();
+                assert!(
+                    message.contains("E0410"),
+                    "a nominal the importer also declares is refused, never rebound: {message}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_projection_onto_a_carried_private_type_is_not_the_importer_s_type() {
+    let dir = create_module_env();
+    write_file(
+        &dir,
+        "dials.aelys",
+        "struct Held { pub h: int }\npub struct Dial { pub base: int }\npub trait Source {\n    type Item\n    fn seed(self) -> int\n}\nimpl Source for Dial {\n    type Item = Held\n    fn seed(self) -> int {\n        return 5\n    }\n}\n",
+    );
+    let main_path = write_file(
+        &dir,
+        "main.aelys",
+        "needs Dial, Source from dials\nstruct Held { pub h: int }\nfn main() -> int {\n    let a: Dial::Item = Held { h: 3 }\n    return a.h\n}\nmain()\n",
+    );
+    let message = run_file(&main_path)
+        .expect_err("'Dial::Item' names the module's type, which this file did not declare")
+        .to_string();
+    assert!(
+        message.contains("E0410") && message.contains("'Held'"),
+        "the importer's own 'Held' may not answer the module's projection: {message}"
     );
 }
