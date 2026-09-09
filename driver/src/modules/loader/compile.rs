@@ -254,6 +254,18 @@ impl ModuleLoader {
             }
             imported_types.extend(inherited_types);
             imported_impl_stmts.extend(inherited_impls);
+            for name in selected.nominal_names() {
+                if let Some(ordinal) = module_info.exported_types.struct_def_ordinals.get(&name) {
+                    imported_types
+                        .struct_def_ordinals
+                        .insert(name.clone(), *ordinal);
+                }
+                if let Some(ordinal) = module_info.exported_types.enum_def_ordinals.get(&name) {
+                    imported_types
+                        .enum_def_ordinals
+                        .insert(name.clone(), *ordinal);
+                }
+            }
             imported_types.extend(selected);
             {
                 if let Some(source) = &module_info.exported_types.source {
@@ -283,6 +295,21 @@ impl ModuleLoader {
                     inherited_nominals.insert(name.clone());
                     nominal_origins.insert(name.clone(), entry.module_path.replace('.', "::"));
                     imported_types.unexported_nominals.insert(name);
+                }
+                for original in module_info.exported_types.renamed_privates.keys() {
+                    inherited_nominals.insert(original.clone());
+                    nominal_origins.insert(original.clone(), entry.module_path.replace('.', "::"));
+                    imported_types.unexported_nominals.insert(original.clone());
+                }
+                for (name, ordinal) in &module_info.exported_types.struct_def_ordinals {
+                    imported_types
+                        .struct_def_ordinals
+                        .insert(name.clone(), *ordinal);
+                }
+                for (name, ordinal) in &module_info.exported_types.enum_def_ordinals {
+                    imported_types
+                        .enum_def_ordinals
+                        .insert(name.clone(), *ordinal);
                 }
                 imported_types.extend(module_info.exported_types.own_private_types.clone());
                 imported_impl_stmts.extend(
@@ -425,6 +452,8 @@ impl ModuleLoader {
         let mut exported_types = super::exported_types::collect_exported_types(
             &declaration_stmts,
             &inference_result.type_table,
+            &inference_result.generic_structs,
+            &inference_result.generic_enums,
             module_path_str,
             module_source.clone(),
         )?;
@@ -432,6 +461,13 @@ impl ModuleLoader {
         exported_types.private_types = private_types;
         exported_types.private_impls = private_impls;
         exported_types.private_origins = nominal_origins;
+        for entry in &nominal_scopes {
+            if let Some(module_info) = self.get_module(&entry.module_path) {
+                exported_types
+                    .renamed_privates
+                    .extend(module_info.exported_types.renamed_privates.clone());
+            }
+        }
         exported_types.private_module_sources = module_sources.clone();
         exported_types.globals.extend(qualified_imports);
         for name in &known_globals {

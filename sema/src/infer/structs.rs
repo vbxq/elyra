@@ -27,6 +27,12 @@ impl TypeInference {
         self.resolve_struct_bodies(stmts, structs);
     }
 
+    pub(super) fn open_nominal_templates(
+        &self,
+    ) -> (Vec<crate::types::StructDef>, Vec<crate::types::EnumDef>) {
+        self.type_table.open_nominal_templates()
+    }
+
     fn declare_enums(&mut self, stmts: &[Stmt]) -> HashSet<String> {
         let enum_count = stmts
             .iter()

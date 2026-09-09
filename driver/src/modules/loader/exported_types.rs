@@ -20,6 +20,9 @@ pub struct ExportedTypes {
     pub private_module_sources: std::collections::HashMap<String, Arc<Source>>,
     pub own_private_types: ImportedTypes,
     pub own_private_impls: Vec<Stmt>,
+    pub struct_def_ordinals: std::collections::HashMap<String, u32>,
+    pub enum_def_ordinals: std::collections::HashMap<String, u32>,
+    pub renamed_privates: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -246,35 +249,44 @@ const GENERIC_REASON: &str =
 
 const MISSING_REASON: &str = "the type checker produced no definition for it";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NominalKind {
+    Struct,
+    Enum,
+    Trait,
+}
+
 pub fn collect_exported_types(
     stmts: &[Stmt],
     type_table: &TypeTable,
+    generic_structs: &[aelys_sema::types::StructDef],
+    generic_enums: &[aelys_sema::types::EnumDef],
     module_path: &str,
     source: Arc<Source>,
 ) -> Result<ExportedTypes> {
     let mut exported = ExportedTypes::default();
-    let mut private_generics: BTreeMap<String, Span> = BTreeMap::new();
+    let mut private_generics: BTreeMap<String, (Span, NominalKind)> = BTreeMap::new();
 
     for stmt in stmts {
-        let (name, type_params, is_pub) = match &stmt.kind {
+        let (name, type_params, is_pub, kind) = match &stmt.kind {
             StmtKind::EnumDecl {
                 name,
                 type_params,
                 is_pub,
                 ..
-            }
-            | StmtKind::StructDecl {
+            } => (name, type_params, *is_pub, NominalKind::Enum),
+            StmtKind::StructDecl {
                 name,
                 type_params,
                 is_pub,
                 ..
-            }
-            | StmtKind::TraitDecl {
+            } => (name, type_params, *is_pub, NominalKind::Struct),
+            StmtKind::TraitDecl {
                 name,
                 type_params,
                 is_pub,
                 ..
-            } => (name, type_params, *is_pub),
+            } => (name, type_params, *is_pub, NominalKind::Trait),
             _ => continue,
         };
 
@@ -282,7 +294,7 @@ pub fn collect_exported_types(
             exported.private_names.insert(name.clone());
             if !type_params.is_empty() {
                 // monomorphization erased it in this module, so it has no definition to send
-                private_generics.insert(name.clone(), stmt.span);
+                private_generics.insert(name.clone(), (stmt.span, kind));
                 continue;
             }
             match &stmt.kind {
@@ -374,20 +386,163 @@ pub fn collect_exported_types(
                 collect_identifiers(text, &mut named);
             }
         }
-        for (name, span) in private_generics {
-            if named.contains(&name) {
+        let mut header_named = HashSet::new();
+        for stmt in exported
+            .impl_stmts
+            .iter()
+            .chain(&exported.own_private_impls)
+        {
+            super::rename::collect_impl_header_names(stmt, &mut header_named);
+        }
+        for (name, (span, kind)) in &private_generics {
+            if !named.contains(name) {
+                continue;
+            }
+            let body_only = !header_named.contains(name) && *kind != NominalKind::Trait;
+            if !body_only {
                 return Err(not_exportable(
                     module_path,
-                    &name,
+                    name,
                     GENERIC_REASON,
-                    span,
+                    *span,
                     source,
                 ));
+            }
+            match kind {
+                NominalKind::Struct => {
+                    if let Some(def) = generic_structs.iter().find(|def| &def.name == name) {
+                        exported.own_private_types.structs.push(def.clone());
+                    }
+                }
+                NominalKind::Enum => {
+                    if let Some(def) = generic_enums.iter().find(|def| &def.name == name) {
+                        exported.own_private_types.enums.push(def.clone());
+                    }
+                }
+                NominalKind::Trait => {}
             }
         }
     }
 
+    rename_body_only_privates(&mut exported, type_table, module_path);
+
     Ok(exported)
+}
+
+fn rename_body_only_privates(
+    exported: &mut ExportedTypes,
+    type_table: &TypeTable,
+    module_path: &str,
+) {
+    use super::rename::{collect_impl_leak_names, collect_infer_names};
+    use std::collections::{HashMap, HashSet};
+
+    let mut exposed: HashSet<String> = HashSet::new();
+    for def in &exported.types.structs {
+        for field in &def.fields {
+            collect_infer_names(&field.ty, &mut exposed);
+        }
+    }
+    for def in &exported.types.enums {
+        for variant in &def.variants {
+            match &variant.fields {
+                aelys_sema::types::EnumVariantFieldsDef::Unit => {}
+                aelys_sema::types::EnumVariantFieldsDef::Tuple(fields) => {
+                    for field in fields {
+                        collect_infer_names(field, &mut exposed);
+                    }
+                }
+                aelys_sema::types::EnumVariantFieldsDef::Named(fields) => {
+                    for field in fields {
+                        collect_infer_names(&field.ty, &mut exposed);
+                    }
+                }
+            }
+        }
+    }
+    for stmt in exported
+        .impl_stmts
+        .iter()
+        .chain(&exported.own_private_impls)
+    {
+        collect_impl_leak_names(stmt, &mut exposed);
+    }
+
+    let mut renames: HashMap<String, String> = HashMap::new();
+    for def in &exported.own_private_types.structs {
+        if !exposed.contains(&def.name) {
+            renames.insert(
+                def.name.clone(),
+                super::rename::renamed_module_nominal(&def.name, module_path),
+            );
+        }
+    }
+    for def in &exported.own_private_types.enums {
+        if !exposed.contains(&def.name) {
+            renames.insert(
+                def.name.clone(),
+                super::rename::renamed_module_nominal(&def.name, module_path),
+            );
+        }
+    }
+    if !renames.is_empty() {
+        for def in &mut exported.own_private_types.structs {
+            if let Some(replacement) = renames.get(&def.name) {
+                def.name = replacement.clone();
+            }
+        }
+        for def in &mut exported.own_private_types.enums {
+            if let Some(replacement) = renames.get(&def.name) {
+                def.name = replacement.clone();
+            }
+        }
+        for stmt in exported
+            .impl_stmts
+            .iter_mut()
+            .chain(&mut exported.own_private_impls)
+        {
+            super::rename::rename_stmts(std::slice::from_mut(stmt), &renames);
+        }
+        exported.renamed_privates.extend(renames);
+    }
+    let struct_ordinals = type_table.struct_definition_ordinals_snapshot();
+    let enum_ordinals = type_table.enum_definition_ordinals_snapshot();
+    for def in exported
+        .types
+        .structs
+        .iter()
+        .chain(&exported.own_private_types.structs)
+    {
+        let original = exported
+            .renamed_privates
+            .iter()
+            .find(|(_, renamed)| *renamed == &def.name)
+            .map(|(original, _)| original.clone())
+            .unwrap_or_else(|| def.name.clone());
+        if let Some(ordinal) = struct_ordinals.get(&original) {
+            exported
+                .struct_def_ordinals
+                .insert(def.name.clone(), *ordinal);
+        }
+    }
+    for def in exported
+        .types
+        .enums
+        .iter()
+        .chain(&exported.own_private_types.enums)
+    {
+        let original = exported
+            .renamed_privates
+            .iter()
+            .find(|(_, renamed)| *renamed == &def.name)
+            .map(|(original, _)| original.clone())
+            .unwrap_or_else(|| def.name.clone());
+        if let Some(ordinal) = enum_ordinals.get(&original) {
+            exported
+                .enum_def_ordinals
+                .insert(def.name.clone(), *ordinal);
+        }
+    }
 }
 
 const BOUNDARY_REASON: &str =

@@ -6,6 +6,7 @@ mod init;
 mod load;
 mod native;
 mod needs;
+mod rename;
 mod resolution;
 mod stdlib;
 mod stdlib_loaded;

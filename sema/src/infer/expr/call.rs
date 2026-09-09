@@ -397,6 +397,10 @@ impl TypeInference {
             }
             _ => return None,
         };
+        if let Some(error) = self.private_nominal_error(&enum_name, callee.span) {
+            self.errors.push(error);
+            return Some((TypedExprKind::Null, InferType::Poison));
+        }
         let enum_def = self.type_table.get_enum(&enum_name).cloned()?;
         if !explicit_type_args.is_empty() && explicit_type_args.len() != enum_def.type_params.len()
         {
@@ -535,6 +539,10 @@ impl TypeInference {
         };
         let trait_name = call_path_name(object)?;
         let trait_def = self.type_table.get_trait(&trait_name).cloned()?;
+        if let Some(error) = self.private_nominal_error(&trait_name, object.span) {
+            self.errors.push(error);
+            return Some((TypedExprKind::Null, InferType::Poison));
+        }
         let required = trait_def
             .methods
             .iter()

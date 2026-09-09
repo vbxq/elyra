@@ -55,6 +55,8 @@ struct NominalImports {
     module_sources: HashMap<String, Arc<Source>>,
     inherited: std::collections::BTreeMap<String, String>,
     carriers: NominalCarriers,
+    private_decls: std::collections::HashSet<(String, String)>,
+    renamed_originals: std::collections::HashSet<String>,
     needs_spans: BTreeMap<String, aelys_syntax::Span>,
 }
 
@@ -76,6 +78,9 @@ impl NominalImports {
             self.inherited
                 .entry(name.clone())
                 .or_insert_with(|| origin.clone());
+            if exported.private_types.unexported_nominals.contains(name) {
+                self.private_decls.insert((name.clone(), origin.clone()));
+            }
             self.carriers
                 .entry(name.clone())
                 .or_default()
@@ -129,6 +134,16 @@ impl NominalImports {
                 .insert(via.clone());
             self.origins.insert(name, module_path.to_string());
         }
+        for name in selected.nominal_names() {
+            if let Some(ordinal) = exported.struct_def_ordinals.get(&name) {
+                self.types
+                    .struct_def_ordinals
+                    .insert(name.clone(), *ordinal);
+            }
+            if let Some(ordinal) = exported.enum_def_ordinals.get(&name) {
+                self.types.enum_def_ordinals.insert(name.clone(), *ordinal);
+            }
+        }
         self.types.extend(selected);
         if !impl_stmts.is_empty() {
             let module = aelys_syntax::ModuleId::new(module_path);
@@ -154,6 +169,7 @@ impl NominalImports {
                 self.inherited
                     .entry(name.clone())
                     .or_insert_with(|| via.clone());
+                self.private_decls.insert((name.clone(), via.clone()));
                 self.carriers
                     .entry(name.clone())
                     .or_default()
@@ -162,6 +178,25 @@ impl NominalImports {
                     .insert(via.clone());
                 self.types.unexported_nominals.insert(name);
             }
+            for original in exported.renamed_privates.keys() {
+                self.inherited
+                    .entry(original.clone())
+                    .or_insert_with(|| via.clone());
+                self.types.unexported_nominals.insert(original.clone());
+                self.renamed_originals.insert(original.clone());
+            }
+            self.types.struct_def_ordinals.extend(
+                exported
+                    .struct_def_ordinals
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v)),
+            );
+            self.types.enum_def_ordinals.extend(
+                exported
+                    .enum_def_ordinals
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v)),
+            );
             self.types.extend(exported.own_private_types.clone());
             self.impl_stmts.extend(
                 exported
@@ -178,14 +213,36 @@ impl NominalImports {
         }
     }
 
+    fn public_declaring(
+        &self,
+        symbol: &str,
+        declaring: &BTreeMap<String, std::collections::BTreeSet<String>>,
+    ) -> Vec<String> {
+        declaring
+            .keys()
+            .filter(|module| {
+                !self
+                    .private_decls
+                    .contains(&(symbol.to_string(), (*module).clone()))
+            })
+            .cloned()
+            .collect()
+    }
+
     fn first_clash(&self) -> Option<(NominalClash, aelys_syntax::Span)> {
         for (symbol, declaring) in &self.carriers {
-            if declaring.len() < 2 {
+            let public = self.public_declaring(symbol, declaring);
+            if public.len() < 2 {
                 continue;
             }
-            let modules: Vec<String> = declaring.keys().cloned().collect();
+            let modules: Vec<String> = public;
             let carried_by: Vec<String> = declaring
                 .iter()
+                .filter(|(module, _)| {
+                    !self
+                        .private_decls
+                        .contains(&(symbol.clone(), (*module).clone()))
+                })
                 .flat_map(|(module, vias)| vias.iter().filter(move |via| *via != module))
                 .cloned()
                 .collect::<std::collections::BTreeSet<String>>()
@@ -193,7 +250,13 @@ impl NominalImports {
                 .collect();
             // the caret follows the declaring module that sorts last, never the order the
             let span = declaring
-                .values()
+                .iter()
+                .filter(|(module, _)| {
+                    !self
+                        .private_decls
+                        .contains(&(symbol.clone(), (*module).clone()))
+                })
+                .map(|(_, vias)| vias)
                 .next_back()
                 .and_then(|vias| vias.iter().next_back())
                 .and_then(|via| self.needs_spans.get(via))
@@ -213,10 +276,21 @@ impl NominalImports {
 
     fn local_clash(&self, name: &str) -> Option<NominalClash> {
         let declaring = self.carriers.get(name)?;
-        let mut modules: Vec<String> = declaring.keys().cloned().collect();
+        let mut modules: Vec<String> = self.public_declaring(name, declaring);
+        if modules.is_empty() {
+            if self.renamed_originals.contains(name) {
+                return None;
+            }
+            modules = declaring.keys().cloned().collect();
+        }
         modules.push("this module".to_string());
         let carried_by: Vec<String> = declaring
             .iter()
+            .filter(|(module, _)| {
+                !self
+                    .private_decls
+                    .contains(&(name.to_string(), (*module).clone()))
+            })
             .flat_map(|(module, vias)| vias.iter().filter(move |via| *via != module))
             .cloned()
             .collect::<std::collections::BTreeSet<String>>()

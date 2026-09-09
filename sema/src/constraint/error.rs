@@ -59,7 +59,10 @@ impl ItemNamespace {
 
 #[derive(Debug, Clone)]
 pub enum AssociatedItemDisagreement {
-    DeclaredType { declared: String, found: String },
+    DeclaredType {
+        declared: String,
+        found: String,
+    },
     ConstantValue {
         declared: String,
         found: Option<String>,

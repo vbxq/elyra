@@ -341,11 +341,15 @@ impl TypeInference {
                 .or_else(|| self.refused_private_nominal(&path_name))
                 .map(str::to_string)
         {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::TypeNotImported {
+            let kind = match self.private_nominal_error(&path_name, _span) {
+                Some(error) if self.unexported_nominals.contains(&path_name) => error.kind,
+                _ => TypeErrorKind::TypeNotImported {
                     name: path_name.clone(),
                     module,
                 },
+            };
+            self.errors.push(TypeError {
+                kind,
                 span: _span,
                 reason: ConstraintReason::UnknownType {
                     name: path_name.clone(),
@@ -537,11 +541,9 @@ impl TypeInference {
             && let Some(path) = source_path_name(object)
         {
             let candidates: Vec<_> = self
-                .type_table
-                .trait_methods(&path, member)
-                .iter()
+                .visible_trait_methods(&path, member)
+                .into_iter()
                 .filter(|candidate| !candidate.has_self)
-                .cloned()
                 .collect();
             match candidates.as_slice() {
                 [method] => {
@@ -780,11 +782,9 @@ impl TypeInference {
                 (inherent, false)
             } else if !has_field {
                 let candidates: Vec<_> = self
-                    .type_table
-                    .trait_methods(&name, member)
-                    .iter()
+                    .visible_trait_methods(&name, member)
+                    .into_iter()
                     .filter(|candidate| candidate.has_self)
-                    .cloned()
                     .collect();
                 match candidates.as_slice() {
                     [candidate] => (

@@ -26,6 +26,8 @@ pub struct InferenceResult {
     pub program: TypedProgram,
     pub warnings: Vec<Warning>,
     pub type_table: TypeTable,
+    pub generic_structs: Vec<crate::types::StructDef>,
+    pub generic_enums: Vec<crate::types::EnumDef>,
 }
 
 impl Default for TypeInference {
@@ -1527,6 +1529,7 @@ impl TypeInference {
 
         let typed_stmts = inf.infer_stmts(&stmts);
 
+        let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
 
         inf.validate_sum_method_residuals(&mut subst);
@@ -1584,6 +1587,8 @@ impl TypeInference {
             },
             warnings: inf.warnings,
             type_table,
+            generic_structs: generic_templates.0,
+            generic_enums: generic_templates.1,
         })
     }
 

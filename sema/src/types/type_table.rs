@@ -274,12 +274,48 @@ impl TypeTable {
         self.nominal_instance_origins.get(name).map(String::as_str)
     }
 
+    pub fn struct_definition_ordinals_snapshot(&self) -> HashMap<String, u32> {
+        self.struct_definition_ordinals.clone()
+    }
+
+    pub fn enum_definition_ordinals_snapshot(&self) -> HashMap<String, u32> {
+        self.enum_definition_ordinals.clone()
+    }
+
+    pub fn adopt_definition_ordinal(&mut self, name: &str, ordinal: u32) {
+        self.struct_definition_ordinals
+            .insert(name.to_string(), ordinal);
+    }
+
+    pub fn adopt_enum_definition_ordinal(&mut self, name: &str, ordinal: u32) {
+        self.enum_definition_ordinals
+            .insert(name.to_string(), ordinal);
+    }
+
     pub fn enum_definition_ordinal(&self, name: &str) -> Option<u32> {
         self.enum_definition_ordinals.get(name).copied()
     }
 
     pub fn struct_definition_ordinal(&self, name: &str) -> Option<u32> {
         self.struct_definition_ordinals.get(name).copied()
+    }
+
+    pub fn open_nominal_templates(&self) -> (Vec<StructDef>, Vec<EnumDef>) {
+        let mut structs: Vec<StructDef> = self
+            .structs
+            .values()
+            .filter(|definition| !definition.type_params.is_empty())
+            .cloned()
+            .collect();
+        structs.sort_by(|left, right| left.name.cmp(&right.name));
+        let mut enums: Vec<EnumDef> = self
+            .enums
+            .values()
+            .filter(|definition| !definition.type_params.is_empty())
+            .cloned()
+            .collect();
+        enums.sort_by(|left, right| left.name.cmp(&right.name));
+        (structs, enums)
     }
 
     pub fn remove_open_nominals(&mut self) {

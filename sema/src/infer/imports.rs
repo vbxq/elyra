@@ -14,6 +14,8 @@ pub struct ImportedTypes {
     pub private_nominals: BTreeMap<String, String>,
     // the subset of `private_nominals` its own module never made public, so no `needs` line
     pub unexported_nominals: BTreeSet<String>,
+    pub struct_def_ordinals: std::collections::HashMap<String, u32>,
+    pub enum_def_ordinals: std::collections::HashMap<String, u32>,
 }
 
 impl ImportedTypes {
@@ -31,6 +33,8 @@ impl ImportedTypes {
             .extend(other.module_scoped_globals);
         self.private_nominals.extend(other.private_nominals);
         self.unexported_nominals.extend(other.unexported_nominals);
+        self.struct_def_ordinals.extend(other.struct_def_ordinals);
+        self.enum_def_ordinals.extend(other.enum_def_ordinals);
     }
 
     pub fn nominal_names(&self) -> Vec<String> {
@@ -46,10 +50,19 @@ impl ImportedTypes {
 impl TypeInference {
     pub(super) fn install_imported_types(&mut self, imported: ImportedTypes) {
         for def in imported.enums {
-            self.type_table.register_enum(def);
+            let ordinal = imported.enum_def_ordinals.get(&def.name).copied();
+            self.type_table.register_enum(def.clone());
+            if let Some(ordinal) = ordinal {
+                self.type_table
+                    .adopt_enum_definition_ordinal(&def.name, ordinal);
+            }
         }
         for def in imported.structs {
-            self.type_table.register_struct(def);
+            let ordinal = imported.struct_def_ordinals.get(&def.name).copied();
+            self.type_table.register_struct(def.clone());
+            if let Some(ordinal) = ordinal {
+                self.type_table.adopt_definition_ordinal(&def.name, ordinal);
+            }
         }
         for def in imported.traits {
             self.type_table.register_trait(def);
@@ -66,7 +79,58 @@ impl TypeInference {
         if self.current_module != self.root_module {
             return None;
         }
+        if self
+            .type_table
+            .get_struct(name)
+            .is_some_and(|definition| definition.owner == self.current_module)
+            || self
+                .type_table
+                .get_enum(name)
+                .is_some_and(|definition| definition.owner == self.current_module)
+            || self
+                .type_table
+                .get_trait(name)
+                .is_some_and(|definition| definition.owner == self.current_module)
+        {
+            return None;
+        }
         self.private_nominals.get(name).map(String::as_str)
+    }
+
+    pub(crate) fn visible_trait_methods(
+        &self,
+        target: &str,
+        member: &str,
+    ) -> Vec<crate::types::TraitMethod> {
+        let candidates = self.type_table.trait_methods(target, member);
+        if self.current_module != self.root_module {
+            return candidates.to_vec();
+        }
+        candidates
+            .iter()
+            .filter(|candidate| {
+                let declaring = self
+                    .type_table
+                    .trait_impl_defs()
+                    .iter()
+                    .filter(|definition| {
+                        crate::types::nominal_name(&definition.self_type).as_deref() == Some(target)
+                            && definition
+                                .methods
+                                .iter()
+                                .any(|method| method.symbol == candidate.symbol)
+                    })
+                    .map(|definition| definition.trait_name.clone())
+                    .collect::<Vec<_>>();
+                if declaring.is_empty() {
+                    return true;
+                }
+                declaring
+                    .iter()
+                    .any(|trait_name| self.refused_private_nominal(trait_name).is_none())
+            })
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn private_nominal_error(

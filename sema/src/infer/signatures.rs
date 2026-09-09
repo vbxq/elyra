@@ -659,7 +659,11 @@ impl TypeInference {
                     })
                     .collect();
                 let trait_name = bound.path.join("::");
-                if let Some(module) = self
+                if let Some(error) =
+                    self.private_nominal_error(&trait_name, clause.type_annotation.span)
+                {
+                    self.errors.push(error);
+                } else if let Some(module) = self
                     .withholding_module(&trait_name)
                     .or_else(|| self.refused_private_nominal(&trait_name))
                     .map(str::to_string)

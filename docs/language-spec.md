@@ -833,12 +833,16 @@ a repair it offers is written in the terms of that file: an ambiguity raised
 inside a carried body names a trait that file can write, never one the importing
 file declared.
 
-A private declaration that travels still occupies the importing file's namespace,
-because one flat table holds them all. A file that declares the same name is
-E0410, exactly as it is for a public one, rather than having the carried body
-silently rebound to its declaration. A **generic** private declaration has nothing
+A private declaration that reaches the importer only inside a carried impl body
+travels with that body and coexists with a same-named declaration of the
+importing file: each resolves in its own module's terms. E0410 still applies
+where the name participates in the import contract — an associated binding, a
+signature, a nominal the importing file names in its own declarations where the
+carried body can read it, or a trait together with its own declaration. A
+**generic** private declaration that reaches the import contract has nothing
 left to send, monomorphization having erased it inside its own module, so a body
-that names one is E0407, the refusal its public twin already gets.
+that names one there is E0407, the refusal its public twin already gets; a
+body-only generic travels as a template and monomorphizes in the importer.
 
 A file binds each nominal name once. Two declarations of one name reaching one
 file is E0410 `symbol 'K' is exported by multiple modules: cored, corec`, reported
