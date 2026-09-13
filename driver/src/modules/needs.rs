@@ -183,6 +183,16 @@ impl NominalImports {
                     .entry(original.clone())
                     .or_insert_with(|| via.clone());
                 self.types.unexported_nominals.insert(original.clone());
+                if exported.renamed_private_traits.contains(original) {
+                    self.private_decls.insert((original.clone(), via.clone()));
+                    self.carriers
+                        .entry(original.clone())
+                        .or_default()
+                        .entry(via.clone())
+                        .or_default()
+                        .insert(via.clone());
+                    continue;
+                }
                 self.renamed_originals.insert(original.clone());
             }
             self.types.struct_def_ordinals.extend(

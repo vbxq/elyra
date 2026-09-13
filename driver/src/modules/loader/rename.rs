@@ -1,26 +1,26 @@
 use aelys_syntax::{
-    AssociatedBinding, Expr, ExprKind, MatchArmBody, MemberSeparator, Pattern, PatternKind, Stmt,
-    StmtKind, TypeAnnotation, WhereClause,
+    AssociatedBinding, EnumVariantFields, Expr, ExprKind, MatchArmBody, MemberSeparator, Pattern,
+    PatternKind, Span, Stmt, StmtKind, TypeAnnotation, WhereClause,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 pub fn renamed_module_nominal(name: &str, module_path: &str) -> String {
     format!("{name}@{module_path}")
 }
 
-fn rename_head(value: &mut String, renames: &HashMap<String, String>) {
+fn rename_head(value: &mut String, renames: &BTreeMap<String, String>) {
     if let Some(replacement) = renames.get(value) {
         *value = replacement.clone();
     }
 }
 
-fn rename_path(path: &mut [String], renames: &HashMap<String, String>) {
+fn rename_path(path: &mut [String], renames: &BTreeMap<String, String>) {
     if let Some(first) = path.first_mut() {
         rename_head(first, renames);
     }
 }
 
-pub fn rename_annotation(annotation: &mut TypeAnnotation, renames: &HashMap<String, String>) {
+pub fn rename_annotation(annotation: &mut TypeAnnotation, renames: &BTreeMap<String, String>) {
     rename_head(&mut annotation.name, renames);
     rename_path(&mut annotation.path, renames);
     for param in &mut annotation.type_params {
@@ -62,13 +62,24 @@ pub fn collect_annotation_names(annotation: &TypeAnnotation, out: &mut HashSet<S
     }
 }
 
-fn rename_where_clauses(clauses: &mut [WhereClause], renames: &HashMap<String, String>) {
+fn rename_where_clauses(clauses: &mut [WhereClause], renames: &BTreeMap<String, String>) {
     for clause in clauses {
         rename_annotation(&mut clause.type_annotation, renames);
         for bound in &mut clause.bounds {
             rename_annotation(bound, renames);
         }
     }
+}
+
+fn where_clause_name_span(clauses: &[WhereClause], name: &str) -> Option<Span> {
+    clauses.iter().find_map(|clause| {
+        annotation_name_span(&clause.type_annotation, name).or_else(|| {
+            clause
+                .bounds
+                .iter()
+                .find_map(|bound| annotation_name_span(bound, name))
+        })
+    })
 }
 
 fn collect_where_names(clauses: &[WhereClause], out: &mut HashSet<String>) {
@@ -80,7 +91,7 @@ fn collect_where_names(clauses: &[WhereClause], out: &mut HashSet<String>) {
     }
 }
 
-fn rename_pattern(pattern: &mut Pattern, renames: &HashMap<String, String>) {
+fn rename_pattern(pattern: &mut Pattern, renames: &BTreeMap<String, String>) {
     match &mut pattern.kind {
         PatternKind::Variant {
             path,
@@ -122,7 +133,7 @@ fn rename_pattern(pattern: &mut Pattern, renames: &HashMap<String, String>) {
     }
 }
 
-fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
+fn rename_expr(expr: &mut Expr, renames: &BTreeMap<String, String>) {
     if let Some(repeat) = &mut expr.repeat {
         rename_expr(repeat.as_mut(), renames);
     }
@@ -310,7 +321,7 @@ fn rename_expr(expr: &mut Expr, renames: &HashMap<String, String>) {
     }
 }
 
-fn rename_member_root(object: &mut Expr, renames: &HashMap<String, String>) {
+fn rename_member_root(object: &mut Expr, renames: &BTreeMap<String, String>) {
     let mut current = object;
     loop {
         match &mut current.kind {
@@ -329,7 +340,7 @@ fn rename_member_root(object: &mut Expr, renames: &HashMap<String, String>) {
     }
 }
 
-pub fn rename_stmts(stmts: &mut [Stmt], renames: &HashMap<String, String>) {
+pub fn rename_stmts(stmts: &mut [Stmt], renames: &BTreeMap<String, String>) {
     if renames.is_empty() {
         return;
     }
@@ -338,7 +349,7 @@ pub fn rename_stmts(stmts: &mut [Stmt], renames: &HashMap<String, String>) {
     }
 }
 
-fn rename_stmt(stmt: &mut Stmt, renames: &HashMap<String, String>) {
+fn rename_stmt(stmt: &mut Stmt, renames: &BTreeMap<String, String>) {
     match &mut stmt.kind {
         StmtKind::Expression(expr) => rename_expr(expr, renames),
         StmtKind::Let {
@@ -403,6 +414,7 @@ fn rename_stmt(stmt: &mut Stmt, renames: &HashMap<String, String>) {
             rename_stmts(&mut func.body, renames);
         }
         StmtKind::ImplDecl {
+            polarity: _,
             type_params: _,
             trait_path,
             self_type,
@@ -436,12 +448,60 @@ fn rename_stmt(stmt: &mut Stmt, renames: &HashMap<String, String>) {
                 rename_stmts(&mut method.body, renames);
             }
         }
-        StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Needs(_)
-        | StmtKind::StructDecl { .. }
-        | StmtKind::EnumDecl { .. }
-        | StmtKind::TraitDecl { .. } => {}
+        StmtKind::StructDecl { name, fields, .. } => {
+            rename_head(name, renames);
+            for field in fields {
+                rename_annotation(&mut field.type_annotation, renames);
+            }
+        }
+        StmtKind::EnumDecl { name, variants, .. } => {
+            rename_head(name, renames);
+            for variant in variants {
+                match &mut variant.fields {
+                    EnumVariantFields::Unit => {}
+                    EnumVariantFields::Tuple(types) => {
+                        for ty in types {
+                            rename_annotation(ty, renames);
+                        }
+                    }
+                    EnumVariantFields::Named(fields) => {
+                        for field in fields {
+                            rename_annotation(&mut field.type_annotation, renames);
+                        }
+                    }
+                }
+            }
+        }
+        StmtKind::TraitDecl {
+            name,
+            super_bounds,
+            where_clauses,
+            methods,
+            associated_consts,
+            ..
+        } => {
+            rename_head(name, renames);
+            for bound in super_bounds {
+                rename_annotation(bound, renames);
+            }
+            rename_where_clauses(where_clauses, renames);
+            for method in methods {
+                rename_where_clauses(&mut method.function.where_clauses, renames);
+                for param in &mut method.function.params {
+                    if let Some(annotation) = &mut param.type_annotation {
+                        rename_annotation(annotation, renames);
+                    }
+                }
+                if let Some(ret) = &mut method.function.return_type {
+                    rename_annotation(ret, renames);
+                }
+                rename_stmts(&mut method.function.body, renames);
+            }
+            for def in associated_consts {
+                rename_annotation(&mut def.type_annotation, renames);
+            }
+        }
+        StmtKind::Break | StmtKind::Continue | StmtKind::Needs(_) => {}
     }
 }
 
@@ -481,6 +541,87 @@ pub fn collect_infer_names(ty: &aelys_sema::InferType, out: &mut HashSet<String>
         InferType::Projection { self_ty, .. } => collect_infer_names(self_ty, out),
         _ => {}
     }
+}
+
+/// where an impl's contract writes `name`, so a refusal underlines the leak and not the
+pub fn impl_contract_name_span(stmt: &Stmt, name: &str) -> Option<Span> {
+    let StmtKind::ImplDecl {
+        trait_path,
+        self_type,
+        where_clauses,
+        methods,
+        associated_types,
+        associated_consts,
+        ..
+    } = &stmt.kind
+    else {
+        return None;
+    };
+    for def in associated_types {
+        if let Some(span) = annotation_name_span(&def.value, name) {
+            return Some(span);
+        }
+    }
+    for def in associated_consts {
+        if let Some(span) = annotation_name_span(&def.type_annotation, name) {
+            return Some(span);
+        }
+    }
+    for method in methods {
+        for param in &method.params {
+            if let Some(annotation) = &param.type_annotation
+                && let Some(span) = annotation_name_span(annotation, name)
+            {
+                return Some(span);
+            }
+        }
+        if let Some(ret) = &method.return_type
+            && let Some(span) = annotation_name_span(ret, name)
+        {
+            return Some(span);
+        }
+        if let Some(span) = where_clause_name_span(&method.where_clauses, name) {
+            return Some(span);
+        }
+    }
+    if let Some(span) = where_clause_name_span(where_clauses, name) {
+        return Some(span);
+    }
+    if let Some(path) = trait_path
+        && let Some(span) = annotation_name_span(path, name)
+    {
+        return Some(span);
+    }
+    annotation_name_span(self_type, name)
+}
+
+fn annotation_name_span(annotation: &TypeAnnotation, name: &str) -> Option<Span> {
+    for param in &annotation.type_params {
+        if let Some(span) = annotation_name_span(param, name) {
+            return Some(span);
+        }
+    }
+    if let Some(params) = &annotation.fn_params {
+        for param in params {
+            if let Some(span) = annotation_name_span(param, name) {
+                return Some(span);
+            }
+        }
+    }
+    if let Some(ret) = &annotation.fn_ret
+        && let Some(span) = annotation_name_span(ret, name)
+    {
+        return Some(span);
+    }
+    for (_, binding, _) in &annotation.associated_bindings {
+        if let AssociatedBinding::Type(ty) = binding
+            && let Some(span) = annotation_name_span(ty, name)
+        {
+            return Some(span);
+        }
+    }
+    (annotation.name == name || annotation.path.iter().any(|segment| segment == name))
+        .then_some(annotation.span)
 }
 
 pub fn collect_impl_header_names(stmt: &Stmt, out: &mut HashSet<String>) {

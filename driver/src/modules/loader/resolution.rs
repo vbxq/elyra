@@ -5,11 +5,38 @@ use aelys_modules::resolution::{
     ExtensionPattern, ModuleKind, ModuleResolution, full_search_patterns,
     native_only_search_patterns,
 };
-use aelys_syntax::Span;
+use aelys_runtime::stdlib;
+use aelys_syntax::{NeedsStmt, Span};
 use std::path::{Path, PathBuf};
 
 impl ModuleLoader {
-    // resolve "utils.helpers" -> ./utils/helpers.aelys or ./utils/helpers/mod.aelys
+    pub fn check_resolvable(&self, needs: &NeedsStmt) -> Result<()> {
+        if needs.path.is_empty() {
+            return Err(AelysError::Compile(CompileError::new(
+                CompileErrorKind::ModuleNotFound {
+                    module_path: "<empty>".to_string(),
+                    searched_paths: vec![],
+                },
+                needs.span,
+                self.source.clone(),
+            )));
+        }
+
+        if stdlib::is_std_module(&needs.path) {
+            return Ok(());
+        }
+
+        let module_path_str = needs.path.join(".");
+        if self.host_modules.contains(&module_path_str)
+            || self.loaded_modules.contains_key(&module_path_str)
+        {
+            return Ok(());
+        }
+
+        self.resolve_path_with_fallback(&needs.path, needs)
+            .map(|_| ())
+    }
+
     pub fn resolve_path(&self, module_path: &[String]) -> Result<PathBuf> {
         match self.resolve_module_path(module_path)? {
             ModuleResolution {

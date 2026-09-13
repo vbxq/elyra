@@ -357,7 +357,11 @@ impl ModuleLoader {
             .collect();
         imported_types.private_nominals = private_nominals;
 
-        let declaration_stmts: Vec<_> = stmts
+        // mangled method symbols are minted there and cannot be rewritten afterwards
+        let applied_renames =
+            super::exported_types::module_private_nominal_renames(&stmts, module_path_str);
+
+        let mut declaration_stmts: Vec<_> = stmts
             .iter()
             .filter(|s| {
                 matches!(
@@ -370,15 +374,15 @@ impl ModuleLoader {
             })
             .cloned()
             .collect();
+        super::rename::rename_stmts(&mut declaration_stmts, &applied_renames);
 
-        let main_stmts: Vec<_> = imported_impl_stmts
+        let mut own_stmts: Vec<_> = stmts
             .into_iter()
-            .chain(
-                stmts
-                    .into_iter()
-                    .filter(|s| !matches!(s.kind, StmtKind::Needs(_))),
-            )
+            .filter(|s| !matches!(s.kind, StmtKind::Needs(_)))
             .collect();
+        super::rename::rename_stmts(&mut own_stmts, &applied_renames);
+
+        let main_stmts: Vec<_> = imported_impl_stmts.into_iter().chain(own_stmts).collect();
 
         let inference_result = TypeInference::infer_program_full_with_native_signatures_in_module(
             aelys_sema::InferenceInputs {
@@ -456,6 +460,7 @@ impl ModuleLoader {
             &inference_result.generic_enums,
             module_path_str,
             module_source.clone(),
+            &applied_renames,
         )?;
         exported_types.source = Some(module_source.clone());
         exported_types.private_types = private_types;
@@ -466,6 +471,9 @@ impl ModuleLoader {
                 exported_types
                     .renamed_privates
                     .extend(module_info.exported_types.renamed_privates.clone());
+                exported_types
+                    .renamed_private_traits
+                    .extend(module_info.exported_types.renamed_private_traits.clone());
             }
         }
         exported_types.private_module_sources = module_sources.clone();

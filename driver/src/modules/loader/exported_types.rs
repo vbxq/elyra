@@ -23,6 +23,7 @@ pub struct ExportedTypes {
     pub struct_def_ordinals: std::collections::HashMap<String, u32>,
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
     pub renamed_privates: BTreeMap<String, String>,
+    pub renamed_private_traits: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -256,6 +257,96 @@ enum NominalKind {
     Trait,
 }
 
+fn collect_variant_names(fields: &aelys_syntax::EnumVariantFields, out: &mut HashSet<String>) {
+    use super::rename::collect_annotation_names;
+    match fields {
+        aelys_syntax::EnumVariantFields::Unit => {}
+        aelys_syntax::EnumVariantFields::Tuple(types) => {
+            for ty in types {
+                collect_annotation_names(ty, out);
+            }
+        }
+        aelys_syntax::EnumVariantFields::Named(fields) => {
+            for field in fields {
+                collect_annotation_names(&field.type_annotation, out);
+            }
+        }
+    }
+}
+
+// spelling because the exported definition that mentions it is never rewritten
+fn exported_surface_names(stmts: &[Stmt]) -> HashSet<String> {
+    use super::rename::{collect_annotation_names, collect_impl_leak_names};
+    let mut exposed = HashSet::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::StructDecl {
+                fields,
+                is_pub: true,
+                ..
+            } => {
+                for field in fields {
+                    collect_annotation_names(&field.type_annotation, &mut exposed);
+                }
+            }
+            StmtKind::EnumDecl {
+                variants,
+                is_pub: true,
+                ..
+            } => {
+                for variant in variants {
+                    collect_variant_names(&variant.fields, &mut exposed);
+                }
+            }
+            StmtKind::ImplDecl { .. } => collect_impl_leak_names(stmt, &mut exposed),
+            _ => {}
+        }
+    }
+    exposed
+}
+
+// a method symbol is mangled from the bare nominal name into one global slot, so the module
+pub fn module_private_nominal_renames(
+    stmts: &[Stmt],
+    module_path: &str,
+) -> BTreeMap<String, String> {
+    let exposed = exported_surface_names(stmts);
+    let mut renames = BTreeMap::new();
+    for stmt in stmts {
+        // a trait names itself in the header of every impl that carries it, so the surface
+        let (name, type_params, surface_holds_it) = match &stmt.kind {
+            StmtKind::StructDecl {
+                name,
+                type_params,
+                is_pub: false,
+                ..
+            }
+            | StmtKind::EnumDecl {
+                name,
+                type_params,
+                is_pub: false,
+                ..
+            } => (name, type_params, exposed.contains(name)),
+            StmtKind::TraitDecl {
+                name,
+                type_params,
+                is_pub: false,
+                ..
+            } => (name, type_params, false),
+            _ => continue,
+        };
+        // a generic declaration has no definition until monomorphization, and the carried
+        if !type_params.is_empty() || surface_holds_it {
+            continue;
+        }
+        renames.insert(
+            name.clone(),
+            super::rename::renamed_module_nominal(name, module_path),
+        );
+    }
+    renames
+}
+
 pub fn collect_exported_types(
     stmts: &[Stmt],
     type_table: &TypeTable,
@@ -263,8 +354,14 @@ pub fn collect_exported_types(
     generic_enums: &[aelys_sema::types::EnumDef],
     module_path: &str,
     source: Arc<Source>,
+    applied_renames: &BTreeMap<String, String>,
 ) -> Result<ExportedTypes> {
-    let mut exported = ExportedTypes::default();
+    let mut exported = ExportedTypes {
+        renamed_privates: applied_renames.clone(),
+        // a needs line spells the bare name, so a refusal still has to recognise it
+        private_names: applied_renames.keys().cloned().collect(),
+        ..Default::default()
+    };
     let mut private_generics: BTreeMap<String, (Span, NominalKind)> = BTreeMap::new();
 
     for stmt in stmts {
@@ -292,6 +389,12 @@ pub fn collect_exported_types(
 
         if !is_pub {
             exported.private_names.insert(name.clone());
+            if kind == NominalKind::Trait
+                && let Some((original, _)) =
+                    applied_renames.iter().find(|(_, renamed)| *renamed == name)
+            {
+                exported.renamed_private_traits.insert(original.clone());
+            }
             if !type_params.is_empty() {
                 // monomorphization erased it in this module, so it has no definition to send
                 private_generics.insert(name.clone(), (stmt.span, kind));
@@ -400,11 +503,17 @@ pub fn collect_exported_types(
             }
             let body_only = !header_named.contains(name) && *kind != NominalKind::Trait;
             if !body_only {
+                let leak = exported
+                    .impl_stmts
+                    .iter()
+                    .chain(&exported.own_private_impls)
+                    .find_map(|stmt| super::rename::impl_contract_name_span(stmt, name))
+                    .unwrap_or(*span);
                 return Err(not_exportable(
                     module_path,
                     name,
                     GENERIC_REASON,
-                    *span,
+                    leak,
                     source,
                 ));
             }
@@ -435,7 +544,7 @@ fn rename_body_only_privates(
     module_path: &str,
 ) {
     use super::rename::{collect_impl_leak_names, collect_infer_names};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     let mut exposed: HashSet<String> = HashSet::new();
     for def in &exported.types.structs {
@@ -468,9 +577,14 @@ fn rename_body_only_privates(
         collect_impl_leak_names(stmt, &mut exposed);
     }
 
-    let mut renames: HashMap<String, String> = HashMap::new();
+    let already: HashSet<&str> = exported
+        .renamed_privates
+        .values()
+        .map(String::as_str)
+        .collect();
+    let mut renames: BTreeMap<String, String> = BTreeMap::new();
     for def in &exported.own_private_types.structs {
-        if !exposed.contains(&def.name) {
+        if !exposed.contains(&def.name) && !already.contains(def.name.as_str()) {
             renames.insert(
                 def.name.clone(),
                 super::rename::renamed_module_nominal(&def.name, module_path),
@@ -478,7 +592,7 @@ fn rename_body_only_privates(
         }
     }
     for def in &exported.own_private_types.enums {
-        if !exposed.contains(&def.name) {
+        if !exposed.contains(&def.name) && !already.contains(def.name.as_str()) {
             renames.insert(
                 def.name.clone(),
                 super::rename::renamed_module_nominal(&def.name, module_path),
@@ -519,7 +633,10 @@ fn rename_body_only_privates(
             .find(|(_, renamed)| *renamed == &def.name)
             .map(|(original, _)| original.clone())
             .unwrap_or_else(|| def.name.clone());
-        if let Some(ordinal) = struct_ordinals.get(&original) {
+        if let Some(ordinal) = struct_ordinals
+            .get(&def.name)
+            .or_else(|| struct_ordinals.get(&original))
+        {
             exported
                 .struct_def_ordinals
                 .insert(def.name.clone(), *ordinal);
@@ -537,7 +654,10 @@ fn rename_body_only_privates(
             .find(|(_, renamed)| *renamed == &def.name)
             .map(|(original, _)| original.clone())
             .unwrap_or_else(|| def.name.clone());
-        if let Some(ordinal) = enum_ordinals.get(&original) {
+        if let Some(ordinal) = enum_ordinals
+            .get(&def.name)
+            .or_else(|| enum_ordinals.get(&original))
+        {
             exported
                 .enum_def_ordinals
                 .insert(def.name.clone(), *ordinal);
