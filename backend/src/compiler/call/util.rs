@@ -1,15 +1,21 @@
-pub(super) fn arg_range_available(register_pool: &[bool], start: u16, args_len: usize) -> bool {
-    for i in 0..args_len {
-        let Some(offset) = u16::try_from(i).ok() else {
-            return false;
-        };
-        let arg_reg = match start.checked_add(offset) {
-            Some(r) => r,
-            None => return false,
-        };
-        if (arg_reg as usize) >= register_pool.len() || register_pool[arg_reg as usize] {
-            return false;
-        }
+// callglobal, callcached and callupval base the callee frame at the caller's dst + 1 and give it
+pub fn call_window_available(
+    register_pool: &[bool],
+    live_high_water: u32,
+    arg_start: u16,
+    args_len: usize,
+) -> bool {
+    let start = usize::from(arg_start);
+    if start >= register_pool.len() {
+        return false;
     }
-    true
+    let Some(arg_end) = start.checked_add(args_len) else {
+        return false;
+    };
+    if arg_end > register_pool.len() {
+        return false;
+    }
+    let high_water = usize::try_from(live_high_water).unwrap_or(register_pool.len());
+    let scan_end = arg_end.max(high_water).min(register_pool.len());
+    !register_pool[start..scan_end].iter().any(|used| *used)
 }

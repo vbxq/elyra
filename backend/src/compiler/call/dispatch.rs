@@ -1,14 +1,12 @@
 use super::super::Compiler;
-use super::util::arg_range_available;
+use super::util::call_window_available;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
 use aelys_syntax::ast::{Expr, ExprKind, FmtStringPart};
 
 impl Compiler {
-    // Call dispatch: try specialized opcodes first, fall back to generic Call.
-    // Order matters - upvalue calls are fastest (no lookup), then module (cached),
-    // then global (cached), then generic (full lookup every time).
+    // call dispatch: try specialized opcodes first, fall back to generic call.
     pub fn compile_call(
         &mut self,
         callee: &Expr,
@@ -28,7 +26,6 @@ impl Compiler {
             return self.compile_call_generic(callee, args, dest, span);
         }
 
-        // Handle format string with placeholders: func("x={}", x) -> func("x=" + __tostring(x))
         if let Some((fmt_parts, placeholder_count)) = Self::get_fmt_string_placeholders(args)
             && placeholder_count > 0
         {
@@ -42,8 +39,6 @@ impl Compiler {
             );
         }
 
-        // each of these returns true if it handled the call
-        // builtins first - fastest path for alloc/free/load/store
         if self.try_compile_builtin_call(callee, args, dest, span)? {
             return Ok(());
         }
@@ -56,8 +51,7 @@ impl Compiler {
             return Ok(());
         }
 
-        // CallCached: when the callee is in a local register (e.g., let f = func; f())
-        // Skips the global index lookup of CallGlobal.
+        // callcached: when the callee is in a local register (e.g., let f = func; f())
         if self.try_compile_cached_call(callee, args, dest, span)? {
             return Ok(());
         }
@@ -66,7 +60,6 @@ impl Compiler {
             return Ok(());
         }
 
-        // nothing matched - use the slow path
         self.compile_call_generic(callee, args, dest, span)
     }
 
@@ -111,7 +104,6 @@ impl Compiler {
         let fmt_extra_args = &args[1..1 + extra_args_needed];
         let remaining_args = &args[1 + extra_args_needed..];
 
-        // Compile: func(fmt_string_expanded, remaining_args...)
         let total_args = 1 + remaining_args.len();
         let call_arity = self.checked_call_arity(total_args, span)?;
         let func_reg =
@@ -127,11 +119,9 @@ impl Compiler {
 
         self.compile_expr(callee, func_reg)?;
 
-        // first arg: the expanded format string
         let fmt_reg = func_reg + 1;
         self.compile_fmt_string(fmt_parts, fmt_extra_args, fmt_reg, args[0].span)?;
 
-        // remaining args
         for (i, arg) in remaining_args.iter().enumerate() {
             let arg_reg =
                 func_reg + 2 + u16::try_from(i).expect("register offset was range checked");
@@ -155,7 +145,7 @@ impl Compiler {
     }
 
     pub(super) fn reserve_arg_registers(&mut self, start: u16, args_len: usize) -> bool {
-        if !arg_range_available(&self.register_pool, start, args_len) {
+        if !call_window_available(&self.register_pool, self.next_register, start, args_len) {
             return false;
         }
         for i in 0..args_len {

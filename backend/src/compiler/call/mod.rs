@@ -7,4 +7,4 @@ mod global;
 mod member;
 mod module_call;
 mod upvalue;
-mod util;
+pub(crate) mod util;

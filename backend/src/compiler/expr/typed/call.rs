@@ -1,4 +1,5 @@
 use super::super::Compiler;
+use crate::compiler::call::util::call_window_available;
 use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
@@ -42,23 +43,18 @@ impl Compiler {
             })?;
             let call_global = self.get_or_create_global_index(symbol);
             self.accessed_globals.insert(symbol.clone());
+            if !call_window_available(
+                &self.register_pool,
+                self.next_register,
+                arg_start,
+                total_args,
+            ) {
+                return self.compile_typed_call_fallback(callee, args, dest, span);
+            }
             let mut reserved = Vec::with_capacity(total_args);
             for index in 0..total_args {
-                let register = arg_start
-                    .checked_add(u16::try_from(index).expect("struct method arity fits"))
-                    .ok_or_else(|| {
-                        aelys_common::error::CompileError::new(
-                            CompileErrorKind::TooManyRegisters,
-                            span,
-                            self.source.clone(),
-                        )
-                    })?;
-                if self.register_pool[register as usize] {
-                    for reserved in reserved.into_iter().rev() {
-                        self.free_register(reserved);
-                    }
-                    return self.compile_typed_call_fallback(callee, args, dest, span);
-                }
+                let register =
+                    arg_start + u16::try_from(index).expect("the call window was range checked");
                 self.register_pool[register as usize] = true;
                 self.next_register = self.next_register.max(u32::from(register) + 1);
                 reserved.push(register);
@@ -183,26 +179,12 @@ impl Compiler {
                     }
                 };
 
-                let mut can_use_callglobal = true;
-                for i in 0..args.len() {
-                    let arg_reg = match arg_start
-                        .checked_add(u16::try_from(i).expect("register offset was range checked"))
-                    {
-                        Some(r) => r,
-                        None => {
-                            can_use_callglobal = false;
-                            break;
-                        }
-                    };
-                    if (arg_reg as usize) >= self.register_pool.len()
-                        || self.register_pool[arg_reg as usize]
-                    {
-                        can_use_callglobal = false;
-                        break;
-                    }
-                }
-
-                if can_use_callglobal {
+                if call_window_available(
+                    &self.register_pool,
+                    self.next_register,
+                    arg_start,
+                    args.len(),
+                ) {
                     for i in 0..args.len() {
                         let arg_reg = arg_start
                             + u16::try_from(i).expect("register offset was range checked");
@@ -302,26 +284,12 @@ impl Compiler {
                     None => return self.compile_typed_call_fallback(callee, args, dest, span),
                 };
 
-                let mut can_use_callglobal = true;
-                for i in 0..args.len() {
-                    let arg_reg = match arg_start
-                        .checked_add(u16::try_from(i).expect("register offset was range checked"))
-                    {
-                        Some(r) => r,
-                        None => {
-                            can_use_callglobal = false;
-                            break;
-                        }
-                    };
-                    if (arg_reg as usize) >= self.register_pool.len()
-                        || self.register_pool[arg_reg as usize]
-                    {
-                        can_use_callglobal = false;
-                        break;
-                    }
-                }
-
-                if can_use_callglobal {
+                if call_window_available(
+                    &self.register_pool,
+                    self.next_register,
+                    arg_start,
+                    args.len(),
+                ) {
                     for i in 0..args.len() {
                         let arg_reg = arg_start
                             + u16::try_from(i).expect("register offset was range checked");
@@ -358,17 +326,7 @@ impl Compiler {
             let Some(arg_start) = dest.checked_add(1) else {
                 return self.compile_typed_call_fallback(callee, args, dest, span);
             };
-            let mut can_use = true;
-            for i in 0..nargs {
-                let reg_idx = (arg_start
-                    + u16::try_from(i).expect("register offset was range checked"))
-                    as usize;
-                if reg_idx >= self.register_pool.len() || self.register_pool[reg_idx] {
-                    can_use = false;
-                    break;
-                }
-            }
-            if can_use {
+            if call_window_available(&self.register_pool, self.next_register, arg_start, nargs) {
                 for i in 0..nargs {
                     let reg_idx = (arg_start
                         + u16::try_from(i).expect("register offset was range checked"))

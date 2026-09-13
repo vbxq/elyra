@@ -180,6 +180,7 @@ impl Compiler {
             TypedExprKind::Try {
                 operand,
                 conversion,
+                ..
             } => self.compile_typed_try(operand, conversion.as_deref(), dest, expr.span),
             TypedExprKind::Match { scrutinee, arms } => {
                 self.compile_typed_match(scrutinee, arms, dest, expr.span)

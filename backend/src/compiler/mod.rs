@@ -1,5 +1,5 @@
 mod builtins;
-mod call;
+pub(crate) mod call;
 mod constructors;
 mod emit;
 mod expr;
