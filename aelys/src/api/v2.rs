@@ -231,6 +231,20 @@ impl CompiledModule {
     }
 }
 
+// `avbc()` hands bytes to callers who run them in another isolate or process, so
+fn reject_unverifiable_module(
+    function: &aelys_bytecode::Function,
+    source: &Arc<Source>,
+) -> Result<(), AelysError> {
+    aelys_runtime::verify_emitted_function(function).map_err(|reason| {
+        AelysError::Runtime(RuntimeError::from_verifier(
+            RuntimeErrorKind::InvalidBytecode(reason),
+            Vec::new(),
+            Arc::clone(source),
+        ))
+    })
+}
+
 #[derive(Clone)]
 pub struct Runtime {
     inner: Arc<RuntimeInner>,
@@ -478,6 +492,7 @@ impl Runtime {
                 source.clone(),
             )
         })?;
+        reject_unverifiable_module(&function, &source)?;
         let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
@@ -923,6 +938,7 @@ impl Isolate {
                 Arc::clone(&source),
             )
         })?;
+        reject_unverifiable_module(&function, &source)?;
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
             function: Arc::new(function),
