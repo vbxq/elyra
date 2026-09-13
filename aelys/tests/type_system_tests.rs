@@ -36,7 +36,22 @@ fn emitted_trait_symbols(source: &str) -> Vec<String> {
 }
 
 #[test]
-fn an_impl_symbol_mangles_the_trait_the_bare_target_and_the_method() {
+fn an_impl_symbol_mangles_the_trait_the_header_spelling_and_the_method() {
+    // one compilation cannot show that the spelling is stable; a review measured
+    for _ in 0..8 {
+        let repeat = emitted_trait_symbols(
+            "trait Source {\n    fn next(self) -> int\n}\n\
+struct Wrap<T> {  v: T }\n\
+impl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\n\
+fn go() -> int {\n    let a = Wrap { v: 5 }\n    return a.next()\n}\ngo()\n",
+        );
+        assert_eq!(
+            repeat,
+            ["__aelys_trait::00000006:Source00000009:Wrap<int>00000004:next"],
+            "one unchanged program mangled two ways"
+        );
+    }
+
     let plain = emitted_trait_symbols(
         "trait Source {\n    fn next(self) -> int\n}\n\
 struct Wrap<T> {  v: T }\n\
@@ -45,8 +60,8 @@ fn go() -> int {\n    let a = Wrap { v: 5 }\n    return a.next()\n}\ngo()\n",
     );
     assert_eq!(
         plain,
-        ["__aelys_trait::00000006:Source00000004:Wrap00000004:next"],
-        "the target type's own argument leaves no trace in the three names"
+        ["__aelys_trait::00000006:Source00000009:Wrap<int>00000004:next"],
+        "the header's own spelling enters the symbol, so two headers never collide"
     );
 
     let generic = emitted_trait_symbols(
@@ -65,8 +80,8 @@ fn go() -> int {\n    let a = Wrap { v: 5 }\n    let b = Wrap { v: true }\n    r
             .split_once("$s2$")
             .unwrap_or_else(|| panic!("no instance suffix on '{symbol}'"));
         assert_eq!(
-            head, "__aelys_trait::00000006:Source00000004:Wrap00000004:next",
-            "the three names are the same for every instance"
+            head, "__aelys_trait::00000006:Source00000008:Wrap<$0>00000004:next",
+            "every instance of one header shares that header's spelling"
         );
         let decoded: String = String::from_utf8_lossy(
             &encoded
@@ -738,7 +753,7 @@ fn generic_trait_argument_rejects_a_wrong_method_argument() {
     .expect_err("a generic trait method must use the concrete trait argument")
     .to_string();
     assert!(
-        error.contains("expected i64") && error.contains("found string"),
+        error.contains("expected int") && error.contains("found string"),
         "{error}"
     );
 }
@@ -1719,7 +1734,7 @@ fn a_declared_return_type_is_the_expected_side_of_the_mismatch() {
     .expect_err("a return value that is not the declared type must be rejected")
     .to_string();
     assert!(
-        error.contains("expected Pt, found i64"),
+        error.contains("expected Pt, found int"),
         "the declared return type is the expected side, got: {error}"
     );
 }
@@ -1736,7 +1751,7 @@ fn a_let_annotation_is_the_expected_side_of_the_mismatch() {
     .expect_err("an initializer that is not the annotated type must be rejected")
     .to_string();
     assert!(
-        error.contains("expected i64, found string"),
+        error.contains("expected int, found string"),
         "the annotation is the expected side, got: {error}"
     );
 }
@@ -1753,7 +1768,7 @@ fn a_lambda_return_annotation_is_the_expected_side_of_the_mismatch() {
     .expect_err("a lambda return that is not the declared type must be rejected")
     .to_string();
     assert!(
-        error.contains("expected string, found i64"),
+        error.contains("expected string, found int"),
         "the declared lambda return type is the expected side, got: {error}"
     );
 }
@@ -1772,7 +1787,7 @@ fn an_implicit_tail_return_reports_the_annotation_as_expected() {
     .expect_err("a tail value that is not the declared return type must be rejected")
     .to_string();
     assert!(
-        error.contains("expected i64, found string"),
+        error.contains("expected int, found string"),
         "the declared return type is the expected side, got: {error}"
     );
 }
@@ -1790,7 +1805,7 @@ fn a_call_argument_keeps_the_parameter_as_the_expected_side() {
     .expect_err("an argument that is not the parameter type must be rejected")
     .to_string();
     assert!(
-        error.contains("expected i64, found string"),
+        error.contains("expected int, found string"),
         "the declared parameter type is the expected side, got: {error}"
     );
 }
@@ -1807,7 +1822,7 @@ fn an_array_element_mismatch_reports_the_established_element_type_as_expected() 
         "#,
     );
     assert!(
-        array.contains("expected i64, found string"),
+        array.contains("expected int, found string"),
         "the established element type is the expected side, got: {array}"
     );
 
@@ -1821,7 +1836,7 @@ fn an_array_element_mismatch_reports_the_established_element_type_as_expected() 
         "#,
     );
     assert!(
-        vector.contains("expected i64, found string"),
+        vector.contains("expected int, found string"),
         "the established element type is the expected side, got: {vector}"
     );
 }
@@ -1839,7 +1854,7 @@ fn an_index_assignment_reports_the_container_element_type_as_expected() {
         "#,
     );
     assert!(
-        array.contains("expected i64, found string"),
+        array.contains("expected int, found string"),
         "the container element type is the expected side, got: {array}"
     );
 
@@ -1854,7 +1869,7 @@ fn an_index_assignment_reports_the_container_element_type_as_expected() {
         "#,
     );
     assert!(
-        vector.contains("expected i64, found string"),
+        vector.contains("expected int, found string"),
         "the container element type is the expected side, got: {vector}"
     );
 }
@@ -1871,7 +1886,7 @@ fn an_index_position_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        read.contains("expected i64, found string"),
+        read.contains("expected int, found string"),
         "the required index type is the expected side, got: {read}"
     );
 
@@ -1886,7 +1901,7 @@ fn an_index_position_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        write.contains("expected i64, found string"),
+        write.contains("expected int, found string"),
         "the required index type is the expected side, got: {write}"
     );
 
@@ -1900,7 +1915,7 @@ fn an_index_position_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        repeat.contains("expected i64, found string"),
+        repeat.contains("expected int, found string"),
         "the required repeat count type is the expected side, got: {repeat}"
     );
 }
@@ -1917,7 +1932,7 @@ fn a_range_bound_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        start.contains("expected i64, found string"),
+        start.contains("expected int, found string"),
         "the required bound type is the expected side, got: {start}"
     );
 
@@ -1931,7 +1946,7 @@ fn a_range_bound_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        end.contains("expected i64, found string"),
+        end.contains("expected int, found string"),
         "the required bound type is the expected side, got: {end}"
     );
 }
@@ -1948,7 +1963,7 @@ fn a_for_loop_header_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        start.contains("expected i64, found string"),
+        start.contains("expected int, found string"),
         "the required bound type is the expected side, got: {start}"
     );
 
@@ -1962,7 +1977,7 @@ fn a_for_loop_header_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        end.contains("expected i64, found string"),
+        end.contains("expected int, found string"),
         "the required bound type is the expected side, got: {end}"
     );
 
@@ -1977,7 +1992,7 @@ fn a_for_loop_header_reports_the_required_integer_as_expected() {
         "#,
     );
     assert!(
-        step.contains("expected i64, found string"),
+        step.contains("expected int, found string"),
         "the required step type is the expected side, got: {step}"
     );
 }
@@ -1994,7 +2009,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        if_statement.contains("expected bool, found i64"),
+        if_statement.contains("expected bool, found int"),
         "the required condition type is the expected side, got: {if_statement}"
     );
 
@@ -2008,7 +2023,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        if_expression.contains("expected bool, found i64"),
+        if_expression.contains("expected bool, found int"),
         "the required condition type is the expected side, got: {if_expression}"
     );
 
@@ -2021,7 +2036,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        tail_if.contains("expected bool, found i64"),
+        tail_if.contains("expected bool, found int"),
         "the required condition type is the expected side, got: {tail_if}"
     );
 
@@ -2035,7 +2050,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        while_loop.contains("expected bool, found i64"),
+        while_loop.contains("expected bool, found int"),
         "the required condition type is the expected side, got: {while_loop}"
     );
 
@@ -2053,7 +2068,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        match_guard.contains("expected bool, found i64"),
+        match_guard.contains("expected bool, found int"),
         "the required guard type is the expected side, got: {match_guard}"
     );
 
@@ -2067,7 +2082,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        negation.contains("expected bool, found i64"),
+        negation.contains("expected bool, found int"),
         "the required operand type is the expected side, got: {negation}"
     );
 }
@@ -2084,7 +2099,7 @@ fn a_logical_operand_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        left.contains("expected bool, found i64"),
+        left.contains("expected bool, found int"),
         "the required operand type is the expected side, got: {left}"
     );
 
@@ -2098,7 +2113,7 @@ fn a_logical_operand_reports_the_required_boolean_as_expected() {
         "#,
     );
     assert!(
-        right.contains("expected bool, found i64"),
+        right.contains("expected bool, found int"),
         "the required operand type is the expected side, got: {right}"
     );
 }
@@ -2116,7 +2131,7 @@ fn an_if_else_result_reports_the_then_branch_type_as_expected() {
         "#,
     );
     assert!(
-        error.contains("expected i64, found string"),
+        error.contains("expected int, found string"),
         "the branch type settled first is the expected side, got: {error}"
     );
 }
@@ -2137,7 +2152,7 @@ fn a_match_result_reports_the_first_arm_type_as_expected() {
         "#,
     );
     assert!(
-        expression_arms.contains("expected i64, found string"),
+        expression_arms.contains("expected int, found string"),
         "the arm type settled first is the expected side, got: {expression_arms}"
     );
 
@@ -2155,7 +2170,7 @@ fn a_match_result_reports_the_first_arm_type_as_expected() {
         "#,
     );
     assert!(
-        block_arms.contains("expected i64, found string"),
+        block_arms.contains("expected int, found string"),
         "the arm type settled first is the expected side, got: {block_arms}"
     );
 }
@@ -2173,7 +2188,7 @@ fn a_declared_field_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        struct_literal.contains("expected i64, found string"),
+        struct_literal.contains("expected int, found string"),
         "the declared field type is the expected side, got: {struct_literal}"
     );
 
@@ -2189,7 +2204,7 @@ fn a_declared_field_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        field_assignment.contains("expected i64, found string"),
+        field_assignment.contains("expected int, found string"),
         "the declared field type is the expected side, got: {field_assignment}"
     );
 
@@ -2204,7 +2219,7 @@ fn a_declared_field_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        enum_literal.contains("expected i64, found string"),
+        enum_literal.contains("expected int, found string"),
         "the declared field type is the expected side, got: {enum_literal}"
     );
 
@@ -2219,7 +2234,7 @@ fn a_declared_field_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        enum_constructor.contains("expected i64, found string"),
+        enum_constructor.contains("expected int, found string"),
         "the declared field type is the expected side, got: {enum_constructor}"
     );
 }
@@ -2237,7 +2252,7 @@ fn an_assignment_reports_the_variable_type_as_expected() {
         "#,
     );
     assert!(
-        error.contains("expected i64, found string"),
+        error.contains("expected int, found string"),
         "the variable type is the expected side, got: {error}"
     );
 }
@@ -2254,7 +2269,7 @@ fn a_builtin_parameter_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        string_builtin.contains("expected i64, found string"),
+        string_builtin.contains("expected int, found string"),
         "the declared parameter type is the expected side, got: {string_builtin}"
     );
 
@@ -2269,7 +2284,7 @@ fn a_builtin_parameter_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        collection_builtin.contains("expected i64, found string"),
+        collection_builtin.contains("expected int, found string"),
         "the declared parameter type is the expected side, got: {collection_builtin}"
     );
 
@@ -2283,7 +2298,7 @@ fn a_builtin_parameter_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        error_builtin.contains("expected string, found i64"),
+        error_builtin.contains("expected string, found int"),
         "the declared parameter type is the expected side, got: {error_builtin}"
     );
 }
@@ -2300,7 +2315,7 @@ fn a_sum_method_parameter_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        resolved_receiver.contains("expected i64, found string"),
+        resolved_receiver.contains("expected int, found string"),
         "the sum method parameter type is the expected side, got: {resolved_receiver}"
     );
 
@@ -2316,7 +2331,7 @@ fn a_sum_method_parameter_type_is_the_expected_side_of_the_mismatch() {
         "#,
     );
     assert!(
-        inferred_receiver.contains("expected i64, found string"),
+        inferred_receiver.contains("expected int, found string"),
         "the sum method parameter type is the expected side, got: {inferred_receiver}"
     );
 }
@@ -2333,7 +2348,7 @@ fn a_qualified_trait_call_keeps_the_parameter_as_the_expected_side() {
         "#,
     );
     assert!(
-        error.contains("expected i64, found string"),
+        error.contains("expected int, found string"),
         "the declared parameter type is the expected side, got: {error}"
     );
 }
@@ -2853,9 +2868,9 @@ const DUPLICATE_PLAIN_SECOND: &str = "error[E0334]: duplicate implementation of 
 
 const DUPLICATE_PROJECTING_SECOND: &str = "error[E0334]: duplicate implementation of trait 'Echo' for type 'Wrapper'\n  --> test.aelys:10:40\n   |\n10 | impl Echo<Counter::Item> for Wrapper { fn echo(self, value: int) -> int { value } }\n   |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
 
-const OVERLAP_GENERIC_SECOND: &str = "error[E0340]: trait 'Echo' has overlapping implementations for Wrapper<T>; add a disjoint bound\n  --> test.aelys:10:36\n   |\n10 | impl<T> Echo<int> for Wrapper<T> { fn echo(self, value: int) -> int { 2 } }\n   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
+const OVERLAP_GENERIC_SECOND: &str = "error[E0340]: trait 'Echo' has overlapping implementations for Wrapper<T> and Wrapper<int>; add a disjoint bound\n  --> test.aelys:10:36\n   |\n10 | impl<T> Echo<int> for Wrapper<T> { fn echo(self, value: int) -> int { 2 } }\n   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
 
-const OVERLAP_PROJECTING_SECOND: &str = "error[E0340]: trait 'Echo' has overlapping implementations for Wrapper<i64>; add a disjoint bound\n  --> test.aelys:10:45\n   |\n10 | impl Echo<Counter::Item> for Wrapper<int> { fn echo(self, value: int) -> int { 1 } }\n   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
+const OVERLAP_PROJECTING_SECOND: &str = "error[E0340]: trait 'Echo' has overlapping implementations for Wrapper<T> and Wrapper<int>; add a disjoint bound\n  --> test.aelys:10:45\n   |\n10 | impl Echo<Counter::Item> for Wrapper<int> { fn echo(self, value: int) -> int { 1 } }\n   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the type checker rejected this program\n";
 
 fn duplicate_late_header_source(order: usize) -> String {
     let projecting =
@@ -3058,7 +3073,7 @@ fn a_method_signature_reads_the_associated_type_its_own_impl_defines() {
     );
     let rejected = render(&own_associated_return_source("string"));
     assert!(
-        rejected.starts_with("error[E0301]") && rejected.contains("expected string, found i64"),
+        rejected.starts_with("error[E0301]") && rejected.contains("expected string, found int"),
         "the mismatched right hand side must still be rejected:\n{rejected}"
     );
 }
@@ -3071,7 +3086,7 @@ fn a_generic_struct_impl_monomorphizes_through_its_own_associated_type() {
     );
     let rejected = render(&generic_associated_return_source("string"));
     assert!(
-        rejected.starts_with("error[E0301]") && rejected.contains("expected string, found i64"),
+        rejected.starts_with("error[E0301]") && rejected.contains("expected string, found int"),
         "the mismatched right hand side must still be rejected:\n{rejected}"
     );
 }
@@ -4629,7 +4644,7 @@ probe()
         "#,
     );
     assert!(
-        error.starts_with("error[E0301]") && error.contains("expected string, found i64"),
+        error.starts_with("error[E0301]") && error.contains("expected string, found int"),
         "the projection must substitute the instantiation, not a wildcard: {error}"
     );
 }

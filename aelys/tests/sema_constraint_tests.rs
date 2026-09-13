@@ -72,8 +72,8 @@ fn test_type_error_display() {
     );
     let msg = format!("{}", err);
     assert!(msg.contains("type mismatch"));
-    assert!(msg.contains("i64"));
-    assert!(msg.contains("f64"));
+    assert!(msg.contains("int"));
+    assert!(msg.contains("float"));
 }
 
 #[test]
@@ -2143,6 +2143,7 @@ const EVERY_ASSOCIATED_SHAPE: &[AssociatedShape] = &[
     AssociatedShape::SecondArgument,
     AssociatedShape::ReturnTypeOnly,
     AssociatedShape::MethodTypeParam,
+    AssociatedShape::MethodTypeParamBounded,
     AssociatedShape::TraitImpl,
 ];
 
@@ -2357,19 +2358,50 @@ probe()
     );
 }
 
-// impl-method type parameters are not monomorphized, so the advice e0352 offers
+// the shape loop violates the impl bound; this one violates the method's own
 #[test]
-fn a_bounded_method_type_parameter_on_a_generic_impl_stays_rejected() {
-    let source = associated_program(
+fn a_bounded_method_type_parameter_on_a_generic_impl_runs_and_checks_its_own_bound() {
+    let accepted = associated_program(
         AssociatedShape::MethodTypeParamBounded,
         true,
         None,
         INT_PAYLOAD,
     );
-    let message = compile_message(&source);
+    assert_eq!(
+        associated_value(
+            &accepted,
+            AssociatedShape::MethodTypeParamBounded,
+            "with an unbounded impl parameter"
+        ),
+        7,
+        "a bounded method type parameter must reach the impl it names:\n{accepted}"
+    );
+
+    let satisfying = format!(
+        "W::make({}, {})",
+        INT_PAYLOAD.value, SATISFYING_PAYLOAD.value
+    );
+    let violating = format!(
+        "W::make({}, {})",
+        INT_PAYLOAD.value, VIOLATING_PAYLOAD.value
+    );
+    let rejected = accepted.replace(&satisfying, &violating);
+    assert_ne!(
+        rejected, accepted,
+        "the call this test violates is no longer the one the fixture emits:\n{accepted}"
+    );
+
+    let message = compile_message(&rejected);
+    assert_associated_diagnostic(
+        &message,
+        "E0338",
+        VIOLATING_PAYLOAD.ty,
+        "",
+        "add an impl or change the bound",
+    );
     assert!(
-        message.contains("E0352"),
-        "a bounded method type parameter must stay rejected under E0352: {message}"
+        message.contains("'Source'"),
+        "E0338 must name the bound the method itself declared: {message}"
     );
 }
 
@@ -4068,21 +4100,30 @@ fn an_associated_constant_resolves_through_an_impl_parameter() {
 }
 
 #[test]
-fn an_associated_constant_through_a_method_parameter_is_refused_by_name() {
-    for called in [true, false] {
-        let message = compile_message(&parameter_owner_program(true, true, called));
-        assert_associated_diagnostic(
-            &message,
-            "E0423",
-            "'T::LIMIT'",
-            "a value expression",
-            "free generic function",
-        );
-    }
+fn an_associated_constant_through_a_method_parameter_reads_each_instance() {
+    assert_eq!(
+        run_ok(&parameter_owner_program(true, true, true)).as_int(),
+        Some(3),
+        "a constant on a method's own type parameter must read the bound impl"
+    );
+    assert_eq!(
+        run_ok(&parameter_owner_program(true, true, false)).as_int(),
+        Some(0),
+        "an uncalled method must be dropped like the free generic function it mirrors"
+    );
     assert_eq!(
         run_ok(&parameter_owner_program(true, false, true)).as_int(),
         Some(9),
-        "the associated type through the same parameter is erased and still runs"
+        "the associated type through the same parameter must still carry its value"
+    );
+
+    let two_instances = run_ok(
+        "struct Counter { v: int }\nstruct Other { w: int }\ntrait Base { const LIMIT: int; }\nimpl Base for Counter { const LIMIT: int = 3; }\nimpl Base for Other { const LIMIT: int = 5; }\nstruct Host { n: int }\nimpl Host {\n    fn probe<T: Base>(self, x: T) -> int {\n        return T::LIMIT\n    }\n}\nfn main() -> int {\n    let h = Host { n: 0 }\n    return h.probe(Counter { v: 1 }) * 10 + h.probe(Other { w: 2 })\n}\nmain()\n",
+    );
+    assert_eq!(
+        two_instances.as_int(),
+        Some(35),
+        "two calls through one method type parameter must read two different constants"
     );
 }
 
@@ -5801,7 +5842,7 @@ fn an_array_repeat_count_that_no_constant_resolves_keeps_its_own_diagnostic() {
     );
 }
 
-// the target type's own arguments never enter the mangled symbol, so these two
+// the target type's own arguments enter the mangled symbol since coherence, so
 fn colliding_instantiation_program(int_first: bool) -> String {
     let on_int = "impl Source for Wrap<int> {\n    fn next(self) -> int { return 1 }\n}\n";
     let on_bool = "impl Source for Wrap<bool> {\n    fn next(self) -> int { return 1 }\n}\n";
@@ -5820,34 +5861,30 @@ probe()\n"
 }
 
 #[test]
-fn two_instantiations_of_one_constructor_collide_on_one_symbol() {
+fn two_instantiations_of_one_constructor_no_longer_share_a_symbol() {
     let message = compile_message(&colliding_instantiation_program(true));
     assert!(
-        message.contains("E0355"),
-        "two impls that mangle to one symbol must be named, not silently resolved: {message}"
+        !message.contains("E0355"),
+        "two disjoint impls of one trait mangle apart, so no slot is shared: {message}"
     );
-    assert_located_at("E0355", &message, 9);
+    // the program is still refused, for a reason of its own that predates this
     assert!(
-        message.contains("two instances of 'Wrap::next'"),
-        "E0355 must name the method whose slot is shared: {message}"
-    );
-    assert!(
-        message.contains("mangle to one symbol"),
-        "E0355 must say what the two instances did: {message}"
+        message.contains("E0352"),
+        "the refusal that remains must be the one the program earns: {message}"
     );
 }
 
 #[test]
-fn the_symbol_collision_reads_the_same_under_either_declaration_order() {
+fn two_disjoint_instantiations_read_the_same_under_either_declaration_order() {
     let int_first = compile_message(&colliding_instantiation_program(true));
     let bool_first = compile_message(&colliding_instantiation_program(false));
     assert_eq!(
         int_first, bool_first,
-        "E0355 must not depend on which impl was written first:\n{int_first}\n----\n{bool_first}"
+        "the verdict must not depend on which impl was written first:\n{int_first}\n----\n{bool_first}"
     );
     assert_renders_identically(
         &colliding_instantiation_program(true),
-        "the impl symbol collision",
+        "two disjoint instantiations of one constructor",
     );
 }
 
@@ -5917,20 +5954,35 @@ probe()\n",
 }
 
 #[test]
-fn an_adopted_default_body_reports_the_collision_on_the_impl() {
-    let message = compile_message(
-        "trait Source {\n    fn a(self) -> int {\n        return 3\n    }\n    fn b(self) -> int {\n        return 4\n    }\n}\n\
+fn an_adopted_default_body_reaches_its_own_impl() {
+    assert_eq!(
+        run_ok(
+            "trait Source {\n    fn a(self) -> int {\n        return 3\n    }\n    fn b(self) -> int {\n        return 4\n    }\n}\n\
+struct Wrap<T> { v: T }\n\
+impl Source for Wrap<int> {\n    fn a(self) -> int { return 1 }\n}\n\
+impl Source for Wrap<bool> {\n    fn b(self) -> int { return 2 }\n}\n\
+fn probe() -> int {\n    let x: Wrap<int> = Wrap { v: 5 }\n    let y: Wrap<bool> = Wrap { v: true }\n    return x.a() * 10 + y.b()\n}\n\
+probe()\n",
+        )
+        .as_int(),
+        Some(12),
+        "two disjoint impls of one trait each adopt the default body they do not write"
+    );
+
+    // the same shape without annotations: the member site cannot narrow the
+    assert_eq!(
+        run_ok(
+            "trait Source {\n    fn a(self) -> int {\n        return 3\n    }\n    fn b(self) -> int {\n        return 4\n    }\n}\n\
 struct Wrap<T> { v: T }\n\
 impl Source for Wrap<int> {\n    fn a(self) -> int { return 1 }\n}\n\
 impl Source for Wrap<bool> {\n    fn b(self) -> int { return 2 }\n}\n\
 fn probe() -> int {\n    let x = Wrap { v: 5 }\n    let y = Wrap { v: true }\n    return x.a() * 10 + y.b()\n}\n\
 probe()\n",
+        )
+        .as_int(),
+        Some(12),
+        "two disjoint impls need no annotation to be told apart"
     );
-    assert!(
-        message.contains("E0355"),
-        "a default body adopted into both impls shares the slot as a written one does: {message}"
-    );
-    assert_located_at("E0355", &message, 13);
 }
 
 #[test]
@@ -6218,7 +6270,7 @@ fn an_impl_header_projection_onto_a_built_in_keeps_the_orphan_refusal() {
         header_projection_program("int", "1")
     ));
     assert!(
-        message.contains("E0339") && message.contains("cannot implement trait 'Mark' for i64"),
+        message.contains("E0339") && message.contains("cannot implement trait 'Mark' for int"),
         "the projection resolves and the orphan rule is the separate refusal: {message}"
     );
     assert!(
@@ -6692,4 +6744,118 @@ probe()\n",
         "the bound is refused once, where it is written: {uncalled}"
     );
     assert_located_at("E0424", &uncalled, 12);
+}
+
+fn self_call_program(cell: &str, receiver: &str) -> String {
+    match cell {
+        "inherent impl, self method" => format!(
+            "struct Counter {{ v: int }}\n\
+             impl Counter {{\n\
+             fn make(x: int) -> int {{ return x }}\n\
+             fn probe(self) -> int {{ return {receiver}::make(5) }}\n\
+             }}\n\
+             Counter {{ v: 1 }}.probe()\n"
+        ),
+        "inherent impl, associated function" => format!(
+            "struct Counter {{ v: int }}\n\
+             impl Counter {{\n\
+             fn make(x: int) -> int {{ return x }}\n\
+             fn probe() -> int {{ return {receiver}::make(5) }}\n\
+             }}\n\
+             Counter::probe()\n"
+        ),
+        "inherent impl, generic associated function" => format!(
+            "struct Counter {{ v: int }}\n\
+             impl Counter {{\n\
+             fn make<U>(x: U) -> U {{ return x }}\n\
+             fn probe() -> int {{ return {receiver}::make(5) }}\n\
+             }}\n\
+             Counter::probe()\n"
+        ),
+        "trait impl" => format!(
+            "struct Counter {{ v: int }}\n\
+             trait Extra {{ fn extra() -> int; }}\n\
+             impl Counter {{ fn make(x: int) -> int {{ return x }} }}\n\
+             impl Extra for Counter {{ fn extra() -> int {{ return {receiver}::make(5) }} }}\n\
+             Counter::extra()\n"
+        ),
+        _ => unreachable!("no cell {cell}"),
+    }
+}
+
+const SELF_CALL_CELLS: [&str; 4] = [
+    "inherent impl, self method",
+    "inherent impl, associated function",
+    "inherent impl, generic associated function",
+    "trait impl",
+];
+
+#[test]
+fn a_self_path_calls_what_the_impl_target_calls() {
+    for cell in SELF_CALL_CELLS {
+        assert_eq!(
+            run_ok(&self_call_program(cell, "Counter")).as_int(),
+            Some(5),
+            "the accepted half of the {cell} cell must keep calling 'Counter::make'"
+        );
+        assert_eq!(
+            run_ok(&self_call_program(cell, "Self")).as_int(),
+            Some(5),
+            "'Self::make' must call in the {cell} cell what 'Counter::make' calls"
+        );
+    }
+}
+
+#[test]
+fn a_trait_default_body_calls_the_associated_function_of_the_impl_it_serves() {
+    let source = "struct Counter { v: int }\n\
+                  struct Other { v: int }\n\
+                  trait Extra {\n\
+                  fn base() -> int\n\
+                  fn probe() -> int { return Self::base() }\n\
+                  }\n\
+                  impl Extra for Counter { fn base() -> int { return 5 } }\n\
+                  impl Extra for Other { fn base() -> int { return 7 } }\n\
+                  Counter::probe() + Other::probe()\n";
+    assert_eq!(
+        run_ok(source).as_int(),
+        Some(12),
+        "one default body must reach the 'base' of each impl that adopted it"
+    );
+}
+
+fn self_call_refusal(cell: &str, receiver: &str) -> String {
+    match cell {
+        "generic impl" => format!(
+            "struct Wrap<T> {{ w: T }}\n\
+             impl<T> Wrap<T> {{\n\
+             fn tag() -> int {{ return 11 }}\n\
+             fn probe(self) -> int {{ return {receiver}::tag() }}\n\
+             }}\n\
+             Wrap {{ w: 1 }}.probe()\n"
+        ),
+        "method taking self" => format!(
+            "struct Counter {{ v: int }}\n\
+             impl Counter {{\n\
+             fn get(self) -> int {{ return self.v }}\n\
+             fn probe(self) -> int {{ return {receiver}::get(self) }}\n\
+             }}\n\
+             Counter {{ v: 3 }}.probe()\n"
+        ),
+        _ => unreachable!("no cell {cell}"),
+    }
+}
+
+#[test]
+fn a_self_path_is_refused_exactly_where_the_impl_target_is() {
+    for (cell, target) in [("generic impl", "Wrap"), ("method taking self", "Counter")] {
+        let through_target = compile_message(&self_call_refusal(cell, target));
+        let through_self = compile_message(&self_call_refusal(cell, "Self"));
+        assert_eq!(
+            through_self.lines().next(),
+            through_target.lines().next(),
+            "'Self' and '{target}' must be refused alike in the {cell} cell:\n\
+             {through_self}\n----\n{through_target}"
+        );
+    }
 }
