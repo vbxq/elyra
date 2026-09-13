@@ -45,6 +45,7 @@ impl VM {
             jit_call_counts: crate::jit::InlineMap::default(),
             jit_backedge_counts: crate::jit::InlineMap::default(),
             schema_registry: HashMap::new(),
+            schema_index: HashMap::new(),
             next_schema_id: 1,
             source,
             open_upvalues: Vec::new(),

@@ -179,7 +179,7 @@ impl VM {
             };
 
             super::verifier::verify_function(func, &self.heap, 0)
-                .map_err(|msg| self.runtime_error(RuntimeErrorKind::InvalidBytecode(msg)))?;
+                .map_err(|msg| self.verifier_rejection(msg))?;
 
             if let Some(obj) = self.heap.get_mut(func_ref)
                 && let ObjectKind::Function(f) = &mut obj.kind
@@ -193,7 +193,7 @@ impl VM {
 
     pub(crate) fn verify_function_value(&self, func: &super::Function) -> Result<(), RuntimeError> {
         super::verifier::verify_function(func, &self.heap, 0)
-            .map_err(|msg| self.runtime_error(RuntimeErrorKind::InvalidBytecode(msg)))
+            .map_err(|msg| self.verifier_rejection(msg))
     }
 }
 

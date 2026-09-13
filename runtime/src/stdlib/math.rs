@@ -1,4 +1,3 @@
-//! std.math - Mathematical functions and constants
 
 use crate::stdlib::helpers::get_number;
 use crate::stdlib::{StdModuleExports, register_native};
@@ -13,7 +12,6 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     let mut all_exports = Vec::new();
     let mut native_functions = Vec::new();
 
-    // Helper to register a constant
     macro_rules! reg_const {
         ($name:expr, $val:expr) => {{
             register_constant(vm, $name, $val);
@@ -21,7 +19,6 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
         }};
     }
 
-    // Helper to register a native function
     macro_rules! reg_fn {
         ($name:expr, $arity:expr, $func:expr) => {{
             register_native(vm, "math", $name, $arity, $func)?;
@@ -30,20 +27,17 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
         }};
     }
 
-    // Constants
     reg_const!("PI", Value::float(PI));
     reg_const!("E", Value::float(E));
     reg_const!("TAU", Value::float(TAU));
     reg_const!("INF", Value::float(f64::INFINITY));
     reg_const!("NEG_INF", Value::float(f64::NEG_INFINITY));
 
-    // Basic functions
     reg_fn!("sqrt", 1, native_sqrt);
     reg_fn!("cbrt", 1, native_cbrt);
     reg_fn!("abs", 1, native_abs);
     reg_fn!("sign", 1, native_sign);
 
-    // Trigonometric functions
     reg_fn!("sin", 1, native_sin);
     reg_fn!("cos", 1, native_cos);
     reg_fn!("tan", 1, native_tan);
@@ -52,41 +46,34 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("atan", 1, native_atan);
     reg_fn!("atan2", 2, native_atan2);
 
-    // Hyperbolic functions
     reg_fn!("sinh", 1, native_sinh);
     reg_fn!("cosh", 1, native_cosh);
     reg_fn!("tanh", 1, native_tanh);
 
-    // Exponential and logarithmic functions
     reg_fn!("exp", 1, native_exp);
     reg_fn!("log", 1, native_log);
     reg_fn!("log10", 1, native_log10);
     reg_fn!("log2", 1, native_log2);
     reg_fn!("pow", 2, native_pow);
 
-    // Rounding functions
     reg_fn!("floor", 1, native_floor);
     reg_fn!("ceil", 1, native_ceil);
     reg_fn!("round", 1, native_round);
     reg_fn!("trunc", 1, native_trunc);
 
-    // Comparison functions
     reg_fn!("min", 2, native_min);
     reg_fn!("max", 2, native_max);
     reg_fn!("clamp", 3, native_clamp);
 
-    // Angle conversion
     reg_fn!("deg_to_rad", 1, native_deg_to_rad);
     reg_fn!("rad_to_deg", 1, native_rad_to_deg);
 
-    // Additional math functions
     reg_fn!("hypot", 2, native_hypot);
     reg_fn!("fmod", 2, native_fmod);
     reg_fn!("is_nan", 1, native_is_nan);
     reg_fn!("is_inf", 1, native_is_inf);
     reg_fn!("is_finite", 1, native_is_finite);
 
-    // Random number generation
     reg_fn!("randint", 2, native_randint);
 
     Ok(StdModuleExports {
@@ -109,7 +96,6 @@ fn native_cbrt(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::float(x.cbrt()))
 }
 
-// Preserves type: abs(int) -> int, abs(float) -> float
 fn native_abs(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(i) = args[0].as_int() {
         Ok(Value::int(i.abs()))
@@ -146,7 +132,6 @@ fn native_sign(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-// Trig functions - all in radians, obviously
 fn native_sin(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let x = get_number(vm, args[0], "sin")?;
     Ok(Value::float(x.sin()))
@@ -177,13 +162,11 @@ fn native_atan(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::float(x.atan()))
 }
 
-// atan2 is the "proper" arctangent that handles quadrants correctly
 fn native_atan2(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let y = get_number(vm, args[0], "atan2")?;
     let x = get_number(vm, args[1], "atan2")?;
     Ok(Value::float(y.atan2(x)))
 }
-// hyperbolic trig
 fn native_sinh(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::float(get_number(vm, args[0], "sinh")?.sinh()))
 }
@@ -247,7 +230,6 @@ fn native_min(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_max(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    // int fast path
     if let (Some(a), Some(b)) = (args[0].as_int(), args[1].as_int()) {
         return Ok(Value::int(a.max(b)));
     }
@@ -283,14 +265,12 @@ fn native_hypot(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::float(x.hypot(y)))
 }
 
-/// fmod(x, y) - Floating-point remainder of x/y.
 fn native_fmod(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let x = get_number(vm, args[0], "fmod")?;
     let y = get_number(vm, args[1], "fmod")?;
     Ok(Value::float(x % y))
 }
 
-/// is_nan(x) - Check if x is NaN.
 fn native_is_nan(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_nan()))
@@ -305,7 +285,6 @@ fn native_is_nan(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// is_inf(x) - Check if x is infinite.
 fn native_is_inf(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_infinite()))
@@ -320,7 +299,7 @@ fn native_is_inf(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// is_finite(x) - Check if x is finite (not NaN or infinite).
+/// is_finite(x) - check if x is finite (not nan or infinite).
 fn native_is_finite(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_finite()))
@@ -335,8 +314,6 @@ fn native_is_finite(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     }
 }
 
-/// randint(debut, fin) - Random integer in range [debut, fin] (both inclusive)
-// TODO: this deserves its own std module
 fn native_randint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let debut = args[0].as_int().ok_or_else(|| {
         vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -355,10 +332,11 @@ fn native_randint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     })?;
 
     if debut > fin {
-        return Err(vm.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
-            "randint: debut ({}) must be <= fin ({})",
-            debut, fin
-        ))));
+        return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+            operation: "randint",
+            expected: "debut <= fin",
+            got: format!("debut {debut}, fin {fin}"),
+        }));
     }
 
     Ok(Value::int(vm.random_i64_inclusive(debut, fin)))

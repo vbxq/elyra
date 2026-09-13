@@ -7,6 +7,15 @@ impl VM {
         RuntimeError::new(kind, self.build_stack_trace(), Arc::clone(&self.source))
     }
 
+    // reserved for the bytecode verifier: the only verdict a caller may read as
+    pub(crate) fn verifier_rejection(&self, reason: String) -> RuntimeError {
+        RuntimeError::from_verifier(
+            RuntimeErrorKind::InvalidBytecode(reason),
+            self.build_stack_trace(),
+            Arc::clone(&self.source),
+        )
+    }
+
     pub fn runtime_error_with_hint(&self, kind: RuntimeErrorKind, var_name: &str) -> RuntimeError {
         let mut error = self.runtime_error(kind);
 

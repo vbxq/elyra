@@ -5,9 +5,11 @@ use super::{
 use aelys_bytecode::object::{
     AelysArray, AelysEnum, AelysStruct, AelysSum, AelysVec, SumTag, TypeTag,
 };
-use aelys_bytecode::{SchemaId, StructSchema};
+use aelys_bytecode::{DefId, SchemaId, StructFieldSchema, StructSchema, TypeDescriptor};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use aelys_native::{AelysNativeFn, AelysNativeType};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 impl VM {
     pub(crate) fn ensure_array_capacity(
@@ -248,21 +250,24 @@ impl VM {
     }
 
     fn materialize_schema_ids(&mut self, function: &mut super::Function) {
-        let schemas = function.struct_schemas.clone();
-        function.schema_ids = schemas
-            .iter()
-            .map(|schema| self.intern_schema(schema))
-            .collect();
+        let mut ids = Vec::with_capacity(function.struct_schemas.len());
+        for schema in &function.struct_schemas {
+            ids.push(self.intern_schema(schema));
+        }
+        function.schema_ids = ids;
         for nested in &mut function.nested_functions {
             self.materialize_schema_ids(nested);
         }
     }
 
     fn intern_schema(&mut self, schema: &StructSchema) -> SchemaId {
-        if let Some((id, _)) = self
-            .schema_registry
-            .iter()
-            .find(|(_, existing)| same_schema(existing, schema))
+        let hash = schema_hash(schema);
+        if let Some(bucket) = self.schema_index.get(&hash)
+            && let Some(id) = bucket.iter().find(|id| {
+                self.schema_registry
+                    .get(id)
+                    .is_some_and(|existing| same_schema(existing, schema))
+            })
         {
             return *id;
         }
@@ -273,6 +278,7 @@ impl VM {
             self.next_schema_id = self.next_schema_id.saturating_add(1).max(1);
         }
         self.schema_registry.insert(id, schema.clone());
+        self.schema_index.entry(hash).or_default().push(id);
         id
     }
 
@@ -406,8 +412,20 @@ impl VM {
     }
 }
 
+type SchemaKey<'a> = (&'a DefId, &'a [TypeDescriptor], &'a [StructFieldSchema]);
+
+fn schema_key(schema: &StructSchema) -> SchemaKey<'_> {
+    (&schema.ctor, &schema.type_args, &schema.fields)
+}
+
 fn same_schema(left: &StructSchema, right: &StructSchema) -> bool {
-    left.ctor == right.ctor && left.type_args == right.type_args && left.fields == right.fields
+    schema_key(left) == schema_key(right)
+}
+
+fn schema_hash(schema: &StructSchema) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    schema_key(schema).hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]
