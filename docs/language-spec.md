@@ -1290,6 +1290,11 @@ A method has `self` or `mut self` as its first parameter and is reached with
 `value.name(...)`. Struct field access remains `value.field`; module members
 and associated items use `::`.
 
+Inside an impl body, `Self::name(...)` calls the associated function that
+`Type::name(...)` calls, and inside a trait default body it calls the one of the
+impl the body is serving. A method that takes `self` is not reachable through
+either receiver: `Self::shift(point)` and `Point::shift(point)` are both E0362.
+
 Struct patterns bind fields and compose with the exhaustive `match` rules:
 
 ```rust
@@ -1393,7 +1398,7 @@ trait, so the left side of a `::` path names exactly one declaration.
 
 A type parameter carries its bounds inline, and `+` joins several. Bounds on
 generic functions are checked at each concrete call site; an unsatisfied bound is
-E0338 `trait 'Scorable' is not implemented for i64; add an impl or change the
+E0338 `trait 'Scorable' is not implemented for int; add an impl or change the
 bound`.
 
 ```rust
@@ -1668,8 +1673,7 @@ A projection fails to resolve for these reasons, all E0423:
 - `Self` is written where no impl and no trait declaration is open;
 - the receiver is a type parameter whose bounds declare no such item, or a
   parameter of a struct or an enum, which carries no bound at all;
-- a fixed-array length is taken from a type parameter, or a constant is read on
-  a method's own type parameter.
+- a fixed-array length is taken from a type parameter.
 
 A length that resolves and is **negative** is not in that list: the projection
 resolved, so it is E0315, the same code and the same sentence a negative literal
@@ -1749,13 +1753,40 @@ on the position:
   is accepted in a default body of the same trait, and in an impl's signature
   and body alike, where `Self` is one concrete type. The repairs the diagnostic
   offers are a literal length, the constant on a concrete type, or a `Vec`.
-- A method that declares its **own** type parameter is compiled a single time
-  whatever the types it is called with, so a constant on that parameter has no
-  single value:
-  `fn pick<T: Source>(self, v: T) -> int { T::LIMIT }` inside an `impl` is E0423,
-  which points at a free generic function as the specialized alternative. The
-  type half of that shape is accepted in the signature, but calling a bound
-  method on the parameter is E0352, so the shape as a whole is not usable.
+- A method that declares its **own** type parameter is monomorphized over the
+  nominals the way a free generic function is: one body per reachable instance,
+  so a constant on that parameter reads the value of that instance.
+  `fn pick<T: Source>(self, v: T) -> int { T::LIMIT }` inside an `impl` reads
+  `LIMIT` from the impl each call site selects, and a bound declared on that
+  parameter is checked against the argument bound to it. A call site that binds
+  nothing to the parameter is E0343, the same refusal the free generic twin
+  gives.
+- A method's own type parameter spelled like one the **receiver's type** declares
+  is not a second, free parameter at a call. The receiver fixes that type's
+  parameters and the binding stands: `impl<A> P<A> { fn get<A>(self) -> A }`
+  called on a `P<int>` answers `int`, so a caller that declared `bool` is E0301,
+  and an argument annotated with that parameter is read at the receiver's type
+  rather than at its own. The spelling that collides is the one the `struct` or
+  `enum` declares, which an impl need not reuse: with `struct P<A>`, an
+  `impl<Z> P<Z>` whose method declares `A` collides all the same. A parameter the
+  call site deduces on its own needs a spelling the nominal does not use. A bound
+  written on the method's parameter is still the method's, and does not reach the
+  impl's. Reached through a bound instead of a receiver, none of this applies:
+  there is no receiver to fix anything, and the two parameters are not told apart.
+- The resemblance stops at calls out to a free generic function. Inside an
+  `impl` or a trait default body, a call to a free generic function whose type
+  argument is, or contains, a type parameter of the enclosing method or impl is
+  E0343, and the turbofish the diagnostic asks for does not lift it:
+  `fn grow<T>(self, v: T) -> string { ident(v) }` and the same body written
+  `ident::<T>(v)` are both refused, while that body written as a free generic
+  function runs. The refusal is on the body rather than on a call site: it
+  stands when the method is never called, and a concrete call to the same free
+  function elsewhere in the program does not supply the instance. What passes
+  from those bodies is every call whose type argument is already concrete:
+  `ident(7)`, `ident(self.n)`, `ident::<int>(7)`, a call to another method, and
+  a call to a free function that is not generic. A generic `impl` header on its
+  own changes nothing; only an argument or a return carrying the parameter
+  does.
 
 ### Bindings in a bound
 
@@ -1921,10 +1952,9 @@ would otherwise offer one the grammar refuses.
   type parameters, two impls define it, the definition cycles, the constant is
   defined but cannot be folded or is not a constant integer expression, `Self`
   is written where no impl or trait declaration is open, the receiver is a
-  parameter no bound covers, a fixed-array length is taken from a type
-  parameter, or a constant is read on a method's own type parameter. A length
-  that folds to a negative value is **not** E0423: the projection resolved, so
-  it is E0315.
+  parameter no bound covers, or a fixed-array length is taken from a type
+  parameter. A length that folds to a negative value is **not** E0423: the
+  projection resolved, so it is E0315.
 - **E0424** fires when an associated binding in a bound disagrees with the
   selected impl, names an item the trait does not declare, or binds a value to a
   type or a type to a value. The last two are decided by the bound alone, so
@@ -2121,9 +2151,12 @@ never shadow or duplicate the identity conversion.
 These features are outside the delivered language surface:
 
 - trait objects and dynamic dispatch
-- negative impls, specialization, and higher-kinded types
+- higher-kinded types
 - generic function values without an explicit concrete instantiation
 - async/await
+
+Negative impls (`impl !Trait for Type`) and specialization (`default fn`) are
+**delivered**, with their diagnostics E0431 to E0433 and E0441 to E0444 below.
 
 ### Stage 3 boundary diagnostics
 
@@ -2135,8 +2168,6 @@ stage fails with a clear reason instead of a parse error.
 |------|-----------|---------|
 | E0111 | `&self`, `&mut self` | borrowing receiver '&self' is deferred to Stage 3 |
 | E0113 | `dyn Trait` | trait object 'dyn T' is deferred to Stage 3 |
-| E0114 | `impl !Trait for T` | negative impl is deferred to Stage 3 |
-| E0115 | `default fn` | specialization with 'default fn' is deferred to Stage 3 |
 
 Each carries the repair for the current stage. A method takes its receiver by
 value, so write `self`; a trait or impl body holds only `fn` items; a trait object
@@ -2194,8 +2225,6 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0110 | MatchArmValueRequired | a match arm must produce a value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
-| E0114 | NegativeImplDeferred | a negative impl is Stage 3 |
-| E0115 | SpecializationDeferred | `default fn` is Stage 3 |
 
 ### E02xx, names and emission limits
 
@@ -2335,3 +2364,13 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0429 | UnevaluatedAssociatedConstBinding | an associated-constant binding has a side the compiler cannot evaluate |
 | E0430 | UnconstrainedImplTypeParam | an impl declares a type parameter its target type never mentions |
 | E0434 | UnfoldableAssociatedConstType | an associated constant is declared, or an impl instantiates its declaration, with a type the compiler folds no constant of |
+| E0435 | EmittedBytecodeRejected | the bytecode about to be written is refused by the Aelys verifier or cannot be read back, so the run writes no artifact |
+| E0436 | BytecodeEncodingRefused | the program carries a name the bytecode format cannot encode, so the run writes no artifact |
+| E0437 | AmbiguousTraitInstantiation | one trait, implemented for the same type at several instantiations, supplies the method a call names |
+| E0431 | NegativeImplOrphan | a negative impl names neither a local trait nor a local type |
+| E0432 | PositiveNegativeConflict | one trait is both implemented and denied for one type |
+| E0433 | OverlappingImplHeaders | two impl headers overlap without one being strictly more specific |
+| E0441 | InvalidDefaultMethod | `default fn` is written outside a method of a generic trait impl |
+| E0442 | UnorderedSpecialization | two impls of one trait for one type are equally specific |
+| E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
+| E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |

@@ -128,6 +128,10 @@ aelys-cli repl -ae.max-heap=1G
 
 Bytecode files are portable across machines with the same Aelys version. They skip parsing and compilation.
 
+A `.avbc` records the `needs` lines its entry file declared, so running it imports the same modules the
+source did, under the same names, whether or not the program qualifies them. The modules themselves are
+not embedded: they are resolved beside the entry file, so a `.avbc` moved away from them will not run.
+
 ## Project Structure
 
 Here's a sample project layout to explain module organization:
