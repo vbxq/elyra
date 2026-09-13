@@ -1,8 +1,8 @@
 use super::scope::ScopeStack;
 use crate::passes::{ConstantFolder, OptimizationPass, OptimizationStats};
 use aelys_sema::{
-    TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedProgram, TypedStmt,
-    TypedStmtKind,
+    TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedPattern, TypedPatternKind,
+    TypedProgram, TypedStmt, TypedStmtKind,
 };
 
 pub struct LocalConstantPropagator {
@@ -44,6 +44,8 @@ impl LocalConstantPropagator {
 
                 if !*mutable && Self::is_simple_constant(initializer) {
                     self.scopes.insert(name.clone(), initializer.clone());
+                } else {
+                    self.scopes.shadow(name.clone());
                 }
             }
 
@@ -88,6 +90,7 @@ impl LocalConstantPropagator {
             }
 
             TypedStmtKind::For {
+                iterator,
                 start,
                 end,
                 step,
@@ -105,11 +108,17 @@ impl LocalConstantPropagator {
                     self.scopes.invalidate(name);
                 }
                 self.scopes.push();
+                self.scopes.shadow(iterator.clone());
                 self.propagate_stmt(body);
                 self.scopes.pop();
             }
 
-            TypedStmtKind::ForEach { iterable, body, .. } => {
+            TypedStmtKind::ForEach {
+                iterator,
+                iterable,
+                body,
+                ..
+            } => {
                 self.propagate_expr(iterable);
                 let mut assigned = Vec::new();
                 Self::collect_assigned_vars(body, &mut assigned);
@@ -117,6 +126,7 @@ impl LocalConstantPropagator {
                     self.scopes.invalidate(name);
                 }
                 self.scopes.push();
+                self.scopes.shadow(iterator.clone());
                 self.propagate_stmt(body);
                 self.scopes.pop();
             }
@@ -291,10 +301,33 @@ impl LocalConstantPropagator {
 
     fn propagate_function(&mut self, func: &mut TypedFunction) {
         self.scopes.push();
+        for param in &func.params {
+            self.scopes.shadow(param.name.clone());
+        }
         for stmt in func.body.iter_mut() {
             self.propagate_stmt(stmt);
         }
         self.scopes.pop();
+    }
+
+    fn shadow_pattern(&mut self, pattern: &TypedPattern) {
+        match &pattern.kind {
+            TypedPatternKind::Binding(name) => self.scopes.shadow(name.clone()),
+            TypedPatternKind::Variant { fields, .. } | TypedPatternKind::Or(fields) => {
+                for field in fields {
+                    self.shadow_pattern(field);
+                }
+            }
+            TypedPatternKind::Struct { fields, .. } => {
+                for (_, field, _) in fields {
+                    self.shadow_pattern(field);
+                }
+            }
+            TypedPatternKind::Wildcard
+            | TypedPatternKind::Int(_)
+            | TypedPatternKind::String(_)
+            | TypedPatternKind::Bool(_) => {}
+        }
     }
 
     fn propagate_expr(&mut self, expr: &mut TypedExpr) {
@@ -306,7 +339,8 @@ impl LocalConstantPropagator {
                     } else {
                         const_val.ty.clone()
                     };
-                    *expr = TypedExpr::new(const_val.kind.clone(), ty, expr.span);
+                    let span = const_val.span;
+                    *expr = TypedExpr::new(const_val.kind.clone(), ty, span);
                     self.stats.locals_propagated += 1;
                 }
             }
@@ -355,8 +389,11 @@ impl LocalConstantPropagator {
                 self.propagate_expr(inner);
             }
 
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { params, body, .. } => {
                 self.scopes.push();
+                for param in params.iter() {
+                    self.scopes.shadow(param.name.clone());
+                }
                 for stmt in body.iter_mut() {
                     self.propagate_stmt(stmt);
                 }
@@ -449,6 +486,8 @@ impl LocalConstantPropagator {
             TypedExprKind::Match { scrutinee, arms } => {
                 self.propagate_expr(scrutinee);
                 for arm in arms {
+                    self.scopes.push();
+                    self.shadow_pattern(&arm.pattern);
                     if let Some(guard) = &mut arm.guard {
                         self.propagate_expr(guard);
                     }
@@ -460,6 +499,7 @@ impl LocalConstantPropagator {
                             }
                         }
                     }
+                    self.scopes.pop();
                 }
             }
             TypedExprKind::Int(_)

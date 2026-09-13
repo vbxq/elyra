@@ -1,8 +1,8 @@
 use super::GlobalConstantPropagator;
 use aelys_sema::{TypedExpr, TypedExprKind, TypedStmt, TypedStmtKind};
+use std::collections::HashSet;
 
 impl GlobalConstantPropagator {
-    // can this expr be evaluated at compile time?
     pub(super) fn is_constant_expr(&self, expr: &TypedExpr) -> bool {
         match &expr.kind {
             TypedExprKind::Int(_)
@@ -34,8 +34,8 @@ impl GlobalConstantPropagator {
     }
 
     pub(super) fn collect_global_constants(&mut self, stmts: &[TypedStmt]) {
-        // iterate until fixpoint (handles `let B = A + 1` after `let A = 1`)
-        // cap at 10 to avoid infinite loops on weird edge cases
+        let rebound = rebound_globals(stmts);
+
         for _ in 0..10 {
             let prev_count = self.constants.len();
 
@@ -47,7 +47,7 @@ impl GlobalConstantPropagator {
                     ..
                 } = &stmt.kind
                 {
-                    if *mutable || self.constants.contains_key(name) {
+                    if *mutable || rebound.contains(name) || self.constants.contains_key(name) {
                         continue;
                     }
                     if self.is_constant_expr(initializer) {
@@ -64,7 +64,6 @@ impl GlobalConstantPropagator {
         }
     }
 
-    // substitute known constants during collection phase (for chained constants)
     pub(super) fn substitute_in_expr_for_collection(&self, expr: &mut TypedExpr) {
         match &mut expr.kind {
             TypedExprKind::Identifier(name) => {
@@ -94,4 +93,18 @@ impl GlobalConstantPropagator {
             _ => {}
         }
     }
+}
+
+// a name the top level binds twice is two variables, and the substitution walk has no way
+fn rebound_globals(stmts: &[TypedStmt]) -> HashSet<String> {
+    let mut seen = HashSet::new();
+    let mut rebound = HashSet::new();
+    for stmt in stmts {
+        if let TypedStmtKind::Let { name, .. } = &stmt.kind
+            && !seen.insert(name.clone())
+        {
+            rebound.insert(name.clone());
+        }
+    }
+    rebound
 }

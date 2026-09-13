@@ -377,9 +377,11 @@ impl InlineExpander {
             TypedExprKind::Try {
                 operand,
                 conversion,
+                conversion_target,
             } => TypedExprKind::Try {
                 operand: Box::new(self.substitute_expr(operand, params, span)),
                 conversion: conversion.clone(),
+                conversion_target: conversion_target.clone(),
             },
             TypedExprKind::Match { scrutinee, arms } => TypedExprKind::Match {
                 scrutinee: Box::new(self.substitute_expr(scrutinee, params, span)),

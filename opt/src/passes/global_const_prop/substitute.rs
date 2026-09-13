@@ -1,17 +1,26 @@
 use super::GlobalConstantPropagator;
-use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
+use aelys_sema::{
+    TypedExpr, TypedExprKind, TypedFunction, TypedPattern, TypedPatternKind, TypedStmt,
+    TypedStmtKind,
+};
 
 impl GlobalConstantPropagator {
     pub(super) fn substitute_constants(&mut self, expr: &mut TypedExpr) {
         match &mut expr.kind {
             TypedExprKind::Identifier(name) => {
-                if let Some(c) = self.constants.get(name) {
+                let known = if self.shadows.is_shadowed(name) {
+                    None
+                } else {
+                    self.constants.get(name)
+                };
+                if let Some(c) = known {
                     let ty = if expr.ty.is_integer() && c.ty.is_integer() {
                         expr.ty.clone()
                     } else {
                         c.ty.clone()
                     };
-                    *expr = TypedExpr::new(c.kind.clone(), ty, expr.span);
+                    let span = c.span;
+                    *expr = TypedExpr::new(c.kind.clone(), ty, span);
                     self.stats.globals_propagated += 1;
                 }
             }
@@ -42,10 +51,15 @@ impl GlobalConstantPropagator {
                 self.substitute_constants(else_branch);
             }
             TypedExprKind::Lambda(inner) => self.substitute_constants(inner),
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { params, body, .. } => {
+                self.shadows.push();
+                for param in params.iter() {
+                    self.shadows.shadow(param.name.clone());
+                }
                 for stmt in body {
                     self.substitute_in_stmt(stmt);
                 }
+                self.shadows.pop();
             }
             TypedExprKind::Member { object, .. } => self.substitute_constants(object),
             TypedExprKind::StructField { object, .. }
@@ -119,6 +133,8 @@ impl GlobalConstantPropagator {
             TypedExprKind::Match { scrutinee, arms } => {
                 self.substitute_constants(scrutinee);
                 for arm in arms {
+                    self.shadows.push();
+                    self.shadow_pattern(&arm.pattern);
                     if let Some(guard) = &mut arm.guard {
                         self.substitute_constants(guard);
                     }
@@ -132,6 +148,7 @@ impl GlobalConstantPropagator {
                             }
                         }
                     }
+                    self.shadows.pop();
                 }
             }
             TypedExprKind::Int(_)
@@ -147,11 +164,18 @@ impl GlobalConstantPropagator {
     pub(super) fn substitute_in_stmt(&mut self, stmt: &mut TypedStmt) {
         match &mut stmt.kind {
             TypedStmtKind::Expression(expr) => self.substitute_constants(expr),
-            TypedStmtKind::Let { initializer, .. } => self.substitute_constants(initializer),
+            TypedStmtKind::Let {
+                name, initializer, ..
+            } => {
+                self.substitute_constants(initializer);
+                self.shadows.shadow(name.clone());
+            }
             TypedStmtKind::Block(stmts) => {
+                self.shadows.push();
                 for s in stmts {
                     self.substitute_in_stmt(s);
                 }
+                self.shadows.pop();
             }
             TypedStmtKind::If {
                 condition,
@@ -159,16 +183,23 @@ impl GlobalConstantPropagator {
                 else_branch,
             } => {
                 self.substitute_constants(condition);
+                self.shadows.push();
                 self.substitute_in_stmt(then_branch);
+                self.shadows.pop();
                 if let Some(else_b) = else_branch {
+                    self.shadows.push();
                     self.substitute_in_stmt(else_b);
+                    self.shadows.pop();
                 }
             }
             TypedStmtKind::While { condition, body } => {
                 self.substitute_constants(condition);
+                self.shadows.push();
                 self.substitute_in_stmt(body);
+                self.shadows.pop();
             }
             TypedStmtKind::For {
+                iterator,
                 start,
                 end,
                 step,
@@ -180,11 +211,22 @@ impl GlobalConstantPropagator {
                 if let Some(s) = &mut **step {
                     self.substitute_constants(s);
                 }
+                self.shadows.push();
+                self.shadows.shadow(iterator.clone());
                 self.substitute_in_stmt(body);
+                self.shadows.pop();
             }
-            TypedStmtKind::ForEach { iterable, body, .. } => {
+            TypedStmtKind::ForEach {
+                iterator,
+                iterable,
+                body,
+                ..
+            } => {
                 self.substitute_constants(iterable);
+                self.shadows.push();
+                self.shadows.shadow(iterator.clone());
                 self.substitute_in_stmt(body);
+                self.shadows.pop();
             }
             TypedStmtKind::Return(Some(expr)) => self.substitute_constants(expr),
             TypedStmtKind::Function(func) => self.substitute_in_function(func),
@@ -204,8 +246,33 @@ impl GlobalConstantPropagator {
     }
 
     fn substitute_in_function(&mut self, func: &mut TypedFunction) {
+        self.shadows.push();
+        for param in &func.params {
+            self.shadows.shadow(param.name.clone());
+        }
         for stmt in &mut func.body {
             self.substitute_in_stmt(stmt);
+        }
+        self.shadows.pop();
+    }
+
+    fn shadow_pattern(&mut self, pattern: &TypedPattern) {
+        match &pattern.kind {
+            TypedPatternKind::Binding(name) => self.shadows.shadow(name.clone()),
+            TypedPatternKind::Variant { fields, .. } | TypedPatternKind::Or(fields) => {
+                for field in fields {
+                    self.shadow_pattern(field);
+                }
+            }
+            TypedPatternKind::Struct { fields, .. } => {
+                for (_, field, _) in fields {
+                    self.shadow_pattern(field);
+                }
+            }
+            TypedPatternKind::Wildcard
+            | TypedPatternKind::Int(_)
+            | TypedPatternKind::String(_)
+            | TypedPatternKind::Bool(_) => {}
         }
     }
 }
