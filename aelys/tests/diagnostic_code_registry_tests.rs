@@ -182,24 +182,127 @@ fn documented_codes() -> Vec<(u16, String, usize)> {
     out
 }
 
+/// one code per condition, not per variant: each entry pins the exact variants that share it
+const SHARED_CODES: &[(u16, &[&str])] = &[
+    (209, &["IntegerLiteralOutOfRange", "IntegerOverflow"]),
+    (
+        301,
+        &[
+            "Mismatch",
+            "NotOneOf",
+            "TypeInferenceError",
+            "UndefinedVariable",
+        ],
+    ),
+    (338, &["MissingSupertraitImpl", "UnsatisfiedTraitBound"]),
+    (403, &["PrivateNominalNotExported", "SymbolNotPublic"]),
+    (
+        424,
+        &[
+            "AssociatedBindingMismatch",
+            "AssociatedBindingNamespaceMismatch",
+            "AssociatedConstBindingMismatch",
+            "UndeclaredAssociatedBinding",
+        ],
+    ),
+];
+
+fn declared_shares() -> BTreeMap<u16, BTreeSet<String>> {
+    SHARED_CODES
+        .iter()
+        .map(|(code, names)| (*code, names.iter().map(|n| (*n).to_string()).collect()))
+        .collect()
+}
+
+fn code_collisions(source: &BTreeMap<u16, BTreeSet<String>>) -> Vec<String> {
+    let declared = declared_shares();
+    let mut out = Vec::new();
+    for (code, names) in source {
+        match declared.get(code) {
+            Some(expected) if expected != names => out.push(format!(
+                "E{code:04} is declared shared by {expected:?} but the source hands it to {names:?}"
+            )),
+            None if names.len() > 1 => out.push(format!(
+                "E{code:04} is handed to {} variants: {names:?}",
+                names.len()
+            )),
+            _ => {}
+        }
+    }
+    for code in declared.keys().filter(|code| !source.contains_key(code)) {
+        out.push(format!(
+            "E{code:04} is declared shared but no source arm assigns it"
+        ));
+    }
+    out
+}
+
 #[test]
 fn no_source_file_hands_one_code_to_two_diagnostics() {
-    for (relative, header) in [(COMMON_CODES, COMMON_FN), (SEMA_CODES, SEMA_FN)] {
-        let mut seen: BTreeMap<u16, Vec<String>> = BTreeMap::new();
-        for (code, names) in source_arms(relative, header) {
-            seen.entry(code).or_default().push(names.join(" | "));
-        }
-        let collisions: Vec<String> = seen
-            .iter()
-            .filter(|(_, arms)| arms.len() > 1)
-            .map(|(code, arms)| format!("E{code:04} is used by {} arms: {arms:?}", arms.len()))
-            .collect();
-        assert!(
-            collisions.is_empty(),
-            "{relative} reuses diagnostic codes:\n{}",
-            collisions.join("\n")
-        );
+    let collisions = code_collisions(&all_source_codes());
+    assert!(
+        collisions.is_empty(),
+        "the diagnostic sources reuse codes:\n{}",
+        collisions.join("\n")
+    );
+}
+
+#[test]
+fn the_guard_counts_variants_and_not_arms() {
+    let one_arm: Vec<(u16, Vec<String>)> = vec![(
+        437,
+        vec!["Invented".to_string(), "AlsoInvented".to_string()],
+    )];
+    assert_eq!(
+        one_arm.len(),
+        1,
+        "the sample is a single or-pattern arm, which counting arms cannot flag"
+    );
+    let mut source: BTreeMap<u16, BTreeSet<String>> = BTreeMap::new();
+    for (code, names) in one_arm {
+        source.entry(code).or_default().extend(names);
     }
+    let collisions = code_collisions(&source);
+    assert!(
+        collisions
+            .iter()
+            .any(|c| c.contains("E0437") && c.contains("Invented") && c.contains("AlsoInvented")),
+        "an undeclared code shared by two variants of one or-pattern must be reported: \
+         {collisions:?}"
+    );
+}
+
+#[test]
+fn an_undeclared_fourth_share_fails_the_guard() {
+    let mut source = all_source_codes();
+    source
+        .entry(362)
+        .or_default()
+        .insert("InventedTwin".to_string());
+    let collisions = code_collisions(&source);
+    assert!(
+        collisions
+            .iter()
+            .any(|c| c.contains("E0362") && c.contains("InventedTwin")),
+        "a fourth, undeclared share must fail the guard: {collisions:?}"
+    );
+}
+
+#[test]
+fn a_declared_share_that_gains_a_variant_fails_the_guard() {
+    let mut source = all_source_codes();
+    source
+        .entry(338)
+        .or_default()
+        .insert("InventedThird".to_string());
+    let collisions = code_collisions(&source);
+    assert!(
+        collisions
+            .iter()
+            .any(|c| c.contains("E0338") && c.contains("InventedThird")),
+        "widening a declared share must fail the guard until the declaration follows: \
+         {collisions:?}"
+    );
 }
 
 #[test]
