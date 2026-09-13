@@ -4,7 +4,10 @@ pub mod compile;
 pub mod runtime;
 pub mod stack;
 
-pub use compile::{CompileError, CompileErrorKind, PrivateFieldDetail, SymbolConflictRepair};
+pub use compile::{
+    CompileError, CompileErrorKind, PrivateFieldDetail, RejectedBytecodeArtifact,
+    RejectedBytecodeOrigin, RejectedBytecodeStage, SymbolConflictRepair,
+};
 pub use runtime::{RuntimeError, RuntimeErrorKind};
 pub use stack::StackFrame;
 

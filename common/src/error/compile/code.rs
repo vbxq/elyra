@@ -23,8 +23,7 @@ impl CompileErrorKind {
             Self::TypeNestingTooDeep { .. } => 380,
             Self::BorrowingReceiverDeferred { .. } => 111,
             Self::TraitObjectDeferred { .. } => 113,
-            Self::NegativeImplDeferred => 114,
-            Self::SpecializationDeferred => 115,
+            Self::InvalidDefaultMethod => 441,
             Self::UndefinedVariable(_) => 201,
             Self::VariableAlreadyDefined(_) => 202,
             Self::AssignToImmutable(_) => 203,
@@ -64,6 +63,8 @@ impl CompileErrorKind {
             Self::DynamicSumMethod { .. } => 310,
             Self::TypeInferenceError(_) => 301,
             Self::NamedTypeError { code, .. } => *code,
+            Self::EmittedBytecodeRejected { .. } => 435,
+            Self::BytecodeEncodingRefused { .. } => 436,
         }
     }
 }

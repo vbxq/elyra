@@ -1,4 +1,6 @@
-use super::CompileErrorKind;
+use super::{
+    CompileErrorKind, RejectedBytecodeArtifact, RejectedBytecodeOrigin, RejectedBytecodeStage,
+};
 
 impl CompileErrorKind {
     pub fn message(&self) -> String {
@@ -45,12 +47,9 @@ impl CompileErrorKind {
             Self::TraitObjectDeferred { trait_name } => format!(
                 "trait object 'dyn {trait_name}' is deferred to Stage 3\n   = help: take a generic type parameter bound by {trait_name} instead"
             ),
-            Self::NegativeImplDeferred => "negative impl is deferred to Stage 3\n   \
-                 = help: Stage 2 cannot state that a type does not implement a trait"
-                .to_string(),
-            Self::SpecializationDeferred => {
-                "specialization with 'default fn' is deferred to Stage 3\n   \
-                 = help: write one plain 'fn' per impl"
+            Self::InvalidDefaultMethod => {
+                "'default fn' is only allowed on a method of a generic trait impl\n   \
+                 = help: drop 'default', or move the method to a generic 'impl<T> Trait for Type<T>'"
                     .to_string()
             }
             Self::UndefinedVariable(name) => format!(
@@ -238,6 +237,77 @@ impl CompileErrorKind {
                 "dynamic value cannot use sum method '{method}'; annotate it as Option<T> or Result<T, E>"
             ),
             Self::NamedTypeError { message, .. } => message.clone(),
+            Self::EmittedBytecodeRejected {
+                output,
+                reason,
+                origin,
+                stage,
+                artifact,
+            } => {
+                let verdict = match (origin, stage) {
+                    (RejectedBytecodeOrigin::Compiler, RejectedBytecodeStage::Verifier) => {
+                        format!(
+                            "the compiler emitted bytecode the Aelys verifier refuses: {reason}"
+                        )
+                    }
+                    (RejectedBytecodeOrigin::Compiler, RejectedBytecodeStage::Reader) => {
+                        format!("the compiler emitted bytecode it cannot read back: {reason}")
+                    }
+                    (RejectedBytecodeOrigin::Compiler, RejectedBytecodeStage::Loader) => {
+                        format!("the compiler emitted bytecode that cannot be loaded: {reason}")
+                    }
+                    (RejectedBytecodeOrigin::Assembly, RejectedBytecodeStage::Verifier) => {
+                        format!("the Aelys verifier refuses the assembled bytecode: {reason}")
+                    }
+                    (RejectedBytecodeOrigin::Assembly, RejectedBytecodeStage::Reader) => {
+                        format!("the assembled bytecode cannot be read back: {reason}")
+                    }
+                    (RejectedBytecodeOrigin::Assembly, RejectedBytecodeStage::Loader) => {
+                        format!("the assembled bytecode cannot be loaded: {reason}")
+                    }
+                };
+                let artifact = match artifact {
+                    RejectedBytecodeArtifact::Absent => {
+                        format!("   = note: no '{output}' was written")
+                    }
+                    RejectedBytecodeArtifact::PreviousLeftInPlace => {
+                        format!("   = note: the previous '{output}' was left untouched")
+                    }
+                };
+                let blame = match origin {
+                    RejectedBytecodeOrigin::Compiler => {
+                        "   = note: this is a defect in the compiler, not in the program it compiled\n   \
+                         = help: report the program that produced this message"
+                    }
+                    RejectedBytecodeOrigin::Assembly => {
+                        "   = help: fix the assembly, or produce it with 'aelys-cli asm'"
+                    }
+                };
+                format!("{verdict}\n{artifact}\n{blame}")
+            }
+            Self::BytecodeEncodingRefused {
+                output,
+                reason,
+                longest_name,
+                artifact,
+            } => {
+                let artifact = match artifact {
+                    RejectedBytecodeArtifact::Absent => {
+                        format!("   = note: no '{output}' was written")
+                    }
+                    RejectedBytecodeArtifact::PreviousLeftInPlace => {
+                        format!("   = note: the previous '{output}' was left untouched")
+                    }
+                };
+                let widest = match longest_name {
+                    Some(name) => format!(
+                        "\n   = note: the longest name the program declares is '{name}'\n   \
+                         = help: shorten the names the bytecode has to carry"
+                    ),
+                    None => String::new(),
+                };
+                format!("the program cannot be encoded as bytecode: {reason}\n{artifact}{widest}")
+            }
         }
     }
 }

@@ -8,6 +8,8 @@ pub struct RuntimeError {
     pub kind: RuntimeErrorKind,
     pub stack_trace: Vec<StackFrame>,
     pub source: Arc<Source>,
+    // private so only `from_verifier` can set it: callers downstream read this
+    from_verifier: bool,
 }
 
 #[derive(Debug)]
@@ -92,7 +94,25 @@ impl RuntimeError {
             kind,
             stack_trace,
             source,
+            from_verifier: false,
         }
+    }
+
+    pub fn from_verifier(
+        kind: RuntimeErrorKind,
+        stack_trace: Vec<StackFrame>,
+        source: Arc<Source>,
+    ) -> Self {
+        Self {
+            kind,
+            stack_trace,
+            source,
+            from_verifier: true,
+        }
+    }
+
+    pub fn is_verifier_verdict(&self) -> bool {
+        self.from_verifier
     }
 }
 

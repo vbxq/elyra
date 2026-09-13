@@ -40,8 +40,7 @@ pub enum CompileErrorKind {
     TraitObjectDeferred {
         trait_name: String,
     },
-    NegativeImplDeferred,
-    SpecializationDeferred,
+    InvalidDefaultMethod,
 
     UndefinedVariable(String),
     VariableAlreadyDefined(String),
@@ -148,6 +147,40 @@ pub enum CompileErrorKind {
         code: u16,
         message: String,
     },
+
+    EmittedBytecodeRejected {
+        output: String,
+        reason: String,
+        origin: RejectedBytecodeOrigin,
+        stage: RejectedBytecodeStage,
+        artifact: RejectedBytecodeArtifact,
+    },
+    BytecodeEncodingRefused {
+        output: String,
+        reason: String,
+        longest_name: Option<String>,
+        artifact: RejectedBytecodeArtifact,
+    },
+}
+
+/// who wrote the bytes, which decides who the refusal may blame
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectedBytecodeOrigin {
+    Compiler,
+    Assembly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectedBytecodeStage {
+    Verifier,
+    Reader,
+    Loader,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectedBytecodeArtifact {
+    Absent,
+    PreviousLeftInPlace,
 }
 
 #[derive(Debug)]
