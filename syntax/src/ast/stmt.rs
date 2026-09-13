@@ -79,6 +79,7 @@ pub enum StmtKind {
     Function(Function),
     ImplDecl {
         type_params: Vec<String>,
+        polarity: ImplPolarity,
         trait_path: Option<TypeAnnotation>,
         self_type: TypeAnnotation,
         where_clauses: Vec<WhereClause>,
@@ -193,6 +194,8 @@ pub enum ImportKind {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    /// written `default fn`, which marks the method replaceable by a more
+    pub is_default: bool,
     pub type_params: Vec<String>,
     pub where_clauses: Vec<WhereClause>,
     pub params: Vec<Parameter>,
@@ -201,6 +204,12 @@ pub struct Function {
     pub decorators: Vec<Decorator>,
     pub is_pub: bool,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImplPolarity {
+    Positive,
+    Negative,
 }
 
 #[derive(Debug, Clone)]

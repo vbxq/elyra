@@ -1,7 +1,7 @@
 use super::Parser;
 use aelys_common::Result;
 use aelys_common::error::CompileErrorKind;
-use aelys_syntax::{Stmt, StmtKind, TokenKind};
+use aelys_syntax::{ImplPolarity, Stmt, StmtKind, TokenKind};
 
 impl Parser {
     pub(super) fn impl_declaration(&mut self) -> Result<Stmt> {
@@ -9,9 +9,11 @@ impl Parser {
         self.advance();
 
         let (type_params, mut where_clauses) = self.parse_type_params_with_bounds()?;
-        if self.check(&TokenKind::Bang) {
-            return Err(self.error(CompileErrorKind::NegativeImplDeferred));
-        }
+        let polarity = if self.match_token(&TokenKind::Bang) {
+            ImplPolarity::Negative
+        } else {
+            ImplPolarity::Positive
+        };
         let first_type = self.parse_type_annotation()?;
         if first_type
             .path
@@ -52,8 +54,17 @@ impl Parser {
             if self.match_token(&TokenKind::Semicolon) {
                 continue;
             }
+            let placement = if polarity == ImplPolarity::Negative {
+                super::trait_decl::DefaultPlacement::Deferred
+            } else if trait_path.is_some() && !type_params.is_empty() {
+                super::trait_decl::DefaultPlacement::Allowed
+            } else {
+                super::trait_decl::DefaultPlacement::Rejected
+            };
+            let specializes = self.take_default_method(placement)?;
             if self.check(&TokenKind::Fn) {
-                let method = self.function_declaration(Vec::new(), false)?;
+                let method =
+                    self.function_declaration_with_default(Vec::new(), false, specializes)?;
                 let StmtKind::Function(method) = method.kind else {
                     unreachable!("impl parser only accepts functions")
                 };
@@ -97,8 +108,7 @@ impl Parser {
                     _ => {}
                 }
             }
-            self.reject_deferred_body_item()?;
-            let method = self.function_declaration(Vec::new(), false)?;
+            let method = self.function_declaration_with_default(Vec::new(), false, specializes)?;
             let StmtKind::Function(method) = method.kind else {
                 unreachable!("impl parser only accepts functions")
             };
@@ -108,6 +118,7 @@ impl Parser {
         Ok(Stmt::new(
             StmtKind::ImplDecl {
                 type_params,
+                polarity,
                 trait_path,
                 self_type,
                 where_clauses,

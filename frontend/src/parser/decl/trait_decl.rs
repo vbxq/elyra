@@ -3,6 +3,13 @@ use aelys_common::Result;
 use aelys_common::error::CompileErrorKind;
 use aelys_syntax::{Function, Stmt, StmtKind, TokenKind, TraitMethod, TypeAnnotation, WhereClause};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DefaultPlacement {
+    Allowed,
+    Rejected,
+    Deferred,
+}
+
 impl Parser {
     pub(super) fn trait_declaration(&mut self, is_pub: bool) -> Result<Stmt> {
         let start_span = self.peek().span;
@@ -32,6 +39,7 @@ impl Parser {
             if self.match_token(&TokenKind::Semicolon) {
                 continue;
             }
+            self.take_default_method(DefaultPlacement::Rejected)?;
             if self.check(&TokenKind::Fn) {
                 methods.push(self.trait_method_declaration()?);
                 continue;
@@ -67,7 +75,6 @@ impl Parser {
                     _ => {}
                 }
             }
-            self.reject_deferred_body_item()?;
             return Err(self.error(CompileErrorKind::UnexpectedToken {
                 expected: "fn, type, or const in trait declaration".to_string(),
                 found: self.peek().kind.to_string(),
@@ -156,16 +163,22 @@ impl Parser {
         Ok(clauses)
     }
 
-    pub(super) fn reject_deferred_body_item(&self) -> Result<()> {
-        let TokenKind::Identifier(word) = &self.peek().kind else {
-            return Ok(());
-        };
-        match word.as_str() {
-            "default" if matches!(self.peek_at(1).kind, TokenKind::Fn) => {
-                Err(self.error(CompileErrorKind::SpecializationDeferred))
-            }
-            _ => Ok(()),
+    /// a body item is `default fn` only when the word is followed by `fn`; the
+    pub(super) fn at_default_method(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identifier(word) if word == "default")
+            && matches!(self.peek_at(1).kind, TokenKind::Fn)
+    }
+
+    /// `deferred` leaves the word to sema, which refuses the whole body of a
+    pub(super) fn take_default_method(&mut self, placement: DefaultPlacement) -> Result<bool> {
+        if !self.at_default_method() {
+            return Ok(false);
         }
+        if placement == DefaultPlacement::Rejected {
+            return Err(self.error(CompileErrorKind::InvalidDefaultMethod));
+        }
+        self.advance();
+        Ok(placement == DefaultPlacement::Allowed)
     }
 
     fn match_word(&mut self, word: &str) -> bool {
@@ -214,6 +227,7 @@ impl Parser {
         Ok(TraitMethod {
             function: Function {
                 name,
+                is_default: false,
                 type_params,
                 where_clauses,
                 params,

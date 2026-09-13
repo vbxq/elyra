@@ -8,6 +8,15 @@ impl Parser {
         decorators: Vec<Decorator>,
         is_pub: bool,
     ) -> Result<Stmt> {
+        self.function_declaration_with_default(decorators, is_pub, false)
+    }
+
+    pub(super) fn function_declaration_with_default(
+        &mut self,
+        decorators: Vec<Decorator>,
+        is_pub: bool,
+        is_default: bool,
+    ) -> Result<Stmt> {
         let start_span = self.peek().span;
         self.advance();
 
@@ -48,6 +57,7 @@ impl Parser {
 
         let function = Function {
             name: name.clone(),
+            is_default,
             type_params,
             where_clauses,
             params,
