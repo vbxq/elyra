@@ -30,10 +30,35 @@ const MAX_ENUM_FIELDS: usize = 65_535;
 const MAX_SCHEMA_TABLE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_REGISTERS: u32 = 65_536;
 
+const MAX_REQUIRED_IMPORTS: usize = 65_535;
+const MAX_IMPORT_SEGMENTS: usize = 64;
+const MAX_IMPORT_SYMBOLS: usize = 65_535;
+
 const SECTION_MANIFEST: u32 = u32::from_le_bytes(*b"MANF");
 const SECTION_BUNDLES: u32 = u32::from_le_bytes(*b"NBND");
+const SECTION_REQUIRES: u32 = u32::from_le_bytes(*b"REQM");
 
 pub type DeserializeResult = Result<(Function, Option<Vec<u8>>, Vec<NativeBundle>)>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequiredImportKind {
+    Module { alias: Option<String> },
+    Symbols(Vec<String>),
+    Wildcard,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequiredImport {
+    pub path: Vec<String>,
+    pub kind: RequiredImportKind,
+}
+
+pub struct ProgramSections {
+    pub function: Function,
+    pub manifest: Option<Vec<u8>>,
+    pub bundles: Vec<NativeBundle>,
+    pub requires: Vec<RequiredImport>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeBundle {
@@ -91,6 +116,15 @@ pub fn serialize_with_manifest(
     manifest: Option<&[u8]>,
     bundles: Option<&[NativeBundle]>,
 ) -> Result<Vec<u8>> {
+    serialize_with_sections(func, manifest, bundles, &[])
+}
+
+pub fn serialize_with_sections(
+    func: &Function,
+    manifest: Option<&[u8]>,
+    bundles: Option<&[NativeBundle]>,
+    requires: &[RequiredImport],
+) -> Result<Vec<u8>> {
     let mut writer = BinaryWriter::new();
     writer.write_program(func)?;
     if let Some(manifest_bytes) = manifest {
@@ -99,6 +133,10 @@ pub fn serialize_with_manifest(
     if let Some(bundles) = bundles {
         let data = build_bundles_section(bundles)?;
         writer.write_section(SECTION_BUNDLES, &data)?;
+    }
+    if !requires.is_empty() {
+        let data = build_requires_section(requires)?;
+        writer.write_section(SECTION_REQUIRES, &data)?;
     }
     Ok(writer.into_bytes())
 }
@@ -109,6 +147,11 @@ pub fn deserialize(data: &[u8]) -> Result<Function> {
 }
 
 pub fn deserialize_with_manifest(data: &[u8]) -> DeserializeResult {
+    let sections = deserialize_with_sections(data)?;
+    Ok((sections.function, sections.manifest, sections.bundles))
+}
+
+pub fn deserialize_with_sections(data: &[u8]) -> Result<ProgramSections> {
     let reader = BinaryReader::new(data);
     reader.read_program_with_sections()
 }
@@ -609,16 +652,159 @@ fn build_bundles_section(bundles: &[NativeBundle]) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+const IMPORT_KIND_MODULE: u8 = 0;
+const IMPORT_KIND_SYMBOLS: u8 = 1;
+const IMPORT_KIND_WILDCARD: u8 = 2;
+
+fn build_requires_section(requires: &[RequiredImport]) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    ensure_len(
+        requires.len(),
+        MAX_REQUIRED_IMPORTS,
+        "required import count",
+    )?;
+    write_u32_to(
+        &mut buf,
+        u32::try_from(requires.len()).map_err(|_| BinaryError::LimitExceeded {
+            what: "required import count",
+            limit: MAX_REQUIRED_IMPORTS,
+        })?,
+    );
+    for import in requires {
+        if import.path.is_empty() || import.path.len() > MAX_IMPORT_SEGMENTS {
+            return Err(BinaryError::LimitExceeded {
+                what: "required import path segments",
+                limit: MAX_IMPORT_SEGMENTS,
+            });
+        }
+        write_u32_to(
+            &mut buf,
+            u32::try_from(import.path.len()).map_err(|_| BinaryError::LimitExceeded {
+                what: "required import path segments",
+                limit: MAX_IMPORT_SEGMENTS,
+            })?,
+        );
+        for segment in &import.path {
+            write_named_string_to(&mut buf, segment, "required import segment length")?;
+        }
+        match &import.kind {
+            RequiredImportKind::Module { alias } => {
+                buf.push(IMPORT_KIND_MODULE);
+                match alias {
+                    Some(alias) => {
+                        buf.push(1);
+                        write_named_string_to(&mut buf, alias, "required import alias length")?;
+                    }
+                    None => buf.push(0),
+                }
+            }
+            RequiredImportKind::Symbols(symbols) => {
+                buf.push(IMPORT_KIND_SYMBOLS);
+                ensure_len(symbols.len(), MAX_IMPORT_SYMBOLS, "required import symbols")?;
+                write_u32_to(
+                    &mut buf,
+                    u32::try_from(symbols.len()).map_err(|_| BinaryError::LimitExceeded {
+                        what: "required import symbols",
+                        limit: MAX_IMPORT_SYMBOLS,
+                    })?,
+                );
+                for symbol in symbols {
+                    write_named_string_to(&mut buf, symbol, "required import symbol length")?;
+                }
+            }
+            RequiredImportKind::Wildcard => buf.push(IMPORT_KIND_WILDCARD),
+        }
+    }
+    ensure_len(buf.len(), MAX_SECTION_LEN, "required import section length")?;
+    Ok(buf)
+}
+
+fn parse_requires_section(data: &[u8]) -> Result<Vec<RequiredImport>> {
+    let mut cursor = Cursor::new(data);
+    let count = read_u32_from(&mut cursor)? as usize;
+    ensure_len(count, MAX_REQUIRED_IMPORTS, "required import count")?;
+    ensure_within_remaining(count, 5, remaining_in(&cursor), "required import count")?;
+    let mut requires = Vec::with_capacity(count);
+    for _ in 0..count {
+        let segments = read_u32_from(&mut cursor)? as usize;
+        if segments == 0 || segments > MAX_IMPORT_SEGMENTS {
+            return Err(BinaryError::LimitExceeded {
+                what: "required import path segments",
+                limit: MAX_IMPORT_SEGMENTS,
+            });
+        }
+        ensure_within_remaining(
+            segments,
+            4,
+            remaining_in(&cursor),
+            "required import path segments",
+        )?;
+        let mut path = Vec::with_capacity(segments);
+        for _ in 0..segments {
+            path.push(read_string_from(
+                &mut cursor,
+                "required import segment length",
+            )?);
+        }
+        let tag = read_u8_from(&mut cursor)?;
+        let kind = match tag {
+            IMPORT_KIND_MODULE => {
+                let alias = match read_u8_from(&mut cursor)? {
+                    0 => None,
+                    1 => Some(read_string_from(
+                        &mut cursor,
+                        "required import alias length",
+                    )?),
+                    other => return Err(BinaryError::InvalidConstantType(other)),
+                };
+                RequiredImportKind::Module { alias }
+            }
+            IMPORT_KIND_SYMBOLS => {
+                let sym_count = read_u32_from(&mut cursor)? as usize;
+                ensure_len(sym_count, MAX_IMPORT_SYMBOLS, "required import symbols")?;
+                ensure_within_remaining(
+                    sym_count,
+                    4,
+                    remaining_in(&cursor),
+                    "required import symbols",
+                )?;
+                let mut symbols = Vec::with_capacity(sym_count);
+                for _ in 0..sym_count {
+                    symbols.push(read_string_from(
+                        &mut cursor,
+                        "required import symbol length",
+                    )?);
+                }
+                RequiredImportKind::Symbols(symbols)
+            }
+            IMPORT_KIND_WILDCARD => RequiredImportKind::Wildcard,
+            other => return Err(BinaryError::InvalidConstantType(other)),
+        };
+        requires.push(RequiredImport { path, kind });
+    }
+    Ok(requires)
+}
+
+fn read_u8_from(cursor: &mut Cursor<&[u8]>) -> Result<u8> {
+    let mut buf = [0u8; 1];
+    cursor.read_exact(&mut buf)?;
+    Ok(buf[0])
+}
+
 fn write_u32_to(buf: &mut Vec<u8>, v: u32) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
 fn write_string_to(buf: &mut Vec<u8>, s: &str) -> Result<()> {
-    ensure_len(s.len(), MAX_STRING_LEN, "bundle string length")?;
+    write_named_string_to(buf, s, "bundle string length")
+}
+
+fn write_named_string_to(buf: &mut Vec<u8>, s: &str, what: &'static str) -> Result<()> {
+    ensure_len(s.len(), MAX_STRING_LEN, what)?;
     write_u32_to(
         buf,
         u32::try_from(s.len()).map_err(|_| BinaryError::LimitExceeded {
-            what: "bundle string length",
+            what,
             limit: MAX_STRING_LEN,
         })?,
     );
@@ -708,7 +894,7 @@ impl<'a> BinaryReader<'a> {
         Ok(func)
     }
 
-    fn read_program_with_sections(mut self) -> DeserializeResult {
+    fn read_program_with_sections(mut self) -> Result<ProgramSections> {
         let mut magic = [0u8; 4];
         self.cursor.read_exact(&mut magic)?;
         if &magic != MAGIC {
@@ -725,9 +911,14 @@ impl<'a> BinaryReader<'a> {
         let _reserved = self.read_u32()?;
 
         let func = self.read_function(0, version)?;
-        let (manifest, bundles) = self.read_sections()?;
+        let (manifest, bundles, requires) = self.read_sections()?;
 
-        Ok((func, manifest, bundles))
+        Ok(ProgramSections {
+            function: func,
+            manifest,
+            bundles,
+            requires,
+        })
     }
 
     fn read_function(&mut self, depth: usize, version: u16) -> Result<Function> {
@@ -1376,9 +1567,13 @@ impl<'a> BinaryReader<'a> {
         String::from_utf8(bytes).map_err(|_| BinaryError::InvalidUtf8)
     }
 
-    fn read_sections(&mut self) -> Result<(Option<Vec<u8>>, Vec<NativeBundle>)> {
+    #[allow(clippy::type_complexity)]
+    fn read_sections(
+        &mut self,
+    ) -> Result<(Option<Vec<u8>>, Vec<NativeBundle>, Vec<RequiredImport>)> {
         let mut manifest = None;
         let mut bundles = Vec::new();
+        let mut requires = Vec::new();
         while self.remaining() > 0 {
             let tag = self.read_u32()?;
             let len = self.read_u32()? as usize;
@@ -1397,10 +1592,14 @@ impl<'a> BinaryReader<'a> {
                     let mut parsed = parse_bundles_section(&data)?;
                     bundles.append(&mut parsed);
                 }
+                SECTION_REQUIRES => {
+                    let mut parsed = parse_requires_section(&data)?;
+                    requires.append(&mut parsed);
+                }
                 _ => {}
             }
         }
-        Ok((manifest, bundles))
+        Ok((manifest, bundles, requires))
     }
 
     fn remaining(&self) -> usize {
