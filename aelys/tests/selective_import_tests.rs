@@ -870,11 +870,11 @@ fn a_refusal_inside_a_carried_impl_names_the_file_that_owns_the_span() {
             "the span belongs to the defining file and must name it: {message}"
         );
         assert!(
-            message.contains("struct Hidden<T> { n: T }"),
+            message.contains("type Item = Hidden<int>"),
             "the rendered line must be the one the span covers, not an empty line past the end \
              of another file: {message}"
         );
-        assert_located_at("E0407", &message, 2);
+        assert_located_at("E0407", &message, 13);
     }
 }
 

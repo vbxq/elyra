@@ -447,3 +447,77 @@ fn aasm_round_trips_a_generic_struct_instance_schema() {
     let assembled = assemble(&assembly).expect("struct instance assembly should round-trip");
     assert_eq!(assembled[0].struct_schemas, vec![schema]);
 }
+
+fn producer_of(schema: StructSchema) -> Function {
+    let mut function = Function::new(Some("make".to_string()), 0);
+    function.num_registers = 2;
+    function.struct_schemas = vec![schema];
+    function.jit_unsupported_struct = true;
+    function.emit_b(OpCode::LoadI, 0, 7, 1);
+    function.emit_struct(OpCode::StructNew, 0, 1, 0, 1, 1);
+    function.emit_a(OpCode::Return, 1, 0, 0, 1);
+    function.finalize_bytecode();
+    function
+}
+
+fn reader_of(schema: StructSchema) -> Function {
+    let mut function = Function::new(Some("read".to_string()), 1);
+    function.num_registers = 2;
+    function.struct_schemas = vec![schema];
+    function.jit_unsupported_struct = true;
+    function.emit_struct(OpCode::StructLoad, 0, 1, 0, 0, 1);
+    function.emit_a(OpCode::Return, 1, 0, 0, 1);
+    function.finalize_bytecode();
+    function
+}
+
+fn read_back_schema(produced: StructSchema, read: StructSchema) -> Result<Value, String> {
+    let mut vm = VM::new(Source::new("struct-identity", "")).expect("vm");
+    let make = vm
+        .alloc_function(producer_of(produced))
+        .expect("producer allocation");
+    let instance = vm.execute(make).expect("producer execution");
+    let read = vm
+        .alloc_function(reader_of(read))
+        .expect("reader allocation");
+    vm.call_value(Value::ptr(read.index()), &[instance])
+        .map_err(|error| error.to_string())
+}
+
+fn holder(ordinal: u32, type_args: Vec<TypeDescriptor>, field: &str) -> StructSchema {
+    StructSchema::with_identity(
+        0,
+        DefId::from_display_name("pkg::alpha::Holder", ordinal),
+        type_args,
+        vec![StructFieldSchema {
+            offset: 0,
+            name: field.to_string(),
+            ty: TypeDescriptor::Int(IntWidth::I64),
+        }],
+    )
+}
+
+#[test]
+fn a_runtime_schema_id_is_shared_exactly_when_the_compared_parts_agree() {
+    let reference = || holder(0, Vec::new(), "x");
+    assert_eq!(
+        read_back_schema(reference(), reference()),
+        Ok(Value::int(7)),
+        "two schemas that agree on every compared part are one schema"
+    );
+    for (part, other) in [
+        ("the constructor", holder(1, Vec::new(), "x")),
+        (
+            "a type argument",
+            holder(0, vec![TypeDescriptor::Int(IntWidth::I64)], "x"),
+        ),
+        ("a field name", holder(0, Vec::new(), "y")),
+    ] {
+        let error = read_back_schema(reference(), other)
+            .expect_err(&format!("{part} must separate two runtime schemas"));
+        assert!(
+            error.contains("different struct type"),
+            "two schemas that disagree on {part} must not be given one runtime id: {error}"
+        );
+    }
+}

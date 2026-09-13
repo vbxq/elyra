@@ -519,3 +519,14 @@ if val >= 0 and val <= 1000 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
+
+#[test]
+fn randint_reversed_bounds_is_a_type_error() {
+    let code = r#"
+randint(5, 1)
+"#;
+    assert_aelys_error_contains(
+        code,
+        "type error in 'randint': expected debut <= fin, got debut 5, fin 1",
+    );
+}

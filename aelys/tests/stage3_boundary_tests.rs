@@ -129,8 +129,8 @@ fn paint(shape: dyn Shape) -> int { 0 }
 }
 
 #[test]
-fn negative_impl_is_named_and_deferred() {
-    let message = compile_message(
+fn negative_impl_is_accepted_in_stage3() {
+    let result = Runtime::new().compile(
         r#"
 trait Scorable {
     fn score(self) -> int;
@@ -138,16 +138,17 @@ trait Scorable {
 struct Point { x: int }
 impl !Scorable for Point {}
 "#,
+        CompileOptions::default(),
     );
-    assert_deferred(
-        &message,
-        "error[E0114]",
-        "negative impl is deferred to Stage 3",
+    assert!(
+        result.is_ok(),
+        "Stage 3 accepts a negative impl on a local type: {:?}",
+        result.err()
     );
 }
 
 #[test]
-fn specialization_in_an_impl_is_named_and_deferred() {
+fn specialization_in_an_inherent_impl_is_e0441() {
     let message = compile_message(
         r#"
 struct Point { x: int }
@@ -158,13 +159,13 @@ impl Point {
     );
     assert_deferred(
         &message,
-        "error[E0115]",
-        "specialization with 'default fn' is deferred to Stage 3",
+        "error[E0441]",
+        "'default fn' is only allowed on a method of a generic trait impl",
     );
 }
 
 #[test]
-fn specialization_in_a_trait_is_named_and_deferred() {
+fn specialization_in_a_trait_is_e0441() {
     let message = compile_message(
         r#"
 trait Scorable {
@@ -174,8 +175,8 @@ trait Scorable {
     );
     assert_deferred(
         &message,
-        "error[E0115]",
-        "specialization with 'default fn' is deferred to Stage 3",
+        "error[E0441]",
+        "'default fn' is only allowed on a method of a generic trait impl",
     );
 }
 
