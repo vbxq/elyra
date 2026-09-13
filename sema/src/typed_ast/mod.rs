@@ -103,7 +103,9 @@ pub enum TypedStmtKind {
 #[derive(Debug, Clone)]
 pub struct TypedFunction {
     pub name: String,
+    // every parameter in scope for the body: an impl method carries the impl half too
     pub type_params: Vec<String>,
+    pub own_type_params: Vec<String>,
     pub params: Vec<TypedParam>,
     pub return_type: InferType,
     pub body: Vec<TypedStmt>,
@@ -189,6 +191,8 @@ pub enum TypedExprKind {
     Try {
         operand: Box<TypedExpr>,
         conversion: Option<String>,
+        /// the error type the conversion produces, carried so the monomorphizer
+        conversion_target: Option<InferType>,
     },
 
     Match {

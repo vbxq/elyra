@@ -80,6 +80,7 @@ impl TypeInference {
                             .type_table
                             .nominal_keyword(name)
                             .filter(|kind| *kind != "enum"),
+                        modules: self.clashing_modules(name),
                     },
                     span: stmt.span,
                     reason: ConstraintReason::Other("enum declaration".to_string()),
@@ -504,6 +505,7 @@ impl TypeInference {
                             .type_table
                             .nominal_keyword(name)
                             .filter(|kind| *kind != "struct"),
+                        modules: self.clashing_modules(name),
                     },
                     span: stmt.span,
                     reason: ConstraintReason::Other("struct declaration".to_string()),

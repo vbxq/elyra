@@ -42,6 +42,7 @@ impl Default for TypeInference {
             warnings: Vec::new(),
             type_table: TypeTable::new(),
             type_params_in_scope: Vec::new(),
+            method_param_renames: std::collections::HashMap::new(),
             trait_defaults: HashMap::new(),
             generic_function_bounds: HashMap::new(),
             function_type_params: HashMap::new(),
@@ -98,6 +99,8 @@ impl Default for TypeInference {
             projection_cycle_escaped: std::cell::Cell::new(false),
             substitution_depth: std::cell::Cell::new(0),
             substitution_overflowed: std::cell::Cell::new(None),
+            specialization_verdicts: std::cell::RefCell::new(Vec::new()),
+            conversion_verdicts: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -205,7 +208,12 @@ impl TypeInference {
                 .iter()
                 .any(|param| param == &ann.name)
         {
-            return InferType::Param(ann.name.clone());
+            return InferType::Param(
+                self.method_param_renames
+                    .get(&ann.name)
+                    .cloned()
+                    .unwrap_or_else(|| ann.name.clone()),
+            );
         }
 
         if ann.path.len() >= 2 && ann.type_params.is_empty() {
@@ -1050,6 +1058,16 @@ impl TypeInference {
         }
     }
 
+    // a default body resolves against the impl that adopted it, so no `in_trait_default_body` guard
+    pub(super) fn associated_lookup_receiver(&self, receiver: &str) -> String {
+        match (receiver, self.current_impl_self.as_ref()) {
+            ("Self", Some(target)) => {
+                crate::types::nominal_name(target).unwrap_or_else(|| receiver.to_string())
+            }
+            _ => receiver.to_string(),
+        }
+    }
+
     /// its own position requires. `none` means this point cannot classify the
     pub(super) fn associated_item_namespace(
         &self,
@@ -1560,6 +1578,75 @@ impl TypeInference {
                 ),
             });
         }
+        for (verdict, source, target, span) in inf.conversion_verdicts.borrow_mut().drain(..) {
+            let source_error = match &source {
+                InferType::Result(_, error) => error.as_ref().clone(),
+                other => other.clone(),
+            };
+            let target_error = match &target {
+                InferType::Result(_, error) => error.as_ref().clone(),
+                other => other.clone(),
+            };
+            let kind = match verdict {
+                crate::types::FromSelection::Denied => {
+                    crate::constraint::TypeErrorKind::UnsatisfiedTraitBound {
+                        trait_name: crate::prelude::FROM_TRAIT.to_string(),
+                        trait_args: vec![source_error.clone()],
+                        ty: target_error,
+                        denied: true,
+                    }
+                }
+                crate::types::FromSelection::Unresolved(candidates) => {
+                    crate::constraint::TypeErrorKind::UnsatisfiedTryConversion {
+                        source_error,
+                        target_error,
+                        source,
+                        target,
+                        candidates,
+                    }
+                }
+                _ => continue,
+            };
+            inf.errors.push(crate::constraint::TypeError {
+                kind,
+                span,
+                reason: crate::constraint::ConstraintReason::Other(
+                    "question mark conversion".to_string(),
+                ),
+            });
+        }
+        for (verdict, ty, span) in inf.specialization_verdicts.borrow_mut().drain(..) {
+            let kind = match verdict {
+                crate::types::SpecializationChoice::Ambiguous(trait_name) => {
+                    crate::constraint::TypeErrorKind::AmbiguousSpecialization {
+                        trait_name,
+                        target: ty,
+                    }
+                }
+                crate::types::SpecializationChoice::TooMany(trait_name) => {
+                    crate::constraint::TypeErrorKind::SpecializationLimit {
+                        trait_name,
+                        target: ty,
+                    }
+                }
+                crate::types::SpecializationChoice::Denied(trait_name) => {
+                    crate::constraint::TypeErrorKind::UnsatisfiedTraitBound {
+                        trait_name,
+                        trait_args: Vec::new(),
+                        ty,
+                        denied: true,
+                    }
+                }
+                _ => continue,
+            };
+            inf.errors.push(crate::constraint::TypeError {
+                kind,
+                span,
+                reason: crate::constraint::ConstraintReason::Other(
+                    "specialization selection".to_string(),
+                ),
+            });
+        }
         if let Some(span) = inf.substitution_overflowed.get() {
             inf.errors.push(TypeError::recursion_limit(span));
         }
@@ -1704,7 +1791,7 @@ fn definition_needs_arguments(header: &InferType, definition: &InferType) -> boo
     params.iter().any(|param| definition.mentions_param(param))
 }
 
-fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
+pub(crate) fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
     match ty {
         InferType::Param(name) => out.push(name.clone()),
         InferType::Applied { args, .. } | InferType::Tuple(args) => {
@@ -1734,6 +1821,8 @@ fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
 fn error_priority(kind: &TypeErrorKind) -> u8 {
     match kind {
         TypeErrorKind::DuplicateNominal { .. } => 0,
+        // a mangling collision is a symptom: a coherence verdict, a duplicate
+        TypeErrorKind::MangledSymbolCollision { .. } => 3,
         TypeErrorKind::PoisonedType
         | TypeErrorKind::UnmaterializedAppliedType { .. }
         | TypeErrorKind::IgnoredResult

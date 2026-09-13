@@ -285,9 +285,46 @@ impl TypeInference {
         span: aelys_syntax::Span,
         subst: &Substitution,
     ) -> TypedExprKind {
+        let operand = Box::new(self.apply_substitution_expr(operand, subst));
+        let Some((symbol, source, target)) = self.try_conversions.get(&(span.start, span.end))
+        else {
+            return TypedExprKind::Try {
+                operand,
+                conversion: None,
+                conversion_target: None,
+            };
+        };
+        let applied_source = subst.apply(source);
+        let applied_target = subst.apply(target);
+        let (Some(source_error), Some(target_error)) =
+            (error_of(&applied_source), error_of(&applied_target))
+        else {
+            return TypedExprKind::Try {
+                operand,
+                conversion: Some(symbol.clone()),
+                conversion_target: error_of(&applied_target),
+            };
+        };
+        let verdict = self
+            .type_table
+            .select_from_conversion(&source_error, &target_error);
+        let conversion = match &verdict {
+            crate::types::FromSelection::Identity => None,
+            crate::types::FromSelection::Selected(chosen) => Some(chosen.clone()),
+            _ => {
+                self.conversion_verdicts.borrow_mut().push((
+                    verdict.clone(),
+                    applied_source.clone(),
+                    applied_target.clone(),
+                    span,
+                ));
+                None
+            }
+        };
         TypedExprKind::Try {
-            operand: Box::new(self.apply_substitution_expr(operand, subst)),
-            conversion: self.try_conversions.get(&(span.start, span.end)).cloned(),
+            operand,
+            conversion,
+            conversion_target: Some(target_error),
         }
     }
 
@@ -398,9 +435,24 @@ impl TypeInference {
         separator: MemberSeparator,
         subst: &Substitution,
     ) -> TypedExprKind {
+        // sema picked the root of a specialization chain because the receiver
+        let object = self.apply_substitution_expr(object, subst);
+        let verdict = self.type_table.select_specialization(&object.ty, symbol);
+        let symbol = match &verdict {
+            crate::types::SpecializationChoice::Redirect(chosen) => chosen.clone(),
+            crate::types::SpecializationChoice::Keep => symbol.to_string(),
+            _ => {
+                self.specialization_verdicts.borrow_mut().push((
+                    verdict,
+                    object.ty.clone(),
+                    object.span,
+                ));
+                symbol.to_string()
+            }
+        };
         TypedExprKind::StructMethod {
-            object: Box::new(self.apply_substitution_expr(object, subst)),
-            symbol: symbol.to_string(),
+            object: Box::new(object),
+            symbol,
             method: method.to_string(),
             separator,
         }
@@ -649,5 +701,12 @@ impl TypeInference {
             ty: subst.apply(&pattern.ty),
             span: pattern.span,
         }
+    }
+}
+
+fn error_of(ty: &InferType) -> Option<InferType> {
+    match ty {
+        InferType::Result(_, error) => Some(error.as_ref().clone()),
+        _ => None,
     }
 }

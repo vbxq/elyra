@@ -1,8 +1,8 @@
 use super::TypeInference;
 use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{
-    TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedMatchArmBody, TypedPattern,
-    TypedPatternKind, TypedStmt, TypedStmtKind,
+    TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedMatchArmBody, TypedParam,
+    TypedPattern, TypedPatternKind, TypedStmt, TypedStmtKind,
 };
 use crate::types::{BoundSelection, InferType};
 use crate::unify::Substitution;
@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_INSTANCES: usize = 65_536;
 const MAX_ACTIVE_INSTANCES: usize = 1_024;
-const MAX_IMPL_INSTANCES: usize = 64;
 
 pub(crate) const BOUND_MARKER_PREFIX: &str = "__aelys_bound::";
 pub(crate) const DISPLAY_MARKER_SYMBOL: &str = "__aelys_display::to_display";
@@ -31,7 +30,7 @@ pub(crate) fn bound_marker_symbol(trait_name: &str, param: &str, method: &str) -
     )
 }
 
-fn parse_bound_marker(symbol: &str) -> Option<(String, String, String)> {
+pub(crate) fn parse_bound_marker(symbol: &str) -> Option<(String, String, String)> {
     let mut cursor = symbol.strip_prefix(BOUND_MARKER_PREFIX)?;
     let mut parts = Vec::with_capacity(3);
     for _ in 0..3 {
@@ -1206,11 +1205,11 @@ impl TypeInference {
 
         if generic_defs.is_empty() {
             self.lower_display_dispatch(&mut stmts);
-            self.monomorphize_impls(&mut stmts);
+            let refused = self.monomorphize_impls(&mut stmts);
             self.materialize_nominals(&mut stmts);
             strip_display_markers(&mut stmts);
             self.errors.extend(errors);
-            self.reject_unresolved_instance_symbols(&mut stmts);
+            self.reject_unresolved_instance_symbols(&mut stmts, &refused);
             self.reject_unspecialized_associated_consts(&mut stmts);
             return stmts;
         }
@@ -1258,11 +1257,11 @@ impl TypeInference {
         specialized.extend(stmts);
         stmts = specialized;
         self.lower_display_dispatch(&mut stmts);
-        self.monomorphize_impls(&mut stmts);
+        let refused = self.monomorphize_impls(&mut stmts);
         self.materialize_nominals(&mut stmts);
         strip_display_markers(&mut stmts);
         self.errors.extend(errors);
-        self.reject_unresolved_instance_symbols(&mut stmts);
+        self.reject_unresolved_instance_symbols(&mut stmts, &refused);
         self.reject_unspecialized_associated_consts(&mut stmts);
         stmts
     }
@@ -1314,7 +1313,11 @@ impl TypeInference {
     }
 
     // a generated symbol with no definition must fail here, never as a runtime undefined variable
-    fn reject_unresolved_instance_symbols(&mut self, stmts: &mut [TypedStmt]) {
+    fn reject_unresolved_instance_symbols(
+        &mut self,
+        stmts: &mut [TypedStmt],
+        refused: &HashSet<(usize, usize)>,
+    ) {
         let mut defined = HashSet::new();
         for stmt in stmts.iter() {
             collect_defined_symbols(stmt, &mut defined);
@@ -1325,9 +1328,16 @@ impl TypeInference {
                 let symbol = match &expr.kind {
                     TypedExprKind::StructMethod { symbol, .. } => symbol,
                     TypedExprKind::Identifier(name) => name,
+                    TypedExprKind::Try {
+                        conversion: Some(symbol),
+                        ..
+                    } => symbol,
                     _ => return,
                 };
                 if !is_generated_instance_symbol(symbol) || defined.contains(symbol) {
+                    return;
+                }
+                if refused.contains(&(expr.span.start, expr.span.end)) {
                     return;
                 }
                 missing.push((symbol.clone(), expr.span));
@@ -1416,7 +1426,7 @@ impl TypeInference {
         Some(function)
     }
 
-    fn monomorphize_impls(&mut self, stmts: &mut Vec<TypedStmt>) {
+    fn monomorphize_impls(&mut self, stmts: &mut Vec<TypedStmt>) -> HashSet<(usize, usize)> {
         let templates = stmts
             .iter()
             .filter_map(|stmt| match &stmt.kind {
@@ -1427,7 +1437,7 @@ impl TypeInference {
                     trait_name,
                     target,
                     methods,
-                } if !type_params.is_empty() => Some(GenericImplTemplate {
+                } if is_impl_template(type_params, methods) => Some(GenericImplTemplate {
                     target: target.clone(),
                     trait_name: trait_name.clone(),
                     type_params: type_params.clone(),
@@ -1439,8 +1449,9 @@ impl TypeInference {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let mut refused = HashSet::new();
         if templates.is_empty() {
-            return;
+            return refused;
         }
         let mut template_indices_by_method = HashMap::<String, Vec<usize>>::new();
         for (template_index, template) in templates.iter().enumerate() {
@@ -1454,145 +1465,211 @@ impl TypeInference {
 
         let mut calls = Vec::new();
         for stmt in stmts.iter() {
+            let first = calls.len();
             collect_impl_calls_stmt(stmt, &mut calls);
+            if matches!(
+                &stmt.kind,
+                TypedStmtKind::ImplDecl { type_params, methods, .. }
+                    if is_impl_template(type_params, methods)
+            ) {
+                for call in &mut calls[first..] {
+                    if call_carries_open_type(call) {
+                        call.reportable = false;
+                    }
+                }
+            }
         }
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::<ImplInstanceKey>::new();
+        let mut impl_instances = HashMap::<(usize, Vec<InferType>), usize>::new();
         let mut next_call = 0;
         let mut replacements = HashMap::<String, Vec<ImplInstanceMethod>>::new();
         let mut specialized_by_template = vec![Vec::new(); templates.len()];
         let mut marker_errors = Vec::new();
         let mut limit_error = None;
+        let mut deduction_errors = Vec::new();
         let mut collision_errors = Vec::new();
-        let mut instance_symbol_keys = HashMap::<String, (usize, Vec<InferType>)>::new();
+        let mut instance_symbol_keys = HashMap::<String, ImplInstanceKey>::new();
         let associated_constants = self.associated_const_resolutions();
         'impl_work: while next_call < calls.len() {
-            let mut discovered = Vec::<(usize, Vec<InferType>)>::new();
+            let mut discovered = Vec::<(ImplInstanceKey, Vec<(String, Vec<InferType>)>)>::new();
             while next_call < calls.len() {
                 let call_index = next_call;
-                let call_symbol = calls[call_index].symbol.clone();
                 next_call += 1;
+                let mut resolved = false;
+                let mut open_param = None;
                 for &template_index in template_indices_by_method
-                    .get(&call_symbol)
+                    .get(&calls[call_index].symbol)
                     .into_iter()
                     .flatten()
                 {
                     let template = &templates[template_index];
-                    let Some(args) = deduce_impl_arguments(template, &calls[call_index]) else {
+                    let deduction = match deduce_impl_arguments(template, &calls[call_index]) {
+                        ImplDeductionOutcome::Resolved(deduction) => deduction,
+                        ImplDeductionOutcome::OpenMethodParam(param) => {
+                            open_param.get_or_insert(param);
+                            continue;
+                        }
+                        ImplDeductionOutcome::NoMatch => continue,
+                    };
+                    resolved = true;
+                    let Some(method_index) = template
+                        .methods
+                        .iter()
+                        .position(|method| method.name == calls[call_index].symbol)
+                    else {
                         continue;
                     };
-                    let key = (template_index, args.clone());
-                    if !seen.contains(&key) {
-                        if seen.len() >= MAX_IMPL_INSTANCES {
-                            limit_error = Some(TypeError {
-                                kind: TypeErrorKind::MonomorphizationLimit {
-                                    name: template.target.clone(),
-                                },
-                                span: template.span,
-                                reason: ConstraintReason::Other(
-                                    "generic impl instance worklist".to_string(),
-                                ),
-                            });
-                            break 'impl_work;
-                        }
-                        seen.insert(key);
-                        discovered.push((template_index, args));
+                    let key = ImplInstanceKey {
+                        template_index,
+                        impl_args: deduction.impl_args,
+                        method_index,
+                        method_args: deduction.method_args,
+                    };
+                    if seen.contains(&key) {
+                        continue;
                     }
-                }
-            }
-
-            for (template_index, args) in discovered {
-                let template = &templates[template_index];
-                let mut substitution = Substitution::new();
-                for (param, arg) in template.type_params.iter().zip(&args) {
-                    substitution.bind_param(param.clone(), arg.clone());
-                }
-                let concrete_target = substitution.apply(&template.target_type);
-                let concrete_trait_args = template
-                    .trait_args
-                    .iter()
-                    .map(|arg| substitution.apply(arg))
-                    .collect::<Vec<_>>();
-                let instance_key = format_type_application(
-                    &template.target,
-                    std::slice::from_ref(&concrete_target),
-                );
-                let mut encoded = String::with_capacity(instance_key.len() * 2);
-                for byte in instance_key.bytes() {
-                    use std::fmt::Write;
-                    let _ = write!(encoded, "{byte:02x}");
-                }
-                let mut methods = Vec::with_capacity(template.methods.len());
-                for method in &template.methods {
-                    let mut method = self.apply_substitution_func(method, &substitution);
-                    let original = method.name.clone();
-                    method.name = format!("{original}$s2${encoded}");
-                    let instance_key = (template_index, args.clone());
-                    if let Some(previous) = instance_symbol_keys.get(&method.name)
-                        && *previous != instance_key
-                    {
-                        collision_errors.push(TypeError {
-                            kind: TypeErrorKind::MangledSymbolCollision {
+                    let call = &calls[call_index];
+                    if let Some(error) = recursion_error(template, &key, call) {
+                        refused.insert((call.callee_span.start, call.callee_span.end));
+                        deduction_errors.push(error);
+                        continue;
+                    }
+                    if call.ancestors.len() >= MAX_ACTIVE_INSTANCES || seen.len() >= MAX_INSTANCES {
+                        limit_error = Some(TypeError {
+                            kind: TypeErrorKind::MonomorphizationLimit {
                                 name: template.target.clone(),
                             },
                             span: template.span,
                             reason: ConstraintReason::Other(
-                                "generic impl instance symbol collision".to_string(),
+                                "generic impl instance worklist".to_string(),
                             ),
                         });
+                        break 'impl_work;
                     }
-                    instance_symbol_keys.insert(method.name.clone(), instance_key);
-                    replacements
-                        .entry(original)
-                        .or_default()
-                        .push(ImplInstanceMethod {
-                            target: concrete_target.clone(),
-                            args: args.clone(),
-                            symbol: method.name.clone(),
-                        });
-                    methods.push(method);
+                    seen.insert(key.clone());
+                    discovered.push((key, call.ancestors.clone()));
                 }
+                if resolved {
+                    continue;
+                }
+                if let Some(param) = open_param
+                    && calls[call_index].reportable
                 {
-                    let type_table = &self.type_table;
-                    let gate = &self.impls_missing_supertraits;
-                    let substitution = &substitution;
-                    let constants = &associated_constants;
-                    for method in &mut methods {
-                        for stmt in &mut method.body {
-                            visit_exprs_stmt(stmt, &mut |expr| {
-                                resolve_associated_const_node(
-                                    expr,
-                                    substitution,
-                                    constants,
+                    let callee_span = calls[call_index].callee_span;
+                    refused.insert((callee_span.start, callee_span.end));
+                    deduction_errors.push(TypeError {
+                        kind: TypeErrorKind::UnresolvedGenericType { name: param },
+                        span: calls[call_index].span,
+                        reason: ConstraintReason::Other(
+                            "impl method call has no concrete instance".to_string(),
+                        ),
+                    });
+                }
+            }
+
+            for (key, ancestors) in discovered {
+                let template = &templates[key.template_index];
+                let mut substitution = Substitution::new();
+                for (param, arg) in template.type_params.iter().zip(&key.impl_args) {
+                    substitution.bind_param(param.clone(), arg.clone());
+                }
+                let concrete_target = substitution.apply(&template.target_type);
+                let impl_suffix = match template.type_params.is_empty() {
+                    true => None,
+                    false => Some(hex_encoded(&format_type_application(
+                        &template.target,
+                        std::slice::from_ref(&concrete_target),
+                    ))),
+                };
+                let position =
+                    match impl_instances.get(&(key.template_index, key.impl_args.clone())) {
+                        Some(position) => *position,
+                        None => {
+                            let concrete_trait_args = template
+                                .trait_args
+                                .iter()
+                                .map(|arg| substitution.apply(arg))
+                                .collect::<Vec<_>>();
+                            let position = specialized_by_template[key.template_index].len();
+                            specialized_by_template[key.template_index].push(TypedStmt::new(
+                                TypedStmtKind::ImplDecl {
+                                    target: template.target.clone(),
+                                    trait_name: template.trait_name.clone(),
+                                    type_params: Vec::new(),
+                                    target_type: concrete_target.clone(),
+                                    trait_args: concrete_trait_args,
+                                    methods: Vec::new(),
+                                },
+                                aelys_syntax::Span::dummy(),
+                            ));
+                            impl_instances
+                                .insert((key.template_index, key.impl_args.clone()), position);
+                            for (method_index, method) in template.methods.iter().enumerate() {
+                                if !method.own_type_params.is_empty() {
+                                    continue;
+                                }
+                                let plain = ImplInstanceKey {
+                                    template_index: key.template_index,
+                                    impl_args: key.impl_args.clone(),
+                                    method_index,
+                                    method_args: Vec::new(),
+                                };
+                                seen.insert(plain.clone());
+                                self.emit_impl_instance_method(
+                                    ImplInstanceEmission {
+                                        template,
+                                        key: &plain,
+                                        ancestors: &ancestors,
+                                        substitution: &substitution,
+                                        concrete_target: &concrete_target,
+                                        impl_suffix: impl_suffix.as_deref(),
+                                        position,
+                                    },
+                                    &associated_constants,
+                                    &mut specialized_by_template[key.template_index],
+                                    &mut replacements,
+                                    &mut instance_symbol_keys,
+                                    &mut collision_errors,
                                     &mut marker_errors,
+                                    &mut calls,
                                 );
-                                resolve_bound_marker(expr, type_table, gate, &mut marker_errors);
-                                resolve_display_marker(expr, type_table);
-                            });
+                            }
+                            position
                         }
-                    }
+                    };
+                if key.method_args.is_empty() {
+                    continue;
                 }
-                for method in &methods {
-                    for stmt in &method.body {
-                        collect_impl_calls_stmt(stmt, &mut calls);
-                    }
+                let method = &template.methods[key.method_index];
+                let mut substitution = substitution.clone();
+                for (param, arg) in method.own_type_params.iter().zip(&key.method_args) {
+                    substitution.bind_param(param.clone(), arg.clone());
                 }
-                specialized_by_template[template_index].push(TypedStmt::new(
-                    TypedStmtKind::ImplDecl {
-                        target: template.target.clone(),
-                        trait_name: template.trait_name.clone(),
-                        type_params: Vec::new(),
-                        target_type: concrete_target,
-                        trait_args: concrete_trait_args,
-                        methods,
+                self.emit_impl_instance_method(
+                    ImplInstanceEmission {
+                        template,
+                        key: &key,
+                        ancestors: &ancestors,
+                        substitution: &substitution,
+                        concrete_target: &concrete_target,
+                        impl_suffix: impl_suffix.as_deref(),
+                        position,
                     },
-                    aelys_syntax::Span::dummy(),
-                ));
+                    &associated_constants,
+                    &mut specialized_by_template[key.template_index],
+                    &mut replacements,
+                    &mut instance_symbol_keys,
+                    &mut collision_errors,
+                    &mut marker_errors,
+                    &mut calls,
+                );
             }
         }
         self.errors.append(&mut collision_errors);
         if let Some(error) = limit_error {
             self.errors.push(error);
         }
+        self.errors.append(&mut deduction_errors);
         self.errors.append(&mut marker_errors);
 
         let rewrite = ImplCallRewrite {
@@ -1614,7 +1691,8 @@ impl TypeInference {
         for stmt in original {
             if matches!(
                 &stmt.kind,
-                TypedStmtKind::ImplDecl { type_params, .. } if !type_params.is_empty()
+                TypedStmtKind::ImplDecl { type_params, methods, .. }
+                    if is_impl_template(type_params, methods)
             ) {
                 rewritten.append(&mut specialized_by_template[template_index]);
                 template_index += 1;
@@ -1623,6 +1701,98 @@ impl TypeInference {
             }
         }
         *stmts = rewritten;
+        refused
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_impl_instance_method(
+        &self,
+        emission: ImplInstanceEmission<'_>,
+        associated_constants: &HashMap<(String, String), crate::infer::ConstResolution>,
+        instances: &mut [TypedStmt],
+        replacements: &mut HashMap<String, Vec<ImplInstanceMethod>>,
+        instance_symbol_keys: &mut HashMap<String, ImplInstanceKey>,
+        collision_errors: &mut Vec<TypeError>,
+        marker_errors: &mut Vec<TypeError>,
+        calls: &mut Vec<ImplCallSite>,
+    ) {
+        let template = emission.template;
+        let key = emission.key;
+        let source = &template.methods[key.method_index];
+        let mut method = self.apply_substitution_func(source, emission.substitution);
+        let original = source.name.clone();
+        method.type_params.clear();
+        method.own_type_params.clear();
+        let mut symbol = original.clone();
+        if let Some(suffix) = emission.impl_suffix {
+            symbol.push_str(IMPL_INSTANCE_INFIX);
+            symbol.push_str(suffix);
+        }
+        if !key.method_args.is_empty() {
+            symbol.push_str(IMPL_INSTANCE_INFIX);
+            symbol.push_str(&hex_encoded(&format_type_application("", &key.method_args)));
+        }
+        method.name = symbol;
+        if let Some(previous) = instance_symbol_keys.get(&method.name)
+            && previous != key
+        {
+            collision_errors.push(TypeError {
+                kind: TypeErrorKind::MangledSymbolCollision {
+                    name: template.target.clone(),
+                },
+                span: template.span,
+                reason: ConstraintReason::Other(
+                    "generic impl instance symbol collision".to_string(),
+                ),
+            });
+        }
+        instance_symbol_keys.insert(method.name.clone(), key.clone());
+        replacements
+            .entry(original.clone())
+            .or_default()
+            .push(ImplInstanceMethod {
+                target: emission.concrete_target.clone(),
+                args: key.impl_args.clone(),
+                method_args: key.method_args.clone(),
+                symbol: method.name.clone(),
+            });
+        {
+            let type_table = &self.type_table;
+            let gate = &self.impls_missing_supertraits;
+            let substitution = emission.substitution;
+            for stmt in &mut method.body {
+                visit_exprs_stmt(stmt, &mut |expr| {
+                    resolve_associated_const_node(
+                        expr,
+                        substitution,
+                        associated_constants,
+                        marker_errors,
+                    );
+                    resolve_bound_marker(expr, type_table, gate, marker_errors);
+                });
+            }
+            // resolving a display marker drops the node the bound marker lives on,
+            for stmt in &mut method.body {
+                visit_exprs_stmt(stmt, &mut |expr| {
+                    resolve_display_marker(expr, type_table);
+                });
+            }
+        }
+        let mut frame_args = key.impl_args.clone();
+        frame_args.extend(key.method_args.iter().cloned());
+        let mut ancestors = emission.ancestors.to_vec();
+        ancestors.push((original, frame_args));
+        let first = calls.len();
+        for stmt in &method.body {
+            collect_impl_calls_stmt(stmt, calls);
+        }
+        for call in &mut calls[first..] {
+            call.ancestors = ancestors.clone();
+        }
+        let TypedStmtKind::ImplDecl { methods, .. } = &mut instances[emission.position].kind else {
+            return;
+        };
+        methods.push(method);
     }
 
     fn materialize_nominals(&mut self, stmts: &mut [TypedStmt]) {
@@ -1886,6 +2056,57 @@ fn is_generic_function(stmt: &TypedStmt) -> bool {
     matches!(&stmt.kind, TypedStmtKind::Function(function) if !function.type_params.is_empty())
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ImplInstanceKey {
+    template_index: usize,
+    impl_args: Vec<InferType>,
+    method_index: usize,
+    method_args: Vec<InferType>,
+}
+
+struct ImplInstanceEmission<'a> {
+    template: &'a GenericImplTemplate,
+    key: &'a ImplInstanceKey,
+    ancestors: &'a [(String, Vec<InferType>)],
+    substitution: &'a Substitution,
+    concrete_target: &'a InferType,
+    impl_suffix: Option<&'a str>,
+    position: usize,
+}
+
+fn hex_encoded(canonical: &str) -> String {
+    let mut encoded = String::with_capacity(canonical.len() * 2);
+    for byte in canonical.bytes() {
+        use std::fmt::Write;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn recursion_error(
+    template: &GenericImplTemplate,
+    key: &ImplInstanceKey,
+    call: &ImplCallSite,
+) -> Option<TypeError> {
+    let mut frame_args = key.impl_args.clone();
+    frame_args.extend(key.method_args.iter().cloned());
+    let name = &template.methods[key.method_index].name;
+    let depth = call.ancestors.iter().rev().position(|(frame, args)| {
+        frame == name && *args != frame_args && !is_strictly_decreasing(&frame_args, args)
+    })?;
+    let reason = match depth {
+        0 => "generic recursion changes the active type instance",
+        _ => "mutually recursive generic instances do not decrease",
+    };
+    Some(TypeError {
+        kind: TypeErrorKind::RecursiveMonomorphization {
+            name: template.target.clone(),
+        },
+        span: call.span,
+        reason: ConstraintReason::Other(reason.to_string()),
+    })
+}
+
 #[derive(Clone)]
 struct GenericImplTemplate {
     target: String,
@@ -1903,34 +2124,120 @@ struct ImplCallSite {
     receiver: Option<InferType>,
     actuals: Vec<InferType>,
     result: InferType,
+    span: Span,
+    callee_span: Span,
+    ancestors: Vec<(String, Vec<InferType>)>,
+    // parameter it leaves unbound is not that call site's fault
+    reportable: bool,
+}
+
+struct ImplDeduction {
+    impl_args: Vec<InferType>,
+    method_args: Vec<InferType>,
+}
+
+enum ImplDeductionOutcome {
+    Resolved(ImplDeduction),
+    OpenMethodParam(String),
+    NoMatch,
+}
+
+// only a call that still holds an open type is waiting for an instantiation that
+fn call_carries_open_type(call: &ImplCallSite) -> bool {
+    call.receiver
+        .iter()
+        .chain(call.actuals.iter())
+        .chain(std::iter::once(&call.result))
+        .any(contains_open_generic_type)
+}
+
+fn is_impl_template(type_params: &[String], methods: &[TypedFunction]) -> bool {
+    !type_params.is_empty()
+        || methods
+            .iter()
+            .any(|method| !method.own_type_params.is_empty())
+}
+
+fn call_formals<'a>(method: &'a TypedFunction, call: &ImplCallSite) -> &'a [TypedParam] {
+    let receiver_is_separate = call.receiver.is_some()
+        && method
+            .params
+            .first()
+            .is_some_and(|param| param.name == "self");
+    match receiver_is_separate {
+        true => &method.params[1..],
+        false => &method.params,
+    }
 }
 
 fn deduce_impl_arguments(
     template: &GenericImplTemplate,
     call: &ImplCallSite,
-) -> Option<Vec<InferType>> {
+) -> ImplDeductionOutcome {
+    let Some(method) = template
+        .methods
+        .iter()
+        .find(|method| method.name == call.symbol)
+    else {
+        return ImplDeductionOutcome::NoMatch;
+    };
     let mut mapping = HashMap::new();
     match &call.receiver {
         Some(receiver) => {
-            match_types(&template.target_type, receiver, &mut mapping)?;
+            if match_types(&template.target_type, receiver, &mut mapping).is_none() {
+                return ImplDeductionOutcome::NoMatch;
+            }
         }
         None => {
-            let method = template
-                .methods
-                .iter()
-                .find(|method| method.name == call.symbol)?;
-            for (formal, actual) in method.params.iter().zip(&call.actuals) {
-                match_types(&formal.ty, actual, &mut mapping)?;
+            for (formal, actual) in call_formals(method, call).iter().zip(&call.actuals) {
+                if match_types(&formal.ty, actual, &mut mapping).is_none() {
+                    return ImplDeductionOutcome::NoMatch;
+                }
             }
-            match_types(&method.return_type, &call.result, &mut mapping)?;
+            if match_types(&method.return_type, &call.result, &mut mapping).is_none() {
+                return ImplDeductionOutcome::NoMatch;
+            }
         }
     }
-    let args = template
+    let Some(impl_args) = template
         .type_params
         .iter()
         .map(|param| mapping.get(param).cloned())
-        .collect::<Option<Vec<_>>>()?;
-    args.iter().all(|arg| arg.is_concrete()).then_some(args)
+        .collect::<Option<Vec<_>>>()
+    else {
+        return ImplDeductionOutcome::NoMatch;
+    };
+    if !impl_args.iter().all(|arg| arg.is_concrete()) {
+        return ImplDeductionOutcome::NoMatch;
+    }
+    if method.own_type_params.is_empty() {
+        return ImplDeductionOutcome::Resolved(ImplDeduction {
+            impl_args,
+            method_args: Vec::new(),
+        });
+    }
+    // the impl half is already bound, so a formal the receiver contradicts is
+    for (formal, actual) in call_formals(method, call).iter().zip(&call.actuals) {
+        let snapshot = mapping.clone();
+        if match_types(&formal.ty, actual, &mut mapping).is_none() {
+            mapping = snapshot;
+        }
+    }
+    let snapshot = mapping.clone();
+    if match_types(&method.return_type, &call.result, &mut mapping).is_none() {
+        mapping = snapshot;
+    }
+    let mut method_args = Vec::with_capacity(method.own_type_params.len());
+    for param in &method.own_type_params {
+        match mapping.get(param) {
+            Some(ty) if ty.is_concrete() => method_args.push(ty.clone()),
+            _ => return ImplDeductionOutcome::OpenMethodParam(param.clone()),
+        }
+    }
+    ImplDeductionOutcome::Resolved(ImplDeduction {
+        impl_args,
+        method_args,
+    })
 }
 
 fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
@@ -2018,6 +2325,10 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
                     receiver,
                     actuals: args.iter().map(|arg| arg.ty.clone()).collect(),
                     result: expr.ty.clone(),
+                    span: expr.span,
+                    callee_span: callee.span,
+                    ancestors: Vec::new(),
+                    reportable: true,
                 });
             }
             collect_impl_calls_expr(callee, calls);
@@ -2031,10 +2342,15 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
             collect_impl_calls_expr(left, calls);
             collect_impl_calls_expr(right, calls);
         }
+        TypedExprKind::Try { operand, .. } => {
+            if let Some(call) = try_conversion_call(expr) {
+                calls.push(call);
+            }
+            collect_impl_calls_expr(operand, calls);
+        }
         TypedExprKind::Unary { operand, .. }
         | TypedExprKind::Grouping(operand)
-        | TypedExprKind::Lambda(operand)
-        | TypedExprKind::Try { operand, .. } => collect_impl_calls_expr(operand, calls),
+        | TypedExprKind::Lambda(operand) => collect_impl_calls_expr(operand, calls),
         TypedExprKind::Assign { value, .. } => collect_impl_calls_expr(value, calls),
         TypedExprKind::If {
             condition,
@@ -2337,6 +2653,7 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
 struct ImplInstanceMethod {
     target: InferType,
     args: Vec<InferType>,
+    method_args: Vec<InferType>,
     symbol: String,
 }
 
@@ -2346,14 +2663,75 @@ struct ImplCallRewrite<'a> {
     replacements: &'a HashMap<String, Vec<ImplInstanceMethod>>,
 }
 
+/// the conversion a `?` selected, read as a call of the impl method it names:
+fn try_conversion_call(expr: &TypedExpr) -> Option<ImplCallSite> {
+    let TypedExprKind::Try {
+        operand,
+        conversion: Some(symbol),
+        conversion_target: Some(target),
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let InferType::Result(_, source) = &operand.ty else {
+        return None;
+    };
+    Some(ImplCallSite {
+        symbol: symbol.clone(),
+        receiver: None,
+        actuals: vec![source.as_ref().clone()],
+        result: target.clone(),
+        span: expr.span,
+        callee_span: expr.span,
+        ancestors: Vec::new(),
+        reportable: false,
+    })
+}
+
+fn rewrite_try_conversion(expr: &mut TypedExpr, rewrite: &ImplCallRewrite<'_>) {
+    let Some(call) = try_conversion_call(expr) else {
+        return;
+    };
+    let Some(candidates) = rewrite.replacements.get(&call.symbol) else {
+        return;
+    };
+    let TypedExprKind::Try {
+        conversion: Some(symbol),
+        ..
+    } = &mut expr.kind
+    else {
+        return;
+    };
+    for &template_index in rewrite
+        .template_indices_by_method
+        .get(&call.symbol)
+        .into_iter()
+        .flatten()
+    {
+        let ImplDeductionOutcome::Resolved(deduction) =
+            deduce_impl_arguments(&rewrite.templates[template_index], &call)
+        else {
+            continue;
+        };
+        if let Some(instance) = candidates.iter().find(|candidate| {
+            candidate.args == deduction.impl_args && candidate.method_args == deduction.method_args
+        }) {
+            *symbol = instance.symbol.clone();
+            return;
+        }
+    }
+}
+
 fn rewrite_impl_call_symbols_stmt(stmt: &mut TypedStmt, rewrite: &ImplCallRewrite<'_>) {
     visit_exprs_stmt(stmt, &mut |expr| {
         rewrite_impl_call_symbol(expr, rewrite);
+        rewrite_try_conversion(expr, rewrite);
     });
 }
 
 fn rewrite_impl_call_symbol(expr: &mut TypedExpr, rewrite: &ImplCallRewrite<'_>) {
     let result = expr.ty.clone();
+    let span = expr.span;
     let TypedExprKind::Call { callee, args } = &mut expr.kind else {
         return;
     };
@@ -2369,22 +2747,17 @@ fn rewrite_impl_call_symbol(expr: &mut TypedExpr, rewrite: &ImplCallRewrite<'_>)
     let Some(candidates) = rewrite.replacements.get(symbol) else {
         return;
     };
-    if *separator == aelys_syntax::MemberSeparator::Dot {
-        let receiver = object.ty.clone();
-        if let Some(instance) = candidates
-            .iter()
-            .find(|candidate| candidate.target == receiver)
-        {
-            *symbol = instance.symbol.clone();
-        }
-        return;
-    }
-    // the same deduction the worklist ran, so a `::` call can never land on an
+    let receiver = (*separator == aelys_syntax::MemberSeparator::Dot).then(|| object.ty.clone());
+    // the same deduction the worklist ran, so a call can never land on an
     let call = ImplCallSite {
         symbol: symbol.clone(),
-        receiver: None,
+        receiver: receiver.clone(),
         actuals: args.iter().map(|arg| arg.ty.clone()).collect(),
         result,
+        span,
+        callee_span: span,
+        ancestors: Vec::new(),
+        reportable: false,
     };
     for &template_index in rewrite
         .template_indices_by_method
@@ -2392,17 +2765,26 @@ fn rewrite_impl_call_symbol(expr: &mut TypedExpr, rewrite: &ImplCallRewrite<'_>)
         .into_iter()
         .flatten()
     {
-        let Some(instance_args) = deduce_impl_arguments(&rewrite.templates[template_index], &call)
+        let ImplDeductionOutcome::Resolved(deduction) =
+            deduce_impl_arguments(&rewrite.templates[template_index], &call)
         else {
             continue;
         };
-        if let Some(instance) = candidates
-            .iter()
-            .find(|candidate| candidate.args == instance_args)
-        {
+        if let Some(instance) = candidates.iter().find(|candidate| {
+            candidate.args == deduction.impl_args && candidate.method_args == deduction.method_args
+        }) {
             *symbol = instance.symbol.clone();
             return;
         }
+    }
+    let Some(receiver) = receiver else {
+        return;
+    };
+    if let Some(instance) = candidates
+        .iter()
+        .find(|candidate| candidate.target == receiver && candidate.method_args.is_empty())
+    {
+        *symbol = instance.symbol.clone();
     }
 }
 
@@ -2489,10 +2871,10 @@ fn resolve_bound_marker(
     let Some((trait_name, _param, method_name)) = marker else {
         return;
     };
-    let receiver = object.ty.clone();
-    if !receiver.is_concrete() {
+    let Some(receiver) = concrete_receiver(type_table, &object.ty) else {
         return;
-    }
+    };
+    object.ty = receiver.clone();
     match type_table.select_bound_method(&trait_name, &receiver, &method_name) {
         BoundSelection::Selected(resolved) => *symbol = resolved,
         BoundSelection::CompilerRule => {}
@@ -2506,23 +2888,40 @@ fn resolve_bound_marker(
                     span,
                 )
             });
+            let denied = type_table.denies(&trait_name, &receiver, &[]);
             errors.push(gated.unwrap_or_else(|| TypeError {
                 kind: TypeErrorKind::UnsatisfiedTraitBound {
                     trait_name,
+                    trait_args: Vec::new(),
                     ty: receiver,
+                    denied,
                 },
                 span,
                 reason: ConstraintReason::Other("bound method at a concrete instance".to_string()),
             }));
         }
-        BoundSelection::Ambiguous => errors.push(TypeError {
-            kind: TypeErrorKind::AmbiguousTraitMethod {
-                target: receiver.to_string(),
-                method: method_name,
+        BoundSelection::AmbiguousSpecialization => errors.push(TypeError {
+            kind: TypeErrorKind::AmbiguousSpecialization {
+                trait_name,
+                target: receiver,
             },
             span,
             reason: ConstraintReason::Other("bound method at a concrete instance".to_string()),
         }),
+        BoundSelection::Ambiguous => {
+            let target =
+                crate::types::nominal_name(&receiver).unwrap_or_else(|| receiver.to_string());
+            errors.push(TypeError {
+                kind: super::signatures::ambiguous_trait_instantiation_kind(
+                    type_table,
+                    &target,
+                    &method_name,
+                    &trait_name,
+                ),
+                span,
+                reason: ConstraintReason::Other("bound method at a concrete instance".to_string()),
+            })
+        }
     }
 }
 
@@ -2599,14 +2998,18 @@ fn resolve_deferred_member(
                 return_type: candidate.return_type.clone(),
                 has_self: candidate.has_self,
                 mutable_self: candidate.mutable_self,
+                own_type_params: Vec::new(),
             }),
             [] => None,
             _ => {
+                let symbols: Vec<String> = candidates
+                    .iter()
+                    .map(|candidate| candidate.symbol.clone())
+                    .collect();
                 errors.push(TypeError {
-                    kind: TypeErrorKind::AmbiguousTraitMethod {
-                        target: name.clone(),
-                        method: member.clone(),
-                    },
+                    kind: super::signatures::ambiguous_trait_method_kind(
+                        type_table, &name, member, &symbols,
+                    ),
                     span: expr.span,
                     reason: ConstraintReason::Other("deferred member lookup".to_string()),
                 });
@@ -2768,19 +3171,30 @@ fn resolve_display_marker(expr: &mut TypedExpr, type_table: &crate::types::TypeT
     if symbol != DISPLAY_MARKER_SYMBOL {
         return;
     }
-    let receiver = object.ty.clone();
-    if !receiver.is_concrete() {
+    let Some(receiver) = concrete_receiver(type_table, &object.ty) else {
         return;
-    }
+    };
     if let BoundSelection::Selected(resolved) = type_table.select_bound_method(
         crate::prelude::DISPLAY_TRAIT,
         &receiver,
         crate::prelude::DISPLAY_METHOD,
     ) {
+        // the object still carries the projection it was written with; the call it
+        object.ty = receiver;
         *symbol = resolved;
         return;
     }
     strip_display_marker(expr);
+}
+
+/// a projection is a spelling of a type, not a type of its own: a marker whose
+fn concrete_receiver(type_table: &crate::types::TypeTable, ty: &InferType) -> Option<InferType> {
+    if ty.is_concrete() {
+        return Some(ty.clone());
+    }
+    type_table
+        .resolve_projection(ty)
+        .filter(|resolved| resolved.is_concrete())
 }
 
 fn strip_display_markers(stmts: &mut [TypedStmt]) {
@@ -3631,10 +4045,15 @@ fn check_instance_trait_bounds(
             .type_table
             .satisfies_bound(trait_name, &actual, &trait_args);
         if !satisfied {
+            let denied = inference
+                .type_table
+                .denies(trait_name, &actual, &trait_args);
             errors.push(TypeError {
                 kind: TypeErrorKind::UnsatisfiedTraitBound {
                     trait_name: trait_name.clone(),
+                    trait_args: trait_args.clone(),
                     ty: actual,
+                    denied,
                 },
                 span,
                 reason: ConstraintReason::Other("generic trait bound".to_string()),
@@ -3932,7 +4351,7 @@ fn instance_arguments(
         .collect()
 }
 
-fn match_types(
+pub(crate) fn match_types(
     formal: &InferType,
     actual: &InferType,
     mapping: &mut HashMap<String, InferType>,

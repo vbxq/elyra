@@ -8,7 +8,7 @@ mod finalize;
 mod functions;
 pub mod imports;
 mod lambda;
-mod monomorphize;
+pub(crate) mod monomorphize;
 mod must_use;
 mod returns;
 mod signatures;
@@ -168,6 +168,8 @@ pub struct TypeInference {
     warnings: Vec<Warning>,
     pub(crate) type_table: TypeTable,
     type_params_in_scope: Vec<String>,
+    /// a method that redeclares a parameter of its impl or of the nominal it is
+    method_param_renames: std::collections::HashMap<String, String>,
     trait_defaults: HashMap<(String, String), aelys_syntax::Function>,
     generic_function_bounds: HashMap<String, Vec<(String, String, Vec<InferType>)>>,
     function_type_params: HashMap<String, Vec<String>>,
@@ -178,7 +180,16 @@ pub struct TypeInference {
     borrow_call_scopes: Vec<Vec<borrows::ActiveLoan>>,
     forwarded_mutable_borrows: HashSet<String>,
     try_residuals: Vec<expr_sum::TryResidual>,
-    try_conversions: HashMap<(usize, usize), String>,
+    try_conversions: HashMap<(usize, usize), (String, InferType, InferType)>,
+    /// with `&self`, so its verdicts are filed here and drained once
+    conversion_verdicts: std::cell::RefCell<
+        Vec<(
+            crate::types::FromSelection,
+            InferType,
+            InferType,
+            aelys_syntax::Span,
+        )>,
+    >,
     must_use_values: Vec<expr_sum::MustUseResidual>,
     sum_method_residuals: Vec<expr_sum::SumMethodResidual>,
     match_exhaustivity_residuals: Vec<expr_sum::MatchExhaustivityResidual>,
@@ -234,6 +245,13 @@ pub struct TypeInference {
     projection_cycle_escaped: std::cell::Cell<bool>,
     /// compile reports a recursion-limit error instead of silently emitting a
     substitution_overflowed: std::cell::Cell<Option<aelys_syntax::Span>>,
+    specialization_verdicts: std::cell::RefCell<
+        Vec<(
+            crate::types::SpecializationChoice,
+            InferType,
+            aelys_syntax::Span,
+        )>,
+    >,
 }
 
 struct AssociatedTypeDefinition {
@@ -404,10 +422,15 @@ impl TypeInference {
             {
                 continue;
             }
+            let denied = self
+                .type_table
+                .denies(&residual.trait_name, &ty, &trait_args);
             reported.push(TypeError {
                 kind: TypeErrorKind::UnsatisfiedTraitBound {
                     trait_name: residual.trait_name.clone(),
+                    trait_args: trait_args.clone(),
                     ty,
+                    denied,
                 },
                 span: residual.span,
                 reason: residual.reason.clone(),
@@ -459,4 +482,11 @@ fn contains_concrete_dynamic(found: &InferType, expected: &InferType) -> bool {
         }
         _ => false,
     }
+}
+
+/// `$` is not in the identifier grammar, so no source can name the result
+pub(crate) const SHADOWED_METHOD_SUFFIX: &str = "$m";
+
+pub(crate) fn shadowed_method_param(name: &str) -> String {
+    format!("{name}{SHADOWED_METHOD_SUFFIX}")
 }

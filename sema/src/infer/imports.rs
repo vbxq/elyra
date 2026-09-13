@@ -97,6 +97,16 @@ impl TypeInference {
         self.private_nominals.get(name).map(String::as_str)
     }
 
+    pub(crate) fn clashing_modules(&self, name: &str) -> Option<(String, String)> {
+        let owner = self.type_table.nominal_owner(name)?;
+        (owner != &self.current_module).then(|| {
+            (
+                self.current_module.as_str().to_string(),
+                owner.as_str().to_string(),
+            )
+        })
+    }
+
     pub(crate) fn visible_trait_methods(
         &self,
         target: &str,
