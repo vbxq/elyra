@@ -1,4 +1,5 @@
 use crate::cli::vm_config::parse_vm_args_or_error;
+use aelys_bytecode::asm::{RequiredImport, RequiredImportKind};
 use aelys_common::error::{AelysError, RuntimeErrorKind};
 use aelys_common::{WarningConfig, format_warnings};
 use aelys_driver::run_file_full_with_control;
@@ -152,8 +153,9 @@ fn run_aasm_file(
         vm.set_script_path(path.display().to_string());
     }
 
-    let required_modules = collect_required_modules(&function);
-    load_required_modules(&mut vm, path, src, &required_modules, None, &HashMap::new())?;
+    let required_modules = required_modules(&function, &[]);
+    load_required_modules(&mut vm, path, src, &required_modules, None, &HashMap::new())
+        .map_err(RequiredModuleError::into_message)?;
 
     let func_ref = vm.alloc_function(function).map_err(|err| err.to_string())?;
     execute_file(&mut vm, func_ref)
@@ -167,8 +169,14 @@ fn run_avbc_file(
 ) -> Result<FileExecution, String> {
     let bytes =
         std::fs::read(path).map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let (function, manifest_bytes, bundles) =
-        aelys_bytecode::asm::deserialize_with_manifest(&bytes).map_err(|err| err.to_string())?;
+    let sections =
+        aelys_bytecode::asm::deserialize_with_sections(&bytes).map_err(|err| err.to_string())?;
+    let aelys_bytecode::asm::ProgramSections {
+        function,
+        manifest: manifest_bytes,
+        bundles,
+        requires,
+    } = sections;
 
     let manifest = match manifest_bytes.as_deref() {
         Some(bytes) => Some(Manifest::from_bytes(bytes).map_err(|err| err.to_string())?),
@@ -188,7 +196,7 @@ fn run_avbc_file(
         vm.set_script_path(path.display().to_string());
     }
 
-    let required_modules = collect_required_modules(&function);
+    let required_modules = required_modules(&function, &requires);
     load_required_modules(
         &mut vm,
         path,
@@ -196,7 +204,8 @@ fn run_avbc_file(
         &required_modules,
         manifest.as_ref(),
         &bundled_modules,
-    )?;
+    )
+    .map_err(RequiredModuleError::into_message)?;
 
     let func_ref = vm.alloc_function(function).map_err(|err| err.to_string())?;
     execute_file(&mut vm, func_ref)
@@ -212,7 +221,55 @@ fn execute_file(vm: &mut VM, function: aelys_runtime::GcRef) -> Result<FileExecu
     }
 }
 
-fn collect_required_modules(function: &aelys_bytecode::Function) -> HashSet<String> {
+pub(crate) enum RequiredModule {
+    Declared(NeedsStmt),
+    Inferred(String),
+}
+
+pub(crate) fn required_modules(
+    function: &aelys_bytecode::Function,
+    declared: &[RequiredImport],
+) -> Vec<RequiredModule> {
+    let declared: Vec<NeedsStmt> = declared.iter().map(needs_stmt_of).collect();
+    let bound: HashSet<&str> = declared.iter().map(module_alias_of).collect();
+
+    let mut inferred: Vec<String> = collect_inferred_modules(function)
+        .into_iter()
+        .filter(|name| !bound.contains(name.as_str()))
+        .collect();
+    inferred.sort();
+
+    declared
+        .into_iter()
+        .map(RequiredModule::Declared)
+        .chain(inferred.into_iter().map(RequiredModule::Inferred))
+        .collect()
+}
+
+fn needs_stmt_of(import: &RequiredImport) -> NeedsStmt {
+    let kind = match &import.kind {
+        RequiredImportKind::Module { alias } => ImportKind::Module {
+            alias: alias.clone(),
+        },
+        RequiredImportKind::Symbols(symbols) => ImportKind::Symbols(symbols.clone()),
+        RequiredImportKind::Wildcard => ImportKind::Wildcard,
+    };
+    NeedsStmt {
+        path: import.path.clone(),
+        kind,
+        span: Span::dummy(),
+    }
+}
+
+// mirrors moduleloader::get_module_alias: the name the qualified globals of the
+fn module_alias_of(needs: &NeedsStmt) -> &str {
+    match &needs.kind {
+        ImportKind::Module { alias: Some(alias) } => alias.as_str(),
+        _ => needs.path.last().map(String::as_str).unwrap_or_default(),
+    }
+}
+
+fn collect_inferred_modules(function: &aelys_bytecode::Function) -> HashSet<String> {
     let mut modules = HashSet::new();
     collect_required_modules_rec(function, &mut modules);
     modules
@@ -237,38 +294,117 @@ fn collect_required_modules_rec(
     }
 }
 
-fn load_required_modules(
+// verifier verdict from a plain module failure
+pub(crate) enum RequiredModuleError {
+    Load(AelysError),
+    Native(String),
+}
+
+impl RequiredModuleError {
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            Self::Load(err) => err.to_string(),
+            Self::Native(message) => message,
+        }
+    }
+}
+
+// it to refuse an artefact naming a module nothing resolves. rooted at the entry
+pub(crate) fn unresolved_required_module(
+    entry_path: &Path,
+    source: std::sync::Arc<Source>,
+    modules: &[RequiredModule],
+    bundled: &HashSet<String>,
+    manifest_bytes: Option<Vec<u8>>,
+) -> Option<String> {
+    let manifest = manifest_bytes
+        .as_deref()
+        .and_then(|bytes| Manifest::from_bytes(bytes).ok());
+    let loader = aelys_driver::modules::ModuleLoader::with_manifest(entry_path, source, manifest);
+
+    for module in modules {
+        let needs = match module {
+            RequiredModule::Declared(needs) => {
+                if bundled.contains(&needs.path.join(".")) {
+                    continue;
+                }
+                needs.clone()
+            }
+            RequiredModule::Inferred(name) => {
+                if bundled.contains(name) {
+                    continue;
+                }
+                let std_needs = NeedsStmt {
+                    path: vec!["std".to_string(), name.clone()],
+                    kind: ImportKind::Module { alias: None },
+                    span: Span::dummy(),
+                };
+                if loader.check_resolvable(&std_needs).is_ok() {
+                    continue;
+                }
+                NeedsStmt {
+                    path: vec![name.clone()],
+                    kind: ImportKind::Module { alias: None },
+                    span: Span::dummy(),
+                }
+            }
+        };
+        if let Err(err) = loader.check_resolvable(&needs) {
+            return Some(err.to_string());
+        }
+    }
+
+    None
+}
+
+pub(crate) fn load_required_modules(
     vm: &mut VM,
     entry_path: &Path,
     source: std::sync::Arc<Source>,
-    modules: &HashSet<String>,
+    modules: &[RequiredModule],
     manifest: Option<&Manifest>,
     bundled_modules: &HashMap<String, aelys_bytecode::asm::NativeBundle>,
-) -> Result<(), String> {
+) -> Result<(), RequiredModuleError> {
     let mut loader = aelys_driver::modules::ModuleLoader::with_manifest(
         entry_path,
         source.clone(),
         manifest.cloned(),
     );
 
-    for module_name in modules {
-        if let Some(bundle) = bundled_modules.get(module_name) {
-            load_bundled_module(vm, module_name, bundle, manifest)?;
-            continue;
-        }
+    for module in modules {
+        match module {
+            RequiredModule::Declared(needs) => {
+                let key = needs.path.join(".");
+                if let Some(bundle) = bundled_modules.get(&key) {
+                    load_bundled_module(vm, &key, module_alias_of(needs), bundle, manifest)
+                        .map_err(RequiredModuleError::Native)?;
+                    continue;
+                }
+                loader
+                    .load_module(needs, vm)
+                    .map_err(RequiredModuleError::Load)?;
+            }
+            RequiredModule::Inferred(module_name) => {
+                if let Some(bundle) = bundled_modules.get(module_name) {
+                    load_bundled_module(vm, module_name, module_name, bundle, manifest)
+                        .map_err(RequiredModuleError::Native)?;
+                    continue;
+                }
 
-        if try_load_std_module(vm, &mut loader, module_name).is_ok() {
-            continue;
-        }
+                if try_load_std_module(vm, &mut loader, module_name).is_ok() {
+                    continue;
+                }
 
-        let needs = NeedsStmt {
-            path: vec![module_name.clone()],
-            kind: ImportKind::Module { alias: None },
-            span: Span::dummy(),
-        };
-        loader
-            .load_module(&needs, vm)
-            .map_err(|err| err.to_string())?;
+                let needs = NeedsStmt {
+                    path: vec![module_name.clone()],
+                    kind: ImportKind::Module { alias: None },
+                    span: Span::dummy(),
+                };
+                loader
+                    .load_module(&needs, vm)
+                    .map_err(RequiredModuleError::Load)?;
+            }
+        }
     }
 
     Ok(())
@@ -293,6 +429,7 @@ fn try_load_std_module(
 fn load_bundled_module(
     vm: &mut VM,
     module_name: &str,
+    alias: &str,
     bundle: &aelys_bytecode::asm::NativeBundle,
     manifest: Option<&Manifest>,
 ) -> Result<(), String> {
@@ -330,7 +467,7 @@ fn load_bundled_module(
         }
     }
 
-    register_native_module(&native_module, module_name, vm)?;
+    register_native_module(&native_module, alias, vm)?;
     vm.register_native_module(module_name.to_string(), native_module);
     Ok(())
 }

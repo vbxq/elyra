@@ -1,6 +1,12 @@
+use super::run::{
+    RequiredModuleError, load_required_modules, required_modules, unresolved_required_module,
+};
 use aelys_backend::Compiler;
-use aelys_bytecode::asm::NativeBundle;
-use aelys_common::error::{CompileError, CompileErrorKind};
+use aelys_bytecode::asm::{NativeBundle, RequiredImport, RequiredImportKind};
+use aelys_common::error::{
+    AelysError, CompileError, CompileErrorKind, RejectedBytecodeArtifact, RejectedBytecodeOrigin,
+    RejectedBytecodeStage, RuntimeErrorKind,
+};
 use aelys_common::{Warning, WarningConfig};
 use aelys_driver::modules::{LoadedNativeInfo, load_modules_with_loader, resolve_globals};
 use aelys_frontend::lexer::Lexer;
@@ -8,7 +14,7 @@ use aelys_frontend::parser::Parser;
 use aelys_modules::manifest::Manifest;
 use aelys_opt::{OptimizationLevel, Optimizer};
 use aelys_runtime::{VM, VmConfig};
-use aelys_syntax::{Source, StmtKind};
+use aelys_syntax::{ImportKind, NeedsStmt, Source, Span, StmtKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,6 +26,7 @@ pub fn compile_to_avbc(path: &Path, opt_level: OptimizationLevel) -> Result<Path
 pub struct CompileResult {
     pub output_path: PathBuf,
     pub warnings: Vec<Warning>,
+    pub written: bool,
 }
 
 pub fn compile_to_avbc_with_output(
@@ -28,12 +35,26 @@ pub fn compile_to_avbc_with_output(
     opt_level: OptimizationLevel,
     source_for_warnings: Option<Arc<Source>>,
 ) -> Result<CompileResult, String> {
+    compile_to_avbc_gated(path, output, opt_level, source_for_warnings, None)
+}
+
+// a run that ends in rc=1 must leave no artefact behind, so -werror has to be
+fn compile_to_avbc_gated(
+    path: &Path,
+    output: Option<PathBuf>,
+    opt_level: OptimizationLevel,
+    source_for_warnings: Option<Arc<Source>>,
+    warning_gate: Option<&WarningConfig>,
+) -> Result<CompileResult, String> {
+    let output_path = output.unwrap_or_else(|| output_path_for(path));
+
     match detect_format(path) {
         CompileInput::Assembly => {
-            let out = assemble_to_avbc(path, output)?;
+            assemble_to_avbc(path, &output_path)?;
             return Ok(CompileResult {
-                output_path: out,
+                output_path,
                 warnings: Vec::new(),
+                written: true,
             });
         }
         CompileInput::Bytecode => {
@@ -63,8 +84,17 @@ pub fn compile_to_avbc_with_output(
         vm.set_script_path(path.display().to_string());
     }
 
+    let declared_imports: Vec<RequiredImport> = stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            StmtKind::Needs(needs) => Some(required_import_of(needs)),
+            _ => None,
+        })
+        .collect();
+    let widest_declaration = widest_declared_name(&stmts);
+
     let (imports, loader) = load_modules_with_loader(&stmts, path, src.clone(), &mut vm)
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| module_load_error(err, &output_path))?;
 
     let main_stmts: Vec<_> = imports
         .imported_impl_stmts
@@ -154,28 +184,222 @@ pub fn compile_to_avbc_with_output(
         .map(|m| m.should_bundle_natives())
         .unwrap_or(false);
 
-    let bytes = if should_bundle && !loader.loaded_native_modules().is_empty() {
-        let bundles = build_native_bundles(loader.loaded_native_modules())?;
-        aelys_bytecode::asm::serialize_with_manifest(
-            &function,
-            manifest_bytes.as_deref(),
-            Some(&bundles),
-        )
-    } else if manifest_bytes.is_some() {
-        aelys_bytecode::asm::serialize_with_manifest(&function, manifest_bytes.as_deref(), None)
+    let bundles = if should_bundle && !loader.loaded_native_modules().is_empty() {
+        Some(build_native_bundles(loader.loaded_native_modules())?)
     } else {
-        aelys_bytecode::asm::serialize(&function)
-    }
-    .map_err(|err| format!("failed to serialize AVBC v3: {err}"))?;
+        None
+    };
+    let bytes = aelys_bytecode::asm::serialize_with_sections(
+        &function,
+        manifest_bytes.as_deref(),
+        bundles.as_deref(),
+        &declared_imports,
+    )
+    .map_err(|err| {
+        serialize_error(
+            &err.to_string(),
+            widest_declaration.as_ref(),
+            &output_path,
+            &src,
+        )
+    })?;
 
-    let output_path = output.unwrap_or_else(|| output_path_for(path));
-    std::fs::write(&output_path, bytes)
-        .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
+    reject_unverifiable_bytecode(&bytes, &vm, &output_path, RejectedBytecodeOrigin::Compiler)?;
+    reject_unloadable_bytecode(&bytes, &declared_imports, path, src.clone(), &output_path)?;
+
+    let blocked_by_warnings = warning_gate.is_some_and(|config| {
+        config.treat_as_error && warnings.iter().any(|w| config.is_enabled(&w.kind))
+    });
+    if !blocked_by_warnings {
+        std::fs::write(&output_path, bytes)
+            .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
+    }
 
     Ok(CompileResult {
         output_path,
         warnings,
+        written: !blocked_by_warnings,
     })
+}
+
+// the encoder gives up on a name, not on a byte offset, so the refusal points at
+fn serialize_error(
+    reason: &str,
+    widest: Option<&(String, Span)>,
+    output_path: &Path,
+    src: &Arc<Source>,
+) -> String {
+    let kind = CompileErrorKind::BytecodeEncodingRefused {
+        output: output_path.display().to_string(),
+        reason: reason.to_string(),
+        longest_name: widest.map(|(name, _)| truncate_name(name)),
+        artifact: artifact_state(output_path),
+    };
+    let span = widest.map(|(_, span)| *span).unwrap_or_else(Span::dummy);
+    CompileError::new(kind, span, src.clone()).to_string()
+}
+
+const NAME_EXCERPT: usize = 48;
+
+fn truncate_name(name: &str) -> String {
+    if name.chars().count() <= NAME_EXCERPT {
+        return name.to_string();
+    }
+    let head: String = name.chars().take(NAME_EXCERPT).collect();
+    format!("{head}... ({} chars)", name.chars().count())
+}
+
+fn widest_declared_name(stmts: &[aelys_syntax::Stmt]) -> Option<(String, Span)> {
+    let mut widest: Option<(String, Span)> = None;
+    let mut consider = |name: &String, span: Span| {
+        if widest
+            .as_ref()
+            .is_none_or(|(current, _)| current.len() < name.len())
+        {
+            widest = Some((name.clone(), span));
+        }
+    };
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::StructDecl { name, .. }
+            | StmtKind::EnumDecl { name, .. }
+            | StmtKind::TraitDecl { name, .. }
+            | StmtKind::Let { name, .. } => consider(name, stmt.span),
+            StmtKind::Function(function) => consider(&function.name, function.span),
+            StmtKind::ImplDecl { methods, .. } => {
+                for method in methods {
+                    consider(&method.name, method.span);
+                }
+            }
+            _ => {}
+        }
+    }
+    widest
+}
+
+fn required_import_of(needs: &NeedsStmt) -> RequiredImport {
+    let kind = match &needs.kind {
+        ImportKind::Module { alias } => RequiredImportKind::Module {
+            alias: alias.clone(),
+        },
+        ImportKind::Symbols(symbols) => RequiredImportKind::Symbols(symbols.clone()),
+        ImportKind::Wildcard => RequiredImportKind::Wildcard,
+    };
+    RequiredImport {
+        path: needs.path.clone(),
+        kind,
+    }
+}
+
+// load, and an artefact whose recorded imports are not the ones the entry asked
+fn reject_unloadable_bytecode(
+    bytes: &[u8],
+    declared: &[RequiredImport],
+    entry_path: &Path,
+    source: Arc<Source>,
+    output_path: &Path,
+) -> Result<(), String> {
+    let sections = match aelys_bytecode::asm::deserialize_with_sections(bytes) {
+        Ok(sections) => sections,
+        Err(err) => {
+            return Err(invalid_bytecode_error(
+                err.to_string(),
+                output_path,
+                RejectedBytecodeOrigin::Compiler,
+                RejectedBytecodeStage::Reader,
+            ));
+        }
+    };
+
+    if sections.requires != declared {
+        return Err(invalid_bytecode_error(
+            "recorded imports do not match the ones the program declares".to_string(),
+            output_path,
+            RejectedBytecodeOrigin::Compiler,
+            RejectedBytecodeStage::Reader,
+        ));
+    }
+
+    let required = required_modules(&sections.function, &sections.requires);
+    let bundled: std::collections::HashSet<String> = sections
+        .bundles
+        .iter()
+        .map(|bundle| bundle.name.clone())
+        .collect();
+    if let Some(reason) =
+        unresolved_required_module(entry_path, source, &required, &bundled, sections.manifest)
+    {
+        return Err(invalid_bytecode_error(
+            reason,
+            output_path,
+            RejectedBytecodeOrigin::Compiler,
+            RejectedBytecodeStage::Loader,
+        ));
+    }
+
+    Ok(())
+}
+
+// the verdict has to be taken on the bytes `run` will read back, not on the
+fn reject_unverifiable_bytecode(
+    bytes: &[u8],
+    vm: &VM,
+    output_path: &Path,
+    origin: RejectedBytecodeOrigin,
+) -> Result<(), String> {
+    match aelys_bytecode::asm::deserialize_with_manifest(bytes) {
+        Ok((function, _manifest, _bundles)) => {
+            aelys_runtime::verify_function(&function, vm.heap(), 0).map_err(|reason| {
+                invalid_bytecode_error(reason, output_path, origin, RejectedBytecodeStage::Verifier)
+            })
+        }
+        Err(err) => Err(invalid_bytecode_error(
+            err.to_string(),
+            output_path,
+            origin,
+            RejectedBytecodeStage::Reader,
+        )),
+    }
+}
+
+fn module_load_error(err: AelysError, output_path: &Path) -> String {
+    if let AelysError::Runtime(runtime) = &err
+        && runtime.is_verifier_verdict()
+        && let RuntimeErrorKind::InvalidBytecode(reason) = &runtime.kind
+    {
+        return invalid_bytecode_error(
+            reason.clone(),
+            output_path,
+            RejectedBytecodeOrigin::Compiler,
+            RejectedBytecodeStage::Verifier,
+        );
+    }
+    err.to_string()
+}
+
+fn invalid_bytecode_error(
+    reason: String,
+    output_path: &Path,
+    origin: RejectedBytecodeOrigin,
+    stage: RejectedBytecodeStage,
+) -> String {
+    let kind = CompileErrorKind::EmittedBytecodeRejected {
+        output: output_path.display().to_string(),
+        reason,
+        origin,
+        stage,
+        artifact: artifact_state(output_path),
+    };
+    format!("error[E{:04}]: {}", kind.code(), kind.message())
+}
+
+// the refusal never deletes an artifact it did not write, so a build reading
+fn artifact_state(output_path: &Path) -> RejectedBytecodeArtifact {
+    if output_path.exists() {
+        RejectedBytecodeArtifact::PreviousLeftInPlace
+    } else {
+        RejectedBytecodeArtifact::Absent
+    }
 }
 
 pub fn run_with_options(
@@ -185,16 +409,20 @@ pub fn run_with_options(
     warn_config: WarningConfig,
 ) -> Result<i32, String> {
     let output = output.map(PathBuf::from);
-    let result = compile_to_avbc_with_output(Path::new(path), output, opt_level, None)?;
+    let result =
+        compile_to_avbc_gated(Path::new(path), output, opt_level, None, Some(&warn_config))?;
 
-    for w in &result.warnings {
-        if warn_config.is_enabled(&w.kind) {
-            eprintln!("{}", w);
-        }
+    let reported: Vec<_> = result
+        .warnings
+        .iter()
+        .filter(|w| warn_config.is_enabled(&w.kind))
+        .collect();
+    for w in &reported {
+        eprintln!("{}", w);
     }
 
-    if warn_config.treat_as_error && !result.warnings.is_empty() {
-        let count = result.warnings.len();
+    if !result.written {
+        let count = reported.len();
         return Err(format!(
             "aborting due to {} warning{}",
             count,
@@ -238,7 +466,7 @@ fn detect_format(path: &Path) -> CompileInput {
     }
 }
 
-fn assemble_to_avbc(path: &Path, output: Option<PathBuf>) -> Result<PathBuf, String> {
+fn assemble_to_avbc(path: &Path, output_path: &Path) -> Result<(), String> {
     let content = std::fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
     let functions = aelys_bytecode::asm::assemble(&content).map_err(|err| err.to_string())?;
@@ -246,12 +474,37 @@ fn assemble_to_avbc(path: &Path, output: Option<PathBuf>) -> Result<PathBuf, Str
         return Err("no functions found in assembly file".to_string());
     }
     let function = reconstruct_function_hierarchy(functions);
+    let src = Source::new(path.display().to_string(), &content);
     let bytes = aelys_bytecode::asm::serialize(&function)
-        .map_err(|err| format!("failed to serialize AVBC v3: {err}"))?;
-    let output_path = output.unwrap_or_else(|| output_path_for(path));
-    std::fs::write(&output_path, bytes)
+        .map_err(|err| serialize_error(&err.to_string(), None, output_path, &src))?;
+
+    let mut vm = VM::with_config_and_args(src.clone(), VmConfig::default(), Vec::new())
+        .map_err(|err| err.to_string())?;
+    if let Ok(abs_path) = path.canonicalize() {
+        vm.set_script_path(abs_path.display().to_string());
+    } else {
+        vm.set_script_path(path.display().to_string());
+    }
+
+    let required = required_modules(&function, &[]);
+    load_required_modules(
+        &mut vm,
+        path,
+        src,
+        &required,
+        None,
+        &std::collections::HashMap::new(),
+    )
+    .map_err(|err| match err {
+        RequiredModuleError::Load(err) => module_load_error(err, output_path),
+        RequiredModuleError::Native(message) => message,
+    })?;
+
+    reject_unverifiable_bytecode(&bytes, &vm, output_path, RejectedBytecodeOrigin::Assembly)?;
+
+    std::fs::write(output_path, bytes)
         .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
-    Ok(output_path)
+    Ok(())
 }
 
 fn reconstruct_function_hierarchy(
@@ -329,5 +582,68 @@ fn current_target_triple() -> String {
     )))]
     {
         "unknown".to_string()
+    }
+}
+
+#[cfg(test)]
+mod unloadable_gate_tests {
+    use super::*;
+    use aelys_bytecode::asm::{RequiredImport, RequiredImportKind};
+
+    fn artifact_requiring(requires: &[RequiredImport]) -> Vec<u8> {
+        let function = aelys_bytecode::Function::new(None, 0);
+        aelys_bytecode::asm::serialize_with_sections(&function, None, None, requires)
+            .expect("a function with no code serializes")
+    }
+
+    fn module_import(name: &str) -> RequiredImport {
+        RequiredImport {
+            path: vec![name.to_string()],
+            kind: RequiredImportKind::Module { alias: None },
+        }
+    }
+
+    fn entry_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("aelys_unloadable_gate_{name}"));
+        std::fs::create_dir_all(&dir).expect("the entry directory is writable");
+        std::fs::write(dir.join("holder.aelys"), "pub fn v() -> int { return 1 }\n")
+            .expect("the module is writable");
+        dir
+    }
+
+    fn verdict(dir: &Path, bytes: &[u8], declared: &[RequiredImport]) -> Result<(), String> {
+        let entry = dir.join("main.aelys");
+        let source = Source::new(entry.display().to_string(), "");
+        reject_unloadable_bytecode(bytes, declared, &entry, source, &dir.join("main.avbc"))
+    }
+
+    #[test]
+    fn an_artifact_naming_a_module_nothing_resolves_is_refused() {
+        let dir = entry_dir("unresolved");
+        let requires = vec![module_import("nowhere")];
+        let err = verdict(&dir, &artifact_requiring(&requires), &requires)
+            .expect_err("a module nothing resolves has to be refused");
+        assert!(err.starts_with("error[E0435]:"), "{err}");
+        assert!(err.contains("cannot be loaded"), "{err}");
+        assert!(err.contains("nowhere"), "{err}");
+    }
+
+    #[test]
+    fn an_artifact_naming_a_module_that_resolves_is_accepted() {
+        let dir = entry_dir("resolved");
+        let requires = vec![module_import("holder")];
+        verdict(&dir, &artifact_requiring(&requires), &requires)
+            .expect("a module sitting next to the entry resolves");
+    }
+
+    #[test]
+    fn an_artifact_recording_imports_the_entry_never_declared_is_refused() {
+        let dir = entry_dir("mismatch");
+        let recorded = vec![module_import("holder")];
+        let declared = vec![module_import("holder"), module_import("std")];
+        let err = verdict(&dir, &artifact_requiring(&recorded), &declared)
+            .expect_err("recorded imports that are not the declared ones have to be refused");
+        assert!(err.starts_with("error[E0435]:"), "{err}");
+        assert!(err.contains("recorded imports"), "{err}");
     }
 }
