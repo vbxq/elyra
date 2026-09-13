@@ -508,7 +508,11 @@ impl fmt::Display for InferType {
                 }
                 write!(f, ">")
             }
-            InferType::Param(name) => write!(f, "{name}"),
+            // a method parameter the impl pass had to respell carries a suffix no
+            InferType::Param(name) => match name.split_once('$') {
+                Some((written, _)) => write!(f, "{written} of the method"),
+                None => write!(f, "{name}"),
+            },
             InferType::Projection {
                 trait_name,
                 item,

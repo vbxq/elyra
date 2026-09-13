@@ -29,6 +29,8 @@ pub struct StructMethod {
     pub return_type: InferType,
     pub has_self: bool,
     pub mutable_self: bool,
+    /// instantiates anew; the ones it inherits from its impl or its trait are
+    pub own_type_params: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +41,10 @@ pub struct TraitMethod {
     pub return_type: InferType,
     pub has_self: bool,
     pub mutable_self: bool,
+    pub own_type_params: Vec<String>,
     pub has_body: bool,
+    /// written `default fn`, which opens the method to replacement by a more
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -47,14 +52,187 @@ pub struct TraitDef {
     pub name: String,
     pub owner: ModuleId,
     pub type_params: Vec<String>,
-    pub super_bounds: Vec<String>,
+    /// a supertrait is written with its arguments, and the obligation it lays is
+    pub super_bounds: Vec<(String, Vec<InferType>)>,
     pub methods: Vec<TraitMethod>,
     pub associated_types: Vec<String>,
     pub associated_consts: Vec<(String, InferType)>,
 }
 
+/// a header's own spelling, with its parameters numbered by first appearance so
+pub(crate) fn positional_spelling(self_ty: &InferType) -> String {
+    let mut seen: Vec<String> = Vec::new();
+    render_positional(self_ty, &mut seen)
+}
+
+fn render_positional(ty: &InferType, seen: &mut Vec<String>) -> String {
+    match ty {
+        InferType::Param(name) => {
+            let position = match seen.iter().position(|known| known == name) {
+                Some(index) => index,
+                None => {
+                    seen.push(name.clone());
+                    seen.len() - 1
+                }
+            };
+            format!("${position}")
+        }
+        InferType::Applied { name, args } => {
+            let rendered: Vec<String> = args
+                .iter()
+                .map(|arg| render_positional(arg, seen))
+                .collect();
+            format!("{name}<{}>", rendered.join(","))
+        }
+        other => other.source_spelling(),
+    }
+}
+
+/// a trait at one instantiation, spelled so that two instantiations of one trait
+pub(crate) fn instantiation_key(name: &str, args: &[InferType]) -> String {
+    // positional numbering restarted per obligation renders two different
+    let mut key = name.to_string();
+    for arg in args {
+        key.push('<');
+        key.push_str(&parameter_marked_spelling(arg));
+    }
+    key
+}
+
+fn parameter_marked_spelling(ty: &InferType) -> String {
+    match ty {
+        InferType::Param(name) => format!("%{name}"),
+        InferType::Applied { name, args } => {
+            let rendered: Vec<String> = args.iter().map(parameter_marked_spelling).collect();
+            format!("{name}<{}>", rendered.join(","))
+        }
+        InferType::Option(inner) => format!("Option<{}>", parameter_marked_spelling(inner)),
+        InferType::Array(inner) => format!("[{}]", parameter_marked_spelling(inner)),
+        InferType::FixedArray(inner, length) => {
+            format!("[{};{length}]", parameter_marked_spelling(inner))
+        }
+        InferType::Vec(inner) => format!("Vec<{}>", parameter_marked_spelling(inner)),
+        InferType::Result(ok, err) => format!(
+            "Result<{},{}>",
+            parameter_marked_spelling(ok),
+            parameter_marked_spelling(err)
+        ),
+        InferType::Tuple(elements) => {
+            let rendered: Vec<String> = elements.iter().map(parameter_marked_spelling).collect();
+            format!("({})", rendered.join(","))
+        }
+        other => other.source_spelling(),
+    }
+}
+
+/// the trait arguments an impl reaches for a given receiver: its declared ones,
+fn instantiate_args(
+    self_type: &InferType,
+    args: &[InferType],
+    receiver: &InferType,
+) -> Vec<InferType> {
+    let mut mapping = std::collections::HashMap::new();
+    if crate::infer::monomorphize::match_types(self_type, receiver, &mut mapping).is_none() {
+        return args.to_vec();
+    }
+    let mut substitution = crate::unify::Substitution::new();
+    for (param, ty) in mapping {
+        substitution.bind_param(param, ty);
+    }
+    args.iter().map(|arg| substitution.apply(arg)).collect()
+}
+
+/// a header is one pattern, its target and every trait argument matched under a
+fn header_covers(
+    pattern: &InferType,
+    pattern_args: &[InferType],
+    ty: &InferType,
+    args: &[InferType],
+) -> bool {
+    let mut mapping = std::collections::HashMap::new();
+    if crate::infer::monomorphize::match_types(pattern, ty, &mut mapping).is_none() {
+        return false;
+    }
+    pattern_args.iter().zip(args).all(|(expected, actual)| {
+        crate::infer::monomorphize::match_types(expected, actual, &mut mapping).is_some()
+    })
+}
+
+/// a conversion header is a pair, target and source, matched under **one**
+fn conversion_fits(general: &TraitImplDef, special: &TraitImplDef) -> bool {
+    let mut mapping = std::collections::HashMap::new();
+    crate::infer::monomorphize::match_types(&general.self_type, &special.self_type, &mut mapping)
+        .and_then(|()| {
+            crate::infer::monomorphize::match_types(
+                &general.trait_args[0],
+                &special.trait_args[0],
+                &mut mapping,
+            )
+        })
+        .is_some()
+}
+
+/// one header outranks another by covering it and not being covered by it
+fn conversion_outranks(left: &TraitImplDef, right: &TraitImplDef) -> bool {
+    conversion_fits(right, left) && !conversion_fits(left, right)
+}
+
+/// two impls of one trait at different instantiations declare different method
+fn same_instantiation(left: &[InferType], right: &[InferType]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a == b)
+}
+
+/// two headers are comparable when one is an instance of the other, target and
+fn comparable_headers(
+    left_self: &InferType,
+    left_args: &[InferType],
+    right_self: &InferType,
+    right_args: &[InferType],
+) -> bool {
+    if left_args.len() != right_args.len() {
+        return false;
+    }
+    // a trait without arguments has one instantiation, and every impl of it is at
+    if left_args.is_empty() {
+        return true;
+    }
+    // two headers that differ only in the names of their parameters cover each
+    header_covers(left_self, left_args, right_self, right_args)
+        || header_covers(right_self, right_args, left_self, left_args)
+}
+
+/// a header subsumes another when a consistent substitution of its parameters
+pub(crate) fn subsumes(general: &InferType, special: &InferType) -> bool {
+    let mut mapping = std::collections::HashMap::new();
+    crate::infer::monomorphize::match_types(general, special, &mut mapping).is_some()
+}
+
+pub(crate) fn strictly_more_specific(special: &InferType, general: &InferType) -> bool {
+    subsumes(general, special) && !subsumes(special, general)
+}
+
+/// a negative impl states that a type does not implement a trait; it lives apart
+pub enum SpecializationChoice {
+    Keep,
+    Redirect(String),
+    Ambiguous(String),
+    TooMany(String),
+    /// the receiver reached a trait a denial removes it from; a call inside a
+    Denied(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct NegativeImplDef {
+    pub trait_name: String,
+    pub trait_args: Vec<InferType>,
+    pub self_type: InferType,
+    pub owner: ModuleId,
+    pub span: aelys_syntax::Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct TraitImplDef {
+    pub opens: bool,
     pub trait_name: String,
     pub trait_args: Vec<InferType>,
     pub self_type: InferType,
@@ -92,11 +270,14 @@ pub enum FromSelection {
     Identity,
     Selected(String),
     Unresolved(Vec<String>),
+    Denied,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundSelection {
     CompilerRule,
+    /// impls of one instantiation of one trait, none of them outranking the rest
+    AmbiguousSpecialization,
     Selected(String),
     Ambiguous,
     Missing,
@@ -119,6 +300,7 @@ pub struct TypeTable {
     trait_methods: HashMap<(String, String), Vec<TraitMethod>>,
     trait_impls: HashMap<(String, String, String), ()>,
     trait_impl_defs: Vec<TraitImplDef>,
+    negative_impls: Vec<NegativeImplDef>,
 }
 
 impl TypeTable {
@@ -171,6 +353,14 @@ impl TypeTable {
 
     pub fn has_nominal(&self, name: &str) -> bool {
         self.has_struct(name) || self.has_enum(name)
+    }
+
+    pub fn nominal_owner(&self, name: &str) -> Option<&ModuleId> {
+        self.structs
+            .get(name)
+            .map(|def| &def.owner)
+            .or_else(|| self.enums.get(name).map(|def| &def.owner))
+            .or_else(|| self.traits.get(name).map(|def| &def.owner))
     }
 
     pub fn nominal_keyword(&self, name: &str) -> Option<&'static str> {
@@ -390,27 +580,85 @@ impl TypeTable {
         }
     }
 
-    // has not resolved yet cannot be mistaken for a competing one.
-    pub fn trait_impl_overlaps_among(
+    // an entry whose header has not resolved yet must not read as a competing one
+    pub fn trait_impl_overlap_among(
         &self,
         indices: &[usize],
         trait_name: &str,
         trait_args: &[InferType],
         self_type: &InferType,
+        opens: bool,
+    ) -> Option<InferType> {
+        indices
+            .iter()
+            .filter_map(|index| self.trait_impl_defs.get(*index))
+            .find(|definition| {
+                definition.trait_name == trait_name
+                    && headers_overlap(
+                        &definition.self_type,
+                        &definition.trait_args,
+                        self_type,
+                        trait_args,
+                    )
+                    && !self.opens_to_specialization(definition, self_type, opens)
+            })
+            .map(|definition| definition.self_type.clone())
+    }
+
+    /// an impl that replaces an open root inherits the root's associated items,
+    pub fn replaces_an_open_root(&self, trait_name: &str, self_type: &InferType) -> bool {
+        self.trait_impl_defs.iter().any(|root| {
+            root.opens
+                && root.trait_name == trait_name
+                && strictly_more_specific(self_type, &root.self_type)
+        })
+    }
+
+    /// two headers of one trait that subsume each other: no type will ever tell
+    pub fn equally_specific_overlap(
+        &self,
+        indices: &[usize],
+        trait_name: &str,
+        trait_args: &[InferType],
+        self_type: &InferType,
+        opens: bool,
     ) -> bool {
         indices
             .iter()
             .filter_map(|index| self.trait_impl_defs.get(*index))
             .any(|definition| {
                 definition.trait_name == trait_name
-                    && definition.trait_args.len() == trait_args.len()
-                    && definition
-                        .trait_args
-                        .iter()
-                        .zip(trait_args)
-                        .all(|(left, right)| types_overlap(left, right))
-                    && types_overlap(&definition.self_type, self_type)
+                    && same_instantiation(&definition.trait_args, trait_args)
+                    && (definition.opens || opens)
+                    && subsumes(&definition.self_type, self_type)
+                    && subsumes(self_type, &definition.self_type)
             })
+    }
+
+    /// an overlap is licit when one header is strictly more specific than the
+    fn opens_to_specialization(
+        &self,
+        seen: &TraitImplDef,
+        incoming: &InferType,
+        incoming_opens: bool,
+    ) -> bool {
+        if strictly_more_specific(incoming, &seen.self_type) {
+            return seen.opens;
+        }
+        if strictly_more_specific(&seen.self_type, incoming) {
+            return incoming_opens;
+        }
+        // neither outranks the other, so the pair alone cannot answer: they may
+        self.shares_an_open_root(seen, incoming)
+    }
+
+    fn shares_an_open_root(&self, seen: &TraitImplDef, incoming: &InferType) -> bool {
+        self.trait_impl_defs.iter().any(|root| {
+            root.opens
+                && root.trait_name == seen.trait_name
+                && strictly_more_specific(&seen.self_type, &root.self_type)
+                && strictly_more_specific(incoming, &root.self_type)
+        })
     }
 
     pub fn types_match(&self, expected: &InferType, actual: &InferType) -> bool {
@@ -431,6 +679,41 @@ impl TypeTable {
         self.trait_declaring_item_in(trait_name, item, None)
     }
 
+    /// every supertrait an impl of this trait at this instantiation must satisfy,
+    pub fn supertrait_obligations(
+        &self,
+        trait_name: &str,
+        trait_args: &[InferType],
+    ) -> Vec<(String, Vec<InferType>)> {
+        let mut out = Vec::new();
+        let mut queue =
+            std::collections::VecDeque::from([(trait_name.to_string(), trait_args.to_vec())]);
+        // the identity of an obligation is its instantiation, not its name: a
+        let mut seen = std::collections::HashSet::new();
+        while let Some((name, args)) = queue.pop_front() {
+            if !seen.insert(instantiation_key(&name, &args)) {
+                continue;
+            }
+            if let Some(definition) = self.get_trait(&name) {
+                let mut substitution = crate::unify::Substitution::new();
+                for (param, ty) in definition.type_params.iter().zip(&args) {
+                    substitution.bind_param(param.clone(), ty.clone());
+                }
+                for (super_name, super_args) in &definition.super_bounds {
+                    queue.push_back((
+                        super_name.clone(),
+                        super_args
+                            .iter()
+                            .map(|arg| substitution.apply(arg))
+                            .collect(),
+                    ));
+                }
+            }
+            out.push((name, args));
+        }
+        out
+    }
+
     // keyed on one trait must accept an impl of any of them, and must not pick a
     pub fn supertrait_closure(&self, trait_name: &str) -> Vec<String> {
         let mut closure = Vec::new();
@@ -441,7 +724,7 @@ impl TypeTable {
                 continue;
             }
             if let Some(definition) = self.get_trait(&name) {
-                queue.extend(definition.super_bounds.iter().cloned());
+                queue.extend(definition.super_bounds.iter().map(|(name, _)| name.clone()));
             }
             closure.push(name);
         }
@@ -476,7 +759,7 @@ impl TypeTable {
             if declares {
                 return Some(name);
             }
-            queue.extend(definition.super_bounds.iter().cloned());
+            queue.extend(definition.super_bounds.iter().map(|(name, _)| name.clone()));
         }
         None
     }
@@ -533,54 +816,396 @@ impl TypeTable {
         let closure = trait_name
             .as_deref()
             .map(|name| self.supertrait_closure(name));
-        let mut found = Vec::new();
-        for implementation in &self.trait_impl_defs {
-            if closure
-                .as_deref()
-                .is_some_and(|names| !names.contains(&implementation.trait_name))
-            {
-                continue;
+        // a replacement of an open root supplies the item too, so a projection on a
+        let candidates: Vec<&TraitImplDef> = self
+            .trait_impl_defs
+            .iter()
+            .filter(|implementation| {
+                closure
+                    .as_deref()
+                    .is_none_or(|names| names.contains(&implementation.trait_name))
+                    && subsumes(&implementation.self_type, self_ty)
+                    && implementation
+                        .associated_types
+                        .iter()
+                        .any(|(name, _)| name == item)
+            })
+            .collect();
+        let chosen = match candidates.as_slice() {
+            [] => None,
+            [only] => Some(*only),
+            _ => {
+                let minima: Vec<&&TraitImplDef> = candidates
+                    .iter()
+                    .filter(|candidate| {
+                        !candidates.iter().any(|other| {
+                            other.trait_name == candidate.trait_name
+                                && strictly_more_specific(&other.self_type, &candidate.self_type)
+                        })
+                    })
+                    .collect();
+                match minima.as_slice() {
+                    [only] => Some(**only),
+                    _ => None,
+                }
             }
-            if !type_matches(&implementation.self_type, self_ty)
-                && !type_matches(self_ty, &implementation.self_type)
-            {
-                continue;
-            }
-            if let Some((_, ty)) = implementation
-                .associated_types
-                .iter()
-                .find(|(name, _)| name == item)
-            {
-                found.push(instantiate_impl_definition(
-                    &implementation.self_type,
-                    self_ty,
-                    ty,
-                ));
-            }
-        }
-        if found.len() == 1 {
-            Some(found.swap_remove(0))
-        } else {
-            None
-        }
+        }?;
+        let (_, ty) = chosen
+            .associated_types
+            .iter()
+            .find(|(name, _)| name == item)?;
+        Some(instantiate_impl_definition(&chosen.self_type, self_ty, ty))
     }
 
     pub fn trait_impl_defs(&self) -> &[TraitImplDef] {
         &self.trait_impl_defs
     }
 
-    pub fn trait_method_candidates(&self, receiver: &InferType, name: &str) -> Vec<TraitMethod> {
-        self.trait_impl_defs
+    pub fn push_negative_impl(&mut self, definition: NegativeImplDef) {
+        self.negative_impls.push(definition);
+    }
+
+    /// two headers of one trait on one nominal that overlap without one being
+    pub fn negative_header_clash(
+        &self,
+        trait_name: &str,
+        self_type: &InferType,
+        trait_args: &[InferType],
+    ) -> bool {
+        self.negative_impls.iter().any(|definition| {
+            definition.trait_name == trait_name
+                && headers_overlap(
+                    &definition.self_type,
+                    &definition.trait_args,
+                    self_type,
+                    trait_args,
+                )
+                && !strictly_more_specific(self_type, &definition.self_type)
+                && !strictly_more_specific(&definition.self_type, self_type)
+        })
+    }
+
+    /// only a denial strictly more specific than a positive header carves a hole
+    pub fn positive_negative_clash(
+        &self,
+        trait_name: &str,
+        self_type: &InferType,
+        trait_args: &[InferType],
+    ) -> bool {
+        self.negative_impls.iter().any(|definition| {
+            definition.trait_name == trait_name
+                && headers_overlap(
+                    &definition.self_type,
+                    &definition.trait_args,
+                    self_type,
+                    trait_args,
+                )
+                && !strictly_more_specific(&definition.self_type, self_type)
+        })
+    }
+
+    /// the mirror, for a negative header meeting the positive impls already seen
+    pub fn positive_header_clash(
+        &self,
+        trait_name: &str,
+        self_type: &InferType,
+        trait_args: &[InferType],
+    ) -> bool {
+        self.trait_impl_defs.iter().any(|definition| {
+            definition.trait_name == trait_name
+                && headers_overlap(
+                    &definition.self_type,
+                    &definition.trait_args,
+                    self_type,
+                    trait_args,
+                )
+                && !(definition.opens && strictly_more_specific(self_type, &definition.self_type))
+        })
+    }
+
+    /// the symbol of the most specific impl that can receive this type, when the
+    pub const MAX_APPLICABLE_IMPLS: usize = 64;
+
+    pub fn select_specialization(
+        &self,
+        receiver: &InferType,
+        current: &str,
+    ) -> SpecializationChoice {
+        if !receiver.is_concrete() {
+            return SpecializationChoice::Keep;
+        }
+        let Some(root) = self
+            .trait_impl_defs
             .iter()
-            .filter(|implementation| type_matches(&implementation.self_type, receiver))
-            .flat_map(|implementation| {
-                implementation
-                    .methods
-                    .iter()
-                    .filter(move |method| method.name == name)
-                    .cloned()
+            .find(|definition| definition.methods.iter().any(|e| e.symbol == current))
+        else {
+            return SpecializationChoice::Keep;
+        };
+        let Some(method) = root
+            .methods
+            .iter()
+            .find(|entry| entry.symbol == current)
+            .map(|entry| entry.name.clone())
+        else {
+            return SpecializationChoice::Keep;
+        };
+        // is about the trait this receiver reaches, so they are instantiated for it
+        let reached_args = instantiate_args(&root.self_type, &root.trait_args, receiver);
+        if self.denies(&root.trait_name, receiver, &reached_args) {
+            return SpecializationChoice::Denied(root.trait_name.clone());
+        }
+        let applicable: Vec<&TraitImplDef> = self
+            .trait_impl_defs
+            .iter()
+            .filter(|definition| {
+                definition.trait_name == root.trait_name
+                    && comparable_headers(
+                        &definition.self_type,
+                        &definition.trait_args,
+                        &root.self_type,
+                        &root.trait_args,
+                    )
+                    && subsumes(&definition.self_type, receiver)
+                    && definition.methods.iter().any(|entry| entry.name == method)
             })
-            .collect()
+            .collect();
+        if applicable.len() > Self::MAX_APPLICABLE_IMPLS {
+            return SpecializationChoice::TooMany(root.trait_name.clone());
+        }
+        let minima: Vec<&&TraitImplDef> = applicable
+            .iter()
+            .filter(|candidate| {
+                !applicable
+                    .iter()
+                    .any(|other| strictly_more_specific(&other.self_type, &candidate.self_type))
+            })
+            .collect();
+        if minima.len() > 1 {
+            return SpecializationChoice::Ambiguous(root.trait_name.clone());
+        }
+        let Some(best) = minima.first() else {
+            return SpecializationChoice::Keep;
+        };
+        if std::ptr::eq(**best, root) {
+            return SpecializationChoice::Keep;
+        }
+        best.methods
+            .iter()
+            .find(|entry| entry.name == method)
+            .map(|entry| SpecializationChoice::Redirect(entry.symbol.clone()))
+            .unwrap_or(SpecializationChoice::Keep)
+    }
+
+    /// when several impls of one trait supply the method and they form a chain,
+    pub fn specialization_root(&self, target: &str, method: &str) -> Option<String> {
+        let supplying: Vec<&TraitImplDef> = self
+            .trait_impl_defs
+            .iter()
+            .filter(|definition| {
+                nominal_name(&definition.self_type).as_deref() == Some(target)
+                    && definition.methods.iter().any(|entry| entry.name == method)
+            })
+            .collect();
+        if supplying.len() < 2 {
+            return None;
+        }
+        let first = supplying.first()?;
+        if supplying.iter().any(|other| {
+            other.trait_name != first.trait_name
+                || !comparable_headers(
+                    &other.self_type,
+                    &other.trait_args,
+                    &first.self_type,
+                    &first.trait_args,
+                )
+        }) {
+            // a trait implemented at several instantiations is e0437's business,
+            return None;
+        }
+        // candidates that cannot both receive one type need no root: whichever is
+        let disjoint = supplying.iter().all(|candidate| {
+            supplying.iter().all(|other| {
+                std::ptr::eq(*other, *candidate)
+                    || !types_overlap(&other.self_type, &candidate.self_type)
+            })
+        });
+        let root = match disjoint {
+            true => supplying.first()?,
+            false => {
+                let found = supplying.iter().find(|candidate| {
+                    supplying.iter().all(|other| {
+                        std::ptr::eq(*other, **candidate)
+                            || strictly_more_specific(&other.self_type, &candidate.self_type)
+                    })
+                })?;
+                if !found.opens {
+                    return None;
+                }
+                found
+            }
+        };
+        root.methods
+            .iter()
+            .find(|entry| entry.name == method)
+            .map(|entry| entry.symbol.clone())
+    }
+
+    /// the symbols an ordering leaves out: every applicable impl that another
+    pub fn symbols_outranked(&self, receiver: &InferType, method: &str) -> Vec<String> {
+        if !receiver.is_concrete() {
+            return Vec::new();
+        }
+        let applicable: Vec<&TraitImplDef> = self
+            .trait_impl_defs
+            .iter()
+            .filter(|definition| subsumes(&definition.self_type, receiver))
+            .filter(|definition| definition.methods.iter().any(|entry| entry.name == method))
+            .collect();
+        let mut out = Vec::new();
+        for definition in &applicable {
+            let outranked = applicable.iter().any(|other| {
+                other.trait_name == definition.trait_name
+                    && comparable_headers(
+                        &other.self_type,
+                        &other.trait_args,
+                        &definition.self_type,
+                        &definition.trait_args,
+                    )
+                    && strictly_more_specific(&other.self_type, &definition.self_type)
+            });
+            if !outranked {
+                continue;
+            }
+            for entry in &definition.methods {
+                if entry.name == method {
+                    out.push(entry.symbol.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// the symbols of impls whose self type cannot receive this receiver; a
+    pub fn symbols_not_applying(&self, receiver: &InferType, method: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        // an open receiver rules nothing out: every impl could still be the one
+        if !receiver.is_concrete() {
+            return out;
+        }
+        for definition in &self.trait_impl_defs {
+            if subsumes(&definition.self_type, receiver) {
+                continue;
+            }
+            for entry in &definition.methods {
+                if entry.name == method {
+                    out.push(entry.symbol.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// the symbol an impl of this trait on this nominal gives the named method
+    pub fn trait_impl_method(
+        &self,
+        trait_name: &str,
+        target: &str,
+        method: &str,
+    ) -> Option<String> {
+        let mut found: Option<String> = None;
+        for definition in &self.trait_impl_defs {
+            if definition.trait_name != trait_name
+                || nominal_name(&definition.self_type).as_deref() != Some(target)
+            {
+                continue;
+            }
+            for entry in &definition.methods {
+                if entry.name != method {
+                    continue;
+                }
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(entry.symbol.clone());
+            }
+        }
+        found
+    }
+
+    /// the traits whose impls on this nominal supply the named method
+    pub fn traits_supplying(&self, target: &str, method: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for definition in &self.trait_impl_defs {
+            if nominal_name(&definition.self_type).as_deref() != Some(target) {
+                continue;
+            }
+            if !definition.methods.iter().any(|entry| entry.name == method) {
+                continue;
+            }
+            if !names.contains(&definition.trait_name) {
+                names.push(definition.trait_name.clone());
+            }
+        }
+        names
+    }
+
+    /// the denial is matched against the receiver type, never against its bare
+    pub fn denies(&self, trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
+        self.negative_impls.iter().any(|definition| {
+            definition.trait_name == trait_name
+                && definition.trait_args.len() == trait_args.len()
+                && header_covers(
+                    &definition.self_type,
+                    &definition.trait_args,
+                    ty,
+                    trait_args,
+                )
+        })
+    }
+
+    /// the impls of `target` that supply any of `symbols`, as (trait name, its instantiation)
+    pub fn trait_impls_supplying(&self, target: &str, symbols: &[String]) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for definition in &self.trait_impl_defs {
+            if nominal_name(&definition.self_type).as_deref() != Some(target) {
+                continue;
+            }
+            if !definition
+                .methods
+                .iter()
+                .any(|method| symbols.contains(&method.symbol))
+            {
+                continue;
+            }
+            let entry = (
+                definition.trait_name.clone(),
+                trait_instantiation_spelling(&definition.trait_name, &definition.trait_args),
+            );
+            if !out.contains(&entry) {
+                out.push(entry);
+            }
+        }
+        // the listing is read by a diagnostic, so source order must not reach it
+        out.sort();
+        out
+    }
+
+    pub fn trait_instantiations_of(&self, target: &str, trait_name: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for definition in &self.trait_impl_defs {
+            if definition.trait_name != trait_name
+                || nominal_name(&definition.self_type).as_deref() != Some(target)
+            {
+                continue;
+            }
+            let spelling = trait_instantiation_spelling(trait_name, &definition.trait_args);
+            if !out.contains(&spelling) {
+                out.push(spelling);
+            }
+        }
+        // the listing is read by a diagnostic, so source order must not reach it
+        out.sort();
+        out
     }
 
     pub fn has_trait_impl(&self, trait_name: &str, target: &str) -> bool {
@@ -616,40 +1241,101 @@ impl TypeTable {
         ty: &InferType,
         trait_args: &[InferType],
     ) -> bool {
+        // the denial is read first, and before the prelude short circuit, or a
+        if self.denies(trait_name, ty, trait_args) {
+            return false;
+        }
         if crate::prelude::provides(trait_name, ty, trait_args) {
             return true;
         }
-        nominal_name(ty)
-            .is_some_and(|target| self.has_trait_impl_with_args(trait_name, &target, trait_args))
+        self.implements(trait_name, ty, trait_args)
     }
 
+    /// whether an impl of this trait covers this exact type with these exact trait
+    pub fn implements(&self, trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
+        // answered by the name alone; only a concrete question can be refused on
+        if !ty.is_concrete() || trait_args.iter().any(|arg| !arg.is_concrete()) {
+            return nominal_name(ty).is_some_and(|target| {
+                self.has_trait_impl_with_args(trait_name, &target, trait_args)
+            });
+        }
+        self.trait_impl_defs.iter().any(|definition| {
+            definition.trait_name == trait_name
+                // instantiation, exactly as the registry answered before
+                && if trait_args.is_empty() {
+                    subsumes(&definition.self_type, ty)
+                } else {
+                    definition.trait_args.len() == trait_args.len()
+                        && header_covers(
+                            &definition.self_type,
+                            &definition.trait_args,
+                            ty,
+                            trait_args,
+                        )
+                }
+        }) || nominal_name(ty).is_some_and(|target| {
+            // the registered triples carry no header types, so they answer only the
+            self.trait_impls.keys().any(|(name, impl_target, args)| {
+                name == trait_name
+                    && *impl_target == target
+                    && (trait_args.is_empty() || args == &type_args_key(trait_args))
+            })
+        })
+    }
+
+    /// the denial is read first, and before the prelude short circuit. a display
     pub fn select_bound_method(
         &self,
         trait_name: &str,
         ty: &InferType,
         method_name: &str,
     ) -> BoundSelection {
+        if self.denies(trait_name, ty, &[]) {
+            return BoundSelection::Missing;
+        }
         if crate::prelude::provides(trait_name, ty, &[]) {
             return BoundSelection::CompilerRule;
         }
-        let mut symbols = Vec::new();
-        if let Some(target) = nominal_name(ty) {
-            for definition in &self.trait_impl_defs {
-                if definition.trait_name != trait_name
-                    || nominal_name(&definition.self_type).as_deref() != Some(target.as_str())
+        // the bound names the trait, the receiver names the impl: a header the
+        let mut candidates: Vec<(&TraitImplDef, String)> = Vec::new();
+        for definition in &self.trait_impl_defs {
+            if definition.trait_name != trait_name || !subsumes(&definition.self_type, ty) {
+                continue;
+            }
+            for method in &definition.methods {
+                if method.name == method_name
+                    && !candidates.iter().any(|(_, known)| *known == method.symbol)
                 {
-                    continue;
-                }
-                for method in &definition.methods {
-                    if method.name == method_name && !symbols.contains(&method.symbol) {
-                        symbols.push(method.symbol.clone());
-                    }
+                    candidates.push((definition, method.symbol.clone()));
                 }
             }
         }
-        match symbols.len() {
+        // two instantiations of one trait declare different signatures, so the
+        let one_instantiation = candidates.first().is_some_and(|(first, _)| {
+            candidates.iter().all(|(other, _)| {
+                comparable_headers(
+                    &first.self_type,
+                    &first.trait_args,
+                    &other.self_type,
+                    &other.trait_args,
+                )
+            })
+        });
+        if candidates.len() > 1 && one_instantiation {
+            let most_specific = candidates.iter().position(|(definition, _)| {
+                candidates.iter().all(|(other, _)| {
+                    std::ptr::eq(*definition, *other)
+                        || strictly_more_specific(&definition.self_type, &other.self_type)
+                })
+            });
+            return match most_specific {
+                Some(index) => BoundSelection::Selected(candidates.swap_remove(index).1),
+                None => BoundSelection::AmbiguousSpecialization,
+            };
+        }
+        match candidates.len() {
             0 => BoundSelection::Missing,
-            1 => BoundSelection::Selected(symbols.swap_remove(0)),
+            1 => BoundSelection::Selected(candidates.swap_remove(0).1),
             // two impls of the same trait differing only in trait arguments cannot be told apart here
             _ => BoundSelection::Ambiguous,
         }
@@ -673,6 +1359,14 @@ impl TypeTable {
     }
 
     pub fn select_from_conversion(&self, source: &InferType, target: &InferType) -> FromSelection {
+        // the denial names the conversion this site asks for, target and source
+        if self.denies(
+            crate::prelude::FROM_TRAIT,
+            target,
+            std::slice::from_ref(source),
+        ) {
+            return FromSelection::Denied;
+        }
         if crate::prelude::provides(
             crate::prelude::FROM_TRAIT,
             target,
@@ -680,24 +1374,54 @@ impl TypeTable {
         ) {
             return FromSelection::Identity;
         }
-        let mut symbols = Vec::new();
-        for definition in self.matching_from_impls(target) {
-            if !type_matches(&definition.trait_args[0], source) {
-                continue;
-            }
-            for method in &definition.methods {
-                if method.name == crate::prelude::FROM_METHOD
-                    && !method.symbol.is_empty()
-                    && !symbols.contains(&method.symbol)
-                {
-                    symbols.push(method.symbol.clone());
+        // the two halves of a conversion header are matched under **one**
+        let candidates: Vec<&TraitImplDef> = self
+            .matching_from_impls(target)
+            .filter(|definition| {
+                let mut mapping = std::collections::HashMap::new();
+                crate::infer::monomorphize::match_types(&definition.self_type, target, &mut mapping)
+                    .and_then(|()| {
+                        crate::infer::monomorphize::match_types(
+                            &definition.trait_args[0],
+                            source,
+                            &mut mapping,
+                        )
+                    })
+                    .is_some()
+            })
+            .collect();
+        // a conversion is specialized like any other impl, and its order reads both
+        let chosen = match candidates.len() {
+            0 => None,
+            1 => candidates.first().copied(),
+            _ => {
+                let minima: Vec<&&TraitImplDef> = candidates
+                    .iter()
+                    .filter(|candidate| {
+                        !candidates
+                            .iter()
+                            .any(|other| conversion_outranks(other, candidate))
+                    })
+                    .collect();
+                match minima.as_slice() {
+                    [only] => Some(**only),
+                    _ => None,
                 }
             }
+        };
+        let symbol = chosen.and_then(|definition| {
+            definition
+                .methods
+                .iter()
+                .find(|method| {
+                    method.name == crate::prelude::FROM_METHOD && !method.symbol.is_empty()
+                })
+                .map(|method| method.symbol.clone())
+        });
+        match symbol {
+            Some(symbol) => FromSelection::Selected(symbol),
+            None => FromSelection::Unresolved(self.conversion_headers_for(target)),
         }
-        if symbols.len() == 1 {
-            return FromSelection::Selected(symbols.swap_remove(0));
-        }
-        FromSelection::Unresolved(self.conversion_headers_for(target))
     }
 
     pub fn conversion_headers_for(&self, target: &InferType) -> Vec<String> {
@@ -975,6 +1699,34 @@ fn type_matches(pattern: &InferType, actual: &InferType) -> bool {
         (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err)) => {
             type_matches(expected_ok, found_ok) && type_matches(expected_err, found_err)
         }
+        (
+            InferType::FixedArray(expected, expected_len),
+            InferType::FixedArray(found, found_len),
+        ) => expected_len == found_len && type_matches(expected, found),
+        (InferType::Tuple(expected), InferType::Tuple(found)) => {
+            expected.len() == found.len()
+                && expected
+                    .iter()
+                    .zip(found)
+                    .all(|(expected, found)| type_matches(expected, found))
+        }
+        (
+            InferType::Function {
+                params: expected_params,
+                ret: expected_ret,
+            },
+            InferType::Function {
+                params: found_params,
+                ret: found_ret,
+            },
+        ) => {
+            expected_params.len() == found_params.len()
+                && expected_params
+                    .iter()
+                    .zip(found_params)
+                    .all(|(expected, found)| type_matches(expected, found))
+                && type_matches(expected_ret, found_ret)
+        }
         _ => pattern == actual,
     }
 }
@@ -983,10 +1735,124 @@ pub(crate) fn headers_unify(left: &InferType, right: &InferType) -> bool {
     types_overlap(left, right)
 }
 
+/// two headers overlap when **one** type satisfies both. that is a unification, not
 fn types_overlap(left: &InferType, right: &InferType) -> bool {
-    match (left, right) {
-        (InferType::Param(_), _) | (InferType::Var(_), _) => true,
-        (_, InferType::Param(_)) | (_, InferType::Var(_)) => true,
+    headers_overlap(left, &[], right, &[])
+}
+
+/// a header is its target **and** its trait arguments, and the overlap question is
+fn headers_overlap(
+    left: &InferType,
+    left_args: &[InferType],
+    right: &InferType,
+    right_args: &[InferType],
+) -> bool {
+    if left_args.len() != right_args.len() {
+        return false;
+    }
+    let mut bindings = std::collections::HashMap::new();
+    if !unify_headers(
+        &tag_params(left, "l:"),
+        &tag_params(right, "r:"),
+        &mut bindings,
+    ) {
+        return false;
+    }
+    left_args.iter().zip(right_args).all(|(left, right)| {
+        unify_headers(
+            &tag_params(left, "l:"),
+            &tag_params(right, "r:"),
+            &mut bindings,
+        )
+    })
+}
+
+/// the two headers name their parameters independently, so one side is renamed
+fn tag_params(ty: &InferType, prefix: &str) -> InferType {
+    match ty {
+        InferType::Param(name) => InferType::Param(format!("{prefix}{name}")),
+        InferType::Applied { name, args } => InferType::Applied {
+            name: name.clone(),
+            args: args.iter().map(|arg| tag_params(arg, prefix)).collect(),
+        },
+        InferType::Option(inner) => InferType::Option(Box::new(tag_params(inner, prefix))),
+        InferType::Array(inner) => InferType::Array(Box::new(tag_params(inner, prefix))),
+        InferType::FixedArray(inner, length) => {
+            InferType::FixedArray(Box::new(tag_params(inner, prefix)), *length)
+        }
+        InferType::Vec(inner) => InferType::Vec(Box::new(tag_params(inner, prefix))),
+        InferType::Result(ok, err) => InferType::Result(
+            Box::new(tag_params(ok, prefix)),
+            Box::new(tag_params(err, prefix)),
+        ),
+        InferType::Tuple(elements) => {
+            InferType::Tuple(elements.iter().map(|e| tag_params(e, prefix)).collect())
+        }
+        InferType::Function { params, ret } => InferType::Function {
+            params: params.iter().map(|p| tag_params(p, prefix)).collect(),
+            ret: Box::new(tag_params(ret, prefix)),
+        },
+        other => other.clone(),
+    }
+}
+
+fn resolved_binding(
+    ty: &InferType,
+    bindings: &std::collections::HashMap<String, InferType>,
+) -> InferType {
+    let mut current = ty.clone();
+    while let InferType::Param(name) = &current {
+        match bindings.get(name) {
+            Some(bound) if *bound != current => current = bound.clone(),
+            _ => break,
+        }
+    }
+    current
+}
+
+/// a parameter cannot stand for a type that contains it: the answer would be an
+fn occurs_in(
+    name: &str,
+    ty: &InferType,
+    bindings: &std::collections::HashMap<String, InferType>,
+) -> bool {
+    match resolved_binding(ty, bindings) {
+        InferType::Param(found) => found == name,
+        InferType::Applied { args, .. } => args.iter().any(|arg| occurs_in(name, arg, bindings)),
+        InferType::Option(inner)
+        | InferType::Array(inner)
+        | InferType::FixedArray(inner, _)
+        | InferType::Vec(inner) => occurs_in(name, &inner, bindings),
+        InferType::Result(ok, err) => {
+            occurs_in(name, &ok, bindings) || occurs_in(name, &err, bindings)
+        }
+        InferType::Tuple(elements) => elements.iter().any(|e| occurs_in(name, e, bindings)),
+        InferType::Function { params, ret } => {
+            params.iter().any(|p| occurs_in(name, p, bindings)) || occurs_in(name, &ret, bindings)
+        }
+        _ => false,
+    }
+}
+
+fn unify_headers(
+    left: &InferType,
+    right: &InferType,
+    bindings: &mut std::collections::HashMap<String, InferType>,
+) -> bool {
+    let left = resolved_binding(left, bindings);
+    let right = resolved_binding(right, bindings);
+    match (&left, &right) {
+        (InferType::Var(_), _) | (_, InferType::Var(_)) => true,
+        (InferType::Param(name), other) | (other, InferType::Param(name)) => {
+            if matches!(other, InferType::Param(found) if found == name) {
+                return true;
+            }
+            if occurs_in(name, other, bindings) {
+                return false;
+            }
+            bindings.insert(name.clone(), other.clone());
+            true
+        }
         (InferType::Struct(left), InferType::Struct(right)) => left == right,
         (
             InferType::Applied {
@@ -1003,13 +1869,41 @@ fn types_overlap(left: &InferType, right: &InferType) -> bool {
                 && left_args
                     .iter()
                     .zip(right_args)
-                    .all(|(left, right)| types_overlap(left, right))
+                    .all(|(left, right)| unify_headers(left, right, bindings))
         }
         (InferType::Option(left), InferType::Option(right))
         | (InferType::Array(left), InferType::Array(right))
-        | (InferType::Vec(left), InferType::Vec(right)) => types_overlap(left, right),
+        | (InferType::Vec(left), InferType::Vec(right)) => unify_headers(left, right, bindings),
+        (InferType::FixedArray(left, left_len), InferType::FixedArray(right, right_len)) => {
+            left_len == right_len && unify_headers(left, right, bindings)
+        }
         (InferType::Result(left_ok, left_err), InferType::Result(right_ok, right_err)) => {
-            types_overlap(left_ok, right_ok) && types_overlap(left_err, right_err)
+            unify_headers(left_ok, right_ok, bindings)
+                && unify_headers(left_err, right_err, bindings)
+        }
+        (InferType::Tuple(left), InferType::Tuple(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| unify_headers(left, right, bindings))
+        }
+        (
+            InferType::Function {
+                params: left_params,
+                ret: left_ret,
+            },
+            InferType::Function {
+                params: right_params,
+                ret: right_ret,
+            },
+        ) => {
+            left_params.len() == right_params.len()
+                && left_params
+                    .iter()
+                    .zip(right_params)
+                    .all(|(left, right)| unify_headers(left, right, bindings))
+                && unify_headers(left_ret, right_ret, bindings)
         }
         _ => left == right,
     }
@@ -1020,4 +1914,12 @@ pub(crate) fn nominal_name(ty: &InferType) -> Option<String> {
         InferType::Struct(name) | InferType::Applied { name, .. } => Some(name.clone()),
         _ => None,
     }
+}
+
+pub(crate) fn trait_instantiation_spelling(trait_name: &str, trait_args: &[InferType]) -> String {
+    if trait_args.is_empty() {
+        return trait_name.to_string();
+    }
+    let args: Vec<String> = trait_args.iter().map(InferType::source_spelling).collect();
+    format!("{trait_name}<{}>", args.join(", "))
 }

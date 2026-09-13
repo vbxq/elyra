@@ -1,5 +1,6 @@
 use super::ConstraintReason;
 use crate::types::{InferType, TypeVarId};
+use aelys_bytecode::Value;
 use aelys_syntax::{ModuleId, Span};
 use std::fmt;
 
@@ -273,6 +274,7 @@ pub enum TypeErrorKind {
         name: String,
         keyword: &'static str,
         collides_with: Option<&'static str>,
+        modules: Option<(String, String)>,
     },
     DuplicateStructField {
         structure: String,
@@ -422,6 +424,12 @@ pub enum TypeErrorKind {
         target: String,
         method: String,
     },
+    AmbiguousTraitInstantiation {
+        target: String,
+        method: String,
+        trait_name: String,
+        instantiations: Vec<String>,
+    },
     UnboundTypeParamMethod {
         param: String,
         method: String,
@@ -431,7 +439,11 @@ pub enum TypeErrorKind {
     },
     UnsatisfiedTraitBound {
         trait_name: String,
+        /// the instantiation the question carried, so the message does not name a
+        trait_args: Vec<InferType>,
         ty: InferType,
+        /// set when a negative impl removed the trait, so the message does not
+        denied: bool,
     },
     MissingSupertraitImpl {
         trait_name: String,
@@ -442,9 +454,34 @@ pub enum TypeErrorKind {
         trait_name: String,
         target: InferType,
     },
+    NegativeImplOrphan {
+        trait_name: String,
+        target: InferType,
+    },
+    PositiveNegativeConflict {
+        trait_name: String,
+        target: InferType,
+    },
+    OverlappingImplHeaders {
+        trait_name: String,
+        target: InferType,
+    },
+    UnorderedSpecialization {
+        trait_name: String,
+        target: InferType,
+    },
+    AmbiguousSpecialization {
+        trait_name: String,
+        target: InferType,
+    },
+    SpecializationLimit {
+        trait_name: String,
+        target: InferType,
+    },
     OverlappingTraitImpl {
         trait_name: String,
         target: InferType,
+        partner: InferType,
     },
     DuplicateTraitMethod {
         trait_name: String,
@@ -465,6 +502,9 @@ pub enum TypeErrorKind {
     },
     MangledSymbolCollision {
         name: String,
+    },
+    IntegerLiteralOutOfRange {
+        value: i64,
     },
     EnumLayoutTooLarge {
         enum_name: String,
@@ -525,11 +565,19 @@ impl TypeError {
                 write!(
                     f,
                     "type mismatch: expected {}, found {} ({})",
-                    expected, found, self.reason
+                    expected.source_spelling(),
+                    found.source_spelling(),
+                    self.reason
                 )
             }
             TypeErrorKind::InfiniteType { var, ty } => {
-                write!(f, "infinite type: {} = {} ({})", var, ty, self.reason)
+                write!(
+                    f,
+                    "infinite type: {} = {} ({})",
+                    var,
+                    ty.source_spelling(),
+                    self.reason
+                )
             }
             TypeErrorKind::NotOneOf { ty, options } => {
                 if let ConstraintReason::CollectionMethodReceiver { method } = &self.reason {
@@ -541,18 +589,22 @@ impl TypeError {
                     return write!(
                         f,
                         "collection method '{}' requires {}, found {}",
-                        method, required, ty
+                        method,
+                        required,
+                        ty.source_spelling()
                     );
                 }
                 let options = options
                     .iter()
-                    .map(ToString::to_string)
+                    .map(InferType::source_spelling)
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(
                     f,
                     "type {} is not one of [{}] ({})",
-                    ty, options, self.reason
+                    ty.source_spelling(),
+                    options,
+                    self.reason
                 )
             }
             TypeErrorKind::ArityMismatch { expected, found } => {
@@ -563,7 +615,12 @@ impl TypeError {
                 )
             }
             TypeErrorKind::NotCallable { ty } => {
-                write!(f, "type {} is not callable ({})", ty, self.reason)
+                write!(
+                    f,
+                    "type {} is not callable ({})",
+                    ty.source_spelling(),
+                    self.reason
+                )
             }
             TypeErrorKind::UndefinedVariable { name } => {
                 write!(
@@ -624,7 +681,8 @@ impl TypeError {
                 write!(
                     f,
                     "cannot propagate {} with '?' from a function returning {}",
-                    source, target
+                    source.source_spelling(),
+                    target.source_spelling()
                 )
             }
             TypeErrorKind::InvalidTryResidual { source, target } => {
@@ -636,7 +694,9 @@ impl TypeError {
                 write!(
                     f,
                     "cannot propagate {} with '?' from a function returning {}: {}",
-                    source, target, residual
+                    source.source_spelling(),
+                    target.source_spelling(),
+                    residual
                 )
             }
             TypeErrorKind::UnsatisfiedTryConversion {
@@ -659,7 +719,8 @@ impl TypeError {
             TypeErrorKind::ReservedIdentityConversion { ty } => write!(
                 f,
                 "From<{}> for {} is reserved; the compiler already provides the identity conversion",
-                ty, ty
+                ty.source_spelling(),
+                ty.source_spelling()
             ),
             TypeErrorKind::UnresolvedSumType { constructor } => {
                 write!(f, "cannot infer the sum type for {}", constructor)
@@ -668,7 +729,12 @@ impl TypeError {
                 write!(f, "unknown variant '{}' for {}", variant, expected)
             }
             TypeErrorKind::InvalidSumMethod { method, receiver } => {
-                write!(f, "method '{}' is not available on {}", method, receiver)
+                write!(
+                    f,
+                    "method '{}' is not available on {}",
+                    method,
+                    receiver.source_spelling()
+                )
             }
             TypeErrorKind::DynamicSumMethod { method } => write!(
                 f,
@@ -692,7 +758,7 @@ impl TypeError {
                 write!(
                     f,
                     "function can fall through without returning {}",
-                    expected
+                    expected.source_spelling()
                 )
             }
             TypeErrorKind::MatchArmValueRequired => {
@@ -710,10 +776,15 @@ impl TypeError {
             TypeErrorKind::UntypedNativeTypeMismatch { name, expected } => write!(
                 f,
                 "untyped native '{}' cannot satisfy annotation {}",
-                name, expected
+                name,
+                expected.source_spelling()
             ),
             TypeErrorKind::InvalidIndex { receiver } => {
-                write!(f, "cannot index a value of type {}", receiver)
+                write!(
+                    f,
+                    "cannot index a value of type {}",
+                    receiver.source_spelling()
+                )
             }
             TypeErrorKind::InvalidCollectionMethod { method, receiver } => {
                 let required = match method.as_str() {
@@ -724,13 +795,16 @@ impl TypeError {
                 write!(
                     f,
                     "collection method '{}' requires {}, found {}",
-                    method, required, receiver
+                    method,
+                    required,
+                    receiver.source_spelling()
                 )
             }
             TypeErrorKind::InvalidStringMethod { method, receiver } => write!(
                 f,
                 "string method '{}' requires a string receiver, found {}",
-                method, receiver
+                method,
+                receiver.source_spelling()
             ),
             TypeErrorKind::ConstantIndexOutOfBounds { index, length } => write!(
                 f,
@@ -738,7 +812,11 @@ impl TypeError {
                 index, length
             ),
             TypeErrorKind::NotIterable { receiver } => {
-                write!(f, "cannot iterate over a value of type {}", receiver)
+                write!(
+                    f,
+                    "cannot iterate over a value of type {}",
+                    receiver.source_spelling()
+                )
             }
             TypeErrorKind::UnknownField { structure, field } => {
                 write!(f, "unknown field '{}' on struct {}", field, structure)
@@ -759,7 +837,7 @@ impl TypeError {
             TypeErrorKind::SizedArrayElementNotDefaultable { element } => write!(
                 f,
                 "cannot create a sized array of {}; initialize its elements explicitly",
-                element
+                element.source_spelling()
             ),
             TypeErrorKind::NegativeArraySize { size, constant } => match constant {
                 Some(path) => write!(
@@ -792,14 +870,16 @@ impl TypeError {
                 write!(
                     f,
                     "collection operation '{}' requires a mutable collection receiver, found {}",
-                    method, receiver
+                    method,
+                    receiver.source_spelling()
                 )
             }
             TypeErrorKind::ReadOnlyCollectionRequired { method, receiver } => {
                 write!(
                     f,
                     "collection method '{}' is unavailable through a read-only receiver of type {}",
-                    method, receiver
+                    method,
+                    receiver.source_spelling()
                 )
             }
             TypeErrorKind::UnconsumedCollectionIterator => write!(
@@ -821,12 +901,21 @@ impl TypeError {
                 name,
                 keyword,
                 collides_with,
-            } => match collides_with {
-                Some(other) => write!(
+                modules,
+            } => match (modules, collides_with) {
+                (Some((here, there)), Some(other)) => write!(
+                    f,
+                    "duplicate {keyword} declaration '{name}': module '{here}' declares it while the {other} '{name}' already comes from module '{there}'; a name comes from one module only"
+                ),
+                (Some((here, there)), None) => write!(
+                    f,
+                    "duplicate {keyword} declaration '{name}': module '{here}' declares it while '{name}' already comes from module '{there}'; a name comes from one module only"
+                ),
+                (None, Some(other)) => write!(
                     f,
                     "duplicate {keyword} declaration '{name}': the name is already taken by the {other} '{name}', and one name cannot be both; rename the {keyword} or the {other}"
                 ),
-                None => write!(f, "duplicate {keyword} declaration '{name}'"),
+                (None, None) => write!(f, "duplicate {keyword} declaration '{name}'"),
             },
             TypeErrorKind::DuplicateStructField { structure, field } => {
                 write!(f, "duplicate field '{}' in struct {}", field, structure)
@@ -835,7 +924,7 @@ impl TypeError {
             TypeErrorKind::InvalidStructMethod { method, structure } => {
                 write!(
                     f,
-                    "method '{}' is not available on struct {}",
+                    "method '{}' is not available on type '{}'",
                     method, structure
                 )
             }
@@ -1181,6 +1270,23 @@ impl TypeError {
                 "method '{}' on '{}' is provided by more than one trait; use a qualified call",
                 method, target
             ),
+            TypeErrorKind::AmbiguousTraitInstantiation {
+                target,
+                method,
+                trait_name,
+                instantiations,
+            } => write!(
+                f,
+                "method '{}' on '{}' is supplied by {} impls of the single trait '{}' ({}); a call \
+                 cannot name which of them to take, so keep one impl of '{}' for '{}'",
+                method,
+                target,
+                instantiations.len(),
+                trait_name,
+                instantiations.join(", "),
+                trait_name,
+                target
+            ),
             TypeErrorKind::UnboundTypeParamMethod { param, method } => write!(
                 f,
                 "method '{}' is not available on type parameter '{}' because no bound on '{}' provides it; add the bound '{}: Trait' that declares '{}'",
@@ -1191,29 +1297,95 @@ impl TypeError {
                 "'{}' was not specialized for this call because a type parameter stayed unknown; add a type annotation that pins every type parameter of the call",
                 name
             ),
-            TypeErrorKind::UnsatisfiedTraitBound { trait_name, ty } => write!(
+            TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name,
+                trait_args,
+                ty,
+                denied: true,
+            } => write!(
+                f,
+                "trait '{}' is denied for {} by a negative impl; remove the negative impl or use another type",
+                crate::types::trait_instantiation_spelling(trait_name, trait_args),
+                ty.source_spelling()
+            ),
+            TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name,
+                trait_args,
+                ty,
+                ..
+            } => write!(
                 f,
                 "trait '{}' is not implemented for {}; add an impl or change the bound",
-                trait_name, ty
+                crate::types::trait_instantiation_spelling(trait_name, trait_args),
+                ty.source_spelling()
             ),
             TypeErrorKind::MissingSupertraitImpl {
                 trait_name,
                 supertrait,
                 ty,
-            } => write!(
-                f,
-                "trait '{supertrait}' is not implemented for {ty}, and the impl of '{trait_name}' requires it; implement '{supertrait}' for {ty}, or drop '{supertrait}' from the supertraits of '{trait_name}'"
-            ),
+            } => {
+                let ty = ty.source_spelling();
+                write!(
+                    f,
+                    "trait '{supertrait}' is not implemented for {ty}, and the impl of '{trait_name}' requires it; implement '{supertrait}' for {ty}, or drop '{supertrait}' from the supertraits of '{trait_name}'"
+                )
+            }
             TypeErrorKind::OrphanTraitImpl { trait_name, target } => write!(
                 f,
                 "cannot implement trait '{}' for {}; the trait or type must be local",
-                trait_name, target
+                trait_name,
+                target.source_spelling()
             ),
-            TypeErrorKind::OverlappingTraitImpl { trait_name, target } => write!(
+            TypeErrorKind::NegativeImplOrphan { trait_name, target } => write!(
                 f,
-                "trait '{}' has overlapping implementations for {}; add a disjoint bound",
-                trait_name, target
+                "cannot deny trait '{}' for {}; the trait or type must be local",
+                trait_name,
+                target.source_spelling()
             ),
+            TypeErrorKind::PositiveNegativeConflict { trait_name, target } => write!(
+                f,
+                "trait '{}' is both implemented and denied for {}; keep one of the two",
+                trait_name,
+                target.source_spelling()
+            ),
+            TypeErrorKind::UnorderedSpecialization { trait_name, target } => write!(
+                f,
+                "two impls of trait '{}' for {} are equally specific, so neither can replace the other; make one strictly more specific",
+                trait_name,
+                // the two headers are equal up to the names of their parameters,
+                crate::types::positional_spelling(target)
+            ),
+            TypeErrorKind::AmbiguousSpecialization { trait_name, target } => write!(
+                f,
+                "this call to trait '{}' on {} lies where two incomparable impls both apply; add the impl that decides it",
+                trait_name,
+                target.source_spelling()
+            ),
+            TypeErrorKind::SpecializationLimit { trait_name, target } => write!(
+                f,
+                "trait '{}' has more impls applying to {} than selection will weigh; reduce them",
+                trait_name,
+                target.source_spelling()
+            ),
+            TypeErrorKind::OverlappingImplHeaders { trait_name, target } => write!(
+                f,
+                "trait '{}' has overlapping impl headers for {}; make one strictly more specific, or disjoin them",
+                trait_name,
+                crate::types::positional_spelling(target)
+            ),
+            TypeErrorKind::OverlappingTraitImpl {
+                trait_name,
+                target,
+                partner,
+            } => {
+                let mut headers = [target.source_spelling(), partner.source_spelling()];
+                headers.sort();
+                let [left, right] = headers;
+                write!(
+                    f,
+                    "trait '{trait_name}' has overlapping implementations for {left} and {right}; add a disjoint bound"
+                )
+            }
             TypeErrorKind::DuplicateTraitMethod { trait_name, method } => write!(
                 f,
                 "trait '{}' declares method '{}' more than once",
@@ -1242,6 +1414,13 @@ impl TypeError {
             TypeErrorKind::MangledSymbolCollision { name } => {
                 write!(f, "two instances of '{}' mangle to one symbol", name)
             }
+            TypeErrorKind::IntegerLiteralOutOfRange { value } => write!(
+                f,
+                "integer literal '{}' exceeds 48-bit signed range ({} to {})",
+                value,
+                Value::INT_MIN,
+                Value::INT_MAX
+            ),
             TypeErrorKind::EnumLayoutTooLarge {
                 enum_name,
                 item,
@@ -1292,7 +1471,8 @@ impl TypeError {
             TypeErrorKind::NoSuchMember { receiver, member } => write!(
                 f,
                 "no field or method '{}' on a value of type {}",
-                member, receiver
+                member,
+                receiver.source_spelling()
             ),
             TypeErrorKind::UnknownTypeName { name } => {
                 write!(f, "unknown type '{}'; no such type is in scope", name)
@@ -1399,6 +1579,18 @@ impl TypeError {
             reason: ConstraintReason::Other("recursion limit".to_string()),
         }
     }
+
+    /// the parser folds a leading `-` into the literal, so `int_min` arrives here already negative
+    pub fn integer_literal_out_of_range(value: i64, span: Span) -> Option<Self> {
+        if (Value::INT_MIN..=Value::INT_MAX).contains(&value) {
+            return None;
+        }
+        Some(TypeError {
+            kind: TypeErrorKind::IntegerLiteralOutOfRange { value },
+            span,
+            reason: ConstraintReason::Other("integer literal".to_string()),
+        })
+    }
 }
 
 impl TypeErrorKind {
@@ -1472,6 +1664,7 @@ impl TypeErrorKind {
             Self::TraitMethodNotInTrait { .. } => 335,
             Self::TraitMethodSignatureMismatch { .. } => 336,
             Self::AmbiguousTraitMethod { .. } => 337,
+            Self::AmbiguousTraitInstantiation { .. } => 437,
             Self::UnboundTypeParamMethod { .. } => 351,
             Self::UnresolvedInstanceSymbol { .. } => 352,
             Self::UnresolvedTypeVariable => 353,
@@ -1480,6 +1673,12 @@ impl TypeErrorKind {
             Self::GlobalWithoutSignature { .. } => 376,
             Self::UnsatisfiedTraitBound { .. } | Self::MissingSupertraitImpl { .. } => 338,
             Self::OrphanTraitImpl { .. } => 339,
+            Self::NegativeImplOrphan { .. } => 431,
+            Self::PositiveNegativeConflict { .. } => 432,
+            Self::OverlappingImplHeaders { .. } => 433,
+            Self::UnorderedSpecialization { .. } => 442,
+            Self::AmbiguousSpecialization { .. } => 443,
+            Self::SpecializationLimit { .. } => 444,
             Self::OverlappingTraitImpl { .. } => 340,
             Self::DuplicateTraitMethod { .. } => 341,
             Self::InvalidTraitReceiver { .. } => 342,
@@ -1487,6 +1686,7 @@ impl TypeErrorKind {
             Self::RecursiveMonomorphization { .. } => 344,
             Self::MonomorphizationLimit { .. } => 345,
             Self::MangledSymbolCollision { .. } => 355,
+            Self::IntegerLiteralOutOfRange { .. } => 209,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,
             Self::GenericArityMismatch { .. } => 357,
