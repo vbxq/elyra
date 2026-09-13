@@ -555,7 +555,7 @@ impl TypeInference {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::InvalidStructMethod {
                         method: member.clone(),
-                        structure: typed_receiver.ty.to_string(),
+                        structure: typed_receiver.ty.source_spelling(),
                     },
                     span,
                     reason: ConstraintReason::Other("qualified trait receiver".to_string()),
@@ -575,10 +575,13 @@ impl TypeInference {
             }
         };
         if !self.type_table.has_trait_impl(&trait_name, &target) {
+            let denied = self.type_table.denies(&trait_name, &typed_receiver.ty, &[]);
             self.errors.push(TypeError {
                 kind: TypeErrorKind::UnsatisfiedTraitBound {
                     trait_name: trait_name.clone(),
+                    trait_args: Vec::new(),
                     ty: typed_receiver.ty.clone(),
+                    denied,
                 },
                 span,
                 reason: ConstraintReason::Other("qualified trait method".to_string()),
@@ -597,8 +600,14 @@ impl TypeInference {
             ));
         }
         let trait_args = self.type_table.sole_trait_impl_args(&trait_name, &target);
-        let symbol = trait_method_symbol(&trait_name, &target, member, &trait_args);
-        let method = self
+        // the symbol is a function of the header, so it is looked up rather than
+        let supplied = self
+            .type_table
+            .trait_impl_method(&trait_name, &target, member);
+        let symbol = supplied
+            .clone()
+            .unwrap_or_else(|| trait_method_symbol(&trait_name, &target, member, &trait_args));
+        let mut method = self
             .type_table
             .trait_methods(&target, member)
             .iter()
@@ -621,8 +630,26 @@ impl TypeInference {
                 return_type: required.return_type.clone(),
                 has_self: required.has_self,
                 mutable_self: required.mutable_self,
+                own_type_params: required.own_type_params.clone(),
                 has_body: required.has_body,
+                is_default: false,
             });
+        // a path supplies no receiver, so nothing else stands between the
+        if !method.own_type_params.is_empty() {
+            let substitutions: HashMap<String, InferType> = method
+                .own_type_params
+                .iter()
+                .map(|parameter| (parameter.clone(), self.type_gen.fresh()))
+                .collect();
+            method.params = method
+                .params
+                .iter()
+                .map(|param| param.substitute_params(&substitutions))
+                .collect();
+            method.return_type = method.return_type.substitute_params(&substitutions);
+        }
+        // `symbol` is the mangled instance name, which no reader can act on
+        let called = format!("{trait_name}::{member}");
         let mut typed_args = Vec::with_capacity(args.len());
         for (index, arg) in args.iter().enumerate() {
             let typed = if index == 0 {
@@ -636,7 +663,7 @@ impl TypeInference {
                     expected,
                     typed.span,
                     ConstraintReason::Argument {
-                        func_name: symbol.clone(),
+                        func_name: called.clone(),
                         arg_index: index,
                     },
                 )
@@ -646,7 +673,7 @@ impl TypeInference {
                     typed.ty.clone(),
                     typed.span,
                     ConstraintReason::Argument {
-                        func_name: symbol.clone(),
+                        func_name: called.clone(),
                         arg_index: index,
                     },
                 ));
@@ -855,6 +882,11 @@ impl TypeInference {
         let mut names = Vec::new();
         let mut seen = HashSet::new();
         collect_generic_params(&callee.ty, &mut names, &mut seen);
+        // a method reached through a bound already had the trait's parameters
+        if is_method_callee(&callee) {
+            // the member pass already gave this signature the receiver's types and
+            names.retain(|name| !self.type_params_in_scope.contains(name));
+        }
         if names.is_empty() {
             return callee;
         }
@@ -1332,4 +1364,13 @@ fn effective_argument_indices(args: &[TypedExpr]) -> Vec<usize> {
     std::iter::once(0)
         .chain((placeholders + 1)..args.len())
         .collect()
+}
+
+/// a call on a receiver, whose signature the member pass already substituted with
+fn is_method_callee(callee: &TypedExpr) -> bool {
+    matches!(
+        &callee.kind,
+        TypedExprKind::StructMethod { separator, .. }
+            if *separator == aelys_syntax::MemberSeparator::Dot
+    )
 }

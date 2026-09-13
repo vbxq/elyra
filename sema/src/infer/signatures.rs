@@ -8,6 +8,7 @@ use std::rc::Rc;
 struct ImplBlock<'a> {
     self_type: &'a aelys_syntax::TypeAnnotation,
     impl_type_params: &'a [String],
+    polarity: aelys_syntax::ImplPolarity,
     methods: &'a [Function],
     trait_path: Option<&'a aelys_syntax::TypeAnnotation>,
     where_clauses: &'a [aelys_syntax::WhereClause],
@@ -73,6 +74,7 @@ fn gather_impl_blocks<'a>(stmts: &'a [Stmt], out: &mut Vec<ImplBlock<'a>>) {
         match &stmt.kind {
             StmtKind::ImplDecl {
                 type_params,
+                polarity,
                 self_type,
                 trait_path,
                 where_clauses,
@@ -83,6 +85,7 @@ fn gather_impl_blocks<'a>(stmts: &'a [Stmt], out: &mut Vec<ImplBlock<'a>>) {
                 out.push(ImplBlock {
                     self_type,
                     impl_type_params: type_params,
+                    polarity: *polarity,
                     methods,
                     trait_path: trait_path.as_ref(),
                     where_clauses,
@@ -175,6 +178,7 @@ impl TypeInference {
                         name: name.clone(),
                         keyword: "trait",
                         collides_with: self.type_table.nominal_keyword(name),
+                        modules: self.clashing_modules(name),
                     },
                     span: stmt.span,
                     reason: crate::constraint::ConstraintReason::Other(
@@ -183,14 +187,12 @@ impl TypeInference {
                 });
                 continue;
             }
+            let resolved_super_bounds = self.resolved_super_bounds(type_params, super_bounds);
             self.type_table.register_trait(TraitDef {
                 owner: self.current_module.clone(),
                 name: name.clone(),
                 type_params: type_params.clone(),
-                super_bounds: super_bounds
-                    .iter()
-                    .map(|bound| bound.path.join("::"))
-                    .collect(),
+                super_bounds: resolved_super_bounds,
                 methods: Vec::new(),
                 associated_types: associated_types
                     .iter()
@@ -466,14 +468,12 @@ impl TypeInference {
         self.type_params_in_scope = saved_type_params;
         self.current_trait_name = saved_trait;
         self.current_trait_associated_items = saved_trait_items;
+        let resolved_super_bounds = self.resolved_super_bounds(type_params, super_bounds);
         self.type_table.register_trait(TraitDef {
             owner: self.current_module.clone(),
             name: name.to_string(),
             type_params: type_params.to_vec(),
-            super_bounds: super_bounds
-                .iter()
-                .map(|bound| bound.path.join("::"))
-                .collect(),
+            super_bounds: resolved_super_bounds,
             methods: typed_methods,
             associated_types: associated_types
                 .iter()
@@ -540,7 +540,9 @@ impl TypeInference {
             return_type,
             has_self,
             mutable_self: has_self && method.params[0].mutable,
+            own_type_params: method.type_params.to_vec(),
             has_body,
+            is_default: false,
         }
     }
 
@@ -644,6 +646,59 @@ impl TypeInference {
         }
     }
 
+    /// a supertrait annotation carries its arguments, and they are resolved once,
+    fn resolved_super_bounds(
+        &mut self,
+        type_params: &[String],
+        super_bounds: &[aelys_syntax::TypeAnnotation],
+    ) -> Vec<(String, Vec<InferType>)> {
+        // its supertrait annotation is read
+        let saved = std::mem::replace(&mut self.type_params_in_scope, type_params.to_vec());
+        let resolved = self.resolve_super_bound_arguments(super_bounds);
+        self.type_params_in_scope = saved;
+        resolved
+    }
+
+    /// a trait that takes parameters is not named until they are given: leaving
+    fn check_trait_arity(&mut self, trait_name: &str, given: usize, span: aelys_syntax::Span) {
+        let Some(definition) = self.type_table.get_trait(trait_name) else {
+            return;
+        };
+        let expected = definition.type_params.len();
+        if expected == given {
+            return;
+        }
+        self.errors.push(crate::constraint::TypeError {
+            kind: crate::constraint::TypeErrorKind::GenericArityMismatch {
+                name: trait_name.to_string(),
+                expected,
+                found: given,
+            },
+            span,
+            reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
+        });
+    }
+
+    fn resolve_super_bound_arguments(
+        &mut self,
+        super_bounds: &[aelys_syntax::TypeAnnotation],
+    ) -> Vec<(String, Vec<InferType>)> {
+        let mut resolved = Vec::with_capacity(super_bounds.len());
+        for bound in super_bounds {
+            let args: Vec<InferType> = bound
+                .type_params
+                .iter()
+                .map(|argument| {
+                    self.type_from_annotation_as(crate::infer::OccurrenceRole::Bound, argument)
+                })
+                .collect();
+            let trait_name = bound.path.join("::");
+            self.check_trait_arity(&trait_name, args.len(), bound.span);
+            resolved.push((trait_name, args));
+        }
+        resolved
+    }
+
     fn bounds_from_where_clauses(
         &mut self,
         clauses: &[aelys_syntax::WhereClause],
@@ -651,7 +706,7 @@ impl TypeInference {
         let mut bounds = Vec::new();
         for clause in clauses {
             for bound in &clause.bounds {
-                let trait_args = bound
+                let trait_args: Vec<InferType> = bound
                     .type_params
                     .iter()
                     .map(|argument| {
@@ -659,6 +714,7 @@ impl TypeInference {
                     })
                     .collect();
                 let trait_name = bound.path.join("::");
+                self.check_trait_arity(&trait_name, trait_args.len(), clause.type_annotation.span);
                 if let Some(error) =
                     self.private_nominal_error(&trait_name, clause.type_annotation.span)
                 {
@@ -875,48 +931,53 @@ impl TypeInference {
         self.errors.truncate(mark);
         self.defer_projection_resolution = saved_defer;
         self.type_params_in_scope = saved_type_params;
-        let slot = trait_name.as_deref().map(|trait_name| {
-            let associated_types = block
-                .associated_types
-                .iter()
-                .filter(|item| {
-                    self.trait_owns_item(
-                        trait_name,
-                        &item.name,
-                        crate::constraint::ItemNamespace::Type,
-                    )
+        let slot = trait_name
+            .as_deref()
+            .filter(|_| block.polarity == aelys_syntax::ImplPolarity::Positive)
+            .map(|trait_name| {
+                let associated_types = block
+                    .associated_types
+                    .iter()
+                    .filter(|item| {
+                        self.trait_owns_item(
+                            trait_name,
+                            &item.name,
+                            crate::constraint::ItemNamespace::Type,
+                        )
+                    })
+                    .map(|item| {
+                        (
+                            item.name.clone(),
+                            unresolved_associated_item(trait_name, &item.name, &self_ty),
+                        )
+                    })
+                    .collect();
+                let associated_consts = block
+                    .associated_consts
+                    .iter()
+                    .filter(|item| {
+                        self.trait_owns_item(
+                            trait_name,
+                            &item.name,
+                            crate::constraint::ItemNamespace::Const,
+                        )
+                    })
+                    .map(|item| {
+                        let placeholder =
+                            unresolved_associated_item(trait_name, &item.name, &self_ty);
+                        (item.name.clone(), placeholder.clone(), placeholder, None)
+                    })
+                    .collect();
+                self.type_table.push_trait_impl_def(TraitImplDef {
+                    opens: block.methods.iter().any(|method| method.is_default),
+                    trait_name: trait_name.to_string(),
+                    trait_args: Vec::new(),
+                    self_type: self_ty.clone(),
+                    methods: Vec::new(),
+                    associated_types,
+                    associated_consts,
                 })
-                .map(|item| {
-                    (
-                        item.name.clone(),
-                        unresolved_associated_item(trait_name, &item.name, &self_ty),
-                    )
-                })
-                .collect();
-            let associated_consts = block
-                .associated_consts
-                .iter()
-                .filter(|item| {
-                    self.trait_owns_item(
-                        trait_name,
-                        &item.name,
-                        crate::constraint::ItemNamespace::Const,
-                    )
-                })
-                .map(|item| {
-                    let placeholder = unresolved_associated_item(trait_name, &item.name, &self_ty);
-                    (item.name.clone(), placeholder.clone(), placeholder, None)
-                })
-                .collect();
-            self.type_table.push_trait_impl_def(TraitImplDef {
-                trait_name: trait_name.to_string(),
-                trait_args: Vec::new(),
-                self_type: self_ty.clone(),
-                methods: Vec::new(),
-                associated_types,
-                associated_consts,
-            })
-        });
+            });
         ImplName {
             target,
             self_ty,
@@ -1021,6 +1082,9 @@ impl TypeInference {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        if let Some(trait_name) = name.trait_name.as_deref() {
+            self.check_trait_arity(trait_name, trait_args.len(), block.self_type.span);
+        }
         let bounds = self.bounds_from_where_clauses(block.where_clauses);
         let bindings = self.bindings_from_where_clauses(block.where_clauses);
         self.type_params_in_scope = saved_type_params;
@@ -1036,6 +1100,78 @@ impl TypeInference {
             bounds,
             bindings,
         }
+    }
+
+    /// a negative header reaches here having passed the orphan, visibility and
+    fn check_negative_impl_header(
+        &mut self,
+        block: &ImplBlock<'_>,
+        header: &ImplHeader,
+        header_span: aelys_syntax::Span,
+    ) -> bool {
+        let Some(trait_name) = header.trait_name.as_deref() else {
+            return false;
+        };
+        let target_ty = header.target_ty.clone();
+        let trait_args = header.trait_args.clone();
+        let item_span = block
+            .methods
+            .first()
+            .map(|method| method.span)
+            .or_else(|| block.associated_types.first().map(|item| item.span))
+            .or_else(|| block.associated_consts.first().map(|item| item.span));
+        if let Some(span) = item_span {
+            self.errors.push(crate::constraint::TypeError {
+                kind: crate::constraint::TypeErrorKind::PositiveNegativeConflict {
+                    trait_name: trait_name.to_string(),
+                    target: target_ty,
+                },
+                span,
+                reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
+            });
+            return false;
+        }
+        if self
+            .type_table
+            .negative_header_clash(trait_name, &target_ty, &trait_args)
+        {
+            self.errors.push(crate::constraint::TypeError {
+                kind: crate::constraint::TypeErrorKind::OverlappingImplHeaders {
+                    trait_name: trait_name.to_string(),
+                    target: target_ty,
+                },
+                span: header_span,
+                reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
+            });
+            return false;
+        }
+        if crate::prelude::provides(trait_name, &target_ty, &trait_args)
+            || self
+                .type_table
+                .positive_header_clash(trait_name, &target_ty, &trait_args)
+        {
+            self.errors.push(crate::constraint::TypeError {
+                kind: crate::constraint::TypeErrorKind::PositiveNegativeConflict {
+                    trait_name: trait_name.to_string(),
+                    target: target_ty,
+                },
+                span: header_span,
+                reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
+            });
+            return false;
+        }
+        self.type_table
+            .push_negative_impl(crate::types::NegativeImplDef {
+                trait_name: trait_name.to_string(),
+                trait_args,
+                self_type: target_ty,
+                owner: block
+                    .definition_module
+                    .cloned()
+                    .unwrap_or_else(|| self.current_module.clone()),
+                span: header_span,
+            });
+        false
     }
 
     fn check_impl_header(
@@ -1057,11 +1193,19 @@ impl TypeInference {
         let effective_methods = self.effective_impl_methods(block.methods, trait_name.as_deref());
         let methods = effective_methods.as_slice();
         if trait_name.is_some() && is_foreign_impl_target(&target_ty, &self.type_table) {
-            self.errors.push(crate::constraint::TypeError {
-                kind: crate::constraint::TypeErrorKind::OrphanTraitImpl {
+            let kind = if block.polarity == aelys_syntax::ImplPolarity::Negative {
+                crate::constraint::TypeErrorKind::NegativeImplOrphan {
                     trait_name: trait_name.clone().unwrap_or_default(),
                     target: target_ty.clone(),
-                },
+                }
+            } else {
+                crate::constraint::TypeErrorKind::OrphanTraitImpl {
+                    trait_name: trait_name.clone().unwrap_or_default(),
+                    target: target_ty.clone(),
+                }
+            };
+            self.errors.push(crate::constraint::TypeError {
+                kind,
                 span: methods.first().map_or(header_span, |m| m.span),
                 reason: crate::constraint::ConstraintReason::Other("trait coherence".to_string()),
             });
@@ -1089,10 +1233,12 @@ impl TypeInference {
             return false;
         }
 
+        // a negative impl mints no symbol and has no call site, so e0430's stated
         if let Some(unconstrained) = block
             .impl_type_params
             .iter()
             .find(|param| !target_ty.mentions_param(param))
+            .filter(|_| block.polarity == aelys_syntax::ImplPolarity::Positive)
         {
             let call_site_binds = call_site_binds_param(methods, &trait_args, unconstrained);
             self.errors.push(crate::constraint::TypeError {
@@ -1134,6 +1280,9 @@ impl TypeInference {
                 });
                 return false;
             };
+            if block.polarity == aelys_syntax::ImplPolarity::Negative {
+                return self.check_negative_impl_header(block, header, header_span);
+            }
             if crate::prelude::reserves_header(trait_name, &target_ty, &trait_args) {
                 self.errors.push(crate::constraint::TypeError {
                     kind: crate::constraint::TypeErrorKind::ReservedIdentityConversion {
@@ -1142,6 +1291,22 @@ impl TypeInference {
                     span: methods
                         .first()
                         .map_or(trait_path_span, |method| method.span),
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "trait coherence".to_string(),
+                    ),
+                });
+                return false;
+            }
+            if self
+                .type_table
+                .positive_negative_clash(trait_name, &target_ty, &trait_args)
+            {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::PositiveNegativeConflict {
+                        trait_name: trait_name.to_string(),
+                        target: target_ty.clone(),
+                    },
+                    span: methods.first().map_or(header_span, |method| method.span),
                     reason: crate::constraint::ConstraintReason::Other(
                         "trait coherence".to_string(),
                     ),
@@ -1165,14 +1330,37 @@ impl TypeInference {
                 });
                 return false;
             }
-            if self
-                .type_table
-                .trait_impl_overlaps_among(live, trait_name, &trait_args, &target_ty)
-            {
+            if self.type_table.equally_specific_overlap(
+                live,
+                trait_name,
+                &trait_args,
+                &target_ty,
+                block.methods.iter().any(|method| method.is_default),
+            ) {
+                self.errors.push(crate::constraint::TypeError {
+                    kind: crate::constraint::TypeErrorKind::UnorderedSpecialization {
+                        trait_name: trait_name.to_string(),
+                        target: target_ty.clone(),
+                    },
+                    span: methods.first().map_or(header_span, |method| method.span),
+                    reason: crate::constraint::ConstraintReason::Other(
+                        "trait coherence".to_string(),
+                    ),
+                });
+                return false;
+            }
+            if let Some(partner) = self.type_table.trait_impl_overlap_among(
+                live,
+                trait_name,
+                &trait_args,
+                &target_ty,
+                block.methods.iter().any(|method| method.is_default),
+            ) {
                 self.errors.push(crate::constraint::TypeError {
                     kind: crate::constraint::TypeErrorKind::OverlappingTraitImpl {
                         trait_name: trait_name.to_string(),
                         target: target_ty.clone(),
+                        partner,
                     },
                     span: methods.first().map_or(header_span, |method| method.span),
                     reason: crate::constraint::ConstraintReason::Other(
@@ -1284,18 +1472,24 @@ impl TypeInference {
                     let mut declarations = written.iter().filter(|(name, _)| *name == required);
                     let first = declarations.next();
                     let second = declarations.next();
-                    if first.is_none() {
+                    let inherits = self
+                        .type_table
+                        .replaces_an_open_root(trait_name, &target_ty);
+                    if first.is_none() && !inherits {
+                        // the impl body cannot write the trait's parameters but can write
+                        let instantiation = self.trait_param_instantiation(trait_name, &trait_args);
+                        let declared_type = self
+                            .type_table
+                            .declared_associated_consts(trait_name)
+                            .into_iter()
+                            .find(|(name, _)| *name == *required)
+                            .map(|(_, ty)| ty.substitute_params(&instantiation).source_spelling());
                         self.errors.push(crate::constraint::TypeError {
                             kind: crate::constraint::TypeErrorKind::MissingAssociatedItem {
                                 trait_name: trait_name.to_string(),
                                 item: required.clone(),
                                 namespace,
-                                declared_type: self
-                                    .type_table
-                                    .declared_associated_consts(trait_name)
-                                    .into_iter()
-                                    .find(|(name, _)| *name == *required)
-                                    .map(|(_, ty)| ty.source_spelling()),
+                                declared_type,
                             },
                             span: self_type.span,
                             reason: impl_site_reason(Some(trait_name), &target_ty),
@@ -1366,10 +1560,11 @@ impl TypeInference {
             let target_ty = header.target_ty.clone();
             let mut missing: Vec<String> = self
                 .type_table
-                .supertrait_closure(trait_name)
+                .supertrait_obligations(trait_name, &header.trait_args)
                 .into_iter()
-                .filter(|name| name != trait_name)
-                .filter(|name| !self.type_table.satisfies_bound(name, &target_ty, &[]))
+                .filter(|(name, _)| name != trait_name)
+                .filter(|(name, args)| !self.type_table.satisfies_bound(name, &target_ty, args))
+                .map(|(name, args)| crate::types::trait_instantiation_spelling(&name, &args))
                 .collect();
             missing.sort_unstable();
             if !missing.is_empty() {
@@ -1598,6 +1793,16 @@ impl TypeInference {
         let saved_impl_self = self.current_impl_self.replace(target_ty.clone());
         let effective_methods =
             self.adopted_impl_methods(block.methods, trait_name.as_deref(), &target);
+        let nominal_type_params: Vec<String> = self
+            .type_table
+            .get_struct(&target)
+            .map(|definition| definition.type_params.clone())
+            .or_else(|| {
+                self.type_table
+                    .get_enum(&target)
+                    .map(|definition| definition.type_params.clone())
+            })
+            .unwrap_or_default();
         let methods = effective_methods.as_slice();
         let mut registered_trait_methods = Vec::new();
         let saved_default_body = self.in_trait_default_body;
@@ -1636,11 +1841,22 @@ impl TypeInference {
                 continue;
             }
 
+            let method_renames: HashMap<String, String> = method
+                .type_params
+                .iter()
+                .filter(|name| {
+                    impl_type_params.contains(name) || nominal_type_params.contains(name)
+                })
+                .map(|name| (name.clone(), crate::infer::shadowed_method_param(name)))
+                .collect();
             let mut method_type_params = impl_type_params.to_vec();
             method_type_params.extend(method.type_params.iter().cloned());
+            method_type_params.extend(method_renames.values().cloned());
             method_type_params.push("Self".to_string());
             let saved_type_params =
                 std::mem::replace(&mut self.type_params_in_scope, method_type_params);
+            let saved_renames =
+                std::mem::replace(&mut self.method_param_renames, method_renames.clone());
             let self_substitution = HashMap::from([("Self".to_string(), target_ty.clone())]);
             let visible_impl_bounds: Vec<_> = impl_bounds
                 .iter()
@@ -1708,6 +1924,7 @@ impl TypeInference {
             self.current_function_bounds = saved_bounds;
             self.current_function_bindings = saved_bindings;
             self.type_params_in_scope = saved_type_params;
+            self.method_param_renames = saved_renames;
             if let Some(trait_name) = trait_name.as_deref()
                 && let Some(required) =
                     self.type_table
@@ -1731,6 +1948,15 @@ impl TypeInference {
                     .map(|param| param.substitute_params(&substitutions))
                     .collect();
                 let expected_return = required.return_type.substitute_params(&substitutions);
+                let widens_contract = required
+                    .params
+                    .iter()
+                    .chain([&required.return_type])
+                    .zip(params.iter().chain([&ret]))
+                    .any(|(declared, actual)| {
+                        mentions_method_own_param(actual)
+                            && !declares_own_param(declared, &required.own_type_params)
+                    });
                 let saved_type_params =
                     std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
                 let expected_params: Vec<_> = expected_params
@@ -1745,7 +1971,8 @@ impl TypeInference {
                     &target_ty,
                 );
                 self.type_params_in_scope = saved_type_params;
-                let signature_matches = params.len() == expected_params.len()
+                let signature_matches = !widens_contract
+                    && params.len() == expected_params.len()
                     && params
                         .iter()
                         .zip(expected_params.iter())
@@ -1775,9 +2002,10 @@ impl TypeInference {
                     });
                 }
             }
+            let header_spelling = crate::types::positional_spelling(&target_ty);
             let symbol = trait_name
                 .as_deref()
-                .map(|name| trait_method_symbol(name, &target, &method.name, &trait_args))
+                .map(|name| trait_method_symbol(name, &header_spelling, &method.name, &trait_args))
                 .unwrap_or_else(|| struct_method_symbol(&target, &method.name));
             if impl_type_params.is_empty() {
                 let written_here = index < block.methods.len();
@@ -1826,7 +2054,9 @@ impl TypeInference {
                     return_type: ret,
                     has_self,
                     mutable_self: has_self && method.params[0].mutable,
+                    own_type_params: renamed_own_params(&method.type_params, &method_renames),
                     has_body: false,
+                    is_default: method.is_default,
                 };
                 self.type_table
                     .register_trait_method(target.clone(), trait_method.clone());
@@ -1841,6 +2071,7 @@ impl TypeInference {
                         return_type: ret,
                         has_self,
                         mutable_self: has_self && method.params[0].mutable,
+                        own_type_params: renamed_own_params(&method.type_params, &method_renames),
                     },
                 );
             }
@@ -1982,13 +2213,24 @@ impl TypeInference {
         target_ty: &InferType,
     ) -> HashMap<String, InferType> {
         let mut instantiation = HashMap::from([("Self".to_string(), target_ty.clone())]);
-        let Some(definition) = self.type_table.get_trait(trait_name) else {
-            return instantiation;
-        };
-        for (param, argument) in definition.type_params.iter().zip(trait_args) {
-            instantiation.insert(param.clone(), argument.clone());
-        }
+        instantiation.extend(self.trait_param_instantiation(trait_name, trait_args));
         instantiation
+    }
+
+    fn trait_param_instantiation(
+        &self,
+        trait_name: &str,
+        trait_args: &[InferType],
+    ) -> HashMap<String, InferType> {
+        let Some(definition) = self.type_table.get_trait(trait_name) else {
+            return HashMap::new();
+        };
+        definition
+            .type_params
+            .iter()
+            .cloned()
+            .zip(trait_args.iter().cloned())
+            .collect()
     }
 
     /// none while a parameter or an unresolved projection leaves it open
@@ -2563,6 +2805,57 @@ fn impl_site_reason(
     })
 }
 
+pub(super) fn ambiguous_trait_method_kind(
+    type_table: &crate::types::TypeTable,
+    target: &str,
+    method: &str,
+    symbols: &[String],
+) -> crate::constraint::TypeErrorKind {
+    let supplying = type_table.trait_impls_supplying(target, symbols);
+    let single = supplying
+        .first()
+        .filter(|(first, _)| supplying.iter().all(|(name, _)| name == first))
+        .map(|(name, _)| name.clone());
+    match single {
+        Some(trait_name) if supplying.len() > 1 => {
+            crate::constraint::TypeErrorKind::AmbiguousTraitInstantiation {
+                target: target.to_string(),
+                method: method.to_string(),
+                trait_name,
+                instantiations: supplying
+                    .into_iter()
+                    .map(|(_, spelling)| spelling)
+                    .collect(),
+            }
+        }
+        _ => crate::constraint::TypeErrorKind::AmbiguousTraitMethod {
+            target: target.to_string(),
+            method: method.to_string(),
+        },
+    }
+}
+
+pub(super) fn ambiguous_trait_instantiation_kind(
+    type_table: &crate::types::TypeTable,
+    target: &str,
+    method: &str,
+    trait_name: &str,
+) -> crate::constraint::TypeErrorKind {
+    let instantiations = type_table.trait_instantiations_of(target, trait_name);
+    if instantiations.len() < 2 {
+        return crate::constraint::TypeErrorKind::AmbiguousTraitMethod {
+            target: target.to_string(),
+            method: method.to_string(),
+        };
+    }
+    crate::constraint::TypeErrorKind::AmbiguousTraitInstantiation {
+        target: target.to_string(),
+        method: method.to_string(),
+        trait_name: trait_name.to_string(),
+        instantiations,
+    }
+}
+
 // monomorphization meets the same withheld default through a bound on a type
 pub(super) fn supertrait_gate_error_for(
     type_table: &crate::types::TypeTable,
@@ -2595,4 +2888,23 @@ pub(super) fn supertrait_gate_error_for(
         });
     }
     None
+}
+
+fn renamed_own_params(written: &[String], renames: &HashMap<String, String>) -> Vec<String> {
+    written
+        .iter()
+        .map(|name| renames.get(name).cloned().unwrap_or_else(|| name.clone()))
+        .collect()
+}
+
+fn mentions_method_own_param(ty: &InferType) -> bool {
+    let mut names = Vec::new();
+    crate::infer::entry::collect_type_params(ty, &mut names);
+    names
+        .iter()
+        .any(|name| name.ends_with(crate::infer::SHADOWED_METHOD_SUFFIX))
+}
+
+fn declares_own_param(declared: &InferType, own: &[String]) -> bool {
+    own.iter().any(|name| declared.mentions_param(name))
 }

@@ -183,6 +183,7 @@ impl TypeInference {
         TypedFunction {
             name: func.name.clone(),
             type_params: func.type_params.clone(),
+            own_type_params: func.type_params.clone(),
             params: typed_params,
             return_type,
             body: typed_body,
@@ -217,9 +218,20 @@ impl TypeInference {
             true => crate::types::nominal_name(&target_type).unwrap_or(written),
             false => written,
         };
+        let header_spelling = crate::types::positional_spelling(&target_type);
         let trait_name = trait_path.map(|path| path.path.join("::"));
         let trait_args = self.impl_trait_args(trait_path, impl_type_params);
         let effective_methods = self.adopted_impl_methods(methods, trait_name.as_deref(), &target);
+        let nominal_params: Vec<String> = self
+            .type_table
+            .get_struct(&target)
+            .map(|definition| definition.type_params.clone())
+            .or_else(|| {
+                self.type_table
+                    .get_enum(&target)
+                    .map(|definition| definition.type_params.clone())
+            })
+            .unwrap_or_default();
         let saved_impl_self = self
             .current_impl_self
             .replace(InferType::Struct(target.clone()));
@@ -228,14 +240,22 @@ impl TypeInference {
         for (index, method) in effective_methods.iter().enumerate() {
             self.in_trait_default_body = index >= methods.len();
             let mut normalized = method.clone();
+            // a method that redeclares a spelling its impl or its nominal already
+            let renames: std::collections::HashMap<String, String> = method
+                .type_params
+                .iter()
+                .filter(|name| impl_type_params.contains(name) || nominal_params.contains(name))
+                .map(|name| (name.clone(), crate::infer::shadowed_method_param(name)))
+                .collect();
             normalized.type_params = impl_type_params
                 .iter()
                 .cloned()
                 .chain(method.type_params.iter().cloned())
+                .chain(renames.values().cloned())
                 .collect();
             normalized.name = trait_name
                 .as_deref()
-                .map(|name| trait_method_symbol(name, &target, &method.name, &trait_args))
+                .map(|name| trait_method_symbol(name, &header_spelling, &method.name, &trait_args))
                 .unwrap_or_else(|| struct_method_symbol(&target, &method.name));
             if let Some(first) = normalized.params.first_mut()
                 && first.name == "self"
@@ -243,7 +263,15 @@ impl TypeInference {
             {
                 first.type_annotation = Some(self_type.clone());
             }
-            typed_methods.push(self.infer_function(&normalized));
+            let saved_renames = std::mem::replace(&mut self.method_param_renames, renames.clone());
+            let mut typed = self.infer_function(&normalized);
+            self.method_param_renames = saved_renames;
+            typed.own_type_params = method
+                .type_params
+                .iter()
+                .map(|name| renames.get(name).cloned().unwrap_or_else(|| name.clone()))
+                .collect();
+            typed_methods.push(typed);
         }
         self.in_trait_default_body = saved_default_body;
         self.current_impl_self = saved_impl_self;

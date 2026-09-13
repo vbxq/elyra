@@ -1131,6 +1131,7 @@ impl TypeInference {
                 TypedExprKind::Try {
                     operand: Box::new(typed_inner),
                     conversion: None,
+                    conversion_target: None,
                 },
                 InferType::Dynamic,
             );
@@ -1220,6 +1221,7 @@ impl TypeInference {
             TypedExprKind::Try {
                 operand: Box::new(typed_inner),
                 conversion: None,
+                conversion_target: None,
             },
             output,
         )
@@ -1270,7 +1272,26 @@ impl TypeInference {
                     {
                         crate::types::FromSelection::Identity => {}
                         crate::types::FromSelection::Selected(symbol) => {
-                            conversions.push((residual.span, symbol));
+                            conversions.push((
+                                residual.span,
+                                symbol,
+                                source.clone(),
+                                target.clone(),
+                            ));
+                        }
+                        crate::types::FromSelection::Denied => {
+                            errors.push(TypeError {
+                                kind: TypeErrorKind::UnsatisfiedTraitBound {
+                                    trait_name: crate::prelude::FROM_TRAIT.to_string(),
+                                    trait_args: vec![source_error.as_ref().clone()],
+                                    ty: target_error.as_ref().clone(),
+                                    denied: true,
+                                },
+                                span: residual.span,
+                                reason: ConstraintReason::Other(
+                                    "question mark conversion".to_string(),
+                                ),
+                            });
                         }
                         crate::types::FromSelection::Unresolved(candidates) => {
                             errors.push(TypeError {
@@ -1305,8 +1326,9 @@ impl TypeInference {
             }
         }
         self.errors.extend(errors);
-        for (span, symbol) in conversions {
-            self.try_conversions.insert((span.start, span.end), symbol);
+        for (span, symbol, source, target) in conversions {
+            self.try_conversions
+                .insert((span.start, span.end), (symbol, source, target));
         }
     }
 

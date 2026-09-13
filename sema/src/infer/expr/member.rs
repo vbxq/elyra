@@ -514,7 +514,8 @@ impl TypeInference {
             && member == "None";
 
         if separator == MemberSeparator::Path
-            && let Some(path) = source_path_name(object)
+            && let Some(path) =
+                source_path_name(object).map(|written| self.associated_lookup_receiver(&written))
             && let Some(method) = self.type_table.method(&path, member).cloned()
             && !method.has_self
         {
@@ -538,8 +539,9 @@ impl TypeInference {
         }
 
         if separator == MemberSeparator::Path
-            && let Some(path) = source_path_name(object)
+            && let Some(written) = source_path_name(object)
         {
+            let path = self.associated_lookup_receiver(&written);
             let candidates: Vec<_> = self
                 .visible_trait_methods(&path, member)
                 .into_iter()
@@ -567,11 +569,24 @@ impl TypeInference {
                 }
                 [] => {}
                 _ => {
+                    let symbols: Vec<String> = candidates
+                        .iter()
+                        .map(|candidate| candidate.symbol.clone())
+                        .collect();
+                    let mut kind = crate::infer::signatures::ambiguous_trait_method_kind(
+                        &self.type_table,
+                        &path,
+                        member,
+                        &symbols,
+                    );
+                    let named = self.projection_receiver(&written);
+                    match &mut kind {
+                        TypeErrorKind::AmbiguousTraitInstantiation { target, .. }
+                        | TypeErrorKind::AmbiguousTraitMethod { target, .. } => *target = named,
+                        _ => {}
+                    }
                     self.errors.push(TypeError {
-                        kind: TypeErrorKind::AmbiguousTraitMethod {
-                            target: path,
-                            method: member.to_string(),
-                        },
+                        kind,
                         span: _span,
                         reason: ConstraintReason::Other(
                             "associated trait method lookup".to_string(),
@@ -741,7 +756,7 @@ impl TypeInference {
                 } else {
                     (
                         TypeErrorKind::UndefinedFunction {
-                            name: format!("{}::{}", path, member),
+                            name: format!("{}::{}", self.projection_receiver(path), member),
                         },
                         lookup_reason,
                     )
@@ -778,14 +793,33 @@ impl TypeInference {
                 .then(|| self.type_table.method(&name, member).cloned())
                 .flatten()
                 .filter(|method| method.has_self);
+            let mut ambiguous_symbols: Vec<String> = Vec::new();
             let (mut method, trait_ambiguous) = if inherent.is_some() {
                 (inherent, false)
             } else if !has_field {
+                let mut inapplicable = self
+                    .type_table
+                    .symbols_not_applying(&typed_object.ty, member);
+                inapplicable.extend(self.type_table.symbols_outranked(&typed_object.ty, member));
                 let candidates: Vec<_> = self
                     .visible_trait_methods(&name, member)
                     .into_iter()
                     .filter(|candidate| candidate.has_self)
+                    .filter(|candidate| !inapplicable.contains(&candidate.symbol))
                     .collect();
+                // the receiver's type may still hold inference variables here, so
+                for supplier in self.type_table.traits_supplying(&name, member) {
+                    self.bound_residuals.push(crate::infer::BoundResidual {
+                        ty: typed_object.ty.clone(),
+                        trait_name: supplier,
+                        trait_args: Vec::new(),
+                        span: _span,
+                        reason: crate::constraint::ConstraintReason::Other(
+                            "trait method call".to_string(),
+                        ),
+                        nominal_only: true,
+                    });
+                }
                 match candidates.as_slice() {
                     [candidate] => (
                         Some(crate::types::StructMethod {
@@ -795,21 +829,45 @@ impl TypeInference {
                             return_type: candidate.return_type.clone(),
                             has_self: candidate.has_self,
                             mutable_self: candidate.mutable_self,
+                            own_type_params: candidate.own_type_params.clone(),
                         }),
                         false,
                     ),
                     [] => (None, false),
-                    _ => (None, true),
+                    _ => match self.type_table.specialization_root(&name, member) {
+                        Some(root) => (
+                            candidates
+                                .iter()
+                                .find(|candidate| candidate.symbol == root)
+                                .map(|candidate| crate::types::StructMethod {
+                                    name: candidate.name.clone(),
+                                    symbol: candidate.symbol.clone(),
+                                    params: candidate.params.clone(),
+                                    return_type: candidate.return_type.clone(),
+                                    has_self: candidate.has_self,
+                                    mutable_self: candidate.mutable_self,
+                                    own_type_params: candidate.own_type_params.clone(),
+                                }),
+                            false,
+                        ),
+                        None => {
+                            ambiguous_symbols =
+                                candidates.iter().map(|c| c.symbol.clone()).collect();
+                            (None, true)
+                        }
+                    },
                 }
             } else {
                 (None, false)
             };
             if trait_ambiguous {
                 self.errors.push(TypeError {
-                    kind: TypeErrorKind::AmbiguousTraitMethod {
-                        target: name.clone(),
-                        method: member.to_string(),
-                    },
+                    kind: crate::infer::signatures::ambiguous_trait_method_kind(
+                        &self.type_table,
+                        &name,
+                        member,
+                        &ambiguous_symbols,
+                    ),
                     span: _span,
                     reason: ConstraintReason::Other("trait method lookup".to_string()),
                 });
@@ -833,6 +891,13 @@ impl TypeInference {
                         span: _span,
                         reason: ConstraintReason::Other("mutable struct receiver".to_string()),
                     });
+                }
+                // like one the receiver fixes is indistinguishable from it
+                let mut substitutions = substitutions;
+                for parameter in &method.own_type_params {
+                    substitutions
+                        .entry(parameter.clone())
+                        .or_insert_with(|| self.type_gen.fresh());
                 }
                 method.params = method
                     .params
@@ -1535,13 +1600,24 @@ impl TypeInference {
             .collect();
         let mut seen = std::collections::HashSet::new();
         let mut resolved = Vec::new();
+        // the same traversal the obligation check runs, and the same identity: a
         while let Some((trait_name, trait_args)) = pending.pop() {
-            if !seen.insert(trait_name.clone()) {
+            if !seen.insert(crate::types::instantiation_key(&trait_name, &trait_args)) {
                 continue;
             }
             if let Some(definition) = self.type_table.get_trait(&trait_name) {
-                for super_bound in &definition.super_bounds {
-                    pending.push((super_bound.clone(), Vec::new()));
+                let mut substitution = crate::unify::Substitution::new();
+                for (param, ty) in definition.type_params.iter().zip(&trait_args) {
+                    substitution.bind_param(param.clone(), ty.clone());
+                }
+                for (super_name, super_args) in &definition.super_bounds {
+                    pending.push((
+                        super_name.clone(),
+                        super_args
+                            .iter()
+                            .map(|arg| substitution.apply(arg))
+                            .collect(),
+                    ));
                 }
             }
             resolved.push((trait_name, trait_args));
@@ -1578,11 +1654,33 @@ impl TypeInference {
         }
 
         if candidates.len() > 1 {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::AmbiguousTraitMethod {
+            let first = candidates[0].0.clone();
+            let one_trait = candidates.iter().all(|(name, ..)| *name == first);
+            let kind = if one_trait {
+                TypeErrorKind::AmbiguousTraitInstantiation {
                     target: param.to_string(),
                     method: member.to_string(),
-                },
+                    trait_name: first.clone(),
+                    instantiations: {
+                        // supertraits were written in must not reach it
+                        let mut out: Vec<String> = candidates
+                            .iter()
+                            .map(|(name, _, _, args)| {
+                                crate::types::trait_instantiation_spelling(name, args)
+                            })
+                            .collect();
+                        out.sort();
+                        out
+                    },
+                }
+            } else {
+                TypeErrorKind::AmbiguousTraitMethod {
+                    target: param.to_string(),
+                    method: member.to_string(),
+                }
+            };
+            self.errors.push(TypeError {
+                kind,
                 span,
                 reason: ConstraintReason::Other("type parameter bound lookup".to_string()),
             });
@@ -1619,6 +1717,12 @@ impl TypeInference {
             HashMap::from([("Self".to_string(), InferType::Param(param.to_string()))]);
         for (parameter, argument) in trait_type_params.iter().zip(&trait_args) {
             substitutions.insert(parameter.clone(), argument.clone());
+        }
+        // the trait's parameters are fixed by the bound and rigid here; a method
+        for parameter in &method.own_type_params {
+            substitutions
+                .entry(parameter.clone())
+                .or_insert_with(|| self.type_gen.fresh());
         }
         let params = method
             .params

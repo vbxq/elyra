@@ -42,7 +42,12 @@ impl TypeInference {
         }
 
         let (kind, ty) = match &expr.kind {
-            ExprKind::Int(n) => (TypedExprKind::Int(*n), InferType::I64),
+            ExprKind::Int(n) => {
+                if let Some(error) = TypeError::integer_literal_out_of_range(*n, expr.span) {
+                    self.errors.push(error);
+                }
+                (TypedExprKind::Int(*n), InferType::I64)
+            }
             ExprKind::Float(f) => (TypedExprKind::Float(*f), InferType::F64),
             ExprKind::Bool(b) => (TypedExprKind::Bool(*b), InferType::Bool),
             ExprKind::String(s) => (TypedExprKind::String(s.clone()), InferType::String),
