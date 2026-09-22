@@ -1905,22 +1905,125 @@ uninhabitation ban.
 
 An impl method's symbol is mangled from three names, each written as the byte
 length of the text in eight hexadecimal digits, a colon and the text: the trait,
-the **bare name** of the target type, and the method. The trait's own type
-arguments follow in the same encoding, rendered with the impl's type parameters
-spelled as the impl wrote them, and a generic impl then carries one suffix per
-instance holding the substituted target type. The target type's own type
-arguments never enter the three names, so `impl Source for Wrap<int>` mangles
-`next` to `__aelys_trait::00000006:Source00000004:Wrap00000004:next`. A type
-parameter the target type never mentions therefore leaves no trace in the
-symbol. Two impls of one trait for two instantiations of one constructor
-therefore write one slot, so they are refused with E0355 as the second impl
-registers its method, the caret on that method, or on the impl's target type
-when the method is a default body adopted from the trait. The check compares the
-substituted target type held against the symbol, so one impl inlined into
-several importers stays equal to itself; a generic impl carries no target
-arguments in the symbol at all and is left to the monomorphizer, which raises
-the same code on the per-instance suffix. Renaming the method in one impl, or
-declaring it in a second trait, separates the two slots.
+the **header spelling** of the target type, and the method. The header spelling
+keeps the target's arguments, with the impl's type parameters numbered by first
+appearance, so `impl Source for Wrap<int>` mangles `next` to
+`__aelys_trait::00000006:Source00000009:Wrap<int>00000004:next` and
+`impl Source for Wrap<bool>` to a second symbol. The trait's own type arguments
+follow in the same encoding, and a generic impl then carries one suffix per
+instance holding the substituted target type. Two impls of one trait for two
+instantiations of one constructor are therefore two symbols, and both are
+licit; E0355 is left to two instances that still collide after this spelling.
+
+A call on a receiver of that constructor, when several impls supply the method,
+is typed through the **trait's declaration** with `Self` read as the receiver if
+the trait takes no parameters: an impl conforms to the trait position by position,
+so the declaration is what any of them answers. An associated type in that
+signature stays a projection on the receiver until the receiver is known, and is
+then read from the impl that will run, the most specific one when several
+overlap. Nothing is refused for the impls being several, whether they are
+disjoint, form a specialization chain, or both; the monomorphizer runs, for each
+instance, the impl that covers its receiver, and refuses with E0338 an instance
+that no impl covers.
+
+An impl that no instantiation of the receiver reaches is set aside, in a
+generic body or a trait's default body as well as on a concrete receiver. When
+no impl that supplies the method is left, no instance of the call can succeed,
+and it is refused with E0338 where it is typed, naming the trait and the
+receiver; this holds for a method call, a call whose receiver is known only at
+its instance and a qualified call alike, whether one impl or several supply the
+method. When one impl alone is left and it covers the receiver whatever the
+receiver's own type parameters become, it runs for every instance: its header
+binds the receiver and its own signature, associated types included, types the
+call. One that reaches the receiver without covering it runs for some instances
+only: for a trait without parameters the call is typed through the trait and
+each instance takes the impl that covers it or is refused with E0338, and for a
+trait that takes parameters the call is refused.
+
+A trait that takes parameters is typed through its declaration only when the
+impl chosen is the root of a specialization chain: the root covers every
+receiver the chain covers, so its header, equated with the receiver, fixes the
+trait's arguments, and an associated type in the signature stays a projection
+until the impl that runs answers it. The root is looked for among the impls the
+receiver has not set aside, so two chains on one nominal each keep their own,
+and a trait's default body adopted by an impl of either chain is typed. On a
+receiver whose type parameters stay open, as in a generic body, such a
+projection is read from the most specific impl that covers the receiver, when
+every impl that reaches the receiver, that it does not outrank, and that no more
+specific impl covers wherever it applies, gives under that instantiation what it
+gives there: `N<X, int>::Out` is
+`X` when the root answers `A` and a specialization for `N<int, B>` answers
+`int`, and `N<int, X>::Out` is that specialization's answer, which runs for
+every instance. Otherwise it stays opaque, and a
+body that needs it to be one particular type is refused, even when the
+instances the program creates would all have given that type. Otherwise, when the impls give the trait
+different arguments, the call cannot name which instantiation it means, which is
+E0437, and its message lists every impl that supplies the method, header
+included. Two impls give the trait the same arguments when each argument is the
+same type, or the same position of the receiver: the names an impl gives its
+parameters, and the order the file declares the impls in, decide nothing. When
+the arguments are the same and the receiver is still open, the impl cannot be
+chosen before the receiver's instantiation is known, which is E0438; annotating
+the receiver chooses it. A receiver its impl header does not fit is refused.
+
+A qualified call, `Tr::m(p)`, reads the impl the receiver leaves standing, with
+that impl's parameters instantiated afresh at each call, and each instance
+chooses its impl from the receiver again, as a method call does: a negative
+impl that denies the trait to the receiver refuses it with E0338. On a
+concrete receiver that several impls still apply to, a qualified call is
+refused with E0443 when they give the trait one instantiation, and with E0437
+when they do not. A qualified call on a receiver still open over a
+specialization chain is not supported and is refused with E0352. A receiver known only once its instance is, as `id(N { .. })`,
+calls a method that has its own type parameters as a method call does: each
+call site gives those parameters its arguments, and every argument the site
+typed must be what the method takes, whether or not its result is used. An
+argument that is itself such a call is resolved first, so what it returns is
+what the method is given. Where
+several impls could run, the impl is chosen once the receiver is known, and a
+receiver in a lattice left open is E0443 there as on a method call. Such a call
+sees the impls a method call sees: in the program's root module, an impl of a
+trait the root cannot see supplies nothing, and the call is refused as a member
+the type does not have. A module's bodies are typed inside the program that
+imports them and see every impl that program declares, the importer's own
+traits included, so a method one of them shares with the module's traits is
+ambiguous there (E0337).
+
+Inside an impl, in its signature as in its bodies, `Self::Item` is read by the
+same rule, on the impl's own header: it is that impl's answer unless another
+impl that reaches some of its receivers, that it does not outrank, and that no
+more specific impl covers wherever it applies, answers otherwise there. When
+two of them define it differently, as a specialization that redefines an
+associated type does, `Self::Item` is not one type across those receivers and
+is refused with E0423, whose message lists the impls that reach them; the impl
+writes the type itself instead. An annotation in a body names `Self` as that
+header, not as the nominal alone, and a projection under a constructor, as
+`W<Self::Out>`, is read where the call is typed, so each instance materializes
+the constructor.
+
+Two impls that overlap without one being strictly more specific (E0340), or
+that are equally specific (E0442), are both withdrawn, and an impl withdrawn
+this way still meets the impls that follow it, so the impls withdrawn do not
+depend on the order the file declares them in. These verdicts are reported
+before any error the withdrawal causes elsewhere in the program, and errors of one
+kind that a trait's default body raises once per impl adopting it are reported
+in the order of what they say rather than the order of the impls.
+
+A trait's default body is typed once per impl that adopts it, and a call on
+`Self` there reaches the trait at the instantiation that impl gives it: another
+impl of the trait at another instantiation, even one whose header reaches the
+same receiver, is not a candidate, since each instance runs the adopting impl's
+own methods.
+
+A call through a bound on a type parameter reads the impls by what they give
+the trait at the receiver, and takes the most specific only where it refines
+the others, header and trait arguments together, as a method call on that
+receiver does; where it does not, no call can name one, which is E0437, and
+where two incomparable impls both apply it is E0443. A pair whose headers are
+ordered but whose trait arguments are not is refused at every use, whichever
+route the call takes.
+
+A negative impl supplies nothing: none of its trait's default bodies is typed on
+its header.
 
 `impl<T, U> W<T>` is rejected at the header with E0430, the caret on the
 target type, naming the parameter and the two repairs: mention it in the target
@@ -2367,6 +2470,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0435 | EmittedBytecodeRejected | the bytecode about to be written is refused by the Aelys verifier or cannot be read back, so the run writes no artifact |
 | E0436 | BytecodeEncodingRefused | the program carries a name the bytecode format cannot encode, so the run writes no artifact |
 | E0437 | AmbiguousTraitInstantiation | one trait, implemented for the same type at several instantiations, supplies the method a call names |
+| E0438 | UnresolvedReceiverInstantiation | several impls of one trait that takes parameters, at one instantiation, each for its own instantiation of the receiver's nominal, supply the method, and the receiver is not yet a known instantiation |
 | E0431 | NegativeImplOrphan | a negative impl names neither a local trait nor a local type |
 | E0432 | PositiveNegativeConflict | one trait is both implemented and denied for one type |
 | E0433 | OverlappingImplHeaders | two impl headers overlap without one being strictly more specific |
