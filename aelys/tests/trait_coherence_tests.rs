@@ -20,6 +20,24 @@ fn compile_message(source: &str) -> String {
     }
 }
 
+/// every error the program draws, as a set: the public pipeline reports them all, where a compile reports the first
+fn every_error(source: &str) -> Vec<String> {
+    let mut pipeline = aelys_driver::pipeline::standard_pipeline();
+    let error = pipeline
+        .execute_str("test", source)
+        .expect_err("the program must be refused")
+        .to_string();
+    let mut lines: Vec<String> = error
+        .lines()
+        .map(|line| {
+            line.trim_start_matches("Stage 'type_inference' failed: ")
+                .to_string()
+        })
+        .collect();
+    lines.sort();
+    lines
+}
+
 fn value_of(source: &str) -> i64 {
     run(source, "test.aelys")
         .unwrap_or_else(|error| panic!("the program must run: {error}\n{source}"))
@@ -3806,7 +3824,7 @@ probe()
         );
     }
 
-    // both present: the impl is legal. a call on either is e0437 by d7, two
+    // both present: the impl is legal. a call on either is E0437 by d7, two
     assert_eq!(
         value_of(&format!(
             "{source}\
@@ -4784,4 +4802,2259 @@ probe()
         2,
         "the specialized method's own parameter is deduced from the argument"
     );
+}
+
+/// the refusal is on the body, so it holds whatever route reaches the method
+#[test]
+fn a_method_own_parameter_is_its_own_on_every_route() {
+    let impl_block = "\
+trait Get2 {
+    fn fetch<A>(self) -> A;
+}
+struct P<A> { v: A }
+impl<A> Get2 for P<A> {
+    fn fetch<A>(self) -> A { return self.v }
+}
+";
+    let through_bound = format!(
+        "{impl_block}fn g<X: Get2>(x: X) -> bool {{ return x.fetch() }}
+fn probe() -> bool {{
+    let p: P<int> = P {{ v: 7 }}
+    return g(p)
+}}
+probe()
+"
+    );
+    let through_path = format!(
+        "{impl_block}fn probe() -> bool {{
+    let p: P<int> = P {{ v: 7 }}
+    return Get2::fetch(p)
+}}
+probe()
+"
+    );
+    for (source, route) in [(&through_bound, "a bound"), (&through_path, "a path")] {
+        let message = compile_message(source);
+        assert!(
+            message.contains("error[E0301]") && message.contains("of the method"),
+            "reached through {route}, the body is still refused where it is written: \
+             {message}\n{source}"
+        );
+    }
+    let swapped_through_bound = "\
+trait Sw {
+    fn swap<A>(self, other: P<A>) -> A;
+}
+struct P<A> { v: A }
+impl<A> Sw for P<A> {
+    fn swap<A>(self, other: P<A>) -> A { return other.v }
+}
+fn g<X: Sw>(x: X) -> int {
+    let q: P<bool> = P { v: true }
+    if x.swap(q) { return 111 }
+    return 222
+}
+fn probe() -> int {
+    let p: P<int> = P { v: 7 }
+    return g(p)
+}
+probe()
+";
+    assert_eq!(
+        value_of(swapped_through_bound),
+        111,
+        "through a bound, the method's parameter is still the argument's type"
+    );
+}
+
+/// three programs that were refused only for reusing a spelling the nominal or the impl already had
+#[test]
+fn a_reused_spelling_no_longer_refuses_a_sound_method() {
+    let argument_only = "\
+struct P<A> { v: A }
+impl<A> P<A> {
+    fn take<A>(self, a: A) -> int { return 1 }
+}
+fn probe() -> int {
+    let p = P { v: 7 }
+    return p.take(true)
+}
+probe()
+";
+    let adopted_default_body = "\
+trait Dup {
+    fn dup<A>(self, a: A) -> Self { return self }
+}
+struct P<A> { v: A }
+impl<A> Dup for P<A> { }
+fn probe() -> int {
+    let p = P { v: 7 }
+    let q = p.dup(true)
+    return q.v + 1
+}
+probe()
+";
+    let spelling_of_the_struct_only = "\
+struct P<A> { v: A }
+impl<Z> P<Z> {
+    fn call<A>(self, t: A) -> int { return 12 }
+}
+fn probe() -> int {
+    let p: P<int> = P { v: 1 }
+    return p.call(true)
+}
+probe()
+";
+    assert_eq!(
+        value_of(argument_only),
+        1,
+        "an argument of the method's own type"
+    );
+    assert_eq!(
+        value_of(adopted_default_body),
+        8,
+        "a default body the impl adopts"
+    );
+    assert_eq!(
+        value_of(spelling_of_the_struct_only),
+        12,
+        "a spelling the struct declares and the impl does not reuse"
+    );
+}
+
+/// a qualified call reads the method record, not the typed body, so a respelled parameter must be recorded there too
+#[test]
+fn a_qualified_call_deduces_a_respelled_method_parameter() {
+    assert_eq!(
+        value_of(
+            "\
+trait Pk {
+    fn pick<A>(self, a: A) -> A;
+}
+struct P<A> { v: A }
+impl Pk for P<int> {
+    fn pick<A>(self, a: A) -> A { return a }
+}
+fn probe() -> int {
+    let p: P<int> = P { v: 7 }
+    if Pk::pick(p, true) { return 111 }
+    return 222
+}
+probe()
+"
+        ),
+        111,
+        "the method's parameter spelled like the struct's is deduced from the argument"
+    );
+}
+
+/// a bound on a respelled parameter must follow the respelling or no lookup finds it
+#[test]
+fn a_bound_follows_a_respelled_method_parameter() {
+    let prelude = "\
+trait Show { fn show(self) -> int; }
+struct W { k: int }
+impl Show for W { fn show(self) -> int { return self.k } }
+struct P<A> { v: A }
+";
+    let call = "\
+fn probe() -> int {
+    let p = P { v: 7 }
+    return p.use_it(W { k: 42 })
+}
+probe()
+";
+    let inline =
+        "impl<A> P<A> {\n    fn use_it<A: Show>(self, a: A) -> int { return a.show() }\n}\n";
+    let where_clause = "impl<A> P<A> {\n    fn use_it<A>(self, a: A) -> int where A: Show { return a.show() }\n}\n";
+    let trait_impl = "trait Use { fn use_it<A: Show>(self, a: A) -> int; }\nimpl<A> Use for P<A> {\n    fn use_it<A: Show>(self, a: A) -> int { return a.show() }\n}\n";
+    for (block, form) in [
+        (inline, "an inline bound"),
+        (where_clause, "a where clause"),
+        (trait_impl, "a trait impl's method"),
+    ] {
+        assert_eq!(
+            value_of(&format!("{prelude}{block}{call}")),
+            42,
+            "{form} on a parameter spelled like the struct's reaches that parameter"
+        );
+    }
+}
+
+/// every other reading of a respelled parameter inside the method
+#[test]
+fn a_respelled_method_parameter_reads_its_own_items() {
+    let constant = "\
+trait Source { const LIMIT: int; }
+struct C { k: int }
+impl Source for C { const LIMIT: int = 4; }
+struct D { k: int }
+impl Source for D { const LIMIT: int = 30; }
+struct P<A> { v: A }
+impl<A> P<A> {
+    fn lim<A: Source>(self, a: A) -> int { return A::LIMIT }
+}
+fn probe() -> int {
+    let p = P { v: 7 }
+    return p.lim(C { k: 0 }) + p.lim(D { k: 0 })
+}
+probe()
+";
+    let projection = "\
+trait Source { type Item; fn item(self) -> Self::Item; }
+struct C { k: int }
+impl Source for C { type Item = int; fn item(self) -> int { return self.k } }
+struct P<A> { v: A }
+impl<A> P<A> {
+    fn take<A: Source>(self, a: A) -> A::Item { return a.item() }
+}
+fn probe() -> int {
+    let p = P { v: true }
+    return p.take(C { k: 41 }) + 1
+}
+probe()
+";
+    let impl_bound = "\
+trait Show { fn show(self) -> int; }
+struct W { k: int }
+impl Show for W { fn show(self) -> int { return self.k } }
+struct P<A> { v: A }
+impl<A: Show> P<A> {
+    fn m<A>(self, a: A) -> int { return self.v.show() }
+}
+fn probe() -> int {
+    let p = P { v: W { k: 9 } }
+    return p.m(true)
+}
+probe()
+";
+    assert_eq!(
+        value_of(constant),
+        34,
+        "each instance reads the constant of the type it was called with"
+    );
+    assert_eq!(
+        value_of(projection),
+        42,
+        "a projection on the method's parameter"
+    );
+    assert_eq!(
+        value_of(impl_bound),
+        9,
+        "the impl's bound stays on the impl's parameter when a method reuses its name"
+    );
+}
+
+/// a method's signature is written in its impl's names, so the receiver is matched against the impl header
+#[test]
+fn a_receiver_binds_the_names_its_impl_header_wrote() {
+    let renamed = "\
+struct P<A> { v: A }
+impl<Z> P<Z> {
+    fn m(self) -> Z { return self.v }
+}
+";
+    let swapped = "\
+struct P<A, B> { a: A, b: B }
+impl<B, A> P<B, A> {
+    fn first(self) -> B { return self.a }
+    fn second(self) -> A { return self.b }
+}
+";
+    assert_eq!(
+        value_of(&format!(
+            "{renamed}fn probe() -> int {{\n    let p: P<int> = P {{ v: 7 }}\n    return p.m()\n}}\nprobe()\n"
+        )),
+        7,
+        "an impl's own name for the slot reads the receiver's type"
+    );
+    assert_eq!(
+        value_of(&format!(
+            "{swapped}fn probe() -> int {{\n    let p: P<int, bool> = P {{ a: 7, b: true }}\n    if p.second() {{ return p.first() + 1 }}\n    return 0\n}}\nprobe()\n"
+        )),
+        8,
+        "swapped names read their own slots"
+    );
+    for (source, what) in [
+        (
+            format!(
+                "{renamed}fn probe() -> bool {{\n    let p: P<int> = P {{ v: 7 }}\n    return p.m()\n}}\nprobe()\n"
+            ),
+            "an int reaching a caller that declared bool",
+        ),
+        (
+            format!(
+                "{swapped}fn probe() -> bool {{\n    let p: P<int, bool> = P {{ a: 7, b: true }}\n    return p.first()\n}}\nprobe()\n"
+            ),
+            "the first slot read as the second's type",
+        ),
+    ] {
+        let message = compile_message(&source);
+        assert!(
+            message.contains("error[E0301]"),
+            "{what} is refused: {message}\n{source}"
+        );
+    }
+}
+
+/// a position the trait declares with a method parameter takes the impl method's own, one the trait fixes takes neither a free parameter nor another type
+#[test]
+fn a_trait_signature_is_honoured_position_by_position() {
+    let caller = "\
+fn probe() -> bool {
+    let p: P<int> = P { v: 7 }
+    return g(p)
+}
+probe()
+";
+    let fixes_the_own_return = "\
+trait Tr { fn m<T>(self, a: T) -> T; }
+struct P<A> { v: A }
+impl Tr for P<int> {
+    fn m<A>(self, a: A) -> int { return self.v }
+}
+fn g<X: Tr>(x: X) -> bool { return x.m(true) }
+";
+    let impl_parameter_for_an_own_one = "\
+trait Tr { fn f<A>(self, c: A) -> A; }
+struct P<A> { v: A }
+impl<A> Tr for P<A> {
+    fn f(self, c: A) -> A { return self.v }
+}
+fn g<X: Tr>(x: X) -> bool { return x.f(true) }
+";
+    let specialized_fixes_the_own_return = "\
+trait Tr { fn m<T>(self, a: T) -> T; }
+struct P<A> { v: A }
+impl<A> Tr for P<A> {
+    default fn m<A>(self, a: A) -> A { return a }
+}
+impl Tr for P<int> {
+    fn m<A>(self, a: A) -> int { return self.v }
+}
+fn g<X: Tr>(x: X) -> bool { return x.m(true) }
+";
+    let own_parameter_at_a_fixed_position = "\
+trait Tr { fn f(self, x: int) -> bool; }
+struct P<A> { v: A }
+impl<A> Tr for P<A> {
+    fn f<B>(self, x: B) -> B { return x }
+}
+fn g<X: Tr>(x: X) -> bool { return x.f(3) }
+";
+    let impl_parameter_at_a_fixed_position = "\
+trait Tr { fn m(self) -> bool; }
+struct P<A> { v: A }
+impl<A> Tr for P<A> {
+    fn m(self) -> A { return self.v }
+}
+fn g<X: Tr>(x: X) -> bool { return x.m() }
+";
+    for (block, what) in [
+        (fixes_the_own_return, "an own return fixed to int"),
+        (
+            impl_parameter_for_an_own_one,
+            "an impl parameter where the trait declares its own",
+        ),
+        (
+            specialized_fixes_the_own_return,
+            "the same fixed by a specializing impl",
+        ),
+        (
+            own_parameter_at_a_fixed_position,
+            "a free parameter where the trait fixes int",
+        ),
+        (
+            impl_parameter_at_a_fixed_position,
+            "an impl parameter where the trait fixes bool",
+        ),
+    ] {
+        let source = format!("{block}{caller}");
+        let message = compile_message(&source);
+        assert!(
+            message.contains("error[E0336]"),
+            "{what} does not implement the trait's method: {message}\n{source}"
+        );
+    }
+}
+
+/// a redeclared trait parameter is the method's own, so a bound fixing the trait does not fix it
+#[test]
+fn a_trait_method_parameter_that_shadows_the_trait_is_its_own() {
+    let generic = "\
+trait Get<A> { fn fetch<A>(self, a: A) -> A; }
+struct S { n: int }
+impl Get<int> for S { fn fetch<A>(self, a: A) -> A { return a } }
+";
+    let through_bound = format!(
+        "{generic}fn g<X: Get<int>>(x: X) -> int {{\n    if x.fetch(true) {{ return 111 }}\n    return 222\n}}\nfn probe() -> int {{\n    let s = S {{ n: 1 }}\n    return g(s)\n}}\nprobe()\n"
+    );
+    let through_receiver = format!(
+        "{generic}fn probe() -> int {{\n    let s = S {{ n: 1 }}\n    if s.fetch(true) {{ return 111 }}\n    return 222\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(&through_bound),
+        111,
+        "the bound fixes the trait's A, not the method's"
+    );
+    assert_eq!(
+        value_of(&through_receiver),
+        111,
+        "the same reached through the receiver"
+    );
+    let fixed = "\
+trait Get<A> { fn fetch<A>(self, a: A) -> A; }
+struct S { n: int }
+impl Get<int> for S { fn fetch(self, a: int) -> int { return a + 1 } }
+fn g<X: Get<int>>(x: X) -> bool { return x.fetch(true) }
+fn probe() -> int {
+    let s = S { n: 1 }
+    if g(s) { return 111 }
+    return 222
+}
+probe()
+";
+    let message = compile_message(fixed);
+    assert!(
+        message.contains("error[E0336]"),
+        "an impl that fixes the method's own parameter to the trait's argument does not \
+         implement it: {message}"
+    );
+}
+
+/// `Self::Item` is the impl's own annotation, read in the impl's scope, where a method's respelled parameter does not reach
+#[test]
+fn an_associated_type_is_read_in_its_impl_scope() {
+    let sound = "\
+trait Tr { type Item; fn m<T>(self, t: T) -> Self::Item; }
+struct P<A> { v: A }
+impl<A> Tr for P<A> {
+    type Item = A
+    fn m<A>(self, t: A) -> Self::Item { return self.v }
+}
+fn g<X: Tr<Item = int>>(x: X) -> int { return x.m(true) }
+fn probe() -> int {
+    let p: P<int> = P { v: 7 }
+    return g(p) + p.m(false)
+}
+probe()
+";
+    let returns_the_argument = "\
+trait Tr { type Item; fn m<T>(self, t: T) -> T; }
+struct P<A> { v: A }
+impl<A> Tr for P<A> {
+    type Item = A
+    fn m<A>(self, t: A) -> Self::Item { return t }
+}
+fn probe() -> int {
+    let p: P<int> = P { v: 7 }
+    if p.m(true) { return 111 }
+    return 222
+}
+probe()
+";
+    assert_eq!(
+        value_of(sound),
+        14,
+        "Item is the impl's A, which the receiver fixes"
+    );
+    let message = compile_message(returns_the_argument);
+    assert!(
+        message.contains("error[E0336]"),
+        "a method whose Self::Item is not the trait's own parameter does not implement it: \
+         {message}"
+    );
+}
+
+#[test]
+fn a_diagnostic_names_the_parameter_the_author_wrote() {
+    let unbound = "\
+trait Show { fn show(self) -> int; }
+struct P<A> { v: A }
+impl<A> P<A> {
+    fn m<A>(self, a: A) -> int { return a.show() }
+}
+fn probe() -> int {
+    let p = P { v: 1 }
+    return p.m(true)
+}
+probe()
+";
+    let message = compile_message(unbound);
+    assert!(
+        message.contains("type parameter 'A'") && !message.contains('$'),
+        "the parameter is named as written: {message}"
+    );
+    let alike = "\
+struct P<A> { v: A }
+impl<A> P<A> {
+    fn get<A>(self) -> A { return self.v }
+}
+fn probe() -> int {
+    let p = P { v: 7 }
+    return p.get()
+}
+probe()
+";
+    let message = compile_message(alike);
+    assert!(
+        message.contains("print alike") && !message.contains('$'),
+        "two parameters spelled alike are told apart in words: {message}"
+    );
+}
+
+#[test]
+fn a_respelled_method_calls_another_from_its_scope() {
+    assert_eq!(
+        value_of(
+            "\
+struct P<A> { v: A }
+impl<A> P<A> { fn m<A>(self, a: A) -> A { return a } }
+struct Q<A> { w: A }
+impl<A> Q<A> {
+    fn k<A>(self, a: A) -> int {
+        let p: P<int> = P { v: 7 }
+        return p.m(5) + 1
+    }
+}
+fn probe() -> int {
+    let q: Q<bool> = Q { w: true }
+    return q.k(false)
+}
+probe()
+"
+        ),
+        6,
+        "the inner call deduces its own parameter from its argument"
+    );
+}
+
+/// a turbofish binds a method's own parameters in the order they first appear after the receiver, whatever order the impl declared them in
+#[test]
+fn a_turbofish_binds_a_method_own_parameters() {
+    let inherent = "\
+struct P { n: int }
+impl P { fn f<X>(self, x: X) -> X { return x } }
+fn probe() -> int {
+    let p = P { n: 0 }
+    return p.f::<int>(3)
+}
+probe()
+";
+    let reordered = "\
+trait Tr { fn f<U, W>(self, u: U, w: W) -> W; }
+struct P { n: int }
+impl Tr for P { fn f<X, Y>(self, u: Y, w: X) -> X { return w } }
+";
+    let through_receiver = format!(
+        "{reordered}fn probe() -> int {{\n    let p = P {{ n: 0 }}\n    if p.f::<int, bool>(1, true) {{ return 111 }}\n    return 222\n}}\nprobe()\n"
+    );
+    let through_bound = format!(
+        "{reordered}fn g<Q: Tr>(q: Q) -> bool {{ return q.f::<int, bool>(1, true) }}\nfn probe() -> int {{\n    let p = P {{ n: 0 }}\n    if g(p) {{ return 111 }}\n    return 222\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(inherent),
+        3,
+        "an inherent method takes its turbofish"
+    );
+    assert_eq!(
+        value_of(&through_receiver),
+        111,
+        "the trait's positions give the order"
+    );
+    assert_eq!(value_of(&through_bound), 111, "the same through a bound");
+}
+
+/// a receiver whose type is not resolved yet is still bound by the impl header
+#[test]
+fn an_unresolved_receiver_is_bound_by_the_impl_header() {
+    for (source, what) in [
+        (
+            "\
+struct P<A> { v: A }
+impl<Z> P<Vec<Z>> {
+    fn m(self) -> Z { return self.v[0] }
+}
+fn probe() -> bool {
+    let p = P { v: vec![7, 8] }
+    return p.m()
+}
+probe()
+",
+            "an element of an unannotated receiver reaching a bool",
+        ),
+        (
+            "\
+trait Tr { fn m(self) -> int; }
+struct P<A> { v: A }
+impl P<int> {
+    fn n(self) -> int { return self.v + 1 }
+}
+fn probe() -> int {
+    let p: P<bool> = P { v: true }
+    return p.n()
+}
+probe()
+",
+            "a concrete header called on another instantiation",
+        ),
+    ] {
+        let message = compile_message(source);
+        assert!(
+            message.contains("error[E0301]"),
+            "{what} is refused where it is typed: {message}\n{source}"
+        );
+    }
+}
+
+/// the call is typed through the trait's own declaration, and an associated type resolves through the impl that will run
+#[test]
+fn several_impls_answer_through_the_trait_at_the_receiver() {
+    let impls = "\
+trait Tr { type Out; fn m(self) -> Self::Out; }
+struct H<T> { v: T }
+impl Tr for H<int> {
+    type Out = int
+    fn m(self) -> int { return self.v }
+}
+impl Tr for H<bool> {
+    type Out = bool
+    fn m(self) -> bool { return self.v }
+}
+";
+    let sound = format!(
+        "{impls}fn probe() -> int {{\n    let a = H {{ v: 5 }}\n    let b = H {{ v: true }}\n    if b.m() {{ return a.m() + 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    let bool_plus_one = format!(
+        "{impls}fn probe() -> int {{\n    let h = H {{ v: true }}\n    return h.m() + 1\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(&sound),
+        6,
+        "each receiver reads its own impl's Out"
+    );
+    let message = compile_message(&bool_plus_one);
+    assert!(
+        message.contains("error[E0301]") && message.contains("found bool"),
+        "the item is resolved to the receiver's impl before it is judged: {message}"
+    );
+}
+
+/// several impls of one parameterized trait at one instantiation, on different receiver instantiations, cannot be told apart
+#[test]
+fn an_unknown_receiver_among_impls_of_one_instantiation_is_e0438() {
+    let impls = "\
+trait Tr<T> { type Out; fn m(self) -> Self::Out; }
+struct H<U> { v: U }
+impl Tr<int> for H<int> {
+    type Out = int
+    fn m(self) -> int { return self.v }
+}
+impl Tr<int> for H<bool> {
+    type Out = bool
+    fn m(self) -> bool { return self.v }
+}
+";
+    let open = format!(
+        "{impls}fn probe() -> int {{\n    let h = H {{ v: true }}\n    if h.m() {{ return 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    let annotated = format!(
+        "{impls}fn probe() -> int {{\n    let h: H<bool> = H {{ v: true }}\n    if h.m() {{ return 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    let message = compile_message(&open);
+    assert!(
+        message.contains("error[E0438]") && message.contains("annotate the receiver"),
+        "the diagnostic names the fix that works: {message}"
+    );
+    assert_eq!(
+        value_of(&annotated),
+        1,
+        "an annotated receiver chooses its impl"
+    );
+}
+
+/// a specializing impl gives the associated type the monomorphizer will read, so a concrete receiver resolves it through the most
+#[test]
+fn a_specialized_associated_type_is_read_from_the_impl_that_runs() {
+    let keeps_it = "\
+trait Tr { type Out; fn m(self) -> Self::Out; }
+struct N<A, B> { a: A, b: B }
+impl<A, B> Tr for N<A, B> { type Out = A
+    default fn m(self) -> A { return self.a } }
+impl<B> Tr for N<int, B> { type Out = int
+    fn m(self) -> int { return 100 } }
+fn probe() -> int {
+    let p = N { a: 7, b: true }
+    return p.m()
+}
+probe()
+";
+    let changes_it = "\
+trait Tr { type Out; fn m(self) -> Self::Out; }
+struct N<A, B> { a: A, b: B }
+impl<A, B> Tr for N<A, B> { type Out = A
+    default fn m(self) -> A { return self.a } }
+impl<B> Tr for N<int, B> { type Out = B
+    fn m(self) -> B { return self.b } }
+fn probe() -> int {
+    let p = N { a: 7, b: true }
+    return p.m()
+}
+probe()
+";
+    assert_eq!(value_of(keeps_it), 100, "the specializing impl answers");
+    let message = compile_message(changes_it);
+    assert!(
+        message.contains("error[E0301]") && message.contains("found bool"),
+        "the specializing impl's Out is the one judged: {message}"
+    );
+}
+
+/// a member call whose receiver is not a nominal until later is resolved after solving
+#[test]
+fn a_deferred_member_binds_its_header_and_honours_denials() {
+    let swapped = "\
+struct N<A, B> { a: A, b: B }
+impl<B, A> N<B, A> { fn m(self) -> B { return self.a } }
+struct W<T> { inner: T }
+";
+    let sound = format!(
+        "{swapped}fn probe() -> int {{\n    let w = W {{ inner: N {{ a: 7, b: false }} }}\n    return w.inner.m()\n}}\nprobe()\n"
+    );
+    let wrong = format!(
+        "{swapped}fn probe() -> bool {{\n    let w = W {{ inner: N {{ a: 7, b: false }} }}\n    return w.inner.m()\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(&sound),
+        7,
+        "the impl's first slot is the receiver's first"
+    );
+    let message = compile_message(&wrong);
+    assert!(
+        message.contains("error[E0301]"),
+        "an int does not reach a bool: {message}"
+    );
+    let denied = "\
+trait Tr { fn m(self) -> int; }
+struct N<A, B> { a: A, b: B }
+impl<A, B> Tr for N<A, B> { default fn m(self) -> int { return 1 } }
+impl !Tr for N<bool, bool> {}
+fn id<X>(x: X) -> X { return x }
+fn probe() -> int {
+    let p = id(N { a: true, b: false })
+    return p.m()
+}
+probe()
+";
+    let message = compile_message(denied);
+    assert!(
+        message.contains("error[E0338]") && message.contains("denied"),
+        "a denial is honoured on the deferred route too: {message}"
+    );
+}
+
+/// several impls whose answer depends on which one runs are refused in a generic context
+#[test]
+fn several_impls_are_not_chosen_through_a_type_parameter() {
+    let message = compile_message(
+        "\
+trait Tr { type Out; fn m(self) -> Self::Out; }
+struct N<A, B> { a: A, b: B }
+impl Tr for N<int, bool> { type Out = int
+    fn m(self) -> int { return self.a } }
+impl Tr for N<bool, int> { type Out = int
+    fn m(self) -> int { return self.b } }
+fn w<X>(p: N<X, bool>) -> int { return p.m() }
+fn probe() -> int {
+    return w(N { a: true, b: false })
+}
+probe()
+",
+    );
+    assert!(
+        message.contains("error[E0301]"),
+        "the instance cannot be told apart before X is known: {message}"
+    );
+}
+
+/// the conformance rule walks every shape a type can take: a fixed array, a projection on a paired parameter, an unannotated position
+#[test]
+fn a_trait_signature_is_honoured_in_every_shape() {
+    let caller = "\
+fn probe() -> int {
+    let p = P { n: 1 }
+    return g(p)
+}
+probe()
+";
+    for (block, what) in [
+        (
+            "\
+trait Tr { fn f<U>(self, a: [U; 2]) -> int; }
+struct P { n: int }
+impl Tr for P { fn f(self, a: [int; 2]) -> int { return a[0] } }
+fn g<X: Tr>(x: X) -> int { return x.f([5, 6]) }
+",
+            "a fixed array that fixes the trait's own parameter",
+        ),
+        (
+            "\
+trait Src { type Out; fn out(self) -> Self::Out; }
+trait Tr { fn f<U: Src, W: Src>(self, u: U, w: W) -> U::Out; }
+struct P { n: int }
+impl Tr for P {
+    fn f<Q: Src, R: Src>(self, u: Q, w: R) -> R::Out { return w.out() }
+}
+fn g<X: Tr>(x: X) -> int { return 1 }
+",
+            "a projection on the wrong one of two paired parameters",
+        ),
+    ] {
+        let source = format!("{block}{caller}");
+        let message = compile_message(&source);
+        assert!(
+            message.contains("error[E0336]"),
+            "{what} does not implement the trait's method: {message}\n{source}"
+        );
+    }
+}
+
+/// a position the impl leaves unannotated takes the type the trait declares there, and the body is checked against it
+#[test]
+fn an_unannotated_impl_position_takes_the_trait_type() {
+    let unit = "\
+trait Tick { fn tick(self); }
+struct S { n: int }
+impl Tick for S {
+    fn tick(self) { }
+}
+fn probe() -> int {
+    let s = S { n: 1 }
+    s.tick()
+    return 1
+}
+probe()
+";
+    let consistent = "\
+trait Tr { fn f(self, a: int) -> int; }
+struct S { n: int }
+impl Tr for S {
+    fn f(self, a) -> int { return a + 1 }
+}
+fn probe() -> int {
+    let s = S { n: 1 }
+    return s.f(2)
+}
+probe()
+";
+    let body_disagrees = "\
+trait Tr { fn f(self, a: bool) -> int; }
+struct S { n: int }
+impl Tr for S {
+    fn f(self, a) -> int { return a + 1 }
+}
+fn probe() -> int {
+    let s = S { n: 1 }
+    return s.f(true)
+}
+probe()
+";
+    assert_eq!(
+        value_of(unit),
+        1,
+        "an unannotated return takes the trait's unit"
+    );
+    assert_eq!(
+        value_of(consistent),
+        3,
+        "an unannotated parameter takes the trait's int"
+    );
+    let message = compile_message(body_disagrees);
+    assert!(
+        message.contains("error[E0301]"),
+        "a body that uses the inherited parameter as another type is refused: {message}"
+    );
+}
+
+#[test]
+fn two_sides_that_print_alike_are_described() {
+    let message = compile_message(
+        "\
+struct A { n: int }
+fn mk() -> A { return A { n: 1 } }
+struct P<A> { v: A }
+impl<A> P<A> {
+    fn m<A>(self, x: A) -> A { return mk() }
+}
+fn probe() -> int {
+    let p: P<int> = P { v: 7 }
+    return p.m(3)
+}
+probe()
+",
+    );
+    assert!(
+        message.contains("of the method is its own parameter")
+            && message.contains("is the type of that name"),
+        "a struct named like the method's parameter is named as a type: {message}"
+    );
+}
+
+/// the shapes the conformance rule walks are walked to accept as well as to refuse
+#[test]
+fn a_paired_parameter_conforms_in_every_shape() {
+    let fixed_array = "\
+trait Tr { fn f<U>(self, a: [U; 2]) -> U; }
+struct P { n: int }
+impl Tr for P { fn f<X>(self, a: [X; 2]) -> X { return a[1] } }
+fn g<Q: Tr>(q: Q) -> int { return q.f([5, 6]) }
+fn probe() -> int {
+    let p = P { n: 1 }
+    return g(p)
+}
+probe()
+";
+    let projection = "\
+trait Src { type Out; fn out(self) -> Self::Out; }
+struct C { k: int }
+impl Src for C { type Out = int; fn out(self) -> int { return self.k } }
+trait Tr { fn f<U: Src>(self, u: U) -> U::Out; }
+struct P { n: int }
+impl Tr for P {
+    fn f<Q: Src>(self, u: Q) -> Q::Out { return u.out() }
+}
+fn probe() -> int {
+    let p = P { n: 1 }
+    return p.f(C { k: 41 }) + 1
+}
+probe()
+";
+    let untyped_trait_position = "\
+trait Tr { fn f(self, a) -> int; }
+struct P { n: int }
+impl Tr for P { fn f(self, a: int) -> int { return a + 1 } }
+fn g<X: Tr>(x: X) -> int { return x.f(true) }
+fn probe() -> int {
+    let p = P { n: 1 }
+    return g(p)
+}
+probe()
+";
+    assert_eq!(
+        value_of(fixed_array),
+        6,
+        "a fixed array of the paired parameter"
+    );
+    assert_eq!(
+        value_of(projection),
+        42,
+        "a projection on the paired parameter"
+    );
+    let message = compile_message(untyped_trait_position);
+    assert!(
+        message.contains("error[E0336]"),
+        "an impl that types a position the trait leaves open fixes it for every caller: \
+         {message}"
+    );
+}
+
+/// a parameterized trait with several impls is not typed through its declaration, so a concrete receiver that leaves one impl standing
+#[test]
+fn a_concrete_receiver_binds_the_one_impl_it_leaves() {
+    let impls = "\
+trait Tr<T> { fn m(self) -> T; }
+struct N<A, B> { a: A, b: B }
+impl<Z> Tr<Z> for N<int, Z> { fn m(self) -> Z { return self.b } }
+impl<Z> Tr<Z> for N<bool, Z> { fn m(self) -> Z { return self.b } }
+";
+    let into_int = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<int, bool> = N {{ a: 7, b: true }}\n    return p.m()\n}}\nprobe()\n"
+    );
+    let into_bool = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<int, bool> = N {{ a: 7, b: true }}\n    if p.m() {{ return 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    let message = compile_message(&into_int);
+    assert!(
+        message.contains("error[E0301]"),
+        "the second slot is bool and does not reach an int: {message}"
+    );
+    assert_eq!(value_of(&into_bool), 1, "and it answers a bool");
+}
+
+/// a member call resolved after solving chooses among impls by its resolved receiver, as the member route does
+#[test]
+fn a_deferred_member_chooses_among_impls_by_its_receiver() {
+    assert_eq!(
+        value_of(
+            "\
+trait Tr { fn m(self) -> int; }
+struct N<A, B> { a: A, b: B }
+impl Tr for N<int, bool> { fn m(self) -> int { return 1 } }
+impl Tr for N<bool, int> { fn m(self) -> int { return 2 } }
+struct W<T> { inner: T }
+fn probe() -> int {
+    let w = W { inner: N { a: true, b: 5 } }
+    return w.inner.m()
+}
+probe()
+"
+        ),
+        2,
+        "the impl for N<bool, int> answers"
+    );
+}
+
+/// a call in a generic body is specialized per instance
+#[test]
+fn an_instance_runs_the_impl_that_covers_its_receiver() {
+    let impls = "\
+trait Tr { fn m(self) -> int; }
+struct N<A, B> { a: A, b: B }
+impl Tr for N<int, bool> { fn m(self) -> int { return self.a } }
+impl Tr for N<bool, int> { fn m(self) -> int { return self.b } }
+";
+    let sibling = format!(
+        "{impls}fn w<X>(p: N<X, int>) -> int {{ return p.m() }}\nfn probe() -> int {{\n    return w(N {{ a: true, b: 5 }})\n}}\nprobe()\n"
+    );
+    let uncovered = format!(
+        "{impls}fn w<X>(p: N<X, bool>) -> int {{ return p.m() }}\nfn probe() -> int {{\n    return w(N {{ a: true, b: false }})\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(&sibling),
+        5,
+        "the impl for N<bool, int> runs for w<bool>"
+    );
+    let message = compile_message(&uncovered);
+    assert!(
+        message.contains("error[E0338]") && message.contains("N<bool, bool>"),
+        "no impl covers N<bool, bool>, and no other impl runs in its place: {message}"
+    );
+}
+
+/// two instances of one generic body need two different impls, so one of them contradicts whichever impl sema kept while typing the body
+#[test]
+fn two_instances_of_one_body_run_two_impls() {
+    assert_eq!(
+        value_of(
+            "\
+trait Tr { fn m(self) -> int; }
+struct N<A, B> { a: A, b: B }
+impl Tr for N<int, bool> { fn m(self) -> int { return self.a } }
+impl Tr for N<bool, int> { fn m(self) -> int { return self.b } }
+fn w<X, Y>(p: N<X, Y>) -> int { return p.m() }
+fn probe() -> int {
+    return w(N { a: 3, b: true }) * 10 + w(N { a: false, b: 4 })
+}
+probe()
+"
+        ),
+        34,
+        "each instance runs the impl that covers its receiver"
+    );
+}
+
+/// the root of a specialization chain covers every receiver the chain covers, so for a trait with parameters its header binds an open
+#[test]
+fn a_specialization_root_binds_an_open_receiver() {
+    let impls = "\
+trait Tr<T> { fn m(self) -> T; }
+struct N<A> { a: A }
+impl<P> Tr<P> for N<P> { default fn m(self) -> P { return self.a } }
+impl Tr<int> for N<int> { fn m(self) -> int { return 5 } }
+";
+    let open_bool_into_int = format!(
+        "{impls}fn probe() -> int {{\n    let p = N {{ a: true }}\n    return p.m()\n}}\nprobe()\n"
+    );
+    let generic_into_bool = format!(
+        "{impls}fn w<X>(p: N<X>) -> bool {{ return p.m() }}\nfn probe() -> int {{\n    if w(N {{ a: 7 }}) {{ return 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    let open_int = format!(
+        "{impls}fn probe() -> int {{\n    let p = N {{ a: 7 }}\n    return p.m()\n}}\nprobe()\n"
+    );
+    for (source, what) in [
+        (&open_bool_into_int, "a bool field reaching an int"),
+        (&generic_into_bool, "the parameter itself reaching a bool"),
+    ] {
+        let message = compile_message(source);
+        assert!(
+            message.contains("error[E0301]"),
+            "{what} is refused: {message}"
+        );
+    }
+    assert_eq!(
+        value_of(&open_int),
+        5,
+        "an open int receiver runs the specialization"
+    );
+}
+
+/// a trait without parameters is typed through its declaration, so a chain with a disjoint sibling needs no annotation
+#[test]
+fn a_chain_with_a_disjoint_sibling_needs_no_annotation() {
+    let impls = "\
+trait Tr {
+    fn m(self) -> int;
+    fn twice(self) -> int { return self.m() + 1000 }
+}
+struct N<A, B> { a: A, b: B }
+impl<A> Tr for N<A, int> { default fn m(self) -> int { return 100 } }
+impl Tr for N<int, int> { fn m(self) -> int { return 101 } }
+impl<A> Tr for N<A, bool> { fn m(self) -> int { return 102 } }
+fn id<Y>(y: Y) -> Y { return y }
+";
+    let bare = format!(
+        "{impls}fn probe() -> int {{\n    let p = N {{ a: 7, b: 8 }}\n    return p.m()\n}}\nprobe()\n"
+    );
+    let default_body = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<int, int> = N {{ a: 7, b: 8 }}\n    return p.twice()\n}}\nprobe()\n"
+    );
+    let generic = format!(
+        "{impls}fn w<X>(x: X) -> int {{\n    let p = id(N {{ a: 7, b: x }})\n    return p.m()\n}}\nfn probe() -> int {{\n    return w(false) * 1000 + w(9)\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(&bare),
+        101,
+        "the specialization covers N<int, int>"
+    );
+    assert_eq!(
+        value_of(&default_body),
+        1101,
+        "and it runs from a default body"
+    );
+    assert_eq!(
+        value_of(&generic),
+        102_101,
+        "each instance of the generic body runs the impl that covers its receiver"
+    );
+}
+
+/// a negative impl supplies nothing, so no default body of its trait is typed on its header, and it refuses only the receivers it names
+#[test]
+fn a_negative_impl_adopts_no_default_body() {
+    assert_eq!(
+        value_of(
+            "\
+struct N<A, B> { a: A, b: B }
+trait Tr {
+    fn k(self) -> int;
+    fn m(self) -> int { return self.k() + 1000 }
+}
+impl<A, B> Tr for N<A, B> {
+    default fn k(self) -> int { return 100 }
+}
+impl Tr for N<int, bool> {
+    fn k(self) -> int { return 101 }
+}
+impl !Tr for N<bool, bool> {}
+fn probe() -> int {
+    let p: N<int, int> = N { a: 7, b: 8 }
+    return p.m()
+}
+probe()
+"
+        ),
+        1100,
+        "the default body runs for N<int, int>, which the denial does not name"
+    );
+}
+
+/// which diagnostic an ambiguity gets does not depend on the names the impls give their parameters, and no diagnostic prints one
+#[test]
+fn a_diagnostic_does_not_read_an_impl_parameter_name() {
+    let spelled = |second: &str| {
+        format!(
+            "\
+trait Tr<T> {{ fn m(self) -> T; }}
+struct N<A, B> {{ a: A, b: B }}
+impl<Z> Tr<Z> for N<int, Z> {{ fn m(self) -> Z {{ return self.b }} }}
+impl<{second}> Tr<{second}> for N<bool, {second}> {{ fn m(self) -> {second} {{ return self.b }} }}
+fn probe() -> int {{
+    let p = N {{ a: 7, b: 8 }}
+    return p.m()
+}}
+probe()
+"
+        )
+    };
+    let same = compile_message(&spelled("Z"));
+    let renamed = compile_message(&spelled("Y"));
+    assert!(same.contains("error[E0438]"), "{same}");
+    assert!(
+        renamed.contains("error[E0438]"),
+        "renaming a parameter changes nothing: {renamed}"
+    );
+    let uncovered = compile_message(
+        "\
+trait Tr<T> { fn m(self) -> int; }
+struct N<A, B> { a: A, b: B }
+impl<A> Tr<A> for N<A, int> { fn m(self) -> int { return 1 } }
+fn w<X>(p: N<X, bool>) -> int { return p.m() }
+fn probe() -> int {
+    return w(N { a: true, b: false })
+}
+probe()
+",
+    );
+    assert!(
+        uncovered.contains("error[E0338]") && !uncovered.contains("Tr<A>"),
+        "the refusal names no impl parameter: {uncovered}"
+    );
+}
+
+/// a specialization may give an associated type another value
+#[test]
+fn a_redefined_associated_type_types_the_call_by_the_impl_that_runs() {
+    let impls = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr<A> for N<A, B> {
+    type Out = B
+    default fn m(self) -> B { return self.b }
+}
+impl<B> Tr<int> for N<int, B> {
+    type Out = bool
+    fn m(self) -> bool { return true }
+}
+";
+    let answered = format!(
+        "{impls}fn probe() -> int {{\n    let p = N {{ a: 7, b: 8 }}\n    let r: bool = p.m()\n    let q = N {{ a: true, b: 5 }}\n    let s: int = q.m()\n    if r {{ return s }}\n    return 0\n}}\nprobe()\n"
+    );
+    assert_eq!(
+        value_of(&answered),
+        5,
+        "each receiver reads its own impl's type"
+    );
+    let return_side = format!(
+        "{impls}fn probe() -> int {{\n    let p = N {{ a: 7, b: 8 }}\n    let r: int = p.m()\n    return r + 1\n}}\nprobe()\n"
+    );
+    let inherent = format!(
+        "{impls}impl<X, Y> N<X, Y> {{ fn call(self) -> Y {{ return self.m() }} }}\nfn probe() -> int {{\n    let p: N<int, int> = N {{ a: 7, b: 8 }}\n    let r: int = p.call()\n    return r\n}}\nprobe()\n"
+    );
+    let argument_side = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { type In; fn m(self, x: Self::In) -> int; }
+impl<A, B> Tr<A> for N<A, B> {
+    type In = B
+    default fn m(self, x: B) -> int { return 1 }
+}
+impl<B> Tr<int> for N<int, B> {
+    type In = bool
+    fn m(self, x: bool) -> int { if x { return 2 } return 3 }
+}
+fn probe() -> int {
+    let p = N { a: 7, b: 8 }
+    return p.m(5)
+}
+probe()
+";
+    for (source, what) in [
+        (return_side.as_str(), "a bool read as an int"),
+        (
+            inherent.as_str(),
+            "an inherent method reading the root's type",
+        ),
+        (argument_side, "an int passed where a bool is read"),
+    ] {
+        let message = compile_message(source);
+        assert!(
+            message.contains("error[E0301]"),
+            "{what} is refused: {message}"
+        );
+    }
+    let bound = "\
+struct N<A, B> { a: A, b: B }
+struct Iv { v: int }
+struct Bv { v: bool }
+trait Tr<T> { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr<A> for N<A, B> {
+    type Out = B
+    default fn m(self) -> B { return self.b }
+}
+impl<B> Tr<int> for N<int, B> {
+    type Out = Bv
+    fn m(self) -> Bv { return Bv { v: true } }
+}
+trait Num { fn inc(self) -> int; }
+impl Num for Iv { fn inc(self) -> int { return self.v + 1 } }
+impl Num for Bv { fn inc(self) -> int { if self.v { return 10 } return 20 } }
+fn k<T: Num>(t: T) -> int { return t.inc() }
+fn w<X>(x: X) -> int {
+    let p = N { a: x, b: Iv { v: 8 } }
+    return k(p.m())
+}
+fn probe() -> int { return w(7) + w(true) }
+probe()
+";
+    let message = compile_message(bound);
+    assert!(
+        message.contains("error[E0343]") || message.contains("error[E0301]"),
+        "a bound cannot read the type the root gives: {message}"
+    );
+}
+
+/// impls are grouped by what they give the receiver, not by how their parameters are spelled or declared in the file
+#[test]
+fn impls_are_grouped_by_what_they_give_the_receiver() {
+    let same_instantiation = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { fn m(self) -> int; }
+impl<Z> Tr<Z> for N<int, Z> { fn m(self) -> int { return 1 } }
+impl<Y> Tr<Y> for N<bool, Y> { fn m(self) -> int { return 2 } }
+fn probe() -> int {
+    let p = N { a: 7, b: 8 }
+    return p.m()
+}
+probe()
+";
+    let message = compile_message(same_instantiation);
+    assert!(message.contains("error[E0438]"), "{message}");
+    let three = |first: &str, second: &str| {
+        format!(
+            "struct N<A, B> {{ a: A, b: B }}\ntrait Tr<T> {{ fn m(self) -> int; }}\n{first}\n{second}\nimpl Tr<int> for N<float, bool> {{ fn m(self) -> int {{ return 3 }} }}\nfn probe() -> int {{\n    let p = N {{ a: 7, b: 8 }}\n    return p.m()\n}}\nprobe()\n"
+        )
+    };
+    let z = "impl<Z> Tr<Z> for N<int, Z> { fn m(self) -> int { return 1 } }";
+    let y = "impl<Y> Tr<Y> for N<bool, Y> { fn m(self) -> int { return 2 } }";
+    let forward = compile_message(&three(z, y));
+    let reversed = compile_message(&three(y, z));
+    assert_eq!(
+        forward.lines().next(),
+        reversed.lines().next(),
+        "the order of the impls decides nothing"
+    );
+    assert!(
+        forward.contains("error[E0437]") && forward.contains("supplied by 3 impls"),
+        "every impl that supplies the method is counted: {forward}"
+    );
+}
+
+/// neither impl of an overlapping pair stands, so what the rest of the program is told does not depend on which one the file declares
+#[test]
+fn an_overlap_withdraws_both_impls_whatever_the_order() {
+    let program = |first: &str, second: &str| {
+        format!(
+            "struct N<A, B> {{ a: A, b: B }}\ntrait Tr {{\n    fn m(self) -> int;\n    fn twice(self) -> int {{ return self.m() + 1000 }}\n}}\n{first}\n{second}\nfn probe() -> int {{\n    let p: N<int, int> = N {{ a: 7, b: 8 }}\n    return p.twice()\n}}\nprobe()\n"
+        )
+    };
+    let general = "impl<A, B> Tr for N<A, B> { fn m(self) -> int { return 100 } }";
+    let special = "impl Tr for N<int, int> { fn m(self) -> int { return 101 } }";
+    let forward = compile_message(&program(general, special));
+    let reversed = compile_message(&program(special, general));
+    assert!(forward.contains("error[E0340]"), "{forward}");
+    assert_eq!(
+        forward.lines().next(),
+        reversed.lines().next(),
+        "the verdict names the same pair in either order"
+    );
+    // the rest of the program shows whether one impl of the pair survived
+    assert_eq!(
+        every_error(&program(general, special)),
+        every_error(&program(special, general)),
+        "the same errors in either order"
+    );
+}
+
+/// a receiver whose type parameters leave a single impl reachable names the one that runs, in a trait's default body and in a generic
+#[test]
+fn a_generic_receiver_one_impl_can_reach_needs_no_annotation() {
+    let impls = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { fn m(self) -> int; fn d(self) -> int { return self.m() + 1000 } }
+impl<B> Tr<int> for N<int, B> { fn m(self) -> int { return 100 } }
+impl<B> Tr<int> for N<bool, B> { fn m(self) -> int { return 101 } }
+";
+    let default_body = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<int, int> = N {{ a: 7, b: 8 }}\n    let q: N<bool, int> = N {{ a: true, b: 8 }}\n    return p.d() * 10000 + q.d()\n}}\nprobe()\n"
+    );
+    assert_eq!(value_of(&default_body), 1100 * 10000 + 1101);
+    let generic = format!(
+        "{impls}fn w<Y>(p: N<int, Y>) -> int {{ return p.m() }}\nfn probe() -> int {{\n    return w(N {{ a: 7, b: true }}) * 1000 + w(N {{ a: 7, b: 8 }})\n}}\nprobe()\n"
+    );
+    assert_eq!(value_of(&generic), 100 * 1000 + 100);
+}
+
+/// where two incomparable impls both outrank the root, the call is refused for the lattice left open, not for a missing method
+#[test]
+fn an_open_lattice_is_refused_as_ambiguous() {
+    let message = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m(self) -> int; }
+impl<A, B> Tr for N<A, B> { default fn m(self) -> int { return 100 } }
+impl<B> Tr for N<int, B> { default fn m(self) -> int { return 101 } }
+impl<A> Tr for N<A, int> { default fn m(self) -> int { return 102 } }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 7, b: 8 }
+    return p.m()
+}
+probe()
+",
+    );
+    assert!(message.contains("error[E0443]"), "{message}");
+}
+
+/// each call site gives a method's own parameter its argument, even on a receiver known only at its instance
+#[test]
+fn a_deferred_receiver_calls_a_method_with_its_own_parameter() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m<U>(self, u: U) -> U; }
+impl Tr for N<bool, int> { fn m<U>(self, u: U) -> U { return u } }
+fn id<Y>(y: Y) -> Y { return y }
+fn probe() -> int {
+    let p = id(N { a: true, b: 8 })
+    let r: int = p.m(5)
+    let s: bool = p.m(false)
+    if s { return 0 }
+    return r
+}
+probe()
+";
+    assert_eq!(value_of(source), 5);
+    assert_eq!(
+        bodies_of(&compiled(source), "m").len(),
+        2,
+        "one instance per argument type"
+    );
+}
+
+/// a qualified call instantiates the impl's parameters and, among several impls, takes the one the receiver leaves standing
+#[test]
+fn a_qualified_call_reads_the_impl_its_receiver_leaves() {
+    let single = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m(self, x: int) -> int; fn g(self) -> Self; }
+impl<B> Tr for N<int, B> {
+    fn m(self, x: int) -> int { return x + self.a }
+    fn g(self) -> N<int, B> { return self }
+}
+fn w<B>(p: N<int, B>) -> int { return Tr::m(p, 1) }
+fn probe() -> int {
+    let p: N<int, bool> = N { a: 7, b: true }
+    let q: N<int, bool> = Tr::g(p)
+    let r: N<int, int> = Tr::g(N { a: 1, b: 2 })
+    return w(q) + w(r) + Tr::m(p, 10)
+}
+probe()
+";
+    assert_eq!(value_of(single), 8 + 2 + 17);
+    let chain = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m(self) -> int; }
+impl<A, B> Tr for N<A, B> { default fn m(self) -> int { return 100 } }
+impl<B> Tr for N<int, B> { fn m(self) -> int { return 101 } }
+impl<B> Tr for W<B> { fn m(self) -> int { return 7 } }
+struct W<T> { v: T }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 7, b: 8 }
+    let q: N<bool, int> = N { a: true, b: 8 }
+    return Tr::m(p) * 1000 + Tr::m(q)
+}
+probe()
+";
+    assert_eq!(value_of(chain), 101 * 1000 + 100);
+    let mismatch = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn g(self) -> Self; }
+impl<B> Tr for N<int, B> { fn g(self) -> N<int, B> { return self } }
+fn probe() -> int {
+    let p: N<int, bool> = N { a: 7, b: true }
+    let q: N<int, int> = Tr::g(p)
+    return q.b
+}
+probe()
+",
+    );
+    assert!(mismatch.contains("error[E0301]"), "{mismatch}");
+}
+
+/// `Self::Out` inside a chain that defines `out` twice is refused, and the message names the impls rather than a projection no program
+#[test]
+fn an_ambiguous_self_projection_names_the_impls() {
+    let message = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr for N<A, B> {
+    type Out = B
+    default fn m(self) -> Self::Out { return self.b }
+}
+impl<B> Tr for N<int, B> {
+    type Out = bool
+    fn m(self) -> Self::Out { return true }
+}
+fn probe() -> int { return 0 }
+probe()
+",
+    );
+    assert!(
+        message.contains("error[E0423]: projection 'Self::Out' is ambiguous")
+            && message.contains("implemented for N<A, B> and N<int, B>"),
+        "{message}"
+    );
+}
+
+/// an impl refused for an overlap is still one later impls overlap, so the impls a chain of overlaps withdraws are the same in any order
+#[test]
+fn a_chain_of_overlaps_withdraws_the_same_impls_in_any_order() {
+    let first = "impl<B> Tr for N<int, B> { fn m(self) -> int { return 1 } }";
+    let second = "impl<A> Tr for N<A, bool> { fn m(self) -> int { return 2 } }";
+    let third = "impl Tr for N<bool, bool> { fn m(self) -> int { return 3 } }";
+    let program = |impls: [&str; 3]| {
+        format!(
+            "struct N<A, B> {{ a: A, b: B }}\ntrait Tr {{ fn m(self) -> int; }}\n{}\nfn probe() -> int {{\n    let p: N<bool, bool> = N {{ a: true, b: false }}\n    return p.m()\n}}\nprobe()\n",
+            impls.join("\n")
+        )
+    };
+    assert_eq!(
+        every_error(&program([first, second, third])),
+        every_error(&program([third, first, second])),
+        "the same impls are withdrawn in either order"
+    );
+}
+
+/// two equally specific impls are both withdrawn, and the verdict comes before what a default body typed against neither of them reports
+#[test]
+fn an_unordered_pair_is_reported_before_its_symptoms() {
+    let message = compile_message(
+        "\
+struct W<T> { v: T }
+trait Tr { fn m(self) -> int; fn twice(self) -> int { return self.m() + 1000 } }
+impl<T> Tr for W<T> { default fn m(self) -> int { return 1 } }
+impl<U> Tr for W<U> { fn m(self) -> int { return 2 } }
+fn probe() -> int {
+    let w = W { v: 1 }
+    return w.twice()
+}
+probe()
+",
+    );
+    assert!(
+        message
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains("error[E0442]")),
+        "{message}"
+    );
+}
+
+/// a negative impl refuses a qualified call as it refuses a method call
+#[test]
+fn a_negative_impl_refuses_a_qualified_call() {
+    let impls = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m(self) -> int; }
+impl<A, B> Tr for N<A, B> { default fn m(self) -> int { return 100 } }
+impl Tr for N<int, bool> { fn m(self) -> int { return 101 } }
+impl !Tr for N<bool, bool> {}
+";
+    let concrete = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<bool, bool> = N {{ a: true, b: false }}\n    return Tr::m(p)\n}}\nprobe()\n"
+    );
+    let generic = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m(self) -> int; }
+impl<A, B> Tr for N<A, B> { default fn m(self) -> int { return 100 } }
+impl !Tr for N<bool, bool> {}
+fn w<A, B>(p: N<A, B>) -> int { return Tr::m(p) }
+fn probe() -> int { return w(N { a: true, b: false }) }
+probe()
+"
+    .to_string();
+    for (source, what) in [
+        (&concrete, "a concrete receiver"),
+        (&generic, "a generic one"),
+    ] {
+        let message = compile_message(source);
+        assert!(
+            message.contains("error[E0338]") && message.contains("denied"),
+            "{what} is denied: {message}"
+        );
+    }
+}
+
+/// a call on a receiver known only at its instance binds the method's own parameters, never a parameter of the function the call sits in
+#[test]
+fn a_deferred_call_does_not_bind_the_enclosing_parameter() {
+    let message = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+struct W<T> { v: T }
+trait Tr<T> { fn m(self) -> T; }
+impl<A, B> Tr<A> for N<A, B> { fn m(self) -> A { return self.a } }
+fn id<Y>(y: Y) -> Y { return y }
+fn w<X>(x: X) -> bool {
+    let p = id(N { a: x, b: false })
+    return p.m()
+}
+fn probe() -> int {
+    let r: bool = w(W { v: true })
+    if r { return 1 }
+    return 0
+}
+probe()
+",
+    );
+    assert!(message.contains("error[E0301]"), "{message}");
+}
+
+/// the impl a generic receiver alone reaches binds its header, so its signature is read against the receiver
+#[test]
+fn a_reachable_impl_reads_its_signature_at_the_receiver() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { fn m(self) -> T; }
+impl<A> Tr<A> for N<int, A> { fn m(self) -> A { return self.b } }
+impl<A> Tr<A> for N<bool, A> { fn m(self) -> A { return self.b } }
+fn w<Y>(p: N<int, Y>) -> Y { return p.m() }
+fn probe() -> int {
+    if w(N { a: 1, b: true }) { return w(N { a: 1, b: 7 }) }
+    return 0
+}
+probe()
+";
+    assert_eq!(value_of(source), 7);
+}
+
+/// a receiver known only at its instance does not let a projection in the method's signature stand for whatever the call site expects
+#[test]
+fn a_deferred_call_does_not_read_a_projection_as_any_type() {
+    let message = compile_message(
+        "\
+struct N { a: int }
+trait Tr { type Out; fn make(self) -> Self::Out; }
+impl Tr for N { type Out = bool  fn make(self) -> bool { return true } }
+struct W<T> { t: T }
+impl<T: Tr> W<T> { fn fetch(self) -> T::Out { return self.t.make() } }
+fn id<Y>(y: Y) -> Y { return y }
+fn probe() -> int {
+    let w = id(W { t: N { a: 1 } })
+    let r: int = w.fetch()
+    return r
+}
+probe()
+",
+    );
+    assert!(message.contains("error[E0301]"), "{message}");
+}
+
+/// two chains on one nominal each keep their root, and each receiver runs the impl that covers it
+#[test]
+fn two_chains_on_one_nominal_keep_their_own_roots() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { fn m(self) -> int; fn d(self) -> int { return self.m() + 1000 } }
+impl<B> Tr<int> for N<int, B> { default fn m(self) -> int { return 100 } }
+impl Tr<int> for N<int, bool> { fn m(self) -> int { return 101 } }
+impl<B> Tr<B> for N<bool, B> { default fn m(self) -> int { return 102 } }
+impl Tr<int> for N<bool, int> { fn m(self) -> int { return 103 } }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 1, b: 2 }
+    let q: N<int, bool> = N { a: 1, b: true }
+    let r: N<bool, bool> = N { a: true, b: true }
+    let s: N<bool, int> = N { a: true, b: 2 }
+    return (p.d() - 1000) * 1000000 + (q.d() - 1000) * 10000 + (r.d() - 1000) * 100 + (s.d() - 1000)
+}
+probe()
+";
+    assert_eq!(value_of(source), 101_020_303);
+}
+
+/// errors several impls raise at one place are reported by what they say, not in the order the file declared the impls
+#[test]
+fn errors_at_one_place_do_not_follow_the_declaration_order() {
+    let program = |first: &str, second: &str| {
+        format!(
+            "struct N<A, B> {{ a: A, b: B }}\ntrait Tr {{ fn m(self) -> int; fn d(self) -> int {{ return self.a + 1 }} }}\n{first}\n{second}\nfn probe() -> int {{ return 0 }}\nprobe()\n"
+        )
+    };
+    let on_bool = "impl<B> Tr for N<bool, B> { fn m(self) -> int { return 1 } }";
+    let on_string = "impl<B> Tr for N<string, B> { fn m(self) -> int { return 2 } }";
+    let forward = compile_message(&program(on_bool, on_string));
+    let reversed = compile_message(&program(on_string, on_bool));
+    assert!(forward.contains("error[E0301]"), "{forward}");
+    assert_eq!(forward.lines().next(), reversed.lines().next());
+}
+
+/// an impl a generic receiver reaches without covering it runs for some instances only
+#[test]
+fn an_impl_reached_without_covering_is_left_to_each_instance() {
+    let program = |argument: &str| {
+        format!(
+            "struct N<A, B> {{ a: A, b: B }}\ntrait Tr {{ fn m(self) -> int; }}\nimpl Tr for N<int, bool> {{ fn m(self) -> int {{ return 100 }} }}\nimpl Tr for N<bool, int> {{ fn m(self) -> int {{ return 101 }} }}\nfn id<Y>(y: Y) -> Y {{ return y }}\nfn w<X>(x: X) -> int {{\n    let p = id(N {{ a: true, b: x }})\n    return p.m()\n}}\nfn probe() -> int {{ return w({argument}) }}\nprobe()\n"
+        )
+    };
+    assert_eq!(value_of(&program("8")), 101);
+    let uncovered = compile_message(&program("true"));
+    assert!(uncovered.contains("error[E0338]"), "{uncovered}");
+}
+
+/// a receiver known only at its instance still has its arguments checked, even when nothing constrains what the call returns
+#[test]
+fn a_deferred_call_checks_its_arguments_when_its_result_is_free() {
+    let inherent = compile_message(
+        "\
+struct S { a: int }
+impl S { fn m(self, x: int) -> int { return x * 2 + 1 } }
+fn id<Z>(z: Z) -> Z { return z }
+fn probe() -> int {
+    id(S { a: 7 }).m(\"hello\")
+    return 0
+}
+probe()
+",
+    );
+    let through_a_trait = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { fn m(self, x: T) -> int; }
+impl<A> Tr<int> for N<A, int> { fn m(self, x: int) -> int { return x * 2 + 1 } }
+impl<A> Tr<bool> for N<A, bool> { fn m(self, x: bool) -> int { return 0 } }
+fn id<Z>(z: Z) -> Z { return z }
+fn g<X>(x: X) -> int {
+    let v = id(N { a: x, b: 8 }).m(true)
+    return 0
+}
+fn probe() -> int { return g(7) }
+probe()
+",
+    );
+    for (message, what) in [
+        (&inherent, "an inherent method"),
+        (&through_a_trait, "a trait method"),
+    ] {
+        assert!(message.contains("error[E0301]"), "{what}: {message}");
+    }
+}
+
+/// an open lattice receiver is refused as the member route refuses it
+#[test]
+fn a_deferred_call_in_an_open_lattice_is_e0443_in_either_order() {
+    let program = |second: &str, third: &str| {
+        format!(
+            "trait Describe {{ fn describe(self) -> int; }}\nstruct Pair<A, B> {{ a: A, b: B }}\nimpl<A, B> Describe for Pair<A, B> {{ default fn describe(self) -> int {{ 0 }} }}\n{second}\n{third}\nfn id<Z>(z: Z) -> Z {{ return z }}\nfn probe() -> int {{ return id(Pair {{ a: 1, b: 2 }}).describe() }}\nprobe()\n"
+        )
+    };
+    let on_int_second = "impl<A> Describe for Pair<A, int> { fn describe(self) -> int { 1 } }";
+    let on_int_first = "impl<B> Describe for Pair<int, B> { fn describe(self) -> int { 2 } }";
+    for source in [
+        program(on_int_second, on_int_first),
+        program(on_int_first, on_int_second),
+    ] {
+        let message = compile_message(&source);
+        assert!(message.contains("error[E0443]"), "{message}");
+    }
+}
+
+/// a chain's root is the impl every other refines, found whatever the order the file declares the chain in
+#[test]
+fn a_chain_root_is_found_in_every_declaration_order() {
+    let root = "impl<A, B> Tr<A> for N<W<A>, B> { default fn m(self) -> A { return self.a.v } }";
+    let on_int = "impl<A> Tr<A> for N<W<A>, int> { fn m(self) -> A { return self.a.v } }";
+    let on_bool = "impl Tr<int> for N<W<int>, bool> { fn m(self) -> int { return 102 } }";
+    let orders = [
+        [root, on_int, on_bool],
+        [root, on_bool, on_int],
+        [on_int, root, on_bool],
+        [on_int, on_bool, root],
+        [on_bool, root, on_int],
+        [on_bool, on_int, root],
+    ];
+    for impls in orders {
+        let source = format!(
+            "struct N<A, B> {{ a: A, b: B }}\nstruct W<T> {{ v: T }}\ntrait Tr<T> {{ fn m(self) -> T; }}\n{}\nfn g<X, Y>(p: N<W<X>, Y>) -> X {{ return p.m() }}\nfn probe() -> int {{\n    let x: int = g(N {{ a: W {{ v: 5 }}, b: 8 }})\n    let y: int = g(N {{ a: W {{ v: 6 }}, b: true }})\n    let z: bool = g(N {{ a: W {{ v: true }}, b: false }})\n    if z {{ return x * 1000 + y }}\n    return 0\n}}\nprobe()\n",
+            impls.join("\n")
+        );
+        assert_eq!(value_of(&source), 5102, "{}", impls.join(" / "));
+    }
+}
+
+/// what a generic receiver reaches decides the call
+#[test]
+fn what_a_generic_receiver_reaches_decides_the_call() {
+    let reached_not_covered = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { fn m(self) -> int; }
+impl<B> Tr for N<int, B> { fn m(self) -> int { return 100 } }
+fn g<X>(p: N<X, bool>) -> int { return p.m() }
+fn probe() -> int { return g(N { a: 1, b: true }) }
+probe()
+";
+    assert_eq!(value_of(reached_not_covered), 100);
+    let covered = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A> Tr for N<A, int> { type Out = A  fn m(self) -> A { return self.a } }
+impl Tr for N<bool, bool> { type Out = bool  fn m(self) -> bool { return false } }
+fn g<X>(p: N<X, int>) -> X { return p.m() }
+fn probe() -> int { return g(N { a: 7, b: 8 }) }
+probe()
+";
+    assert_eq!(value_of(covered), 7);
+    let unreached = [
+        "\
+struct N<A, B> { a: A, b: B }
+struct W<T> { v: T }
+trait Tr<T> { fn m(self) -> int; }
+impl<B> Tr<int> for N<int, B> { fn m(self) -> int { return 100 } }
+impl<B> Tr<bool> for N<bool, B> { fn m(self) -> int { return 101 } }
+fn g<X>(p: N<W<X>, int>) -> int { return p.m() }
+fn probe() -> int { return 0 }
+probe()
+",
+    ]
+    .map(str::to_string)
+    .into_iter()
+    .chain(
+        [
+            "return p.m()",
+            "return Tr::m(p)",
+            "let held = Held { inner: p }\n    return held.inner.m()",
+        ]
+        .map(|call| {
+            format!(
+                "struct N<A, B> {{ a: A, b: B }}\nstruct W<T> {{ v: T }}\nstruct Held<T> {{ inner: T }}\ntrait Tr {{ fn m(self) -> int; }}\nimpl<B> Tr for N<int, B> {{ fn m(self) -> int {{ return 100 }} }}\nimpl<B> Tr for N<bool, B> {{ fn m(self) -> int {{ return 101 }} }}\nfn probe() -> int {{\n    let p: N<W<bool>, bool> = N {{ a: W {{ v: true }}, b: false }}\n    {call}\n}}\nprobe()\n"
+            )
+        }),
+    );
+    for source in unreached {
+        let message = compile_message(&source);
+        assert!(
+            message.contains("error[E0338]") && message.contains("is not implemented for N<W<"),
+            "{message}"
+        );
+    }
+}
+
+/// `Self::Out` names one type when every impl reaching the receiver agrees, and otherwise lists only those impls
+#[test]
+fn a_self_projection_reads_the_impls_that_reach_the_receiver() {
+    let agreeing = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr for N<A, B> { type Out = B  default fn m(self) -> B { return self.b } }
+impl<B> Tr for N<int, B> { type Out = B  fn m(self) -> Self::Out { return self.b } }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 1, b: 41 }
+    return p.m() + 1
+}
+probe()
+";
+    assert_eq!(value_of(agreeing), 42);
+    // the impl covering its own receivers most specifically answers for them
+    let own = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr for N<A, B> { type Out = B  default fn m(self) -> B { return self.b } }
+impl<B> Tr for N<int, B> { type Out = bool  fn m(self) -> Self::Out { return true } }
+impl Tr for N<bool, int> { type Out = int  fn m(self) -> int { return 3 } }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 1, b: 2 }
+    if p.m() { return 1 }
+    return 0
+}
+probe()
+";
+    assert_eq!(value_of(own), 1);
+    let message = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr for N<A, B> { type Out = B  default fn m(self) -> B { return self.b } }
+impl<B> Tr for N<int, B> { type Out = B  default fn m(self) -> Self::Out { return self.b } }
+impl Tr for N<int, int> { type Out = bool  fn m(self) -> bool { return true } }
+impl Tr for N<bool, int> { type Out = int  fn m(self) -> int { return 3 } }
+fn probe() -> int { return 0 }
+probe()
+",
+    );
+    assert!(
+        message.contains("error[E0423]")
+            && message.contains("N<int, int>")
+            && !message.contains("N<bool, int>"),
+        "{message}"
+    );
+}
+
+/// a qualified call several impls still apply to is E0443 for one instantiation, E0437 for several
+#[test]
+fn an_ambiguous_qualified_call_says_why() {
+    let lattice = compile_message(
+        "\
+trait Describe { fn describe(self) -> int; }
+struct Pair<A, B> { a: A, b: B }
+impl<A, B> Describe for Pair<A, B> { default fn describe(self) -> int { 0 } }
+impl<A> Describe for Pair<A, int> { fn describe(self) -> int { 1 } }
+impl<B> Describe for Pair<int, B> { fn describe(self) -> int { 2 } }
+fn probe() -> int {
+    let p: Pair<int, int> = Pair { a: 1, b: 2 }
+    return Describe::describe(p)
+}
+probe()
+",
+    );
+    assert!(lattice.contains("error[E0443]"), "{lattice}");
+    let instantiations = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { fn m(self) -> T; }
+impl<B> Tr<int> for N<int, B> { fn m(self) -> int { return 100 } }
+impl<A> Tr<bool> for N<A, bool> { fn m(self) -> bool { return true } }
+fn probe() -> int {
+    let p: N<int, bool> = N { a: 7, b: true }
+    let v: int = Tr::m(p)
+    return v
+}
+probe()
+",
+    );
+    assert!(
+        instantiations.contains("error[E0437]") && !instantiations.contains("found T"),
+        "{instantiations}"
+    );
+}
+
+/// a projection on a generic receiver is read when every impl that reaches the receiver gives, wherever it applies, what the covering
+#[test]
+fn a_projection_every_instance_agrees_on_is_read_in_a_generic_body() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr<A> for N<A, B> { type Out = A  default fn m(self) -> A { return self.a } }
+impl<B> Tr<int> for N<int, B> { type Out = int  fn m(self) -> int { return 101 } }
+fn g<X>(p: N<X, int>) -> X { return p.m() }
+fn probe() -> int {
+    let flag: bool = g(N { a: true, b: 8 })
+    if flag { return g(N { a: 7, b: 8 }) }
+    return 0
+}
+probe()
+";
+    assert_eq!(value_of(source), 101);
+}
+
+/// a trait's default body calls on `self` the trait at the instantiation its adopting impl gives it, so another instantiation reaching
+#[test]
+fn a_default_body_calls_its_own_instantiation_of_the_trait() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+struct W<T> { v: T }
+trait Tr<T> {
+    fn m(self) -> int;
+    fn d(self) -> int { return self.m() + 1000 }
+}
+impl<A, B> Tr<int> for N<W<A>, B> { default fn m(self) -> int { return 100 } }
+impl<A> Tr<bool> for N<A, A> { fn m(self) -> int { return 101 } }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 7, b: 8 }
+    return p.d()
+}
+probe()
+";
+    assert_eq!(value_of(source), 1101);
+}
+
+/// of the impls covering a generic receiver, the most specific runs, so an impl it outranks never answers
+#[test]
+fn a_projection_reads_the_most_specific_covering_impl() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr<T> { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr<A> for N<A, B> { type Out = B  default fn m(self) -> B { return self.b } }
+impl<B> Tr<int> for N<int, B> { type Out = int  fn m(self) -> int { return 101 } }
+fn g<X>(p: N<int, X>) -> int { return p.m() }
+fn probe() -> int { return g(N { a: 7, b: true }) }
+probe()
+";
+    assert_eq!(value_of(source), 101);
+}
+
+/// a method's own parameter may carry the name of a parameter of the caller, which the receiver brings into the signature
+#[test]
+fn a_method_parameter_named_like_the_callers_stays_apart() {
+    let member = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+struct W<T> { v: T }
+trait Tr { type Out; fn m<X>(self, u: X) -> Self::Out; }
+impl<A, B> Tr for N<W<A>, B> { type Out = A  fn m<X>(self, u: X) -> A { return self.a.v } }
+impl Tr for N<int, int> { type Out = int  fn m<X>(self, u: X) -> int { return 101 } }
+fn g<X>(p: N<W<W<X>>, int>) -> W<bool> { return p.m(true) }
+fn probe() -> int {
+    let v: W<bool> = g(N { a: W { v: W { v: 7 } }, b: 8 })
+    if v.v { return 1 }
+    return 0
+}
+probe()
+",
+    );
+    assert!(member.contains("error[E0301]"), "{member}");
+    let deferred = compile_message(
+        "\
+trait Sh { fn sh(self) -> int; }
+struct K { k: int }
+impl Sh for K { fn sh(self) -> int { return self.k } }
+struct S<A> { a: A }
+impl<A: Sh> S<A> { fn m<T>(self, x: A, y: T) -> int { return x.sh() } }
+fn id<Z>(z: Z) -> Z { return z }
+fn g<T: Sh>(t: T) -> int { return id(S { a: t }).m(5, 6) }
+fn probe() -> int { return g(K { k: 1 }) }
+probe()
+",
+    );
+    assert!(deferred.contains("error["), "{deferred}");
+    // the receiver reaches the signature through `Self`, where the caller's parameter would take the value the call gives the method's own
+    let through_the_declaration = compile_message(
+        "\
+struct N<A> { a: A }
+trait Tr { fn keep<M>(self, u: M) -> Self; }
+impl Tr for N<int> { fn keep<M>(self, u: M) -> N<int> { return self } }
+impl Tr for N<bool> { fn keep<M>(self, u: M) -> N<bool> { return self } }
+fn id<Z>(z: Z) -> Z { return z }
+fn g<M>(x: M) -> int {
+    let p = id(N { a: x })
+    let q: N<int> = p.keep(3)
+    return q.a + 1
+}
+fn probe() -> int { return g(true) }
+probe()
+",
+    );
+    assert!(
+        through_the_declaration.contains("error[E0301]"),
+        "{through_the_declaration}"
+    );
+}
+
+/// a field read on a receiver known only at its instance is checked against what the site typed, even where that is not wholly known
+#[test]
+fn a_deferred_field_read_is_checked() {
+    let message = compile_message(
+        "\
+struct S<T> { a: T }
+fn id<Z>(z: Z) -> Z { return z }
+fn g<T, U>(t: T, u: U) -> T { return id(S { a: u }).a }
+fn probe() -> int { return g(5, \"hello\") + 1 }
+probe()
+",
+    );
+    assert!(message.contains("error[E0301]"), "{message}");
+}
+
+/// the deferred route reads a projection the receiver's impls answer alike, on the result and on an argument, as the member route does
+#[test]
+fn a_deferred_call_reads_an_agreed_projection() {
+    let result = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A> Tr for N<A, int> { type Out = A  default fn m(self) -> A { return self.a } }
+impl Tr for N<bool, int> { type Out = bool  fn m(self) -> bool { return false } }
+fn id<Z>(z: Z) -> Z { return z }
+fn g<X>(p: N<X, int>) -> X { return id(p).m() }
+fn probe() -> int {
+    if g(N { a: true, b: 1 }) { return 0 }
+    return g(N { a: 7, b: 1 })
+}
+probe()
+";
+    assert_eq!(value_of(result), 7);
+    let argument = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn put(self, y: Self::Out) -> int; }
+impl<A, B> Tr for N<A, B> { type Out = A  default fn put(self, y: A) -> int { return 1 } }
+impl Tr for N<int, int> { type Out = int  fn put(self, y: int) -> int { return y + 1000 } }
+fn id<Z>(z: Z) -> Z { return z }
+fn g<X>(p: N<X, int>, y: X) -> int { return id(p).put(y) }
+fn probe() -> int { return g(N { a: 1, b: 2 }, 5) * 10 + g(N { a: true, b: 2 }, false) }
+probe()
+";
+    assert_eq!(value_of(argument), 10051);
+}
+
+/// an impl that reaches a generic receiver only where a more specific impl covers it never runs there
+#[test]
+fn an_impl_outranked_where_it_applies_does_not_answer() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr for N<A, B> { type Out = B  default fn m(self) -> B { return self.b } }
+impl<A> Tr for N<A, A> { type Out = int  default fn m(self) -> int { return 101 } }
+impl Tr for N<bool, bool> { type Out = bool  fn m(self) -> bool { return true } }
+fn w<X>(p: N<X, bool>) -> bool { return p.m() }
+fn probe() -> int {
+    if w(N { a: true, b: false }) { return 1 }
+    return 0
+}
+probe()
+";
+    assert_eq!(value_of(source), 1);
+}
+
+/// E0423 on `Self::Item` lists every impl that reaches the receivers, an incomparable one included
+#[test]
+fn a_self_projection_refusal_lists_an_incomparable_impl() {
+    let message = compile_message(
+        "\
+struct N<A, B> { a: A, b: B }
+struct W<T> { v: T }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<A, B> Tr for N<A, B> { type Out = A  default fn m(self) -> A { return self.a } }
+impl<A> Tr for N<W<A>, W<A>> { type Out = A  fn m(self) -> Self::Out { return self.a.v } }
+impl<B> Tr for N<W<W<bool>>, B> { type Out = W<B>  fn m(self) -> W<B> { return W { v: self.b } } }
+fn probe() -> int { return 0 }
+probe()
+",
+    );
+    assert!(
+        message.contains("error[E0423]") && message.contains("N<W<W<bool>>, B>"),
+        "{message}"
+    );
+}
+
+/// `Self::Item` written in a method's body is read on the impl's header, as in its signature
+#[test]
+fn a_self_projection_in_a_body_reads_the_impl_header() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+trait Tr { type Out; fn m(self, x: int) -> Self::Out; }
+impl<A> Tr for N<A, int> {
+    type Out = A
+    fn m(self, x: int) -> A { let r: Self::Out = self.a; return r }
+}
+fn probe() -> int {
+    let p: N<bool, int> = N { a: true, b: 1 }
+    if p.m(4) { return 1 }
+    return 0
+}
+probe()
+";
+    assert_eq!(value_of(source), 1);
+}
+
+/// a body's annotation names `self` as the impl's header, and a projection the impls answer differently there is refused as such
+#[test]
+fn a_body_annotation_names_self_as_the_impl_header() {
+    let message = compile_message(
+        "\
+struct N<M, X> { a: M, b: X }
+struct W<T> { v: T }
+trait Tr { type Out; fn m(self) -> Self::Out; }
+impl<Y, X> Tr for N<Y, W<X>> {
+    type Out = bool
+    default fn m(self) -> bool {
+        let r: Self::Out = true
+        return r
+    }
+}
+impl<M> Tr for N<M, W<M>> {
+    type Out = W<M>
+    fn m(self) -> W<M> { return W { v: self.a } }
+}
+fn probe() -> int { return 0 }
+probe()
+",
+    );
+    assert!(
+        message.contains("projection 'Self::Out' is ambiguous")
+            && !message.contains("without its type arguments"),
+        "{message}"
+    );
+}
+
+/// a call through a bound weighs the impls by what they give the trait at the receiver, so which one the file declares first decides
+#[test]
+fn a_bound_call_reads_the_instantiation_at_the_receiver_in_any_order() {
+    let root = "impl<A, B> Tr<bool> for N<W<A>, B> { default fn m(self) -> int { return 0 } }";
+    let left = "impl<B> Tr<bool> for N<W<W<bool>>, B> { fn m(self) -> int { return 1 } }";
+    let right = "impl<A, B> Tr<bool> for N<W<A>, W<B>> { fn m(self) -> int { return 2 } }";
+    let program = |impls: [&str; 3]| {
+        format!(
+            "struct N<A, B> {{ a: A, b: B }}\nstruct W<T> {{ v: T }}\ntrait Tr<T> {{ fn m(self) -> int; }}\n{}\nfn h<T: Tr<bool>>(q: T) -> int {{ return q.m() }}\nfn probe() -> int {{ return h(N {{ a: W {{ v: W {{ v: true }} }}, b: W {{ v: 3 }} }}) }}\nprobe()\n",
+            impls.join("\n")
+        )
+    };
+    let forward = compile_message(&program([root, left, right]));
+    let reversed = compile_message(&program([left, root, right]));
+    assert!(forward.contains("error[E0443]"), "{forward}");
+    assert_eq!(forward.lines().next(), reversed.lines().next());
+}
+
+/// an argument call resolves before the call it feeds, so the method is given what it turns out to be
+#[test]
+fn a_nested_deferred_call_gives_the_method_what_it_returns() {
+    let impls = "\
+struct N<A> { a: A }
+struct S<T> { a: T }
+trait Tr {
+    fn e<M>(self, u: M) -> M;
+    fn take(self, u: int) -> int;
+}
+impl<A> Tr for N<A> {
+    fn e<M>(self, u: M) -> M { return u }
+    fn take(self, u: int) -> int { return u + 1 }
+}
+fn id<Z>(z: Z) -> Z { return z }
+";
+    let sound = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<int> = N {{ a: 1 }}\n    let v: int = id(p).e(id(p).e(3))\n    let s: string = id(p).e(\"ok\")\n    if s == \"ok\" {{ return v }}\n    return 0\n}}\nprobe()\n"
+    );
+    assert_eq!(value_of(&sound), 3);
+    let refused = [
+        "let v: bool = id(p).e(id(p).e(3))\n    if v { return 1 }\n    return 0",
+        "let v: int = id(p).take(id(p).e(\"zz\"))\n    return v",
+        "let v: int = id(p).take(id(S { a: \"zz\" }).a)\n    return v",
+    ];
+    for tail in refused {
+        let message = compile_message(&format!(
+            "{impls}fn probe() -> int {{\n    let p: N<int> = N {{ a: 1 }}\n    {tail}\n}}\nprobe()\n"
+        ));
+        assert!(message.contains("error[E0301]"), "{message}");
+    }
+}
+
+/// a bound takes an impl only where it refines the others as a specialization does, header and trait arguments together, as the member
+#[test]
+fn a_bound_takes_no_impl_that_does_not_refine_the_others() {
+    let impls = "\
+struct N<A, B> { a: A, b: B }
+trait Tq<T> { type Out; fn m(self, t: T) -> Self::Out; }
+impl<A, B> Tq<A> for N<A, B> {
+    type Out = B
+    default fn m(self, t: A) -> B { return self.b }
+}
+impl<A> Tq<int> for N<A, A> {
+    type Out = string
+    fn m(self, t: int) -> string { return \"s1\" }
+}
+";
+    let through_a_bound = format!(
+        "{impls}fn h<T: Tq<int>>(q: T) -> T::Out {{ return q.m(3) }}\nfn probe() -> int {{\n    let v: string = h(N {{ a: 1, b: 2 }})\n    if v == \"s1\" {{ return 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    let through_the_receiver = format!(
+        "{impls}fn probe() -> int {{\n    let p: N<int, int> = N {{ a: 1, b: 2 }}\n    let v: string = p.m(3)\n    if v == \"s1\" {{ return 1 }}\n    return 0\n}}\nprobe()\n"
+    );
+    for source in [&through_a_bound, &through_the_receiver] {
+        let message = compile_message(source);
+        assert!(message.contains("error[E0437]"), "{message}");
+    }
+}
+
+/// a projection under a constructor in a trait's signature is read at the receiver, so the instance materializes the constructor
+#[test]
+fn a_projection_under_a_constructor_is_read_at_the_receiver() {
+    let source = "\
+struct N<A, B> { a: A, b: B }
+struct W<T> { v: T }
+trait Tr { type Out; fn m(self) -> W<Self::Out>; }
+impl Tr for N<int, int> { type Out = int  fn m(self) -> W<int> { return W { v: 5 } } }
+impl Tr for N<bool, int> { type Out = bool  fn m(self) -> W<bool> { return W { v: true } } }
+fn probe() -> int {
+    let p: N<int, int> = N { a: 1, b: 2 }
+    let v: W<int> = p.m()
+    return v.v
+}
+probe()
+";
+    assert_eq!(value_of(source), 5);
 }

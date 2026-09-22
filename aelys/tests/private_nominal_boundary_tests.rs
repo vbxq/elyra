@@ -703,3 +703,19 @@ fn an_associated_type_reaching_a_private_enum_stays_unconstructible() {
         "constructing the exposed private enum is refused: {message}"
     );
 }
+
+#[test]
+fn a_private_trait_method_is_absent_on_a_receiver_known_at_its_instance() {
+    let dir = create_module_env();
+    write_file(&dir, "sup.aelys", TRAIT_SUPPORT);
+    let main = write_file(
+        &dir,
+        "main.aelys",
+        "needs Counter, Pub from sup\nfn id<Z>(z: Z) -> Z { return z }\nfn probe() -> int {\n    let c = id(Counter { v: 2 })\n    c.render()\n}\nprobe()\n",
+    );
+    let message = run(&main).expect_err("the trait never crossed the boundary");
+    assert!(
+        message.contains("E0363") && message.contains("'render'") && !message.contains('@'),
+        "a receiver known only at its instance does not reveal the trait: {message}"
+    );
+}
