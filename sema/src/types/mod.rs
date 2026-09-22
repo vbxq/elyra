@@ -4,6 +4,7 @@ mod type_table;
 mod type_var;
 
 pub use infer_type::InferType;
+pub(crate) use infer_type::{SHADOWED_METHOD_SUFFIX, written_names};
 pub use resolved_type::ResolvedType;
 pub use type_table::{
     BoundSelection, EnumDef, EnumVariantDef, EnumVariantFieldsDef, FromSelection, NegativeImplDef,

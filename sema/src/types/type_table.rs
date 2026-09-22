@@ -219,6 +219,8 @@ pub enum SpecializationChoice {
     TooMany(String),
     /// the receiver reached a trait a denial removes it from; a call inside a
     Denied(String),
+    /// no impl of the trait at the instantiation the receiver reaches covers it
+    NoImpl(String, Vec<InferType>),
 }
 
 #[derive(Debug, Clone)]
@@ -588,11 +590,15 @@ impl TypeTable {
         trait_args: &[InferType],
         self_type: &InferType,
         opens: bool,
-    ) -> Option<InferType> {
+    ) -> Vec<(usize, InferType)> {
         indices
             .iter()
-            .filter_map(|index| self.trait_impl_defs.get(*index))
-            .find(|definition| {
+            .filter_map(|index| {
+                self.trait_impl_defs
+                    .get(*index)
+                    .map(|definition| (*index, definition))
+            })
+            .filter(|(_, definition)| {
                 definition.trait_name == trait_name
                     && headers_overlap(
                         &definition.self_type,
@@ -602,7 +608,8 @@ impl TypeTable {
                     )
                     && !self.opens_to_specialization(definition, self_type, opens)
             })
-            .map(|definition| definition.self_type.clone())
+            .map(|(index, definition)| (index, definition.self_type.clone()))
+            .collect()
     }
 
     /// an impl that replaces an open root inherits the root's associated items,
@@ -622,17 +629,20 @@ impl TypeTable {
         trait_args: &[InferType],
         self_type: &InferType,
         opens: bool,
-    ) -> bool {
+    ) -> Vec<usize> {
         indices
             .iter()
-            .filter_map(|index| self.trait_impl_defs.get(*index))
-            .any(|definition| {
-                definition.trait_name == trait_name
-                    && same_instantiation(&definition.trait_args, trait_args)
-                    && (definition.opens || opens)
-                    && subsumes(&definition.self_type, self_type)
-                    && subsumes(self_type, &definition.self_type)
+            .copied()
+            .filter(|index| {
+                self.trait_impl_defs.get(*index).is_some_and(|definition| {
+                    definition.trait_name == trait_name
+                        && same_instantiation(&definition.trait_args, trait_args)
+                        && (definition.opens || opens)
+                        && subsumes(&definition.self_type, self_type)
+                        && subsumes(self_type, &definition.self_type)
+                })
             })
+            .collect()
     }
 
     /// an overlap is licit when one header is strictly more specific than the
@@ -810,12 +820,12 @@ impl TypeTable {
         else {
             return None;
         };
-        if !self_ty.is_concrete() {
-            return None;
-        }
         let closure = trait_name
             .as_deref()
             .map(|name| self.supertrait_closure(name));
+        if !self_ty.is_concrete() {
+            return self.resolve_rigid_projection(closure.as_deref(), item, self_ty);
+        }
         // a replacement of an open root supplies the item too, so a projection on a
         let candidates: Vec<&TraitImplDef> = self
             .trait_impl_defs
@@ -855,6 +865,78 @@ impl TypeTable {
             .iter()
             .find(|(name, _)| name == item)?;
         Some(instantiate_impl_definition(&chosen.self_type, self_ty, ty))
+    }
+
+    /// a receiver whose type parameters stay open reads the item of the impl that covers it, when every impl that reaches it agrees
+    fn resolve_rigid_projection(
+        &self,
+        closure: Option<&[String]>,
+        item: &str,
+        self_ty: &InferType,
+    ) -> Option<InferType> {
+        if !self_ty.is_rigid() {
+            return None;
+        }
+        let defining = |implementation: &&TraitImplDef| {
+            closure.is_none_or(|names| names.contains(&implementation.trait_name))
+                && implementation
+                    .associated_types
+                    .iter()
+                    .any(|(name, _)| name == item)
+        };
+        let value_of = |implementation: &TraitImplDef| {
+            implementation
+                .associated_types
+                .iter()
+                .find(|(name, _)| name == item)
+                .map(|(_, ty)| ty.clone())
+        };
+        // of the impls covering the receiver, the most specific runs wherever the others would, so the others never answer for it
+        let covering: Vec<&TraitImplDef> = self
+            .trait_impl_defs
+            .iter()
+            .filter(defining)
+            .filter(|implementation| subsumes(&implementation.self_type, self_ty))
+            .collect();
+        let root = *covering.iter().find(|candidate| {
+            covering.iter().all(|other| {
+                std::ptr::eq(*other, **candidate)
+                    || strictly_more_specific(&candidate.self_type, &other.self_type)
+            })
+        })?;
+        let answer = instantiate_impl_definition(&root.self_type, self_ty, &value_of(root)?);
+        for other in self.trait_impl_defs.iter().filter(defining) {
+            if std::ptr::eq(other, root)
+                || (other.trait_name == root.trait_name
+                    && strictly_more_specific(&root.self_type, &other.self_type))
+            {
+                continue;
+            }
+            let mut bindings = std::collections::HashMap::new();
+            if !unify_headers(
+                &tag_params(&other.self_type, "l:"),
+                &tag_params(self_ty, "r:"),
+                &mut bindings,
+            ) {
+                continue;
+            }
+            // where it applies, a more specific impl may cover the receiver whole, and then this one never runs on it
+            let reached = settle_bindings(&tag_params(self_ty, "r:"), &bindings);
+            let outranked_there = self.trait_impl_defs.iter().any(|better| {
+                better.trait_name == other.trait_name
+                    && strictly_more_specific(&better.self_type, &other.self_type)
+                    && subsumes(&better.self_type, &reached)
+            });
+            if outranked_there {
+                continue;
+            }
+            let theirs = settle_bindings(&tag_params(&value_of(other)?, "l:"), &bindings);
+            let ours = settle_bindings(&tag_params(&answer, "r:"), &bindings);
+            if theirs != ours {
+                return None;
+            }
+        }
+        Some(answer)
     }
 
     pub fn trait_impl_defs(&self) -> &[TraitImplDef] {
@@ -983,8 +1065,15 @@ impl TypeTable {
         if minima.len() > 1 {
             return SpecializationChoice::Ambiguous(root.trait_name.clone());
         }
+        // no impl comparable with the one kept covers the receiver, so running the kept one would read a receiver it was never written for
         let Some(best) = minima.first() else {
-            return SpecializationChoice::Keep;
+            // arguments the receiver did not fix still name the impl's parameters, which no diagnostic may print
+            let printable = if reached_args.iter().any(InferType::mentions_any_param) {
+                Vec::new()
+            } else {
+                reached_args
+            };
+            return SpecializationChoice::NoImpl(root.trait_name.clone(), printable);
         };
         if std::ptr::eq(**best, root) {
             return SpecializationChoice::Keep;
@@ -997,31 +1086,42 @@ impl TypeTable {
     }
 
     /// when several impls of one trait supply the method and they form a chain,
-    pub fn specialization_root(&self, target: &str, method: &str) -> Option<String> {
+    pub fn specialization_root(
+        &self,
+        target: &str,
+        method: &str,
+        among: &[String],
+    ) -> Option<String> {
+        // only the impls still in the running: two chains on one nominal each keep their own root once the receiver has set the other aside
         let supplying: Vec<&TraitImplDef> = self
             .trait_impl_defs
             .iter()
             .filter(|definition| {
                 nominal_name(&definition.self_type).as_deref() == Some(target)
-                    && definition.methods.iter().any(|entry| entry.name == method)
+                    && definition
+                        .methods
+                        .iter()
+                        .any(|entry| entry.name == method && among.contains(&entry.symbol))
             })
             .collect();
         if supplying.len() < 2 {
             return None;
         }
         let first = supplying.first()?;
-        if supplying.iter().any(|other| {
-            other.trait_name != first.trait_name
-                || !comparable_headers(
-                    &other.self_type,
-                    &other.trait_args,
-                    &first.self_type,
-                    &first.trait_args,
-                )
-        }) {
-            // a trait implemented at several instantiations is e0437's business,
+        if supplying
+            .iter()
+            .any(|other| other.trait_name != first.trait_name)
+        {
             return None;
         }
+        let comparable = |left: &TraitImplDef, right: &TraitImplDef| {
+            comparable_headers(
+                &left.self_type,
+                &left.trait_args,
+                &right.self_type,
+                &right.trait_args,
+            )
+        };
         // candidates that cannot both receive one type need no root: whichever is
         let disjoint = supplying.iter().all(|candidate| {
             supplying.iter().all(|other| {
@@ -1030,12 +1130,20 @@ impl TypeTable {
             })
         });
         let root = match disjoint {
-            true => supplying.first()?,
+            true => {
+                // a trait implemented at several instantiations is E0437's business,
+                if supplying.iter().any(|other| !comparable(other, first)) {
+                    return None;
+                }
+                first
+            }
+            // the root is the one every other refines, compared with it and not with whichever the file declared first
             false => {
                 let found = supplying.iter().find(|candidate| {
                     supplying.iter().all(|other| {
                         std::ptr::eq(*other, **candidate)
-                            || strictly_more_specific(&other.self_type, &candidate.self_type)
+                            || (comparable(other, candidate)
+                                && strictly_more_specific(&other.self_type, &candidate.self_type))
                     })
                 })?;
                 if !found.opens {
@@ -1048,6 +1156,44 @@ impl TypeTable {
             .iter()
             .find(|entry| entry.name == method)
             .map(|entry| entry.symbol.clone())
+    }
+
+    /// the symbols `method` receives from impls of `trait_name` at another instantiation than the one `header` names
+    pub fn symbols_at_other_instantiations(
+        &self,
+        trait_name: &str,
+        header: &InferType,
+        args: &[InferType],
+        method: &str,
+    ) -> Vec<String> {
+        self.trait_impl_defs
+            .iter()
+            .filter(|definition| {
+                definition.trait_name == trait_name
+                    && !headers_overlap(&definition.self_type, &definition.trait_args, header, args)
+            })
+            .flat_map(|definition| definition.methods.iter())
+            .filter(|entry| entry.name == method)
+            .map(|entry| entry.symbol.clone())
+            .collect()
+    }
+
+    /// some instantiation of both reaches this header from the receiver
+    pub fn reaches(&self, header: &InferType, receiver: &InferType) -> bool {
+        headers_overlap(header, &[], receiver, &[])
+    }
+
+    /// the impl that supplies `symbol` receives the receiver whatever its own type parameters become
+    pub fn impl_covers(&self, symbol: &str, receiver: &InferType) -> bool {
+        self.trait_impl_defs
+            .iter()
+            .find(|definition| {
+                definition
+                    .methods
+                    .iter()
+                    .any(|entry| entry.symbol == symbol)
+            })
+            .is_some_and(|definition| subsumes(&definition.self_type, receiver))
     }
 
     /// the symbols an ordering leaves out: every applicable impl that another
@@ -1089,11 +1235,16 @@ impl TypeTable {
     pub fn symbols_not_applying(&self, receiver: &InferType, method: &str) -> Vec<String> {
         let mut out = Vec::new();
         // an open receiver rules nothing out: every impl could still be the one
-        if !receiver.is_concrete() {
+        if !receiver.is_concrete() && !receiver.is_rigid() {
             return out;
         }
         for definition in &self.trait_impl_defs {
-            if subsumes(&definition.self_type, receiver) {
+            let reachable = match receiver.is_concrete() {
+                true => subsumes(&definition.self_type, receiver),
+                // a type parameter can still become anything, so only an impl that no instantiation of it reaches is out
+                false => headers_overlap(&definition.self_type, &[], receiver, &[]),
+            };
+            if reachable {
                 continue;
             }
             for entry in &definition.methods {
@@ -1163,9 +1314,13 @@ impl TypeTable {
         })
     }
 
-    /// the impls of `target` that supply any of `symbols`, as (trait name, its instantiation)
-    pub fn trait_impls_supplying(&self, target: &str, symbols: &[String]) -> Vec<(String, String)> {
-        let mut out: Vec<(String, String)> = Vec::new();
+    /// the impls of `target` that supply any of `symbols`, as (trait name, its instantiation) one entry per impl
+    pub fn trait_impls_supplying(
+        &self,
+        target: &str,
+        symbols: &[String],
+    ) -> Vec<(String, String, String)> {
+        let mut out: Vec<(String, String, String)> = Vec::new();
         for definition in &self.trait_impl_defs {
             if nominal_name(&definition.self_type).as_deref() != Some(target) {
                 continue;
@@ -1177,16 +1332,26 @@ impl TypeTable {
             {
                 continue;
             }
-            let entry = (
+            // two impls reach one instantiation when each argument they give the trait is the same position of the receiver, or the same type
+            let mut positions = HashMap::new();
+            receiver_positions(&definition.self_type, &mut Vec::new(), &mut positions);
+            let key: Vec<String> = definition
+                .trait_args
+                .iter()
+                .map(|arg| arg.substitute_params(&positions).source_spelling())
+                .collect();
+            out.push((
                 definition.trait_name.clone(),
-                trait_instantiation_spelling(&definition.trait_name, &definition.trait_args),
-            );
-            if !out.contains(&entry) {
-                out.push(entry);
-            }
+                key.join(", "),
+                format!(
+                    "{} for {}",
+                    trait_instantiation_spelling(&definition.trait_name, &definition.trait_args),
+                    definition.self_type.source_spelling()
+                ),
+            ));
         }
         // the listing is read by a diagnostic, so source order must not reach it
-        out.sort();
+        out.sort_by(|left, right| left.2.cmp(&right.2));
         out
     }
 
@@ -1310,17 +1475,16 @@ impl TypeTable {
                 }
             }
         }
-        // two instantiations of one trait declare different signatures, so the
-        let one_instantiation = candidates.first().is_some_and(|(first, _)| {
-            candidates.iter().all(|(other, _)| {
-                comparable_headers(
-                    &first.self_type,
-                    &first.trait_args,
-                    &other.self_type,
-                    &other.trait_args,
-                )
+        // two instantiations of one trait declare different signatures, so which this receiver reads must be settled, whichever the file declared first
+        let reached: Vec<Vec<InferType>> = candidates
+            .iter()
+            .map(|(definition, _)| {
+                instantiate_args(&definition.self_type, &definition.trait_args, ty)
             })
-        });
+            .collect();
+        let one_instantiation = reached
+            .first()
+            .is_some_and(|first| reached.iter().all(|other| other == first));
         if candidates.len() > 1 && one_instantiation {
             let most_specific = candidates.iter().position(|(definition, _)| {
                 candidates.iter().all(|(other, _)| {
@@ -1328,8 +1492,24 @@ impl TypeTable {
                         || strictly_more_specific(&definition.self_type, &other.self_type)
                 })
             });
+            // the one it selects must refine the others as a specialization does, header and trait arguments together, or no call can name it
+            let refines_them = |index: usize| {
+                let (chosen, _) = &candidates[index];
+                candidates.iter().all(|(other, _)| {
+                    std::ptr::eq(*other, *chosen)
+                        || comparable_headers(
+                            &chosen.self_type,
+                            &chosen.trait_args,
+                            &other.self_type,
+                            &other.trait_args,
+                        )
+                })
+            };
             return match most_specific {
-                Some(index) => BoundSelection::Selected(candidates.swap_remove(index).1),
+                Some(index) if refines_them(index) => {
+                    BoundSelection::Selected(candidates.swap_remove(index).1)
+                }
+                Some(_) => BoundSelection::Ambiguous,
                 None => BoundSelection::AmbiguousSpecialization,
             };
         }
@@ -1796,6 +1976,22 @@ fn tag_params(ty: &InferType, prefix: &str) -> InferType {
     }
 }
 
+/// a type with every bound parameter replaced by what it is bound to, through chains of bindings
+fn settle_bindings(
+    ty: &InferType,
+    bindings: &std::collections::HashMap<String, InferType>,
+) -> InferType {
+    let mut current = ty.clone();
+    for _ in 0..=bindings.len() {
+        let next = current.substitute_params(bindings);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current
+}
+
 fn resolved_binding(
     ty: &InferType,
     bindings: &std::collections::HashMap<String, InferType>,
@@ -1922,4 +2118,40 @@ pub(crate) fn trait_instantiation_spelling(trait_name: &str, trait_args: &[Infer
     }
     let args: Vec<String> = trait_args.iter().map(InferType::source_spelling).collect();
     format!("{trait_name}<{}>", args.join(", "))
+}
+
+/// each parameter of a header, mapped to the first position of the receiver it stands at, spelled so that no source can write it
+fn receiver_positions(ty: &InferType, path: &mut Vec<usize>, out: &mut HashMap<String, InferType>) {
+    let mut visit = |index: usize, inner: &InferType, out: &mut HashMap<String, InferType>| {
+        path.push(index);
+        receiver_positions(inner, path, out);
+        path.pop();
+    };
+    match ty {
+        InferType::Param(name) => {
+            let spelled: Vec<String> = path.iter().map(usize::to_string).collect();
+            out.entry(name.clone())
+                .or_insert_with(|| InferType::Param(format!("@{}", spelled.join("."))));
+        }
+        InferType::Applied { args, .. } | InferType::Tuple(args) => {
+            for (index, arg) in args.iter().enumerate() {
+                visit(index, arg, out);
+            }
+        }
+        InferType::Vec(inner)
+        | InferType::Array(inner)
+        | InferType::Option(inner)
+        | InferType::FixedArray(inner, _) => visit(0, inner, out),
+        InferType::Result(ok, err) => {
+            visit(0, ok, out);
+            visit(1, err, out);
+        }
+        InferType::Function { params, ret } => {
+            for (index, param) in params.iter().enumerate() {
+                visit(index, param, out);
+            }
+            visit(params.len(), ret, out);
+        }
+        _ => {}
+    }
 }

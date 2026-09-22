@@ -102,6 +102,12 @@ pub enum ProjectionFailure {
         constructor: String,
         instantiations: Vec<String>,
     },
+    /// the receiver is written whole, as `self` or with its arguments, and still reaches impls that define the item differently
+    AmbiguousAcrossReceivers {
+        trait_name: String,
+        constructor: String,
+        headers: Vec<String>,
+    },
     Cyclic {
         path: Vec<String>,
         namespace: ItemNamespace,
@@ -430,6 +436,11 @@ pub enum TypeErrorKind {
         trait_name: String,
         instantiations: Vec<String>,
     },
+    UnresolvedReceiverInstantiation {
+        target: String,
+        method: String,
+        trait_name: String,
+    },
     UnboundTypeParamMethod {
         param: String,
         method: String,
@@ -550,9 +561,19 @@ pub enum TypeErrorKind {
 
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.write_kind(f)?;
-        if self.kind.states_its_reason() {
-            write!(f, " ({})", self.reason)?;
+        f.write_str(&crate::types::written_names(
+            &RawTypeError(self).to_string(),
+        ))
+    }
+}
+
+struct RawTypeError<'a>(&'a TypeError);
+
+impl fmt::Display for RawTypeError<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.write_kind(f)?;
+        if self.0.kind.states_its_reason() {
+            write!(f, " ({})", self.0.reason)?;
         }
         Ok(())
     }
@@ -562,13 +583,25 @@ impl TypeError {
     fn write_kind(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             TypeErrorKind::Mismatch { expected, found } => {
+                let (expected_text, found_text) =
+                    (expected.source_spelling(), found.source_spelling());
                 write!(
                     f,
-                    "type mismatch: expected {}, found {} ({})",
-                    expected.source_spelling(),
-                    found.source_spelling(),
+                    "type mismatch: expected {expected_text}, found {found_text} ({})",
                     self.reason
-                )
+                )?;
+                if expected_text == found_text
+                    && expected != found
+                    && (expected.mentions_respelled_param() || found.mentions_respelled_param())
+                {
+                    write!(
+                        f,
+                        "; the two print alike but are different: {}, and {}",
+                        alike_side(expected, &expected_text),
+                        alike_side(found, &found_text)
+                    )?;
+                }
+                Ok(())
             }
             TypeErrorKind::InfiniteType { var, ty } => {
                 write!(
@@ -1119,6 +1152,15 @@ impl TypeError {
                     "projection '{receiver}::{item}' is ambiguous: '{trait_name}' is implemented for {}, and each defines '{item}'; a projection names '{constructor}' without its type arguments and this language has no way to write them there, so neither naming the trait nor naming the type separates the definitions; keep a single impl of '{trait_name}' for '{constructor}', or declare '{item}' in a second trait and name that trait, as in 'OtherTrait::{item}'",
                     instantiations.join(" and ")
                 ),
+                ProjectionFailure::AmbiguousAcrossReceivers {
+                    trait_name,
+                    constructor,
+                    headers,
+                } => write!(
+                    f,
+                    "projection '{receiver}::{item}' is ambiguous: '{trait_name}' is implemented for {}, and each defines '{item}', so '{receiver}::{item}' is not one type across the receivers this code covers; write the type it stands for in each impl, or keep a single impl of '{trait_name}' for '{constructor}'",
+                    headers.join(" and ")
+                ),
                 ProjectionFailure::Cyclic { path, namespace } => write!(
                     f,
                     "projection '{receiver}::{item}' forms a cycle: its definition resolves back to itself through {}; give the {} a concrete definition to break the cycle",
@@ -1269,6 +1311,14 @@ impl TypeError {
                 f,
                 "method '{}' on '{}' is provided by more than one trait; use a qualified call",
                 method, target
+            ),
+            TypeErrorKind::UnresolvedReceiverInstantiation {
+                target,
+                method,
+                trait_name,
+            } => write!(
+                f,
+                "method '{method}' on '{target}' is supplied by several impls of '{trait_name}' at one instantiation, each for its own instantiation of '{target}', and this receiver's instantiation is not known where the call is typed; annotate the receiver's type so one impl is chosen"
             ),
             TypeErrorKind::AmbiguousTraitInstantiation {
                 target,
@@ -1665,6 +1715,7 @@ impl TypeErrorKind {
             Self::TraitMethodSignatureMismatch { .. } => 336,
             Self::AmbiguousTraitMethod { .. } => 337,
             Self::AmbiguousTraitInstantiation { .. } => 437,
+            Self::UnresolvedReceiverInstantiation { .. } => 438,
             Self::UnboundTypeParamMethod { .. } => 351,
             Self::UnresolvedInstanceSymbol { .. } => 352,
             Self::UnresolvedTypeVariable => 353,
@@ -1717,5 +1768,15 @@ impl TypeErrorKind {
             // an undefined name keeps 301 because the surface pins that code for it
             Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,
         }
+    }
+}
+
+fn alike_side(ty: &InferType, text: &str) -> String {
+    match ty {
+        InferType::Param(name) if name.ends_with(crate::types::SHADOWED_METHOD_SUFFIX) => {
+            format!("'{text}' of the method is its own parameter")
+        }
+        InferType::Param(_) => format!("'{text}' of its impl or type is another parameter"),
+        _ => format!("'{text}' is the type of that name"),
     }
 }

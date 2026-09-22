@@ -46,7 +46,7 @@ pub enum InferType {
 
     Param(String),
 
-    /// an unresolved associated projection `self::item` or `t::item`.
+    /// an unresolved associated projection `Self::Item` or `t::item`.
     Projection {
         trait_name: Option<String>,
         item: String,
@@ -206,19 +206,31 @@ impl InferType {
     }
 
     pub fn mentions_param(&self, name: &str) -> bool {
+        self.any_param(&|param| param == name)
+    }
+
+    pub(crate) fn mentions_any_param(&self) -> bool {
+        self.any_param(&|_| true)
+    }
+
+    pub(crate) fn mentions_respelled_param(&self) -> bool {
+        self.any_param(&|param| param.ends_with(SHADOWED_METHOD_SUFFIX))
+    }
+
+    fn any_param(&self, matches: &dyn Fn(&str) -> bool) -> bool {
         match self {
-            InferType::Param(param) => param == name,
+            InferType::Param(param) => matches(param),
             InferType::Function { params, ret } => {
-                params.iter().any(|param| param.mentions_param(name)) || ret.mentions_param(name)
+                params.iter().any(|param| param.any_param(matches)) || ret.any_param(matches)
             }
             InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
-                inner.mentions_param(name)
+                inner.any_param(matches)
             }
-            InferType::FixedArray(inner, _) => inner.mentions_param(name),
-            InferType::Result(ok, err) => ok.mentions_param(name) || err.mentions_param(name),
-            InferType::Tuple(elements) => elements.iter().any(|el| el.mentions_param(name)),
-            InferType::Applied { args, .. } => args.iter().any(|arg| arg.mentions_param(name)),
-            InferType::Projection { self_ty, .. } => self_ty.mentions_param(name),
+            InferType::FixedArray(inner, _) => inner.any_param(matches),
+            InferType::Result(ok, err) => ok.any_param(matches) || err.any_param(matches),
+            InferType::Tuple(elements) => elements.iter().any(|el| el.any_param(matches)),
+            InferType::Applied { args, .. } => args.iter().any(|arg| arg.any_param(matches)),
+            InferType::Projection { self_ty, .. } => self_ty.any_param(matches),
             _ => false,
         }
     }
@@ -238,6 +250,25 @@ impl InferType {
         match self {
             InferType::Projection { self_ty, .. } => self_ty,
             _ => self,
+        }
+    }
+
+    /// nothing inference can still change: each leaf is fixed or a type parameter
+    pub fn is_rigid(&self) -> bool {
+        match self {
+            InferType::Param(_) => true,
+            InferType::Function { params, ret } => {
+                params.iter().all(InferType::is_rigid) && ret.is_rigid()
+            }
+            InferType::Array(inner)
+            | InferType::FixedArray(inner, _)
+            | InferType::Vec(inner)
+            | InferType::Option(inner) => inner.is_rigid(),
+            InferType::Result(ok, error) => ok.is_rigid() && error.is_rigid(),
+            InferType::Tuple(elements) => elements.iter().all(InferType::is_rigid),
+            InferType::Applied { args, .. } => args.iter().all(InferType::is_rigid),
+            InferType::Numeric => false,
+            other => other.is_concrete(),
         }
     }
 
@@ -508,11 +539,7 @@ impl fmt::Display for InferType {
                 }
                 write!(f, ">")
             }
-            // a method parameter the impl pass had to respell carries a suffix no
-            InferType::Param(name) => match name.split_once('$') {
-                Some((written, _)) => write!(f, "{written} of the method"),
-                None => write!(f, "{name}"),
-            },
+            InferType::Param(name) => write!(f, "{}", written_param(name)),
             InferType::Projection {
                 trait_name,
                 item,
@@ -596,4 +623,30 @@ impl InferType {
             | InferType::Poison => self.to_string(),
         }
     }
+}
+
+/// `$` is not in the identifier grammar, so no source can write a name that ends this way, and no lookup keyed by a written name can
+pub(crate) const SHADOWED_METHOD_SUFFIX: &str = "$m";
+
+pub(crate) fn written_param(name: &str) -> &str {
+    name.strip_suffix(SHADOWED_METHOD_SUFFIX).unwrap_or(name)
+}
+
+pub(crate) fn written_names(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(SHADOWED_METHOD_SUFFIX) {
+        let (before, after) = rest.split_at(at);
+        let follows_name = before
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        out.push_str(before);
+        if !follows_name {
+            out.push_str(SHADOWED_METHOD_SUFFIX);
+        }
+        rest = &after[SHADOWED_METHOD_SUFFIX.len()..];
+    }
+    out.push_str(rest);
+    out
 }
