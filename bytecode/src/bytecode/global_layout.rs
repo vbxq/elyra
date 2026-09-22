@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct GlobalLayout {
     id: usize,
     names: Vec<String>,
+    /// whether any name is module qualified
+    has_qualified_names: bool,
 }
 
 static GLOBAL_LAYOUT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -26,6 +28,7 @@ impl GlobalLayout {
         let id = GLOBAL_LAYOUT_ID.fetch_add(1, Ordering::Relaxed);
         let layout = Arc::new(Self {
             id,
+            has_qualified_names: names.iter().any(|name| name.contains("::")),
             names: names.clone(),
         });
         guard.insert(names, Arc::clone(&layout));
@@ -38,19 +41,23 @@ impl GlobalLayout {
                 Arc::new(Self {
                     id: 0,
                     names: Vec::new(),
+                    has_qualified_names: false,
                 })
             })
             .clone()
     }
 
-    // create a layout with placeholder names (for release builds that strip debug info)
     pub fn new_anonymous(count: usize) -> Arc<Self> {
         if count == 0 {
             return Self::empty();
         }
         let names = vec![String::new(); count];
         let id = GLOBAL_LAYOUT_ID.fetch_add(1, Ordering::Relaxed);
-        Arc::new(Self { id, names })
+        Arc::new(Self {
+            id,
+            names,
+            has_qualified_names: false,
+        })
     }
 
     pub fn id(&self) -> usize {
@@ -59,5 +66,9 @@ impl GlobalLayout {
 
     pub fn names(&self) -> &[String] {
         &self.names
+    }
+
+    pub fn has_qualified_names(&self) -> bool {
+        self.has_qualified_names
     }
 }
