@@ -1,4 +1,7 @@
-use super::ir::{FunctionIr, IntPredicate, IrError, IrInstructionKind, IrTerminator, IrType};
+use super::ir::{
+    BlockId, FunctionIr, IntPredicate, IrBlock, IrError, IrInstructionKind, IrTerminator, IrType,
+    ValueId,
+};
 use aelys_runtime::{JitArgument, JitExecutionContext};
 use cranelift_codegen::ir::{
     AbiParam, BlockArg, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, UserFuncName,
@@ -9,7 +12,7 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -264,11 +267,11 @@ impl CompiledFunction {
             *const RawI64Collection,
             *mut JitExecutionContext,
         ) -> i64;
-        // SAFETY: addresses are obtained from finalized Cranelift functions with this exact ABI.
+        // safety: addresses are obtained from finalized Cranelift functions with this exact ABI.
         let entry = unsafe { std::mem::transmute::<usize, Entry>(self.address) };
         let mut exit = RawJitExit::default();
         let mut deopt_registers = vec![0; self.deopt_register_count];
-        // SAFETY: Cranelift receives valid argument, exit-state and deoptimization buffers for the compiled ABI.
+        // safety: Cranelift receives valid argument, exit-state and deoptimization buffers for the compiled ABI.
         let result = unsafe {
             entry(
                 integers,
@@ -480,19 +483,7 @@ impl JitEngine {
             .iter()
             .find(|block| block.id == ir.entry)
             .ok_or(JitError::InvalidIr(IrError::InvalidBlockGraph))?;
-        let mut array_parameters = entry
-            .parameters
-            .iter()
-            .enumerate()
-            .filter_map(|(index, (value, ty))| is_collection_type(*ty).then_some((*value, index)))
-            .collect::<HashMap<_, _>>();
-        for block in &ir.blocks {
-            for (index, &(value, ty)) in block.parameters.iter().enumerate() {
-                if is_collection_type(ty) && ir.parameter_types.get(index) == Some(&ty) {
-                    array_parameters.insert(value, index);
-                }
-            }
-        }
+        let array_parameters = collection_origins(ir, entry);
         let value_types = ir
             .blocks
             .iter()
@@ -588,10 +579,8 @@ extern "C" fn jit_poll(context: *mut JitExecutionContext) -> i64 {
     if context.is_null() {
         return 0;
     }
-    // SAFETY: controlled JIT calls pass a live context for the duration of
-    // the synchronous machine-code invocation.
+    // safety: controlled JIT calls pass a live context for the duration of the synchronous machine-code invocation.
     let context = unsafe { &*context };
-    // SAFETY: the callback and its opaque data are created by the runtime.
     unsafe { (context.poll)(context.data) }
 }
 
@@ -1176,6 +1165,68 @@ fn lower_type(ty: IrType) -> cranelift_codegen::ir::Type {
         IrType::I64Array => types::I64,
         IrType::I64Vec => types::I64,
     }
+}
+
+/// which entry argument a collection value comes from, followed through the block arguments of every jump
+fn collection_origins(ir: &FunctionIr, entry: &IrBlock) -> HashMap<ValueId, usize> {
+    let mut origins: HashMap<ValueId, usize> = entry
+        .parameters
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (value, ty))| is_collection_type(*ty).then_some((*value, index)))
+        .collect();
+    let mut conflicting: HashSet<ValueId> = HashSet::new();
+    let blocks_by_id: HashMap<BlockId, &IrBlock> =
+        ir.blocks.iter().map(|block| (block.id, block)).collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &ir.blocks {
+            let edges: Vec<(BlockId, &Vec<ValueId>)> = match &block.terminator {
+                IrTerminator::Jump { target, arguments } => vec![(*target, arguments)],
+                IrTerminator::Branch {
+                    then_target,
+                    then_arguments,
+                    else_target,
+                    else_arguments,
+                    ..
+                } => vec![
+                    (*then_target, then_arguments),
+                    (*else_target, else_arguments),
+                ],
+                IrTerminator::Return(_) => Vec::new(),
+            };
+            for (target, arguments) in edges {
+                let Some(target_block) = blocks_by_id.get(&target) else {
+                    continue;
+                };
+                for (position, argument) in arguments.iter().enumerate() {
+                    let Some(&(parameter, ty)) = target_block.parameters.get(position) else {
+                        continue;
+                    };
+                    if !is_collection_type(ty) || conflicting.contains(&parameter) {
+                        continue;
+                    }
+                    let Some(&source) = origins.get(argument) else {
+                        continue;
+                    };
+                    match origins.get(&parameter) {
+                        Some(&existing) if existing == source => {}
+                        Some(_) => {
+                            origins.remove(&parameter);
+                            conflicting.insert(parameter);
+                            changed = true;
+                        }
+                        None => {
+                            origins.insert(parameter, source);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    origins
 }
 
 fn is_collection_type(ty: IrType) -> bool {

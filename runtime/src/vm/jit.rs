@@ -18,6 +18,7 @@ impl VM {
         self.jit_executor = executor;
         self.jit_call_counts.clear();
         self.jit_backedge_counts.clear();
+        self.jit_refused.clear();
     }
 
     pub fn alloc_function_with_jit_key(
@@ -45,7 +46,7 @@ impl VM {
         function: GcRef,
         arguments: &[Value],
     ) -> JitCallResult {
-        if self.function_jit_unsupported(function) {
+        if self.function_jit_unsupported(function) || self.jit_refused.get(&function).is_some() {
             return JitCallResult::Unsupported;
         }
         let Some(executor) = self.jit_executor.as_ref().cloned() else {
@@ -57,12 +58,7 @@ impl VM {
         let calls = self.jit_call_counts.get(&key).copied().unwrap_or(0);
         let needs_native_globals = self.heap.get(function).is_some_and(|object| {
             matches!(&object.kind, ObjectKind::Function(bytecode_function)
-                if bytecode_function
-                    .function
-                    .global_layout
-                    .names()
-                    .iter()
-                    .any(|name| name.contains("::")))
+                if bytecode_function.function.global_layout.has_qualified_names())
         });
         let previous_mapping = self.current_global_mapping_id;
         let target_mapping = self.get_global_mapping_id(function);
@@ -129,7 +125,7 @@ impl VM {
     }
 
     pub(crate) fn prepare_jit_call(&mut self, function: GcRef) -> bool {
-        if self.function_jit_unsupported(function) {
+        if self.function_jit_unsupported(function) || self.jit_refused.get(&function).is_some() {
             return false;
         }
         let Some(executor) = self.jit_executor.as_ref().cloned() else {
@@ -145,7 +141,13 @@ impl VM {
             self.jit_call_counts.insert(key.clone(), 1);
             1
         };
-        executor.should_execute(&key, calls)
+        if executor.should_execute(&key, calls) {
+            return true;
+        }
+        if executor.refuses_forever(&key) {
+            self.jit_refused.insert(function, ());
+        }
+        false
     }
 
     #[inline(never)]
@@ -161,16 +163,16 @@ impl VM {
         let argument_end = argument_start
             .checked_add(usize::from(argument_count))
             .ok_or_else(|| self.runtime_error(RuntimeErrorKind::StackOverflow))?;
-        let arguments = self
-            .registers
-            .get(argument_start..argument_end)
-            .ok_or_else(|| {
-                self.runtime_error(RuntimeErrorKind::InvalidRegister {
-                    reg: argument_end.saturating_sub(1),
-                    max: self.registers.len().saturating_sub(1),
-                })
-            })?
-            .to_vec();
+        let arguments = smallvec::SmallVec::<[Value; 8]>::from_slice(
+            self.registers
+                .get(argument_start..argument_end)
+                .ok_or_else(|| {
+                    self.runtime_error(RuntimeErrorKind::InvalidRegister {
+                        reg: argument_end.saturating_sub(1),
+                        max: self.registers.len().saturating_sub(1),
+                    })
+                })?,
+        );
         Ok(match self.try_execute_jit_call(function, &arguments) {
             JitCallResult::Unsupported => JitRegisterCallResult::Unsupported,
             JitCallResult::Returned(value) => JitRegisterCallResult::Returned(value),
@@ -206,7 +208,7 @@ impl VM {
         function: GcRef,
         bytecode_ip: usize,
     ) -> Result<Option<Value>, RuntimeError> {
-        if self.function_jit_unsupported(function) {
+        if self.function_jit_unsupported(function) || self.jit_refused.get(&function).is_some() {
             return Ok(None);
         }
         let initialized = self
@@ -443,6 +445,9 @@ impl VM {
     pub(crate) fn sweep_jit_metadata(&mut self) {
         let heap = &self.heap;
         self.jit_function_keys
+            .retain(|reference, _| heap.get(*reference).is_some());
+        let heap = &self.heap;
+        self.jit_refused
             .retain(|reference, _| heap.get(*reference).is_some());
     }
 }

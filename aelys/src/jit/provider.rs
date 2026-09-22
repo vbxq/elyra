@@ -9,7 +9,7 @@ use aelys_runtime::{
     JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutionContext,
     JitExecutor, JitFunctionKey, Value,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -61,6 +61,7 @@ pub(crate) struct JitProvider {
     tier2_call_threshold: Option<u64>,
     has_compiled_code: AtomicBool,
     profiles: Mutex<HashMap<JitKey, NumericProfile>>,
+    refused: Mutex<HashSet<JitKey>>,
     deoptimizations: AtomicU64,
     osr_executions: AtomicU64,
 }
@@ -78,6 +79,7 @@ impl JitProvider {
             tier2_call_threshold,
             has_compiled_code: AtomicBool::new(false),
             profiles: Mutex::new(HashMap::new()),
+            refused: Mutex::new(HashSet::new()),
             deoptimizations: AtomicU64::new(0),
             osr_executions: AtomicU64::new(0),
         })
@@ -137,19 +139,27 @@ impl JitProvider {
         if calls < self.call_threshold {
             return None;
         }
-        let mut ir = if controlled {
-            translate_controlled_integer_function(function)?
+        if self.refuses(&cache_key) {
+            return None;
+        }
+        let translated = if controlled {
+            translate_controlled_integer_function(function)
         } else if tier == JitTier::Optimized {
-            translate_optimized_integer_function(function)?
+            translate_optimized_integer_function(function)
         } else {
-            translate_integer_function(function)?
+            translate_integer_function(function)
+        };
+        let Some(mut ir) = translated else {
+            return self.refuse(&cache_key);
         };
         if tier == JitTier::Optimized {
             optimize_integer_ir(&mut ir);
             if let Some(profile) = profile {
                 specialize_integer_parameters(&mut ir, profile);
             }
-            ir.verify().ok()?;
+            if ir.verify().is_err() {
+                return self.refuse(&cache_key);
+            }
         }
         let compiled = match self.engine.compile(&cache_key, &ir) {
             Ok(compiled) => compiled,
@@ -160,26 +170,67 @@ impl JitProvider {
                     JitTier::Baseline,
                     controlled,
                 );
-                self.engine.cached(&baseline).ok().flatten()?
+                match self.engine.cached(&baseline).ok().flatten() {
+                    Some(compiled) => compiled,
+                    None => return self.refuse(&cache_key),
+                }
             }
-            Err(_) => return None,
+            Err(_) => return self.refuse(&cache_key),
         };
         self.has_compiled_code.store(true, Ordering::Release);
         Some(compiled)
     }
 
+    /// a translation that failed once fails again for the same bytecode, so the refusal is remembered rather than retried
+    fn refuses(&self, key: &JitKey) -> bool {
+        self.refused
+            .lock()
+            .map(|refused| refused.contains(key))
+            .unwrap_or(false)
+    }
+
+    fn refuse(&self, key: &JitKey) -> Option<Arc<CompiledFunction>> {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.insert(key.clone());
+        }
+        None
+    }
+
     fn key(key: &JitFunctionKey) -> JitKey {
         JitKey::for_path(key.module(), key.shared_path(), JitTier::Baseline)
+    }
+
+    fn tier_key(&self, key: &JitFunctionKey, calls: u64) -> JitKey {
+        let tier = self
+            .tier2_call_threshold
+            .filter(|threshold| calls >= *threshold)
+            .map_or(JitTier::Baseline, |_| JitTier::Optimized);
+        JitKey::for_path(key.module(), key.shared_path(), tier)
     }
 }
 
 impl JitExecutor for JitProvider {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool {
         if calls >= self.call_threshold {
-            return true;
+            return !self.refuses(&self.tier_key(key, calls));
         }
         self.has_compiled_code.load(Ordering::Acquire)
             && self.engine.cached(&Self::key(key)).ok().flatten().is_some()
+    }
+
+    /// only once every tier has refused it, because the second tier inlines leaf calls the first one cannot translate and so compiles
+    fn refuses_forever(&self, key: &JitFunctionKey) -> bool {
+        if !self.refuses(&Self::key(key)) {
+            return false;
+        }
+        let Some(_) = self.tier2_call_threshold else {
+            return true;
+        };
+        self.refuses(&JitKey::for_path(
+            key.module(),
+            key.shared_path(),
+            JitTier::Optimized,
+        ))
     }
 
     fn observe_backedge(&self, key: &JitFunctionKey, function: &Function, backedges: u64) {
@@ -347,12 +398,21 @@ impl JitProvider {
         let cache_key =
             JitKey::for_osr_with_control(key.module(), key.shared_path(), bytecode_ip, controlled);
         let compiled = self.engine.cached(&cache_key).ok().flatten().or_else(|| {
-            let ir = if controlled {
-                translate_controlled_integer_osr(function, bytecode_ip)?
+            if self.refuses(&cache_key) {
+                return None;
+            }
+            let translated = if controlled {
+                translate_controlled_integer_osr(function, bytecode_ip)
             } else {
-                translate_integer_osr(function, bytecode_ip)?
+                translate_integer_osr(function, bytecode_ip)
             };
-            self.engine.compile(&cache_key, &ir).ok()
+            let Some(ir) = translated else {
+                return self.refuse(&cache_key);
+            };
+            match self.engine.compile(&cache_key, &ir) {
+                Ok(compiled) => Some(compiled),
+                Err(_) => self.refuse(&cache_key),
+            }
         });
         let Some(compiled) = compiled else {
             return JitCallResult::Unsupported;

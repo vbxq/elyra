@@ -7,10 +7,14 @@ use std::sync::Arc;
 
 pub const JIT_TIER1_BACKEDGE_THRESHOLD: u64 = 10_000;
 
-/// Per-invocation state passed to JIT code that runs under execution control.
-///
-/// The context is borrowed for the duration of one synchronous machine-code
-/// call. The runtime owns the callback, so control state remains isolate-local.
+static NEXT_JIT_MODULE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// the module half of a function key
+pub fn next_jit_module_id() -> u64 {
+    NEXT_JIT_MODULE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// per-invocation state passed to JIT code that runs under execution control
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct JitExecutionContext {
@@ -155,6 +159,12 @@ pub enum JitArgument<'a> {
 pub trait JitExecutor: Send + Sync {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
 
+    /// true when no later call can compile this function, so the VM can stop asking
+    fn refuses_forever(&self, key: &JitFunctionKey) -> bool {
+        let _ = key;
+        false
+    }
+
     fn observe_backedge(&self, key: &JitFunctionKey, function: &Function, backedges: u64);
 
     fn try_execute(
@@ -165,8 +175,7 @@ pub trait JitExecutor: Send + Sync {
         calls: u64,
     ) -> JitCallResult;
 
-    /// Execute with an isolate-local control context. Providers that do not
-    /// support controlled machine code retain the old fallback behavior.
+    /// execute with an isolate-local control context. providers that do not support controlled machine code retain the old fallback behavior.
     fn try_execute_with_context(
         &self,
         key: &JitFunctionKey,
