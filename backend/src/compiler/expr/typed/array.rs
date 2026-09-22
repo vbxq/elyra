@@ -2,7 +2,7 @@ use super::super::Compiler;
 use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
-use aelys_sema::{InferType, ResolvedType, TypedExpr};
+use aelys_sema::{InferType, ResolvedType, TypedExpr, TypedExprKind};
 use aelys_syntax::Span;
 
 impl Compiler {
@@ -279,6 +279,18 @@ impl Compiler {
         Ok(())
     }
 
+    /// an operand already in a local's register is read where it is
+    fn operand_register(&mut self, expr: &TypedExpr) -> Result<(u16, bool)> {
+        if let TypedExprKind::Identifier(name) = &expr.kind
+            && let Some((register, _)) = self.resolve_variable(name)
+        {
+            return Ok((register, false));
+        }
+        let register = self.alloc_register()?;
+        self.compile_typed_expr(expr, register)?;
+        Ok((register, true))
+    }
+
     pub(super) fn compile_typed_index_access(
         &mut self,
         object: &TypedExpr,
@@ -286,11 +298,8 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let obj_reg = self.alloc_register()?;
-        self.compile_typed_expr(object, obj_reg)?;
-
-        let idx_reg = self.alloc_register()?;
-        self.compile_typed_expr(index, idx_reg)?;
+        let (obj_reg, obj_owned) = self.operand_register(object)?;
+        let (idx_reg, idx_owned) = self.operand_register(index)?;
 
         let opcode = match &object.ty {
             InferType::Vec(inner) => Self::select_typed_opcode(
@@ -313,8 +322,12 @@ impl Compiler {
 
         self.emit_a(opcode, dest, obj_reg, idx_reg, span);
 
-        self.free_register(idx_reg);
-        self.free_register(obj_reg);
+        if idx_owned {
+            self.free_register(idx_reg);
+        }
+        if obj_owned {
+            self.free_register(obj_reg);
+        }
 
         Ok(())
     }
@@ -327,14 +340,10 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let obj_reg = self.alloc_register()?;
-        self.compile_typed_expr(object, obj_reg)?;
+        let (obj_reg, obj_owned) = self.operand_register(object)?;
+        let (idx_reg, idx_owned) = self.operand_register(index)?;
 
-        let idx_reg = self.alloc_register()?;
-        self.compile_typed_expr(index, idx_reg)?;
-
-        let val_reg = self.alloc_register()?;
-        self.compile_typed_expr(value, val_reg)?;
+        let (val_reg, val_owned) = self.operand_register(value)?;
 
         let opcode = match &object.ty {
             InferType::Vec(inner) => Self::select_typed_opcode(
@@ -360,9 +369,15 @@ impl Compiler {
             self.emit_a(OpCode::Move, dest, val_reg, 0, span);
         }
 
-        self.free_register(val_reg);
-        self.free_register(idx_reg);
-        self.free_register(obj_reg);
+        if val_owned {
+            self.free_register(val_reg);
+        }
+        if idx_owned {
+            self.free_register(idx_reg);
+        }
+        if obj_owned {
+            self.free_register(obj_reg);
+        }
 
         Ok(())
     }

@@ -1,4 +1,5 @@
 use super::super::Compiler;
+use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_syntax::Span;
 use aelys_syntax::ast::BinaryOp;
@@ -24,6 +25,26 @@ impl Compiler {
         let left_resolved = aelys_sema::ResolvedType::from_infer_type(&left.ty);
         let right_resolved = aelys_sema::ResolvedType::from_infer_type(&right.ty);
         let opcode = crate::opcode_select::select_opcode(op, &left_resolved, &right_resolved);
+
+        // a small literal on the right becomes the operand, which spares a register and a LoadI
+        if let aelys_sema::TypedExprKind::Int(literal) = &right.kind
+            && (0..=255).contains(literal)
+            && let Some(immediate) = match (op, opcode) {
+                (BinaryOp::Add, OpCode::AddII) => Some(OpCode::AddI),
+                (BinaryOp::Sub, OpCode::SubII) => Some(OpCode::SubI),
+                _ => None,
+            }
+            && let Some(left_local_reg) = self.get_typed_local_register(left)
+        {
+            self.emit_a(
+                immediate,
+                dest,
+                left_local_reg,
+                u8::try_from(*literal).expect("immediate was range checked"),
+                span,
+            );
+            return Ok(());
+        }
 
         if let Some(left_local_reg) = self.get_typed_local_register(left) {
             let (right_reg, right_needs_free) =
