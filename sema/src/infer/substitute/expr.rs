@@ -241,12 +241,39 @@ impl TypeInference {
         args: &[TypedExpr],
         subst: &Substitution,
     ) -> TypedExprKind {
-        TypedExprKind::Call {
-            callee: Box::new(self.apply_substitution_expr(callee, subst)),
-            args: args
+        let mut callee = self.apply_substitution_expr(callee, subst);
+        let args: Vec<TypedExpr> = args
+            .iter()
+            .map(|a| self.apply_substitution_expr(a, subst))
+            .collect();
+        // a qualified call carries its receiver as the first argument, so the instance chooses its impl, or refuses it, from there
+        if let TypedExprKind::StructMethod {
+            symbol,
+            separator: MemberSeparator::Path,
+            ..
+        } = &mut callee.kind
+            && let Some(receiver) = args.first()
+            && self
+                .type_table
+                .trait_impl_defs()
                 .iter()
-                .map(|a| self.apply_substitution_expr(a, subst))
-                .collect(),
+                .flat_map(|definition| definition.methods.iter())
+                .any(|entry| entry.symbol == *symbol && entry.has_self)
+        {
+            let verdict = self.type_table.select_specialization(&receiver.ty, symbol);
+            match verdict {
+                crate::types::SpecializationChoice::Redirect(chosen) => *symbol = chosen,
+                crate::types::SpecializationChoice::Keep => {}
+                verdict => self.specialization_verdicts.borrow_mut().push((
+                    verdict,
+                    receiver.ty.clone(),
+                    receiver.span,
+                )),
+            }
+        }
+        TypedExprKind::Call {
+            callee: Box::new(callee),
+            args,
         }
     }
 

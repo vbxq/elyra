@@ -205,7 +205,12 @@ impl TypeInference {
             && let Some(param) = source_path_name(object)
             && self.type_params_in_scope.contains(&param)
         {
-            let bounds = self.bounds_in_scope_for_param(&param);
+            let looked_up = self
+                .method_param_renames
+                .get(&param)
+                .cloned()
+                .unwrap_or_else(|| param.clone());
+            let bounds = self.bounds_in_scope_for_param(&looked_up);
             let declaring = bounds.into_iter().find(|(name, _)| {
                 self.type_table.get_trait(name).is_some_and(|definition| {
                     definition
@@ -216,7 +221,7 @@ impl TypeInference {
             });
             let Some((trait_name, _)) = declaring else {
                 let cause = match self.associated_item_namespace(
-                    &param,
+                    &looked_up,
                     member,
                     crate::constraint::ItemNamespace::Const,
                 ) {
@@ -250,7 +255,7 @@ impl TypeInference {
                 .unwrap_or(InferType::I64);
             return (
                 TypedExprKind::AssociatedConst {
-                    param,
+                    param: looked_up,
                     trait_name,
                     item: member.to_string(),
                 },
@@ -793,7 +798,50 @@ impl TypeInference {
                 .then(|| self.type_table.method(&name, member).cloned())
                 .flatten()
                 .filter(|method| method.has_self);
+            // the header binds the receiver only when it is the one that will run
+            let off_instantiation: Vec<String> = match &self.adopted_instantiation {
+                Some((trait_name, header, args)) if *header == typed_object.ty => self
+                    .type_table
+                    .symbols_at_other_instantiations(trait_name, header, args, member),
+                _ => Vec::new(),
+            };
+            let settled = typed_object.ty.is_concrete() || typed_object.ty.is_rigid();
+            let standing: Vec<String> = match settled {
+                true => {
+                    let mut ruled_out = self
+                        .type_table
+                        .symbols_not_applying(&typed_object.ty, member);
+                    ruled_out.extend(self.type_table.symbols_outranked(&typed_object.ty, member));
+                    ruled_out.extend(off_instantiation.iter().cloned());
+                    self.visible_trait_methods(&name, member)
+                        .iter()
+                        .filter(|candidate| {
+                            candidate.has_self && !ruled_out.contains(&candidate.symbol)
+                        })
+                        .map(|candidate| candidate.symbol.clone())
+                        .collect()
+                }
+                false => Vec::new(),
+            };
+            let covered = matches!(standing.as_slice(), [only]
+                if self.type_table.impl_covers(only, &typed_object.ty));
+            // an impl that reaches a generic receiver without covering it runs for some instances only
+            let left_to_instances = settled
+                && !typed_object.ty.is_concrete()
+                && !covered
+                && typed_through_declaration(&self.type_table, &name, member);
+            let chosen_by_receiver = standing.len() == 1 && !left_to_instances;
+            let header_decides = inherent.is_some()
+                || (self
+                    .visible_trait_methods(&name, member)
+                    .iter()
+                    .filter(|candidate| candidate.has_self)
+                    .count()
+                    == 1
+                    && !left_to_instances);
             let mut ambiguous_symbols: Vec<String> = Vec::new();
+            let mut unreached_by: Option<String> = None;
+            let mut candidate_root: Option<String> = None;
             let (mut method, trait_ambiguous) = if inherent.is_some() {
                 (inherent, false)
             } else if !has_field {
@@ -801,6 +849,7 @@ impl TypeInference {
                     .type_table
                     .symbols_not_applying(&typed_object.ty, member);
                 inapplicable.extend(self.type_table.symbols_outranked(&typed_object.ty, member));
+                inapplicable.extend(off_instantiation.iter().cloned());
                 let candidates: Vec<_> = self
                     .visible_trait_methods(&name, member)
                     .into_iter()
@@ -820,6 +869,11 @@ impl TypeInference {
                         nominal_only: true,
                     });
                 }
+                let symbols: Vec<String> = candidates
+                    .iter()
+                    .map(|candidate| candidate.symbol.clone())
+                    .collect();
+                candidate_root = self.type_table.specialization_root(&name, member, &symbols);
                 match candidates.as_slice() {
                     [candidate] => (
                         Some(crate::types::StructMethod {
@@ -833,12 +887,54 @@ impl TypeInference {
                         }),
                         false,
                     ),
-                    [] => (None, false),
-                    _ => match self.type_table.specialization_root(&name, member) {
+                    // no impl that supplies the method reaches the receiver, so no instance of the call can succeed
+                    [] => {
+                        // only a trait the call can see: one it cannot answers as an absent member would
+                        let visible: Vec<String> = self
+                            .visible_trait_methods(&name, member)
+                            .into_iter()
+                            .filter(|candidate| candidate.has_self)
+                            .map(|candidate| candidate.symbol)
+                            .collect();
+                        let mut traits: Vec<String> = self
+                            .type_table
+                            .trait_impl_defs()
+                            .iter()
+                            .filter(|definition| {
+                                definition
+                                    .methods
+                                    .iter()
+                                    .any(|entry| visible.contains(&entry.symbol))
+                            })
+                            .map(|definition| definition.trait_name.clone())
+                            .collect();
+                        traits.sort();
+                        traits.dedup();
+                        if settled && let [trait_name] = traits.as_slice() {
+                            unreached_by = Some(trait_name.clone());
+                        }
+                        (None, false)
+                    }
+                    _ => match candidate_root.clone() {
                         Some(root) => (
                             candidates
                                 .iter()
                                 .find(|candidate| candidate.symbol == root)
+                                .map(|candidate| crate::types::StructMethod {
+                                    name: candidate.name.clone(),
+                                    symbol: candidate.symbol.clone(),
+                                    params: candidate.params.clone(),
+                                    return_type: candidate.return_type.clone(),
+                                    has_self: candidate.has_self,
+                                    mutable_self: candidate.mutable_self,
+                                    own_type_params: candidate.own_type_params.clone(),
+                                }),
+                            false,
+                        ),
+                        // a trait without parameters is typed through its declaration, its impl chosen once the receiver is known
+                        None if typed_through_declaration(&self.type_table, &name, member) => (
+                            candidates
+                                .first()
                                 .map(|candidate| crate::types::StructMethod {
                                     name: candidate.name.clone(),
                                     symbol: candidate.symbol.clone(),
@@ -860,6 +956,10 @@ impl TypeInference {
             } else {
                 (None, false)
             };
+            // the root of a specialization chain covers every receiver the chain covers, so its header binds the receiver whichever member runs
+            let chosen_is_root = method
+                .as_ref()
+                .is_some_and(|chosen| candidate_root.as_deref() == Some(chosen.symbol.as_str()));
             if trait_ambiguous {
                 self.errors.push(TypeError {
                     kind: crate::infer::signatures::ambiguous_trait_method_kind(
@@ -868,6 +968,26 @@ impl TypeInference {
                         member,
                         &ambiguous_symbols,
                     ),
+                    span: _span,
+                    reason: ConstraintReason::Other("trait method lookup".to_string()),
+                });
+                return (
+                    TypedExprKind::Member {
+                        object: Box::new(typed_object),
+                        member: member.to_string(),
+                        separator,
+                    },
+                    InferType::Poison,
+                );
+            }
+            if let Some(trait_name) = unreached_by {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::UnsatisfiedTraitBound {
+                        trait_name,
+                        trait_args: Vec::new(),
+                        ty: typed_object.ty.clone(),
+                        denied: false,
+                    },
                     span: _span,
                     reason: ConstraintReason::Other("trait method lookup".to_string()),
                 });
@@ -892,20 +1012,131 @@ impl TypeInference {
                         reason: ConstraintReason::Other("mutable struct receiver".to_string()),
                     });
                 }
-                // like one the receiver fixes is indistinguishable from it
+                // among several impls none speaks for the call
                 let mut substitutions = substitutions;
+                let supplying = self.type_table.traits_supplying(&name, member);
+                let mut typed_by_trait = false;
+                if !header_decides
+                    && let [trait_name] = supplying.as_slice()
+                    && let Some((trait_params, declared)) = self
+                        .type_table
+                        .get_trait(trait_name)
+                        .filter(|definition| definition.type_params.is_empty() || chosen_is_root)
+                        .and_then(|definition| {
+                            definition
+                                .methods
+                                .iter()
+                                .find(|declared| declared.name == member && declared.has_self)
+                                .map(|declared| (definition.type_params.clone(), declared.clone()))
+                        })
+                {
+                    let mut at_receiver =
+                        HashMap::from([("Self".to_string(), typed_object.ty.clone())]);
+                    // a specialization gives the trait its root's arguments, so the root's header fixes them
+                    if !trait_params.is_empty()
+                        && let Some(root) = self
+                            .type_table
+                            .trait_impl_defs()
+                            .iter()
+                            .find(|definition| {
+                                definition
+                                    .methods
+                                    .iter()
+                                    .any(|candidate| candidate.symbol == method.symbol)
+                            })
+                            .cloned()
+                    {
+                        let mut names = Vec::new();
+                        let mut seen = std::collections::HashSet::new();
+                        super::call::collect_generic_params(&root.self_type, &mut names, &mut seen);
+                        let fresh: HashMap<String, InferType> = names
+                            .into_iter()
+                            .map(|name| (name, self.type_gen.fresh()))
+                            .collect();
+                        self.constraints.push(Constraint::equal(
+                            root.self_type.substitute_params(&fresh),
+                            typed_object.ty.clone(),
+                            _span,
+                            ConstraintReason::Other("method receiver".to_string()),
+                        ));
+                        for (param, arg) in trait_params.iter().zip(&root.trait_args) {
+                            at_receiver.insert(param.clone(), arg.substitute_params(&fresh));
+                        }
+                    }
+                    let apart = own_params_apart(&declared.own_type_params, &typed_object.ty);
+                    method.params = declared
+                        .params
+                        .iter()
+                        .map(|param| {
+                            param
+                                .substitute_params(&apart)
+                                .substitute_params(&at_receiver)
+                        })
+                        .collect();
+                    method.return_type = declared
+                        .return_type
+                        .substitute_params(&apart)
+                        .substitute_params(&at_receiver);
+                    method.own_type_params = respelled_own(&declared.own_type_params, &apart);
+                    substitutions = HashMap::new();
+                    typed_by_trait = true;
+                }
+                // the signature is written in the impl's names, which need not be the nominal's
+                if (header_decides || chosen_by_receiver || chosen_is_root)
+                    && !typed_by_trait
+                    && method.has_self
+                    && let Some(header @ InferType::Applied { .. }) = method.params.first()
+                {
+                    let mut names = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    super::call::collect_generic_params(header, &mut names, &mut seen);
+                    let fresh: HashMap<String, InferType> = names
+                        .into_iter()
+                        .map(|name| (name, self.type_gen.fresh()))
+                        .collect();
+                    self.constraints.push(Constraint::equal(
+                        header.substitute_params(&fresh),
+                        typed_object.ty.clone(),
+                        _span,
+                        ConstraintReason::Other("method receiver".to_string()),
+                    ));
+                    substitutions = fresh;
+                }
+                let call_order = own_params_in_call_order(
+                    &method.params,
+                    &method.return_type,
+                    method.has_self,
+                    &method.own_type_params,
+                );
                 for parameter in &method.own_type_params {
                     substitutions
                         .entry(parameter.clone())
                         .or_insert_with(|| self.type_gen.fresh());
                 }
+                self.freshened_own_params = Some(
+                    call_order
+                        .iter()
+                        .filter_map(|parameter| substitutions.get(parameter).cloned())
+                        .collect(),
+                );
                 method.params = method
                     .params
                     .iter()
                     .map(|param| param.substitute_params(&substitutions))
                     .collect();
                 method.return_type = method.return_type.substitute_params(&substitutions);
-                let params = method.params.into_iter().skip(1).collect();
+                // a projection under a constructor, as `w<Self::Out>`, is read here: the solver only answers one standing alone
+                let reason = ConstraintReason::Return {
+                    func_name: member.to_string(),
+                };
+                let params = method
+                    .params
+                    .into_iter()
+                    .skip(1)
+                    .map(|param| self.normalize_projection_types(&param, _span, &reason))
+                    .collect();
+                let return_type =
+                    self.normalize_projection_types(&method.return_type, _span, &reason);
                 return (
                     TypedExprKind::StructMethod {
                         object: Box::new(typed_object),
@@ -915,7 +1146,7 @@ impl TypeInference {
                     },
                     InferType::Function {
                         params,
-                        ret: Box::new(method.return_type),
+                        ret: Box::new(return_type),
                     },
                 );
             }
@@ -1719,11 +1950,23 @@ impl TypeInference {
             substitutions.insert(parameter.clone(), argument.clone());
         }
         // the trait's parameters are fixed by the bound and rigid here; a method
+        let call_order = own_params_in_call_order(
+            &method.params,
+            &method.return_type,
+            method.has_self,
+            &method.own_type_params,
+        );
         for parameter in &method.own_type_params {
             substitutions
                 .entry(parameter.clone())
                 .or_insert_with(|| self.type_gen.fresh());
         }
+        self.freshened_own_params = Some(
+            call_order
+                .iter()
+                .filter_map(|parameter| substitutions.get(parameter).cloned())
+                .collect(),
+        );
         let params = method
             .params
             .iter()
@@ -1867,4 +2110,63 @@ pub(crate) fn projection_failure_for(
         },
         ConstResolution::Missing | ConstResolution::Value(_) => ProjectionFailure::NoImpl,
     }
+}
+
+/// a method's own parameters under names the receiver does not use
+pub(crate) fn own_params_apart(own: &[String], receiver: &InferType) -> HashMap<String, InferType> {
+    own.iter()
+        .map(|name| {
+            let mut spelled = crate::infer::shadowed_method_param(name);
+            while receiver.mentions_param(&spelled) {
+                spelled = crate::infer::shadowed_method_param(&spelled);
+            }
+            (name.clone(), InferType::Param(spelled))
+        })
+        .collect()
+}
+
+pub(crate) fn respelled_own(own: &[String], apart: &HashMap<String, InferType>) -> Vec<String> {
+    own.iter()
+        .map(|name| match apart.get(name) {
+            Some(InferType::Param(spelled)) => spelled.clone(),
+            _ => name.clone(),
+        })
+        .collect()
+}
+
+/// a turbofish on a method binds its own parameters in the order they first appear after the receiver, which is the order the trait's
+fn own_params_in_call_order(
+    params: &[InferType],
+    ret: &InferType,
+    has_self: bool,
+    own: &[String],
+) -> Vec<String> {
+    let callee = InferType::Function {
+        params: params.iter().skip(usize::from(has_self)).cloned().collect(),
+        ret: Box::new(ret.clone()),
+    };
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    super::call::collect_generic_params(&callee, &mut names, &mut seen);
+    names.retain(|name| own.contains(name));
+    for name in own {
+        if !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
+/// one trait without parameters supplies the method, so its declaration types any call to it whichever impl runs
+pub(crate) fn typed_through_declaration(
+    type_table: &crate::types::TypeTable,
+    nominal: &str,
+    member: &str,
+) -> bool {
+    matches!(
+        type_table.traits_supplying(nominal, member).as_slice(),
+        [trait_name] if type_table
+            .get_trait(trait_name)
+            .is_some_and(|definition| definition.type_params.is_empty())
+    )
 }
