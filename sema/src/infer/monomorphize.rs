@@ -1275,10 +1275,11 @@ impl TypeInference {
 
     pub(super) fn resolve_deferred_members(&mut self, stmts: &mut [TypedStmt]) {
         let type_table = &self.type_table;
+        let hidden = |name: &str| self.refused_private_nominal(name).is_some();
         let mut errors = Vec::new();
         for stmt in stmts.iter_mut() {
             visit_exprs_stmt(stmt, &mut |expr| {
-                resolve_deferred_member(expr, type_table, &mut errors);
+                resolve_deferred_expr(expr, type_table, &hidden, &mut errors);
             });
             visit_exprs_stmt(stmt, &mut |expr| {
                 resolve_deferred_call_type(expr);
@@ -2925,9 +2926,34 @@ fn resolve_bound_marker(
     }
 }
 
+fn resolve_deferred_expr(
+    expr: &mut TypedExpr,
+    type_table: &crate::types::TypeTable,
+    hidden: &dyn Fn(&str) -> bool,
+    errors: &mut Vec<TypeError>,
+) {
+    if let TypedExprKind::Call { callee, args } = &mut expr.kind {
+        for argument in args.iter_mut() {
+            resolve_deferred_expr(argument, type_table, hidden, errors);
+        }
+        if let InferType::Function { params, .. } = &mut callee.ty {
+            for (param, argument) in params.iter_mut().zip(args.iter()) {
+                if matches!(param, InferType::Var(_)) && !matches!(argument.ty, InferType::Var(_)) {
+                    *param = argument.ty.clone();
+                }
+            }
+        }
+        resolve_deferred_expr(callee, type_table, hidden, errors);
+        resolve_deferred_call_type(expr);
+        return;
+    }
+    resolve_deferred_member(expr, type_table, hidden, errors);
+}
+
 fn resolve_deferred_member(
     expr: &mut TypedExpr,
     type_table: &crate::types::TypeTable,
+    hidden: &dyn Fn(&str) -> bool,
     errors: &mut Vec<TypeError>,
 ) {
     let TypedExprKind::Member {
@@ -2950,7 +2976,8 @@ fn resolve_deferred_member(
         && let Some(field) = definition.fields.iter().find(|field| field.name == *member)
     {
         let field_ty = field.ty.substitute_params(&substitutions);
-        if expr.ty.is_concrete() && expr.ty != field_ty {
+        // what the site did type must be the field's type, even where it is not wholly known
+        if !fits_call_site(&field_ty, &expr.ty, &[], &mut HashMap::new()) {
             errors.push(TypeError {
                 kind: TypeErrorKind::Mismatch {
                     expected: field_ty.clone(),
@@ -2981,26 +3008,71 @@ fn resolve_deferred_member(
         .method(&name, member)
         .filter(|method| method.has_self)
         .cloned();
+    let mut through_declaration = false;
     let method = if inherent.is_some() {
         inherent
     } else {
+        // the receiver is resolved here, so the impls it rules out leave the same choice the member route makes
+        let mut ruled_out = type_table.symbols_not_applying(&object.ty, member);
+        ruled_out.extend(type_table.symbols_outranked(&object.ty, member));
+        // an impl of a trait the caller cannot see supplies nothing to it, as on the member route
+        let seen = |symbol: &str| {
+            let declaring: Vec<&str> = type_table
+                .trait_impl_defs()
+                .iter()
+                .filter(|definition| {
+                    definition
+                        .methods
+                        .iter()
+                        .any(|entry| entry.symbol == symbol)
+                })
+                .map(|definition| definition.trait_name.as_str())
+                .collect();
+            declaring.is_empty() || declaring.iter().any(|trait_name| !hidden(trait_name))
+        };
         let candidates: Vec<_> = type_table
             .trait_methods(&name, member)
             .iter()
-            .filter(|candidate| candidate.has_self)
+            .filter(|candidate| candidate.has_self && !ruled_out.contains(&candidate.symbol))
+            .filter(|candidate| seen(&candidate.symbol))
             .cloned()
             .collect();
         match candidates.as_slice() {
-            [candidate] => Some(crate::types::StructMethod {
-                name: candidate.name.clone(),
-                symbol: candidate.symbol.clone(),
-                params: candidate.params.clone(),
-                return_type: candidate.return_type.clone(),
-                has_self: candidate.has_self,
-                mutable_self: candidate.mutable_self,
-                own_type_params: Vec::new(),
-            }),
+            // an impl the receiver reaches without covering it runs for some instances only, so its header cannot stand for the receiver
+            [candidate]
+                if type_table.impl_covers(&candidate.symbol, &object.ty)
+                    || !crate::infer::expr::member::typed_through_declaration(
+                        type_table, &name, member,
+                    ) =>
+            {
+                Some(crate::types::StructMethod {
+                    name: candidate.name.clone(),
+                    symbol: candidate.symbol.clone(),
+                    params: candidate.params.clone(),
+                    return_type: candidate.return_type.clone(),
+                    has_self: candidate.has_self,
+                    mutable_self: candidate.mutable_self,
+                    own_type_params: candidate.own_type_params.clone(),
+                })
+            }
             [] => None,
+            // a receiver still open over a trait without parameters: the trait's declaration types the call, and the instance chooses the impl
+            [first, ..]
+                if crate::infer::expr::member::typed_through_declaration(
+                    type_table, &name, member,
+                ) =>
+            {
+                through_declaration = true;
+                Some(crate::types::StructMethod {
+                    name: first.name.clone(),
+                    symbol: first.symbol.clone(),
+                    params: first.params.clone(),
+                    return_type: first.return_type.clone(),
+                    has_self: first.has_self,
+                    mutable_self: first.mutable_self,
+                    own_type_params: first.own_type_params.clone(),
+                })
+            }
             _ => {
                 let symbols: Vec<String> = candidates
                     .iter()
@@ -3018,27 +3090,162 @@ fn resolve_deferred_member(
         }
     };
     let Some(mut method) = method else {
-        errors.push(TypeError {
-            kind: TypeErrorKind::UnknownField {
+        // an impl supplies the method but none reaches this receiver
+        let kind = match type_table.traits_supplying(&name, member).as_slice() {
+            // a trait the caller cannot see answers as an absent member would
+            [trait_name]
+                if (object.ty.is_concrete() || object.ty.is_rigid()) && !hidden(trait_name) =>
+            {
+                TypeErrorKind::UnsatisfiedTraitBound {
+                    trait_name: trait_name.clone(),
+                    trait_args: Vec::new(),
+                    ty: object.ty.clone(),
+                    denied: false,
+                }
+            }
+            _ => TypeErrorKind::UnknownField {
                 structure: name,
                 field: member.clone(),
             },
+        };
+        errors.push(TypeError {
+            kind,
             span: expr.span,
             reason: ConstraintReason::Other("deferred member lookup".to_string()),
         });
         return;
     };
-    method.params = method
-        .params
-        .iter()
-        .map(|param| param.substitute_params(&substitutions))
-        .collect();
-    method.return_type = method.return_type.substitute_params(&substitutions);
-    let function_type = InferType::Function {
-        params: method.params.into_iter().skip(1).collect(),
-        ret: Box::new(method.return_type),
-    };
-    if expr.ty.is_concrete() && expr.ty != function_type {
+    // a provisional choice on a receiver already known is made here, where no later instance will make it again
+    if through_declaration && object.ty.is_concrete() {
+        match type_table.select_specialization(&object.ty, &method.symbol) {
+            crate::types::SpecializationChoice::Redirect(chosen) => method.symbol = chosen,
+            crate::types::SpecializationChoice::Keep => {}
+            verdict => {
+                if let Some(kind) =
+                    super::entry::specialization_error_kind(verdict, object.ty.clone())
+                {
+                    errors.push(TypeError {
+                        kind,
+                        span: expr.span,
+                        reason: ConstraintReason::Other("specialization selection".to_string()),
+                    });
+                }
+                return;
+            }
+        }
+    }
+    if through_declaration
+        && let [trait_name] = type_table.traits_supplying(&name, member).as_slice()
+        && let Some(declared) = type_table.get_trait(trait_name).and_then(|definition| {
+            definition
+                .methods
+                .iter()
+                .find(|declared| declared.name == *member && declared.has_self)
+                .cloned()
+        })
+    {
+        let at_receiver = HashMap::from([("Self".to_string(), object.ty.clone())]);
+        let apart =
+            crate::infer::expr::member::own_params_apart(&declared.own_type_params, &object.ty);
+        method.own_type_params =
+            crate::infer::expr::member::respelled_own(&declared.own_type_params, &apart);
+        method.params = declared
+            .params
+            .iter()
+            .map(|param| {
+                param
+                    .substitute_params(&apart)
+                    .substitute_params(&at_receiver)
+            })
+            .collect();
+        method.return_type = declared
+            .return_type
+            .substitute_params(&apart)
+            .substitute_params(&at_receiver);
+        if object.ty.is_concrete() && type_table.denies(trait_name, &object.ty, &[]) {
+            errors.push(TypeError {
+                kind: TypeErrorKind::UnsatisfiedTraitBound {
+                    trait_name: trait_name.clone(),
+                    trait_args: Vec::new(),
+                    ty: object.ty.clone(),
+                    denied: true,
+                },
+                span: expr.span,
+                reason: ConstraintReason::Other("deferred method lookup".to_string()),
+            });
+            return;
+        }
+    } else {
+        // the signature is written in the impl's names, not the nominal's
+        let mut from_header = HashMap::new();
+        let Some(header) = method.params.first().cloned() else {
+            return;
+        };
+        if match_types(&header, &object.ty, &mut from_header).is_none() {
+            errors.push(TypeError {
+                kind: TypeErrorKind::Mismatch {
+                    expected: header,
+                    found: object.ty.clone(),
+                },
+                span: expr.span,
+                reason: ConstraintReason::Other("method receiver".to_string()),
+            });
+            return;
+        }
+        if let Some(definition) = type_table.trait_impl_defs().iter().find(|definition| {
+            definition
+                .methods
+                .iter()
+                .any(|candidate| candidate.symbol == method.symbol)
+        }) {
+            let trait_args: Vec<InferType> = definition
+                .trait_args
+                .iter()
+                .map(|arg| arg.substitute_params(&from_header))
+                .collect();
+            if type_table.denies(&definition.trait_name, &object.ty, &trait_args) {
+                errors.push(TypeError {
+                    kind: TypeErrorKind::UnsatisfiedTraitBound {
+                        trait_name: definition.trait_name.clone(),
+                        trait_args,
+                        ty: object.ty.clone(),
+                        denied: true,
+                    },
+                    span: expr.span,
+                    reason: ConstraintReason::Other("deferred method lookup".to_string()),
+                });
+                return;
+            }
+        }
+        let apart =
+            crate::infer::expr::member::own_params_apart(&method.own_type_params, &object.ty);
+        method.own_type_params =
+            crate::infer::expr::member::respelled_own(&method.own_type_params, &apart);
+        method.params = method
+            .params
+            .iter()
+            .map(|param| {
+                param
+                    .substitute_params(&apart)
+                    .substitute_params(&from_header)
+            })
+            .collect();
+        method.return_type = method
+            .return_type
+            .substitute_params(&apart)
+            .substitute_params(&from_header);
+    }
+    // a projection the receiver's impls answer alike is that answer, as on the member route
+    let function_type = settle_projections(
+        &InferType::Function {
+            params: method.params.into_iter().skip(1).collect(),
+            ret: Box::new(method.return_type),
+        },
+        type_table,
+    );
+    // the call site fixes the method's own parameters, and nothing else
+    let mut own = HashMap::new();
+    if !fits_call_site(&function_type, &expr.ty, &method.own_type_params, &mut own) {
         errors.push(TypeError {
             kind: TypeErrorKind::Mismatch {
                 expected: function_type.clone(),
@@ -3062,7 +3269,111 @@ fn resolve_deferred_member(
         method: member.clone(),
         separator: MemberSeparator::Dot,
     };
-    expr.ty = function_type;
+    expr.ty = function_type.substitute_params(&own);
+}
+
+/// every projection inside a type that the impls answer, replaced by the answer
+fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> InferType {
+    let settle = |inner: &InferType| settle_projections(inner, type_table);
+    match ty {
+        InferType::Projection { .. } => match type_table.resolve_projection(ty) {
+            Some(resolved) if resolved != *ty => settle(&resolved),
+            _ => ty.clone(),
+        },
+        InferType::Function { params, ret } => InferType::Function {
+            params: params.iter().map(settle).collect(),
+            ret: Box::new(settle(ret)),
+        },
+        InferType::Applied { name, args } => InferType::Applied {
+            name: name.clone(),
+            args: args.iter().map(settle).collect(),
+        },
+        InferType::Array(inner) => InferType::Array(Box::new(settle(inner))),
+        InferType::Vec(inner) => InferType::Vec(Box::new(settle(inner))),
+        InferType::Option(inner) => InferType::Option(Box::new(settle(inner))),
+        InferType::FixedArray(inner, length) => {
+            InferType::FixedArray(Box::new(settle(inner)), *length)
+        }
+        InferType::Result(ok, err) => {
+            InferType::Result(Box::new(settle(ok)), Box::new(settle(err)))
+        }
+        InferType::Tuple(elements) => InferType::Tuple(elements.iter().map(settle).collect()),
+        other => other.clone(),
+    }
+}
+
+/// what the call site left open accepts whatever the method says; the rest, arguments included, must be what the method takes
+fn fits_call_site(
+    formal: &InferType,
+    actual: &InferType,
+    own_params: &[String],
+    bound: &mut HashMap<String, InferType>,
+) -> bool {
+    match (formal, actual) {
+        (_, InferType::Var(_)) => true,
+        (InferType::Param(name), _) if own_params.contains(name) => match bound.get(name) {
+            Some(previous) if !matches!(previous, InferType::Var(_)) => previous == actual,
+            _ => {
+                bound.insert(name.clone(), actual.clone());
+                true
+            }
+        },
+        (
+            InferType::Function {
+                params: formal_params,
+                ret: formal_ret,
+            },
+            InferType::Function {
+                params: actual_params,
+                ret: actual_ret,
+            },
+        ) => {
+            formal_params.len() == actual_params.len()
+                && formal_params
+                    .iter()
+                    .zip(actual_params)
+                    .all(|(formal, actual)| fits_call_site(formal, actual, own_params, bound))
+                && fits_call_site(formal_ret, actual_ret, own_params, bound)
+        }
+        (
+            InferType::Applied {
+                name: formal_name,
+                args: formal_args,
+            },
+            InferType::Applied {
+                name: actual_name,
+                args: actual_args,
+            },
+        ) => {
+            formal_name == actual_name
+                && formal_args.len() == actual_args.len()
+                && formal_args
+                    .iter()
+                    .zip(actual_args)
+                    .all(|(formal, actual)| fits_call_site(formal, actual, own_params, bound))
+        }
+        (InferType::Array(formal), InferType::Array(actual))
+        | (InferType::Vec(formal), InferType::Vec(actual))
+        | (InferType::Option(formal), InferType::Option(actual)) => {
+            fits_call_site(formal, actual, own_params, bound)
+        }
+        (InferType::FixedArray(formal, formal_len), InferType::FixedArray(actual, actual_len)) => {
+            formal_len == actual_len && fits_call_site(formal, actual, own_params, bound)
+        }
+        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err)) => {
+            fits_call_site(formal_ok, actual_ok, own_params, bound)
+                && fits_call_site(formal_err, actual_err, own_params, bound)
+        }
+        (InferType::Tuple(formal), InferType::Tuple(actual)) => {
+            formal.len() == actual.len()
+                && formal
+                    .iter()
+                    .zip(actual)
+                    .all(|(formal, actual)| fits_call_site(formal, actual, own_params, bound))
+        }
+        (formal, InferType::Numeric) => formal.is_numeric(),
+        _ => formal == actual,
+    }
 }
 
 fn resolve_deferred_call_type(expr: &mut TypedExpr) {

@@ -170,6 +170,9 @@ pub struct TypeInference {
     type_params_in_scope: Vec<String>,
     /// a method that redeclares a parameter of its impl or of the nominal it is
     method_param_renames: std::collections::HashMap<String, String>,
+    freshened_own_params: Option<Vec<InferType>>,
+    /// impls withdrawn because a later impl clashes with them: both of a pair go
+    retracted_by_overlap: std::collections::HashSet<usize>,
     trait_defaults: HashMap<(String, String), aelys_syntax::Function>,
     generic_function_bounds: HashMap<String, Vec<(String, String, Vec<InferType>)>>,
     function_type_params: HashMap<String, Vec<String>>,
@@ -239,6 +242,10 @@ pub struct TypeInference {
     occurrence_role: Option<OccurrenceRole>,
     current_impl_self: Option<InferType>,
     in_trait_default_body: bool,
+    /// in an impl's bodies, its header, which `Self::Item` is read on
+    current_impl_header: Option<InferType>,
+    /// in a default body, the trait, header and arguments of the impl adopting it
+    adopted_instantiation: Option<(String, InferType, Vec<InferType>)>,
     impls_missing_supertraits:
         std::collections::BTreeMap<(String, String), (InferType, Vec<String>)>,
     /// reject, so the compile reports it instead of yielding a poisoned type.
@@ -484,8 +491,7 @@ fn contains_concrete_dynamic(found: &InferType, expected: &InferType) -> bool {
     }
 }
 
-/// `$` is not in the identifier grammar, so no source can name the result
-pub(crate) const SHADOWED_METHOD_SUFFIX: &str = "$m";
+pub(crate) use crate::types::SHADOWED_METHOD_SUFFIX;
 
 pub(crate) fn shadowed_method_param(name: &str) -> String {
     format!("{name}{SHADOWED_METHOD_SUFFIX}")

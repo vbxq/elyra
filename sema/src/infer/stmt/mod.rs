@@ -85,11 +85,18 @@ impl TypeInference {
             }
             StmtKind::ImplDecl {
                 type_params,
+                polarity,
                 self_type,
                 trait_path,
                 methods,
                 ..
-            } => self.infer_impl_decl(self_type, type_params, methods, trait_path.as_ref()),
+            } => self.infer_impl_decl(
+                self_type,
+                type_params,
+                methods,
+                trait_path.as_ref(),
+                *polarity == aelys_syntax::ImplPolarity::Negative,
+            ),
             StmtKind::TraitDecl {
                 name, type_params, ..
             } => TypedStmtKind::TraitDecl {
