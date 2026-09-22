@@ -258,8 +258,6 @@ struct RuntimeInner {
     standard_symbols: OnceLock<Result<StandardSymbols, String>>,
 }
 
-static NEXT_MODULE_ID: AtomicU64 = AtomicU64::new(1);
-
 type NativeSymbols = (HashSet<String>, HashSet<String>, HashMap<String, InferType>);
 
 impl RuntimeInner {
@@ -294,6 +292,41 @@ impl RuntimeInner {
     }
 }
 
+fn build_jit_provider(
+    jit_mode: JitMode,
+    config: &JitConfig,
+) -> Result<Option<Arc<JitProvider>>, JitConfigError> {
+    if config.max_cache_entries == 0 {
+        return Err(JitConfigError::EmptyCache);
+    }
+    if jit_mode == JitMode::Off || !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return Ok(None);
+    }
+    let call_threshold = match jit_mode {
+        JitMode::Off => unreachable!("the mode that compiles nothing returned above"),
+        JitMode::Baseline => 1,
+        JitMode::Tiered => TIER1_CALL_THRESHOLD,
+    };
+    let tier2_call_threshold = (jit_mode == JitMode::Tiered).then_some(TIER2_CALL_THRESHOLD);
+    Ok(Some(Arc::new(
+        JitProvider::new(
+            config.max_cache_entries,
+            call_threshold,
+            tier2_call_threshold,
+        )
+        .map_err(JitConfigError::Initialization)?,
+    )))
+}
+
+/// the executor a host installs with `VM::configure_jit` when it runs a program through the driver rather than through an isolate
+pub fn new_jit_executor(
+    jit_mode: JitMode,
+    config: JitConfig,
+) -> Result<Option<Arc<dyn JitExecutor>>, JitConfigError> {
+    Ok(build_jit_provider(jit_mode, &config)?
+        .map(|provider| provider as Arc<dyn aelys_runtime::JitExecutor>))
+}
+
 impl Runtime {
     pub fn new() -> Self {
         Self::default()
@@ -305,30 +338,7 @@ impl Runtime {
     }
 
     pub fn with_jit_config(jit_mode: JitMode, config: JitConfig) -> Result<Self, JitConfigError> {
-        if config.max_cache_entries == 0 {
-            return Err(JitConfigError::EmptyCache);
-        }
-        let jit = if jit_mode == JitMode::Off
-            || !cfg!(all(target_os = "linux", target_arch = "x86_64"))
-        {
-            None
-        } else {
-            let call_threshold = match jit_mode {
-                JitMode::Off => unreachable!(),
-                JitMode::Baseline => 1,
-                JitMode::Tiered => TIER1_CALL_THRESHOLD,
-            };
-            let tier2_call_threshold =
-                (jit_mode == JitMode::Tiered).then_some(TIER2_CALL_THRESHOLD);
-            Some(Arc::new(
-                JitProvider::new(
-                    config.max_cache_entries,
-                    call_threshold,
-                    tier2_call_threshold,
-                )
-                .map_err(JitConfigError::Initialization)?,
-            ))
-        };
+        let jit = build_jit_provider(jit_mode, &config)?;
         Ok(Self {
             inner: Arc::new(RuntimeInner {
                 jit_mode,
@@ -493,7 +503,7 @@ impl Runtime {
             )
         })?;
         reject_unverifiable_module(&function, &source)?;
-        let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
+        let module_id = aelys_runtime::next_jit_module_id();
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
             function: Arc::new(function),
@@ -517,7 +527,7 @@ impl Runtime {
                 Arc::clone(&source),
             ))
         })?;
-        let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
+        let module_id = aelys_runtime::next_jit_module_id();
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
             function: Arc::new(function),
@@ -942,7 +952,7 @@ impl Isolate {
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
             function: Arc::new(function),
-            module_id: NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed),
+            module_id: aelys_runtime::next_jit_module_id(),
             source,
             linked_isolate: Some(self.id),
         })

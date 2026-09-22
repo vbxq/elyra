@@ -2,7 +2,7 @@ use crate::cli::vm_config::parse_vm_args_or_error;
 use aelys_bytecode::asm::{RequiredImport, RequiredImportKind};
 use aelys_common::error::{AelysError, RuntimeErrorKind};
 use aelys_common::{WarningConfig, format_warnings};
-use aelys_driver::run_file_full_with_control;
+use aelys_driver::run_file_full_with_control_and_jit;
 use aelys_modules::manifest::Manifest;
 use aelys_opt::OptimizationLevel;
 use aelys_runtime::VM;
@@ -36,12 +36,21 @@ pub fn run_with_options(
         InputFormat::Bytecode => run_avbc_file(path_ref, config, program_args, execution_control)?,
         InputFormat::Source => {
             ensure_utf8_source(path_ref)?;
-            let result = match run_file_full_with_control(
+            let jit = if parsed.jit {
+                match aelys::new_jit_executor(aelys::JitMode::Tiered, aelys::JitConfig::default()) {
+                    Ok(executor) => executor,
+                    Err(error) => return Err(format!("jit: {error}")),
+                }
+            } else {
+                None
+            };
+            let result = match run_file_full_with_control_and_jit(
                 path_ref,
                 config,
                 program_args,
                 opt_level,
                 execution_control,
+                jit,
             ) {
                 Ok(result) => result,
                 Err(AelysError::Runtime(error)) => {

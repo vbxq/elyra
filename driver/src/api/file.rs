@@ -58,6 +58,25 @@ pub fn run_file_full_with_control(
     opt_level: OptimizationLevel,
     execution_control: ExecutionControl,
 ) -> Result<RunResult> {
+    run_file_full_with_control_and_jit(
+        file_path,
+        config,
+        program_args,
+        opt_level,
+        execution_control,
+        None,
+    )
+}
+
+/// the JIT only ever ran behind the isolate API: the VM turns a function down when it has no key, and only the isolate handed one out
+pub fn run_file_full_with_control_and_jit(
+    file_path: &std::path::Path,
+    config: VmConfig,
+    program_args: Vec<String>,
+    opt_level: OptimizationLevel,
+    execution_control: ExecutionControl,
+    jit: Option<std::sync::Arc<dyn aelys_runtime::JitExecutor>>,
+) -> Result<RunResult> {
     let content = std::fs::read_to_string(file_path).map_err(|_| {
         AelysError::Compile(CompileError::new(
             CompileErrorKind::ModuleNotFound {
@@ -78,6 +97,10 @@ pub fn run_file_full_with_control(
     let mut vm =
         VM::with_config_and_args(src.clone(), config, program_args).map_err(AelysError::Runtime)?;
     vm.configure_execution(execution_control);
+    let jit_enabled = jit.is_some();
+    if jit_enabled {
+        vm.configure_jit(jit);
+    }
 
     if let Ok(abs_path) = file_path.canonicalize() {
         vm.set_script_path(abs_path.display().to_string());
@@ -166,7 +189,13 @@ pub fn run_file_full_with_control(
     .with_module_sources(imports.module_sources.clone());
     let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
-    let func_ref = vm.alloc_function(function).map_err(AelysError::Runtime)?;
+    let func_ref = if jit_enabled {
+        let module_id = aelys_runtime::next_jit_module_id();
+        vm.alloc_function_with_jit_key(function, aelys_runtime::JitFunctionKey::root(module_id))
+            .map_err(AelysError::Runtime)?
+    } else {
+        vm.alloc_function(function).map_err(AelysError::Runtime)?
+    };
     let value = vm.execute(func_ref)?;
 
     Ok(RunResult { value, warnings })

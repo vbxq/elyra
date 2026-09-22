@@ -12,7 +12,7 @@ pub use run::{run, run_source, run_with_config, run_with_config_and_opt};
 pub use v2::{
     CompileOptions, CompiledModule, ExecutionOutcome, ExecutionReport, InterruptHandle, Isolate,
     IsolateConfig, JitConfig, JitConfigError, JitMode, ModuleInstance, RunOptions, Runtime,
-    StructuredCloneError, StructuredValue,
+    StructuredCloneError, StructuredValue, new_jit_executor,
 };
 pub use vm::{new_vm, new_vm_with_config};
 
