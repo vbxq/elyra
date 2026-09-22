@@ -47,7 +47,16 @@ pub struct AelysVmApi {
             out_len: *mut usize,
         ) -> i32,
     >,
-    pub _reserved: [usize; 3],
+    /// hands back the memory of a byte buffer, so a whole image is read or written in one call
+    pub borrow_bytes: Option<
+        extern "C" fn(
+            context: *mut NativeContext,
+            handle: AelysValue,
+            out_ptr: *mut *mut u8,
+            out_len: *mut usize,
+        ) -> i32,
+    >,
+    pub _reserved: [usize; 2],
 }
 
 #[repr(C)]
@@ -163,13 +172,7 @@ pub struct AelysModuleDescriptor {
 impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
 
-    /// Construct a descriptor at an FFI boundary.
-    ///
-    /// # Safety
-    /// Every pointer must remain valid for the lifetime promised by the
-    /// descriptor, and the counts and function pointers must describe the
-    /// corresponding arrays and ABI exactly. Native module registration
-    /// validates the resulting descriptor before using it.
+    /// construct a descriptor at an FFI boundary
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
         abi_version: u32,
@@ -270,9 +273,7 @@ impl NativeHandle {
     }
 }
 
-// SAFETY: these descriptors contain immutable C ABI metadata. Safe Rust can only
-// mutate their public fields through exclusive access; dereferencing embedded raw
-// pointers remains confined to explicitly unsafe loader and hashing operations.
+// safety: these descriptors contain immutable C ABI metadata
 unsafe impl Sync for AelysExport {}
 unsafe impl Sync for AelysFunctionSignature {}
 unsafe impl Sync for AelysRequiredModule {}

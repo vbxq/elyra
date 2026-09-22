@@ -1,5 +1,4 @@
-// FFI types for native modules
-// bump ABI_VERSION when changing struct layouts
+// FFI types for native modules bump abi_version when changing struct layouts
 
 pub use aelys_native_macros::{aelys_export, aelys_module};
 
@@ -45,8 +44,6 @@ use std::sync::OnceLock;
 
 static VM_API: OnceLock<AelysVmApi> = OnceLock::new();
 
-/// Store the VM API provided by the runtime during module init
-/// This is called from the generated init function in #[aelys_module]
 pub fn store_vm_api(api: &AelysVmApi) {
     let _ = VM_API.set(*api);
 }
@@ -63,10 +60,23 @@ pub unsafe fn alloc_string_from_context(
     if status == 0 { Ok(output) } else { Err(status) }
 }
 
-/// Read a string value from the VM using the stored API.
-///
-/// # Safety
-/// `vm` must be a valid pointer to a live VM instance (clippy moment)
+/// borrow a byte buffer allocated by `bytes::alloc`, valid only until the call returns and never resized or freed while held
+pub unsafe fn borrow_bytes_from_handle<'a>(
+    context: *mut NativeContext,
+    handle: AelysValue,
+) -> Option<&'a mut [u8]> {
+    let api = VM_API.get()?;
+    let borrow = api.borrow_bytes?;
+    let mut pointer: *mut u8 = core::ptr::null_mut();
+    let mut length: usize = 0;
+    let status = borrow(context, handle, &mut pointer, &mut length);
+    if status != 0 || pointer.is_null() {
+        return None;
+    }
+    Some(unsafe { core::slice::from_raw_parts_mut(pointer, length) })
+}
+
+/// read a string value from the VM using the stored API. # safety `VM` must be a valid pointer to a live VM instance (clippy moment)
 pub unsafe fn read_string_from_value(
     context: *mut NativeContext,
     value: AelysValue,
