@@ -32,6 +32,13 @@ impl VM {
     }
 
     pub fn prepare_globals_for_function(&mut self, func_ref: GcRef) -> usize {
+        let mapping_id = self.get_global_mapping_id(func_ref);
+        if mapping_id == self.current_global_mapping_id {
+            return mapping_id;
+        }
+        if self.install_prepared_mapping(mapping_id) {
+            return mapping_id;
+        }
         let layout = if let Some(obj) = self.heap.get(func_ref) {
             match &obj.kind {
                 ObjectKind::Function(function) => {
@@ -56,26 +63,39 @@ impl VM {
         }
     }
 
+    /// mapping ids come from a process wide counter, so an unusual number of layouts stops being cached
+    const MAX_PREPARED_MAPPING: usize = 1 << 20;
+
+    fn install_prepared_mapping(&mut self, mapping_id: usize) -> bool {
+        let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id).cloned() else {
+            return false;
+        };
+        self.globals_by_index.clear();
+        self.globals_by_index.extend_from_slice(&prepared);
+        if self.global_generations.len() != prepared.len() {
+            self.sync_global_generation_len(prepared.len());
+        }
+        self.current_global_mapping_id = mapping_id;
+        true
+    }
+
+    fn store_prepared_mapping(&mut self, mapping_id: usize, prepared: Arc<Vec<Value>>) {
+        if mapping_id > Self::MAX_PREPARED_MAPPING {
+            return;
+        }
+        if self.globals_by_index_cache.len() <= mapping_id {
+            self.globals_by_index_cache.resize(mapping_id + 1, None);
+        }
+        self.globals_by_index_cache[mapping_id] = Some(prepared);
+    }
+
     pub fn prepare_globals_for_layout(&mut self, layout: &super::super::GlobalLayout) -> usize {
         let mapping_id = layout.id();
         if mapping_id == self.current_global_mapping_id {
             return mapping_id;
         }
 
-        if let Some(cached) = self.globals_by_index_cache.get(&mapping_id) {
-            let len = cached.len();
-            self.globals_by_index.clear();
-            self.globals_by_index.reserve_exact(len);
-            unsafe {
-                self.globals_by_index.set_len(len);
-                std::ptr::copy_nonoverlapping(
-                    cached.as_ptr(),
-                    self.globals_by_index.as_mut_ptr(),
-                    len,
-                );
-            }
-            self.sync_global_generation_len(len);
-            self.current_global_mapping_id = mapping_id;
+        if self.install_prepared_mapping(mapping_id) {
             return mapping_id;
         }
 
@@ -97,8 +117,8 @@ impl VM {
         self.sync_global_generation_len(needed_len);
 
         self.current_global_mapping_id = mapping_id;
-        self.globals_by_index_cache
-            .insert(mapping_id, Arc::new(self.globals_by_index.clone()));
+        let snapshot = Arc::new(self.globals_by_index.clone());
+        self.store_prepared_mapping(mapping_id, snapshot);
         mapping_id
     }
 
@@ -108,8 +128,7 @@ impl VM {
         }
         self.globals_by_index.clear();
         self.current_global_mapping_id = mapping_id;
-        self.globals_by_index_cache
-            .insert(mapping_id, Arc::new(Vec::new()));
+        self.store_prepared_mapping(mapping_id, Arc::new(Vec::new()));
         mapping_id
     }
 }

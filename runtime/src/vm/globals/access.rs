@@ -48,6 +48,7 @@ impl VM {
         self.globals_by_index[idx] = value;
         self.global_generations[idx] = self.global_generations[idx].wrapping_add(1);
         self.globals_by_index_cache.clear();
+        self.globals_by_index_dirty = true;
     }
 
     pub(crate) fn set_global_by_index_checked(

@@ -2,18 +2,28 @@ use super::super::{ObjectKind, VM};
 use std::sync::Arc;
 
 impl VM {
-    /// Synchronize indexed globals back to the hash map.
+    /// synchronize indexed globals back to the hash map.
     pub fn sync_globals_to_hashmap(&mut self, global_names: &[String]) {
+        self.globals_by_index_dirty = false;
         for (idx, name) in global_names.iter().enumerate() {
             if !name.is_empty() && idx < self.globals_by_index.len() {
                 let value = self.globals_by_index[idx];
-                self.globals.insert(name.clone(), value);
+                match self.globals.get_mut(name) {
+                    Some(slot) => *slot = value,
+                    None => {
+                        self.globals.insert(name.clone(), value);
+                    }
+                }
             }
         }
     }
 
-    /// Sync the current function's globals_by_index to the globals hashmap.
+    /// sync the current function's globals_by_index to the globals hashmap.
     pub fn sync_current_function_globals(&mut self) {
+        if !self.globals_by_index_dirty {
+            return;
+        }
+        self.globals_by_index_dirty = false;
         if let Some(frame) = self.frames.last() {
             let func_ref = frame.function;
             let global_layout: Option<Arc<super::super::GlobalLayout>> = {
@@ -52,7 +62,12 @@ impl VM {
                 for (idx, name) in layout.names().iter().enumerate() {
                     if !name.is_empty() && idx < self.globals_by_index.len() {
                         let value = self.globals_by_index[idx];
-                        self.globals.insert(name.clone(), value);
+                        match self.globals.get_mut(name) {
+                            Some(slot) => *slot = value,
+                            None => {
+                                self.globals.insert(name.clone(), value);
+                            }
+                        }
                     }
                 }
             }
