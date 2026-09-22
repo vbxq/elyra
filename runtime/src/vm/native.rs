@@ -227,6 +227,37 @@ extern "C" fn native_alloc_string_callback(
     0
 }
 
+extern "C" fn native_borrow_bytes_callback(
+    context: *mut aelys_native::NativeContext,
+    handle: AelysValue,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    if context.is_null() || out_ptr.is_null() || out_len.is_null() {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let context = unsafe { &mut *(context as *mut RuntimeNativeContext) };
+    if context.magic != NATIVE_CONTEXT_MAGIC || context.vm.is_null() {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let vm = unsafe { &mut *context.vm };
+    let handle = unsafe { std::mem::transmute::<AelysValue, Value>(handle) };
+    let Some(handle) = handle
+        .as_int()
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    };
+    let Some(crate::stdlib::Resource::ByteBuffer(buffer)) = vm.get_resource_mut(handle) else {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    };
+    unsafe {
+        *out_ptr = buffer.data.as_mut_ptr();
+        *out_len = buffer.data.len();
+    }
+    0
+}
+
 pub fn build_native_vm_api() -> AelysVmApi {
     AelysVmApi {
         api_version: aelys_native::AELYS_API_VERSION,
@@ -237,7 +268,8 @@ pub fn build_native_vm_api() -> AelysVmApi {
         register_type: None,
         alloc_string: Some(native_alloc_string_callback),
         read_string: Some(native_read_string_callback),
-        _reserved: [0; 3],
+        borrow_bytes: Some(native_borrow_bytes_callback),
+        _reserved: [0; 2],
     }
 }
 
@@ -455,6 +487,100 @@ mod tests {
 
         assert_eq!(
             native_alloc_string_callback(context, std::ptr::null(), 0, &mut output),
+            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn borrow_bytes_callback_hands_back_the_whole_buffer() {
+        let mut vm = VM::new(Source::new("native-borrow-bytes", "")).unwrap();
+        let handle = vm.store_resource(crate::stdlib::Resource::ByteBuffer(
+            crate::stdlib::ByteBuffer {
+                data: vec![1, 2, 3, 4],
+            },
+        ));
+        let mut context = RuntimeNativeContext {
+            magic: NATIVE_CONTEXT_MAGIC,
+            vm: &mut vm,
+        };
+        let context = (&mut context as *mut RuntimeNativeContext).cast();
+        let value = aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap();
+        let mut pointer = std::ptr::null_mut();
+        let mut length = 0;
+
+        assert_eq!(
+            native_borrow_bytes_callback(context, value, &mut pointer, &mut length),
+            0
+        );
+        assert_eq!(length, 4);
+        let seen = unsafe { std::slice::from_raw_parts(pointer, length) };
+        assert_eq!(seen, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn borrow_bytes_callback_writes_through_to_the_buffer() {
+        let mut vm = VM::new(Source::new("native-borrow-bytes-write", "")).unwrap();
+        let handle = vm.store_resource(crate::stdlib::Resource::ByteBuffer(
+            crate::stdlib::ByteBuffer { data: vec![0; 3] },
+        ));
+        let value = aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap();
+        {
+            let mut context = RuntimeNativeContext {
+                magic: NATIVE_CONTEXT_MAGIC,
+                vm: &mut vm,
+            };
+            let context = (&mut context as *mut RuntimeNativeContext).cast();
+            let mut pointer = std::ptr::null_mut();
+            let mut length = 0;
+            assert_eq!(
+                native_borrow_bytes_callback(context, value, &mut pointer, &mut length),
+                0
+            );
+            unsafe { std::slice::from_raw_parts_mut(pointer, length) }.copy_from_slice(&[7, 8, 9]);
+        }
+        let Some(crate::stdlib::Resource::ByteBuffer(buffer)) = vm.get_resource(handle) else {
+            panic!("the buffer must still be there");
+        };
+        assert_eq!(buffer.data, vec![7, 8, 9]);
+    }
+
+    #[test]
+    fn borrow_bytes_callback_refuses_a_handle_that_is_not_a_buffer() {
+        let mut vm = VM::new(Source::new("native-borrow-bytes-wrong", "")).unwrap();
+        let handle = vm.store_resource(crate::stdlib::Resource::Timer(std::time::Instant::now()));
+        let mut context = RuntimeNativeContext {
+            magic: NATIVE_CONTEXT_MAGIC,
+            vm: &mut vm,
+        };
+        let context = (&mut context as *mut RuntimeNativeContext).cast();
+        let mut pointer = std::ptr::null_mut();
+        let mut length = 0;
+
+        assert_eq!(
+            native_borrow_bytes_callback(
+                context,
+                aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap(),
+                &mut pointer,
+                &mut length,
+            ),
+            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            native_borrow_bytes_callback(
+                context,
+                aelys_native::value_int(9999).unwrap(),
+                &mut pointer,
+                &mut length,
+            ),
+            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            native_borrow_bytes_callback(
+                context,
+                aelys_native::value_null(),
+                &mut pointer,
+                &mut length,
+            ),
             aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
         );
     }

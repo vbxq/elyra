@@ -1,13 +1,24 @@
 use super::super::state::{DispatchControl, DispatchState};
 use crate::vm::{GcRef, ObjectKind, VM, Value};
 use aelys_bytecode::object::SumTag;
-use aelys_bytecode::{EnumSchema, IntWidth, OpCode, SchemaId, StructSchema, TypeDescriptor};
+use aelys_bytecode::{
+    EnumSchema, FunctionSchemas, IntWidth, OpCode, SchemaId, StructSchema, TypeDescriptor,
+};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
+use std::sync::Arc;
 
 struct SchemaTables<'a> {
     structs: &'a [StructSchema],
     runtime_ids: &'a [SchemaId],
     enums: &'a [EnumSchema],
+}
+
+fn view(schemas: &FunctionSchemas) -> SchemaTables<'_> {
+    SchemaTables {
+        structs: &schemas.structs,
+        runtime_ids: &schemas.runtime_ids,
+        enums: &schemas.enums,
+    }
 }
 
 impl VM {
@@ -37,20 +48,23 @@ impl VM {
         let b = u16::try_from(first & 0xffff).expect("enum source fits");
         let c = u16::try_from(second >> 16).expect("enum variant or field fits");
         let count_or_zero = u16::try_from(second & 0xffff).expect("enum count fits");
-        let enum_schema = self.enum_schema(func_ref, usize::from(schema_index))?;
+        let function_schemas = self.function_schemas(func_ref)?;
+        let enum_schema = function_schemas
+            .enums
+            .get(usize::from(schema_index))
+            .ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                    "enum schema index {schema_index} is out of bounds"
+                )))
+            })?;
         if enum_schema.schema_id != schema_index {
             return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                 "enum schema id does not match its registry slot".to_string(),
             )));
         }
-        let schemas = self.schemas(func_ref)?;
-        let runtime_ids = self.runtime_schema_ids(func_ref)?;
-        let enum_schemas = self.enum_schemas(func_ref)?;
-        let tables = SchemaTables {
-            structs: &schemas,
-            runtime_ids: &runtime_ids,
-            enums: &enum_schemas,
-        };
+        self.check_materialized_ids(&function_schemas)?;
+        let enum_schemas = &function_schemas.enums;
+        let tables = view(&function_schemas);
         let base = state.base;
 
         match opcode_byte {
@@ -281,25 +295,27 @@ impl VM {
         let a = u16::try_from(first >> 16).expect("struct destination fits");
         let b = u16::try_from(first & 0xffff).expect("struct source fits");
         let c = u16::try_from(second >> 16).expect("struct field count fits");
-        let schema = self.schema(func_ref, schema_index)?;
+        let function_schemas = self.function_schemas(func_ref)?;
+        let schema = function_schemas.structs.get(schema_index).ok_or_else(|| {
+            self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
+                "struct schema index {schema_index} is out of bounds"
+            )))
+        })?;
         if schema.schema_id != u32::try_from(schema_index).unwrap_or(u32::MAX) {
             return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                 "struct schema id does not match its registry slot".to_string(),
             )));
         }
-        let schemas = self.schemas(func_ref)?;
-        let enum_schemas = self.enum_schemas(func_ref)?;
-        let runtime_ids = self.runtime_schema_ids(func_ref)?;
-        let schema_id = *runtime_ids.get(schema_index).ok_or_else(|| {
-            self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                "struct schema index has no runtime id".to_string(),
-            ))
-        })?;
-        let tables = SchemaTables {
-            structs: &schemas,
-            runtime_ids: &runtime_ids,
-            enums: &enum_schemas,
-        };
+        self.check_materialized_ids(&function_schemas)?;
+        let schema_id = *function_schemas
+            .runtime_ids
+            .get(schema_index)
+            .ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                    "struct schema index has no runtime id".to_string(),
+                ))
+            })?;
+        let tables = view(&function_schemas);
         let base = state.base;
 
         match opcode_byte {
@@ -364,112 +380,34 @@ impl VM {
         Ok(DispatchControl::Continue)
     }
 
-    fn schemas(&self, func_ref: GcRef) -> Result<Vec<StructSchema>, RuntimeError> {
+    /// one shared table per function object; the previous readers copied the whole schema table on every struct or enum instruction.
+    fn function_schemas(&self, func_ref: GcRef) -> Result<Arc<FunctionSchemas>, RuntimeError> {
+        let missing = |vm: &Self| {
+            vm.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                "struct instruction has no function schema table".to_string(),
+            ))
+        };
         let function = match self.heap.get(func_ref).map(|object| &object.kind) {
-            Some(ObjectKind::Function(function)) => &function.function,
+            Some(ObjectKind::Function(function)) => function,
             Some(ObjectKind::Closure(closure)) => match self.heap.get(closure.function) {
                 Some(object) => match &object.kind {
-                    ObjectKind::Function(function) => &function.function,
-                    _ => {
-                        return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                            "struct instruction has no function schema table".to_string(),
-                        )));
-                    }
+                    ObjectKind::Function(function) => function,
+                    _ => return Err(missing(self)),
                 },
-                None => {
-                    return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                        "struct instruction has no function schema table".to_string(),
-                    )));
-                }
+                None => return Err(missing(self)),
             },
-            _ => {
-                return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                    "struct instruction has no function schema table".to_string(),
-                )));
-            }
+            _ => return Err(missing(self)),
         };
-        Ok(function.struct_schemas.clone())
+        Ok(function.schemas())
     }
 
-    fn runtime_schema_ids(&self, func_ref: GcRef) -> Result<Vec<SchemaId>, RuntimeError> {
-        let function = match self.heap.get(func_ref).map(|object| &object.kind) {
-            Some(ObjectKind::Function(function)) => &function.function,
-            Some(ObjectKind::Closure(closure)) => match self.heap.get(closure.function) {
-                Some(object) => match &object.kind {
-                    ObjectKind::Function(function) => &function.function,
-                    _ => {
-                        return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                            "struct instruction has no function schema table".to_string(),
-                        )));
-                    }
-                },
-                None => {
-                    return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                        "struct instruction has no function schema table".to_string(),
-                    )));
-                }
-            },
-            _ => {
-                return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                    "struct instruction has no function schema table".to_string(),
-                )));
-            }
-        };
-        if function.schema_ids.len() != function.struct_schemas.len() {
+    fn check_materialized_ids(&self, schemas: &FunctionSchemas) -> Result<(), RuntimeError> {
+        if schemas.runtime_ids.len() != schemas.structs.len() {
             return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                 "struct schema table has no materialized runtime ids".to_string(),
             )));
         }
-        Ok(function.schema_ids.clone())
-    }
-
-    fn enum_schemas(&self, func_ref: GcRef) -> Result<Vec<EnumSchema>, RuntimeError> {
-        let function = match self.heap.get(func_ref).map(|object| &object.kind) {
-            Some(ObjectKind::Function(function)) => &function.function,
-            Some(ObjectKind::Closure(closure)) => match self.heap.get(closure.function) {
-                Some(object) => match &object.kind {
-                    ObjectKind::Function(function) => &function.function,
-                    _ => {
-                        return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                            "enum instruction has no function schema table".to_string(),
-                        )));
-                    }
-                },
-                None => {
-                    return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                        "enum instruction has no function schema table".to_string(),
-                    )));
-                }
-            },
-            _ => {
-                return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                    "enum instruction has no function schema table".to_string(),
-                )));
-            }
-        };
-        Ok(function.enum_schemas.clone())
-    }
-
-    fn enum_schema(&self, func_ref: GcRef, index: usize) -> Result<EnumSchema, RuntimeError> {
-        self.enum_schemas(func_ref)?
-            .into_iter()
-            .nth(index)
-            .ok_or_else(|| {
-                self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
-                    "enum schema index {index} is out of bounds"
-                )))
-            })
-    }
-
-    fn schema(&self, func_ref: GcRef, index: usize) -> Result<StructSchema, RuntimeError> {
-        self.schemas(func_ref)?
-            .into_iter()
-            .nth(index)
-            .ok_or_else(|| {
-                self.runtime_error(RuntimeErrorKind::InvalidBytecode(format!(
-                    "struct schema index {index} is out of bounds"
-                )))
-            })
+        Ok(())
     }
 
     fn value_satisfies_schema(

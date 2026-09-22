@@ -1,4 +1,3 @@
-
 use crate::stdlib::helpers::get_number;
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
