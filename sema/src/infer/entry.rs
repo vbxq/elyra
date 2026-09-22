@@ -43,6 +43,8 @@ impl Default for TypeInference {
             type_table: TypeTable::new(),
             type_params_in_scope: Vec::new(),
             method_param_renames: std::collections::HashMap::new(),
+            freshened_own_params: None,
+            retracted_by_overlap: std::collections::HashSet::new(),
             trait_defaults: HashMap::new(),
             generic_function_bounds: HashMap::new(),
             function_type_params: HashMap::new(),
@@ -95,6 +97,8 @@ impl Default for TypeInference {
             occurrence_role: None,
             current_impl_self: None,
             in_trait_default_body: false,
+            adopted_instantiation: None,
+            current_impl_header: None,
             impls_missing_supertraits: std::collections::BTreeMap::new(),
             projection_cycle_escaped: std::cell::Cell::new(false),
             substitution_depth: std::cell::Cell::new(0),
@@ -218,9 +222,15 @@ impl TypeInference {
 
         if ann.path.len() >= 2 && ann.type_params.is_empty() {
             let self_segment = &ann.path[0];
+            // the type and the bound lookups take the respelled parameter; the messages keep the name the author wrote
+            let looked_up = self
+                .method_param_renames
+                .get(self_segment)
+                .cloned()
+                .unwrap_or_else(|| self_segment.clone());
             let item = ann.path.last().cloned().unwrap_or_default();
             if let Some(ProjectionNamespace::WrongNamespace { found }) =
-                self.associated_item_namespace(self_segment, &item, self.annotation_namespace)
+                self.associated_item_namespace(&looked_up, &item, self.annotation_namespace)
             {
                 let reason = self.occurrence_reason("a type annotation");
                 self.errors.push(TypeError {
@@ -251,15 +261,16 @@ impl TypeInference {
                 return InferType::Poison;
             }
             let self_ty = if self_segment == "Self" {
-                self.current_impl_self
+                self.current_impl_header
                     .clone()
+                    .or_else(|| self.current_impl_self.clone())
                     .unwrap_or_else(|| InferType::Param("Self".to_string()))
             } else if self
                 .type_params_in_scope
                 .iter()
                 .any(|param| param == self_segment)
             {
-                InferType::Param(self_segment.clone())
+                InferType::Param(looked_up.clone())
             } else if self.type_table.has_nominal(self_segment) {
                 InferType::Struct(self_segment.clone())
             } else if self.type_table.get_trait(self_segment).is_some() {
@@ -313,25 +324,49 @@ impl TypeInference {
                 &item_name,
                 projection.self_ty(),
             );
+            // an annotation in a body names `self` as the impl's header, which the projection is read on, and not as the nominal alone
+            let receiver = match self.current_impl_header.as_ref() {
+                Some(header) if self_segment == "Self" && !self.in_trait_default_body => {
+                    header.source_spelling()
+                }
+                _ => self.projection_receiver(self_segment),
+            };
+            let constructor = crate::types::nominal_name(projection.self_ty())
+                .unwrap_or_else(|| receiver.clone());
             if candidates.len() > 1 {
                 let mut traits: Vec<String> =
                     candidates.into_iter().map(|(name, _)| name).collect();
                 traits.sort();
                 traits.dedup();
-                let receiver = self.projection_receiver(self_segment);
                 let cause = match traits.as_slice() {
-                    [only] => ProjectionFailure::AmbiguousInstantiations {
+                    [only] if receiver == constructor => {
+                        ProjectionFailure::AmbiguousInstantiations {
+                            trait_name: only.clone(),
+                            constructor: receiver.clone(),
+                            instantiations: self.rival_instantiations(
+                                &receiver,
+                                &item_name,
+                                ItemNamespace::Type,
+                            ),
+                        }
+                    }
+                    [only] => ProjectionFailure::AmbiguousAcrossReceivers {
                         trait_name: only.clone(),
-                        constructor: receiver.clone(),
-                        instantiations: self.rival_instantiations(
-                            &receiver,
+                        headers: self.reaching_headers(
+                            trait_name.as_deref(),
                             &item_name,
-                            ItemNamespace::Type,
+                            projection.self_ty(),
                         ),
+                        constructor,
                     },
                     _ => ProjectionFailure::Ambiguous {
                         traits: self.traits_by_nameability(traits),
                     },
+                };
+                // a receiver with its arguments is no projection a program can write
+                let receiver = match cause {
+                    ProjectionFailure::AmbiguousAcrossReceivers { .. } => self_segment.clone(),
+                    _ => receiver,
                 };
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::AmbiguousAssociatedProjection {
@@ -345,7 +380,7 @@ impl TypeInference {
                 return InferType::Poison;
             }
             if matches!(
-                self.associated_item_namespace(self_segment, &item_name, self.annotation_namespace),
+                self.associated_item_namespace(&looked_up, &item_name, self.annotation_namespace),
                 Some(ProjectionNamespace::Absent)
             ) {
                 let receiver = self.projection_receiver(self_segment);
@@ -732,14 +767,16 @@ impl TypeInference {
             }
             return None;
         }
+        // a receiver whose parameters stay open is answered only where every impl that reaches it agrees
         if !self_ty.is_concrete() {
-            return None;
+            return self.type_table.resolve_projection(projection);
         }
         let mut found = self.associated_projection_candidates(trait_name.as_deref(), item, self_ty);
-        if found.len() == 1 {
-            Some(found.swap_remove(0).1)
-        } else {
-            None
+        match found.len() {
+            1 => Some(found.swap_remove(0).1),
+            // overlapping impls of one trait: the most specific wins for a concrete receiver
+            0 => None,
+            _ => self.type_table.resolve_projection(projection),
         }
     }
 
@@ -840,6 +877,35 @@ impl TypeInference {
             }
         }
         found
+    }
+
+    /// the headers of the impls that reach the receiver and define the item
+    fn reaching_headers(
+        &self,
+        trait_name: Option<&str>,
+        item: &str,
+        self_ty: &InferType,
+    ) -> Vec<String> {
+        let closure = trait_name.map(|name| self.type_table.supertrait_closure(name));
+        let mut headers: Vec<String> = self
+            .type_table
+            .trait_impl_defs()
+            .iter()
+            .filter(|implementation| {
+                closure
+                    .as_deref()
+                    .is_none_or(|names| names.contains(&implementation.trait_name))
+                    && self.type_table.reaches(&implementation.self_type, self_ty)
+                    && implementation
+                        .associated_types
+                        .iter()
+                        .any(|(name, _)| name == item)
+            })
+            .map(|implementation| implementation.self_type.source_spelling())
+            .collect();
+        headers.sort();
+        headers.dedup();
+        headers
     }
 
     pub(super) fn rival_instantiations(
@@ -1616,28 +1682,8 @@ impl TypeInference {
             });
         }
         for (verdict, ty, span) in inf.specialization_verdicts.borrow_mut().drain(..) {
-            let kind = match verdict {
-                crate::types::SpecializationChoice::Ambiguous(trait_name) => {
-                    crate::constraint::TypeErrorKind::AmbiguousSpecialization {
-                        trait_name,
-                        target: ty,
-                    }
-                }
-                crate::types::SpecializationChoice::TooMany(trait_name) => {
-                    crate::constraint::TypeErrorKind::SpecializationLimit {
-                        trait_name,
-                        target: ty,
-                    }
-                }
-                crate::types::SpecializationChoice::Denied(trait_name) => {
-                    crate::constraint::TypeErrorKind::UnsatisfiedTraitBound {
-                        trait_name,
-                        trait_args: Vec::new(),
-                        ty,
-                        denied: true,
-                    }
-                }
-                _ => continue,
+            let Some(kind) = specialization_error_kind(verdict, ty) else {
+                continue;
             };
             inf.errors.push(crate::constraint::TypeError {
                 kind,
@@ -1659,6 +1705,12 @@ impl TypeInference {
                 same_span_priority(&error.kind),
             )
         });
+        let default_bodies: Vec<(usize, usize)> = inf
+            .trait_defaults
+            .values()
+            .map(|body| (body.span.start, body.span.end))
+            .collect();
+        order_errors_of_one_kind_at_one_place(&mut inf.errors, &default_bodies);
 
         if !inf.errors.is_empty() {
             return Err(inf.errors);
@@ -1791,7 +1843,7 @@ fn definition_needs_arguments(header: &InferType, definition: &InferType) -> boo
     params.iter().any(|param| definition.mentions_param(param))
 }
 
-pub(crate) fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
+fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
     match ty {
         InferType::Param(name) => out.push(name.clone()),
         InferType::Applied { args, .. } | InferType::Tuple(args) => {
@@ -1821,6 +1873,9 @@ pub(crate) fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
 fn error_priority(kind: &TypeErrorKind) -> u8 {
     match kind {
         TypeErrorKind::DuplicateNominal { .. } => 0,
+        // a clash withdraws both impls, wherever the code that used them sits
+        TypeErrorKind::OverlappingTraitImpl { .. }
+        | TypeErrorKind::UnorderedSpecialization { .. } => 0,
         // a mangling collision is a symptom: a coherence verdict, a duplicate
         TypeErrorKind::MangledSymbolCollision { .. } => 3,
         TypeErrorKind::PoisonedType
@@ -1828,6 +1883,95 @@ fn error_priority(kind: &TypeErrorKind) -> u8 {
         | TypeErrorKind::IgnoredResult
         | TypeErrorKind::IgnoredOption => 2,
         _ => 1,
+    }
+}
+
+/// errors of one kind raised in a trait's default body come once per impl that adopts it, in the order the file declared those impls
+fn order_errors_of_one_kind_at_one_place(
+    errors: &mut [TypeError],
+    default_bodies: &[(usize, usize)],
+) {
+    let place = |error: &TypeError| {
+        (
+            error_priority(&error.kind),
+            error.span.start,
+            error.span.end,
+            same_span_priority(&error.kind),
+        )
+    };
+    let mut start = 0;
+    while start < errors.len() {
+        let mut end = start + 1;
+        while end < errors.len() && place(&errors[end]) == place(&errors[start]) {
+            end += 1;
+        }
+        let inside_a_default_body = default_bodies
+            .iter()
+            .any(|(first, last)| (*first..=*last).contains(&errors[start].span.start));
+        if !inside_a_default_body {
+            start = end;
+            continue;
+        }
+        let run = &mut errors[start..end];
+        let mut kinds: Vec<std::mem::Discriminant<TypeErrorKind>> = Vec::new();
+        for error in run.iter() {
+            let kind = std::mem::discriminant(&error.kind);
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        for kind in kinds {
+            let slots: Vec<usize> = (0..run.len())
+                .filter(|index| std::mem::discriminant(&run[*index].kind) == kind)
+                .collect();
+            let mut texts: Vec<(String, TypeError)> = slots
+                .iter()
+                .map(|index| (run[*index].to_string(), run[*index].clone()))
+                .collect();
+            texts.sort_by(|left, right| left.0.cmp(&right.0));
+            for (index, (_, error)) in slots.into_iter().zip(texts) {
+                run[index] = error;
+            }
+        }
+        start = end;
+    }
+}
+
+/// the refusal a selection that chose no impl stands for
+pub(super) fn specialization_error_kind(
+    verdict: crate::types::SpecializationChoice,
+    ty: InferType,
+) -> Option<TypeErrorKind> {
+    match verdict {
+        crate::types::SpecializationChoice::Ambiguous(trait_name) => {
+            Some(TypeErrorKind::AmbiguousSpecialization {
+                trait_name,
+                target: ty,
+            })
+        }
+        crate::types::SpecializationChoice::TooMany(trait_name) => {
+            Some(TypeErrorKind::SpecializationLimit {
+                trait_name,
+                target: ty,
+            })
+        }
+        crate::types::SpecializationChoice::Denied(trait_name) => {
+            Some(TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name,
+                trait_args: Vec::new(),
+                ty,
+                denied: true,
+            })
+        }
+        crate::types::SpecializationChoice::NoImpl(trait_name, trait_args) => {
+            Some(TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name,
+                trait_args,
+                ty,
+                denied: false,
+            })
+        }
+        _ => None,
     }
 }
 

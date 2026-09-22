@@ -200,6 +200,7 @@ impl TypeInference {
         impl_type_params: &[String],
         methods: &[Function],
         trait_path: Option<&TypeAnnotation>,
+        negative: bool,
     ) -> crate::typed_ast::TypedStmtKind {
         let target_type = {
             let saved =
@@ -221,7 +222,11 @@ impl TypeInference {
         let header_spelling = crate::types::positional_spelling(&target_type);
         let trait_name = trait_path.map(|path| path.path.join("::"));
         let trait_args = self.impl_trait_args(trait_path, impl_type_params);
-        let effective_methods = self.adopted_impl_methods(methods, trait_name.as_deref(), &target);
+        // a negative impl supplies nothing, so no default body is typed on its header
+        let effective_methods = match negative {
+            true => methods.to_vec(),
+            false => self.adopted_impl_methods(methods, trait_name.as_deref(), &target),
+        };
         let nominal_params: Vec<String> = self
             .type_table
             .get_struct(&target)
@@ -237,8 +242,14 @@ impl TypeInference {
             .replace(InferType::Struct(target.clone()));
         let mut typed_methods = Vec::with_capacity(effective_methods.len());
         let saved_default_body = self.in_trait_default_body;
+        let saved_adoption = self.adopted_instantiation.take();
+        let saved_header = self.current_impl_header.replace(target_type.clone());
         for (index, method) in effective_methods.iter().enumerate() {
             self.in_trait_default_body = index >= methods.len();
+            self.adopted_instantiation = trait_name
+                .clone()
+                .filter(|_| self.in_trait_default_body)
+                .map(|name| (name, target_type.clone(), trait_args.clone()));
             let mut normalized = method.clone();
             // a method that redeclares a spelling its impl or its nominal already
             let renames: std::collections::HashMap<String, String> = method
@@ -274,6 +285,8 @@ impl TypeInference {
             typed_methods.push(typed);
         }
         self.in_trait_default_body = saved_default_body;
+        self.adopted_instantiation = saved_adoption;
+        self.current_impl_header = saved_header;
         self.current_impl_self = saved_impl_self;
         crate::typed_ast::TypedStmtKind::ImplDecl {
             target,

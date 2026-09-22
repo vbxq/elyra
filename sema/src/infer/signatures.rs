@@ -288,6 +288,14 @@ impl TypeInference {
             self.leave_block_module(saved);
             accepted.push(kept);
         }
+        for (name, kept) in names.iter().zip(accepted.iter_mut()) {
+            if name
+                .slot
+                .is_some_and(|slot| self.retracted_by_overlap.contains(&slot))
+            {
+                *kept = false;
+            }
+        }
         self.retract_rejected_impls(&blocks, &mut names, &accepted);
         self.check_supertrait_obligations(&blocks, &headers, &accepted);
         for (((block, header), name), kept) in
@@ -493,11 +501,21 @@ impl TypeInference {
             .params
             .first()
             .is_some_and(|param| param.name == "self");
+        // a method that redeclares a trait parameter declares its own, so a bound on the trait cannot fix it
+        let method_renames: HashMap<String, String> = method
+            .type_params
+            .iter()
+            .filter(|name| trait_type_params.contains(name))
+            .map(|name| (name.clone(), crate::infer::shadowed_method_param(name)))
+            .collect();
         let mut method_type_params = trait_type_params.to_vec();
         method_type_params.extend(method.type_params.iter().cloned());
+        method_type_params.extend(method_renames.values().cloned());
         method_type_params.push("Self".to_string());
         let saved_type_params =
             std::mem::replace(&mut self.type_params_in_scope, method_type_params);
+        let saved_renames =
+            std::mem::replace(&mut self.method_param_renames, method_renames.clone());
         // bound argument reads its sibling bounds.
         let saved_bounds = std::mem::replace(
             &mut self.current_function_bounds,
@@ -533,6 +551,7 @@ impl TypeInference {
         self.current_function_bounds = saved_bounds;
         self.current_function_bindings = saved_bindings;
         self.type_params_in_scope = saved_type_params;
+        self.method_param_renames = saved_renames;
         TraitMethod {
             name: method.name.clone(),
             symbol: String::new(),
@@ -540,7 +559,7 @@ impl TypeInference {
             return_type,
             has_self,
             mutable_self: has_self && method.params[0].mutable,
-            own_type_params: method.type_params.to_vec(),
+            own_type_params: renamed_own_params(&method.type_params, &method_renames),
             has_body,
             is_default: false,
         }
@@ -735,10 +754,22 @@ impl TypeInference {
                         },
                     });
                 }
-                bounds.push((clause.type_annotation.name.clone(), trait_name, trait_args));
+                bounds.push((
+                    self.respelled_subject(&clause.type_annotation.name),
+                    trait_name,
+                    trait_args,
+                ));
             }
         }
         bounds
+    }
+
+    // a bound written on a respelled method parameter is keyed on the spelling its type carries, or no lookup by that type finds it
+    fn respelled_subject(&self, written: &str) -> String {
+        self.method_param_renames
+            .get(written)
+            .cloned()
+            .unwrap_or_else(|| written.to_string())
     }
 
     fn bindings_from_where_clauses(
@@ -802,7 +833,11 @@ impl TypeInference {
                     };
                     items.push((name.clone(), item));
                 }
-                bindings.push((clause.type_annotation.name.clone(), trait_name, items));
+                bindings.push((
+                    self.respelled_subject(&clause.type_annotation.name),
+                    trait_name,
+                    items,
+                ));
             }
         }
         bindings
@@ -1330,13 +1365,15 @@ impl TypeInference {
                 });
                 return false;
             }
-            if self.type_table.equally_specific_overlap(
+            let equals = self.type_table.equally_specific_overlap(
                 live,
                 trait_name,
                 &trait_args,
                 &target_ty,
                 block.methods.iter().any(|method| method.is_default),
-            ) {
+            );
+            if !equals.is_empty() {
+                self.withdraw_clashing_pair(name, &target_ty, &trait_args, &equals, live);
                 self.errors.push(crate::constraint::TypeError {
                     kind: crate::constraint::TypeErrorKind::UnorderedSpecialization {
                         trait_name: trait_name.to_string(),
@@ -1349,24 +1386,29 @@ impl TypeInference {
                 });
                 return false;
             }
-            if let Some(partner) = self.type_table.trait_impl_overlap_among(
+            let partners = self.type_table.trait_impl_overlap_among(
                 live,
                 trait_name,
                 &trait_args,
                 &target_ty,
                 block.methods.iter().any(|method| method.is_default),
-            ) {
-                self.errors.push(crate::constraint::TypeError {
-                    kind: crate::constraint::TypeErrorKind::OverlappingTraitImpl {
-                        trait_name: trait_name.to_string(),
-                        target: target_ty.clone(),
-                        partner,
-                    },
-                    span: methods.first().map_or(header_span, |method| method.span),
-                    reason: crate::constraint::ConstraintReason::Other(
-                        "trait coherence".to_string(),
-                    ),
-                });
+            );
+            if !partners.is_empty() {
+                let slots: Vec<usize> = partners.iter().map(|(slot, _)| *slot).collect();
+                self.withdraw_clashing_pair(name, &target_ty, &trait_args, &slots, live);
+                for (_, partner) in partners {
+                    self.errors.push(crate::constraint::TypeError {
+                        kind: crate::constraint::TypeErrorKind::OverlappingTraitImpl {
+                            trait_name: trait_name.to_string(),
+                            target: target_ty.clone(),
+                            partner,
+                        },
+                        span: methods.first().map_or(header_span, |method| method.span),
+                        reason: crate::constraint::ConstraintReason::Other(
+                            "trait coherence".to_string(),
+                        ),
+                    });
+                }
                 return false;
             }
             for method in methods {
@@ -1587,7 +1629,26 @@ impl TypeInference {
         }
     }
 
-    // a rejected impl contributes nothing, so its registration and the cycle
+    // neither impl of a clashing pair stands, and declaration order does not decide which survive
+    fn withdraw_clashing_pair(
+        &mut self,
+        name: &ImplName,
+        target_ty: &InferType,
+        trait_args: &[InferType],
+        partners: &[usize],
+        live: &mut Vec<usize>,
+    ) {
+        self.retracted_by_overlap.extend(partners.iter().copied());
+        let Some(slot) = name.slot else {
+            return;
+        };
+        if let Some(definition) = self.type_table.trait_impl_def_at_mut(slot) {
+            definition.self_type = target_ty.clone();
+            definition.trait_args = trait_args.to_vec();
+        }
+        live.push(slot);
+    }
+
     fn retract_rejected_impls(
         &mut self,
         blocks: &[ImplBlock<'_>],
@@ -1858,22 +1919,15 @@ impl TypeInference {
             let saved_renames =
                 std::mem::replace(&mut self.method_param_renames, method_renames.clone());
             let self_substitution = HashMap::from([("Self".to_string(), target_ty.clone())]);
-            let visible_impl_bounds: Vec<_> = impl_bounds
-                .iter()
-                .filter(|(subject, _, _)| !method.type_params.contains(subject))
-                .cloned()
-                .collect();
+            // a method that redeclares an impl parameter has its own respelled, so the impl's bound hides nothing
+            let visible_impl_bounds: Vec<_> = impl_bounds.clone();
             let mut subjects = visible_impl_bounds.clone();
             subjects.extend(bound_subjects(&method.where_clauses));
             let saved_bounds = std::mem::replace(&mut self.current_function_bounds, subjects);
             let mut method_bounds = visible_impl_bounds;
             method_bounds.extend(self.bounds_from_where_clauses(&method.where_clauses));
             self.current_function_bounds = method_bounds.clone();
-            let mut method_bindings: AssociatedBindings = impl_bindings
-                .iter()
-                .filter(|(subject, _, _)| !method.type_params.contains(subject))
-                .cloned()
-                .collect();
+            let mut method_bindings: AssociatedBindings = impl_bindings.clone();
             method_bindings.extend(self.bindings_from_where_clauses(&method.where_clauses));
             for (_, _, items) in &mut method_bindings {
                 for (_, item) in items.iter_mut() {
@@ -1914,6 +1968,8 @@ impl TypeInference {
                 .map(|param| param.substitute_params(&self_substitution))
                 .collect();
             ret = ret.substitute_params(&self_substitution);
+            // `Self::Item` is read from the impl's own annotation, written in the impl's scope, where no method parameter has been respelled
+            let respelled = std::mem::take(&mut self.method_param_renames);
             params = params
                 .iter()
                 .map(|param| {
@@ -1921,6 +1977,7 @@ impl TypeInference {
                 })
                 .collect();
             ret = self.normalize_projection_in_signature(&ret, associated_types, &target_ty);
+            self.method_param_renames = respelled;
             self.current_function_bounds = saved_bounds;
             self.current_function_bindings = saved_bindings;
             self.type_params_in_scope = saved_type_params;
@@ -1942,21 +1999,30 @@ impl TypeInference {
                         substitutions.insert(parameter.clone(), argument.clone());
                     }
                 }
+                // the trait method's own parameters are marked before `self` brings in the impl's, which may share their spelling
+                let own_marks: HashMap<String, InferType> = required
+                    .own_type_params
+                    .iter()
+                    .map(|name| (name.clone(), InferType::Param(trait_own_mark(name))))
+                    .collect();
                 let expected_params: Vec<_> = required
                     .params
                     .iter()
-                    .map(|param| param.substitute_params(&substitutions))
+                    .map(|param| {
+                        param
+                            .substitute_params(&own_marks)
+                            .substitute_params(&substitutions)
+                    })
                     .collect();
-                let expected_return = required.return_type.substitute_params(&substitutions);
-                let widens_contract = required
-                    .params
+                let expected_return = required
+                    .return_type
+                    .substitute_params(&own_marks)
+                    .substitute_params(&substitutions);
+                let trait_own: Vec<String> = required
+                    .own_type_params
                     .iter()
-                    .chain([&required.return_type])
-                    .zip(params.iter().chain([&ret]))
-                    .any(|(declared, actual)| {
-                        mentions_method_own_param(actual)
-                            && !declares_own_param(declared, &required.own_type_params)
-                    });
+                    .map(|name| trait_own_mark(name))
+                    .collect();
                 let saved_type_params =
                     std::mem::replace(&mut self.type_params_in_scope, impl_type_params.to_vec());
                 let expected_params: Vec<_> = expected_params
@@ -1971,7 +2037,36 @@ impl TypeInference {
                     &target_ty,
                 );
                 self.type_params_in_scope = saved_type_params;
-                let signature_matches = !widens_contract
+                let inheritable = |expected: &InferType| {
+                    !trait_own.iter().any(|name| expected.mentions_param(name))
+                };
+                if params.len() == expected_params.len() {
+                    for (actual, expected) in params.iter_mut().zip(&expected_params) {
+                        if matches!(actual, InferType::Var(_)) && inheritable(expected) {
+                            *actual = expected.clone();
+                        }
+                    }
+                }
+                if matches!(ret, InferType::Var(_)) && inheritable(&expected_return) {
+                    ret = expected_return.clone();
+                }
+                let impl_own = renamed_own_params(&method.type_params, &method_renames);
+                let mut pairing = HashMap::new();
+                let own_params_conform = params.len() == expected_params.len()
+                    && expected_params
+                        .iter()
+                        .chain([&expected_return])
+                        .zip(params.iter().chain([&ret]))
+                        .all(|(expected, actual)| {
+                            own_params_conform(
+                                expected,
+                                actual,
+                                &trait_own,
+                                &impl_own,
+                                &mut pairing,
+                            )
+                        });
+                let signature_matches = own_params_conform
                     && params.len() == expected_params.len()
                     && params
                         .iter()
@@ -2747,7 +2842,7 @@ impl TypeInference {
     }
 }
 
-// rejected there as e0423. a generic argument list, `wrap<counter::item>`,
+// rejected there as E0423. a generic argument list, `wrap<counter::item>`,
 fn is_a_bare_type_name(annotation: &aelys_syntax::TypeAnnotation) -> bool {
     annotation.path.len() == 1 && annotation.type_params.is_empty()
 }
@@ -2814,18 +2909,26 @@ pub(super) fn ambiguous_trait_method_kind(
     let supplying = type_table.trait_impls_supplying(target, symbols);
     let single = supplying
         .first()
-        .filter(|(first, _)| supplying.iter().all(|(name, _)| name == first))
-        .map(|(name, _)| name.clone());
+        .filter(|(first, _, _)| supplying.iter().all(|(name, _, _)| name == first))
+        .map(|(name, _, _)| name.clone());
+    let mut instantiations: Vec<&str> = supplying.iter().map(|(_, key, _)| key.as_str()).collect();
+    instantiations.sort_unstable();
+    instantiations.dedup();
     match single {
-        Some(trait_name) if supplying.len() > 1 => {
+        // several impls give the trait one instantiation, each on its own receivers: only the receiver's instantiation can choose among them
+        Some(trait_name) if instantiations.len() == 1 && supplying.len() > 1 => {
+            crate::constraint::TypeErrorKind::UnresolvedReceiverInstantiation {
+                target: target.to_string(),
+                method: method.to_string(),
+                trait_name,
+            }
+        }
+        Some(trait_name) if instantiations.len() > 1 => {
             crate::constraint::TypeErrorKind::AmbiguousTraitInstantiation {
                 target: target.to_string(),
                 method: method.to_string(),
                 trait_name,
-                instantiations: supplying
-                    .into_iter()
-                    .map(|(_, spelling)| spelling)
-                    .collect(),
+                instantiations: supplying.into_iter().map(|(_, _, header)| header).collect(),
             }
         }
         _ => crate::constraint::TypeErrorKind::AmbiguousTraitMethod {
@@ -2897,14 +3000,104 @@ fn renamed_own_params(written: &[String], renames: &HashMap<String, String>) -> 
         .collect()
 }
 
-fn mentions_method_own_param(ty: &InferType) -> bool {
-    let mut names = Vec::new();
-    crate::infer::entry::collect_type_params(ty, &mut names);
-    names
-        .iter()
-        .any(|name| name.ends_with(crate::infer::SHADOWED_METHOD_SUFFIX))
+/// a trait position declared with a method parameter takes the impl method's own, wherever it recurs
+fn own_params_conform(
+    expected: &InferType,
+    actual: &InferType,
+    trait_own: &[String],
+    impl_own: &[String],
+    pairing: &mut HashMap<String, String>,
+) -> bool {
+    let conform =
+        |expected: &InferType, actual: &InferType, pairing: &mut HashMap<String, String>| {
+            own_params_conform(expected, actual, trait_own, impl_own, pairing)
+        };
+    match (expected, actual) {
+        (InferType::Param(declared), _) if trait_own.contains(declared) => {
+            let InferType::Param(written) = actual else {
+                return false;
+            };
+            if !impl_own.contains(written) {
+                return false;
+            }
+            match pairing.get(declared) {
+                Some(paired) => paired == written,
+                None if pairing.values().any(|paired| paired == written) => false,
+                None => {
+                    pairing.insert(declared.clone(), written.clone());
+                    true
+                }
+            }
+        }
+        (_, InferType::Param(written)) if impl_own.contains(written) => false,
+        (InferType::Var(_), _) | (_, InferType::Var(_)) => false,
+        (InferType::Param(left), InferType::Param(right)) => left == right,
+        (
+            InferType::Projection {
+                trait_name,
+                item,
+                self_ty,
+            },
+            InferType::Projection {
+                trait_name: actual_trait,
+                item: actual_item,
+                self_ty: actual_self,
+            },
+        ) => {
+            item == actual_item
+                && trait_name == actual_trait
+                && conform(self_ty, actual_self, pairing)
+        }
+        (
+            InferType::Applied { name, args },
+            InferType::Applied {
+                name: actual_name,
+                args: actual_args,
+            },
+        ) => {
+            name == actual_name
+                && args.len() == actual_args.len()
+                && args
+                    .iter()
+                    .zip(actual_args)
+                    .all(|(expected, actual)| conform(expected, actual, pairing))
+        }
+        (InferType::Vec(expected), InferType::Vec(actual))
+        | (InferType::Array(expected), InferType::Array(actual))
+        | (InferType::Option(expected), InferType::Option(actual)) => {
+            conform(expected, actual, pairing)
+        }
+        (InferType::FixedArray(expected, length), InferType::FixedArray(actual, actual_length)) => {
+            length == actual_length && conform(expected, actual, pairing)
+        }
+        (InferType::Result(expected_ok, expected_err), InferType::Result(ok, err)) => {
+            conform(expected_ok, ok, pairing) && conform(expected_err, err, pairing)
+        }
+        (InferType::Tuple(expected), InferType::Tuple(actual)) => {
+            expected.len() == actual.len()
+                && expected
+                    .iter()
+                    .zip(actual)
+                    .all(|(expected, actual)| conform(expected, actual, pairing))
+        }
+        (
+            InferType::Function { params, ret },
+            InferType::Function {
+                params: actual_params,
+                ret: actual_ret,
+            },
+        ) => {
+            params.len() == actual_params.len()
+                && params
+                    .iter()
+                    .zip(actual_params)
+                    .all(|(expected, actual)| conform(expected, actual, pairing))
+                && conform(ret, actual_ret, pairing)
+        }
+        _ => !expected.mentions_any_param() && !actual.mentions_any_param(),
+    }
 }
 
-fn declares_own_param(declared: &InferType, own: &[String]) -> bool {
-    own.iter().any(|name| declared.mentions_param(name))
+fn trait_own_mark(name: &str) -> String {
+    format!("{name}$t")
 }
