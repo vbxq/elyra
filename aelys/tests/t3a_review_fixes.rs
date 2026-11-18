@@ -648,3 +648,26 @@ fn l3_a_literal_fixed_point_shift_count_outside_0_to_63_is_refused() {
         0,
     );
 }
+
+#[test]
+fn l4_a_non_finite_float_cast_to_a_sized_type_names_the_value_and_the_target() {
+    for target in ["i8", "i16", "i32", "u8", "u16", "u32"] {
+        for (value, spelling) in [
+            ("id(0.0) / id(0.0)", "NaN"),
+            ("id(1.0) / id(0.0)", "inf"),
+            ("id(-1.0) / id(0.0)", "-inf"),
+        ] {
+            let source = format!(
+                "fn id(x: float) -> float {{ x }}\nfn cast(v: float) -> {target} {{ v as {target} }}\ncast({value}) as int"
+            );
+            let message = format!("cannot convert {spelling} to {target}");
+            assert_traps_at_every_level(&source, &message);
+            let error = run_at(&source, OptimizationLevel::None).unwrap_err();
+            assert!(!error.contains("48-bit"), "{error}");
+        }
+    }
+    assert_traps_at_every_level(
+        "fn id(x: float) -> float { x }\nlet v = id(0.0) / id(0.0)\nv as int",
+        "integer overflow outside the supported 48-bit range",
+    );
+}

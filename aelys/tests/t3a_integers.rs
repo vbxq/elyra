@@ -726,14 +726,21 @@ let wide: u32 = 4294967295
         "-1294967296,4294967295,255,65535,-1,-1,255,4464,-394967296,254,-2,2,0,1,-1.0,4294967295.0"
     );
     for target in ["int", "i32", "u8"] {
-        for value in [
-            "id(0.0) / id(0.0)",
-            "id(1.0) / id(0.0)",
-            "id(-1.0) / id(0.0)",
+        for (value, spelling) in [
+            ("id(0.0) / id(0.0)", "NaN"),
+            ("id(1.0) / id(0.0)", "inf"),
+            ("id(-1.0) / id(0.0)", "-inf"),
         ] {
             let source =
                 format!("fn id(x: float) -> float {{ x }}\nlet v = {value}\nv as {target}");
-            assert_aelys_error_contains(&source, "integer overflow");
+            if target == "int" {
+                assert_aelys_error_contains(&source, "integer overflow");
+            } else {
+                assert_aelys_error_contains(
+                    &source,
+                    &format!("cannot convert {spelling} to {target}"),
+                );
+            }
         }
     }
     assert_aelys_error_contains(

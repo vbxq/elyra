@@ -51,7 +51,17 @@ impl VM {
                 }
                 if let Some(value) = value.as_float() {
                     if !value.is_finite() {
-                        return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                        let spelling = if value.is_nan() {
+                            "NaN"
+                        } else if value > 0.0 {
+                            "inf"
+                        } else {
+                            "-inf"
+                        };
+                        return Err(self.runtime_error(RuntimeErrorKind::NonFiniteCast {
+                            value: spelling,
+                            target: kind.name(),
+                        }));
                     }
                     let modulus = (1u64 << kind.bits()) as f64;
                     // fmod is exact, so the low bits survive any magnitude

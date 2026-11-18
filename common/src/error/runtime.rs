@@ -73,6 +73,10 @@ pub enum RuntimeErrorKind {
         message: Option<String>,
     },
     IntegerOverflow,
+    NonFiniteCast {
+        value: &'static str,
+        target: &'static str,
+    },
     RuntimePanic {
         message: String,
     },
@@ -189,6 +193,7 @@ impl RuntimeErrorKind {
             Self::IntegerOverflow => {
                 "integer overflow outside the supported 48-bit range".to_string()
             }
+            Self::NonFiniteCast { value, target } => format!("cannot convert {value} to {target}"),
             Self::RuntimePanic { message } => format!("runtime panic recovered: {message}"),
             Self::InstructionBudgetExceeded { limit } => {
                 format!("instruction budget exhausted after {} instructions", limit)

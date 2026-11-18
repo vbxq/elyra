@@ -226,7 +226,7 @@ Any integer type, sized or not, indexes an array or a `Vec`.
 | any integer | a sized integer | the low bits, two's complement: `3000000000 as i32` is `-1294967296`, `-1 as u8` is `255` |
 | any integer | `int` | the same value (every sized value fits) |
 | `float` | `int` | truncated toward zero; NaN, an infinity or a value outside 48 bits traps with the overflow error |
-| `float` | a sized integer | truncated toward zero, then wrapped like an integer (`-2.7 as u8` is `254`); NaN or an infinity traps |
+| `float` | a sized integer | truncated toward zero, then wrapped like an integer (`-2.7 as u8` is `254`); NaN or an infinity traps with `cannot convert NaN to u8` (or `inf`, `-inf`, and the target type) |
 | integer | `float` | the nearest float |
 | `bool` | integer | `0` or `1` |
 
