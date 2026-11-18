@@ -476,7 +476,13 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 let wide_c = (second >> 16) as usize;
                 update_max_reg(&mut max_reg, &mut used, wide_a, Some(wide_b), Some(wide_c));
                 if b != 0 {
-                    update_max_reg(&mut max_reg, &mut used, (second & 0xffff) as usize, None, None);
+                    update_max_reg(
+                        &mut max_reg,
+                        &mut used,
+                        (second & 0xffff) as usize,
+                        None,
+                        None,
+                    );
                 }
             }
         }

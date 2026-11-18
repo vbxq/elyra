@@ -135,17 +135,14 @@ impl TypeInference {
         }
         if let Some(ref ts) = typed_step {
             let step_span = step.map(|s| s.span).unwrap_or(body.span);
-            if !self.reject_dynamic(
-                &ts.ty,
-                &bound_ty,
-                step_span,
-                ConstraintReason::ForBounds,
-            ) && !self.reject_untyped_native(
-                &ts.ty,
-                &bound_ty,
-                step_span,
-                ConstraintReason::ForBounds,
-            ) {
+            if !self.reject_dynamic(&ts.ty, &bound_ty, step_span, ConstraintReason::ForBounds)
+                && !self.reject_untyped_native(
+                    &ts.ty,
+                    &bound_ty,
+                    step_span,
+                    ConstraintReason::ForBounds,
+                )
+            {
                 self.constraints.push(Constraint::equal(
                     bound_ty.clone(),
                     ts.ty.clone(),

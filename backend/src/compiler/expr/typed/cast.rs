@@ -14,9 +14,8 @@ impl Compiler {
     ) -> Result<()> {
         let target_kind =
             crate::opcode_select::sized_kind(&aelys_sema::ResolvedType::from_infer_type(target));
-        let source_kind = crate::opcode_select::sized_kind(
-            &aelys_sema::ResolvedType::from_infer_type(&inner.ty),
-        );
+        let source_kind =
+            crate::opcode_select::sized_kind(&aelys_sema::ResolvedType::from_infer_type(&inner.ty));
         let target = if let Some(kind) = target_kind {
             CastTarget::sized(kind)
         } else if target.is_integer() {

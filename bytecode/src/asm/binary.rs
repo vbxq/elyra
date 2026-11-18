@@ -1,6 +1,6 @@
 use crate::bytecode::{
-    CastTarget, Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth, Function,
-    GlobalLayout, IntWidth, OpCode, StructFieldSchema, StructSchema, TypeDescriptor,
+    CastTarget, Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth,
+    Function, GlobalLayout, IntWidth, OpCode, StructFieldSchema, StructSchema, TypeDescriptor,
     UpvalueDescriptor,
 };
 use std::collections::{HashMap, HashSet};

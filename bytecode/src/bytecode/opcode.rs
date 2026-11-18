@@ -376,7 +376,6 @@ pub enum WrappingOp {
     Shl,
 }
 
-/// the receiver width of `mul_shr` and `shl_div`; `Int` is the 48-bit checked integer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixedKind {
     Sized(SizedInt),

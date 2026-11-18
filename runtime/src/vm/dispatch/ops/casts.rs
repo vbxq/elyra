@@ -43,7 +43,9 @@ impl VM {
             | CastTarget::U8
             | CastTarget::U16
             | CastTarget::U32 => {
-                let kind = target.sized_kind().expect("a sized cast target names a width");
+                let kind = target
+                    .sized_kind()
+                    .expect("a sized cast target names a width");
                 if let Some(value) = value.as_int() {
                     return Ok(Value::int_wrapping(kind.wrap(value)));
                 }

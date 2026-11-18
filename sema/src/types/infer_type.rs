@@ -157,7 +157,6 @@ impl InferType {
         )
     }
 
-    /// two's complement wrap to the width of a sized integer; `int` and the rest are returned unchanged
     pub fn wrap_int(&self, value: i64) -> i64 {
         match self {
             InferType::I8 => value as i8 as i64,

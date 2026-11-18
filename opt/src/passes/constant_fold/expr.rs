@@ -20,7 +20,10 @@ impl ConstantFolder {
             }
             TypedExprKind::Unary { op, operand } => self.try_fold_unary(*op, operand, expr),
             TypedExprKind::Grouping(inner) => self.try_fold(inner),
-            TypedExprKind::Cast { expr: inner, target } if target.is_sized_integer() => {
+            TypedExprKind::Cast {
+                expr: inner,
+                target,
+            } if target.is_sized_integer() => {
                 let folded = self.try_fold(inner);
                 let value = folded.as_ref().unwrap_or(inner);
                 let TypedExprKind::Int(value) = Self::unwrap_grouping(value).kind else {

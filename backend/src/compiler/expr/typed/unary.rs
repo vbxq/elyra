@@ -14,9 +14,9 @@ impl Compiler {
     ) -> Result<()> {
         self.compile_typed_expr(operand, dest)?;
 
-        if let Some(kind) =
-            crate::opcode_select::sized_kind(&aelys_sema::ResolvedType::from_infer_type(&operand.ty))
-            && matches!(op, UnaryOp::Neg | UnaryOp::BitNot)
+        if let Some(kind) = crate::opcode_select::sized_kind(
+            &aelys_sema::ResolvedType::from_infer_type(&operand.ty),
+        ) && matches!(op, UnaryOp::Neg | UnaryOp::BitNot)
         {
             let opcode = if op == UnaryOp::Neg {
                 OpCode::NegW

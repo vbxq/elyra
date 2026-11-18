@@ -313,7 +313,9 @@ impl TypeInference {
                     return;
                 }
                 expr.ty = match &expr.ty {
-                    InferType::FixedArray(_, length) => InferType::FixedArray(inner.clone(), *length),
+                    InferType::FixedArray(_, length) => {
+                        InferType::FixedArray(inner.clone(), *length)
+                    }
                     InferType::Array(_) => InferType::Array(inner.clone()),
                     InferType::Vec(_) => InferType::Vec(inner.clone()),
                     other => other.clone(),
@@ -456,7 +458,11 @@ pub(crate) fn literal_shaped(expr: &TypedExpr) -> bool {
     }
 }
 
-fn retype_open_literal(expr: &mut TypedExpr, target: &InferType, values: &mut Vec<(i64, aelys_syntax::Span)>) {
+fn retype_open_literal(
+    expr: &mut TypedExpr,
+    target: &InferType,
+    values: &mut Vec<(i64, aelys_syntax::Span)>,
+) {
     match &mut expr.kind {
         TypedExprKind::Int(value) => values.push((*value, expr.span)),
         TypedExprKind::Grouping(inner) | TypedExprKind::Unary { operand: inner, .. } => {

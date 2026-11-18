@@ -3,7 +3,7 @@ use crate::vm::{VM, Value};
 use aelys_bytecode::{FixedKind, OpCode, SizedInt};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-/// the wrapping ops that cannot fail, 202 to 228
+/// only 202 to 228, the ops that cannot fail: any other byte is read as ShrW32
 #[inline(always)]
 pub(crate) fn wrap_unchecked(opcode_byte: u8, left: i64, right: i64) -> i64 {
     match opcode_byte {
@@ -39,50 +39,22 @@ pub(crate) fn wrap_unchecked(opcode_byte: u8, left: i64, right: i64) -> i64 {
 
 #[inline(always)]
 fn wrap_binary(opcode_byte: u8, left: i64, right: i64) -> Option<i64> {
-    Some(match opcode_byte {
-        202 => left.wrapping_add(right) as i8 as i64,
-        203 => left.wrapping_add(right) as i16 as i64,
-        204 => left.wrapping_add(right) as i32 as i64,
-        205 => left.wrapping_add(right) as u8 as i64,
-        206 => left.wrapping_add(right) as u16 as i64,
-        207 => left.wrapping_add(right) as u32 as i64,
-        208 => left.wrapping_sub(right) as i8 as i64,
-        209 => left.wrapping_sub(right) as i16 as i64,
-        210 => left.wrapping_sub(right) as i32 as i64,
-        211 => left.wrapping_sub(right) as u8 as i64,
-        212 => left.wrapping_sub(right) as u16 as i64,
-        213 => left.wrapping_sub(right) as u32 as i64,
-        214 => left.wrapping_mul(right) as i8 as i64,
-        215 => left.wrapping_mul(right) as i16 as i64,
-        216 => left.wrapping_mul(right) as i32 as i64,
-        217 => left.wrapping_mul(right) as u8 as i64,
-        218 => left.wrapping_mul(right) as u16 as i64,
-        219 => left.wrapping_mul(right) as u32 as i64,
-        220 => (left << (right & 7)) as i8 as i64,
-        221 => (left << (right & 15)) as i16 as i64,
-        222 => (left << (right & 31)) as i32 as i64,
-        223 => (left << (right & 7)) as u8 as i64,
-        224 => (left << (right & 15)) as u16 as i64,
-        225 => (left << (right & 31)) as u32 as i64,
-        226 => left >> (right & 7),
-        227 => left >> (right & 15),
-        228 => left >> (right & 31),
-        229 | 230 | 231 => {
+    match opcode_byte {
+        229..=231 => {
             if right == 0 {
                 return None;
             }
             let quotient = left.wrapping_div(right);
-            match opcode_byte {
+            Some(match opcode_byte {
                 229 => quotient as i8 as i64,
                 230 => quotient as i16 as i64,
                 _ => quotient as i32 as i64,
-            }
+            })
         }
-        _ => unreachable!(),
-    })
+        _ => Some(wrap_unchecked(opcode_byte, left, right)),
+    }
 }
 
-/// the slow forms (wide registers) share the fast form's arithmetic
 pub(crate) fn sized_binary_value(opcode: OpCode, left: i64, right: i64) -> Option<i64> {
     wrap_binary(opcode as u8, left, right)
 }
