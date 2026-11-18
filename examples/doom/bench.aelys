@@ -23,14 +23,17 @@ let mut p1 = level.things[0]
 for t in level.things {
     if t.kind == 1 { p1 = t }
 }
-let sx = p1.x << 16
-let sy = p1.y << 16
-let sz = render::floor_height_at(sx, sy) + (41 << 16)
-let sa = (p1.angle * 4294967296 / 360) & 0xFFFFFFFF
+let vx = [p1.x, 1700, 2296, 700, 1136, 2200]
+let vy = [p1.y, 1700, -384, 1976, -424, 1500]
+let va = [p1.angle, 300, 90, 180, 0, 200]
 render::reset_times()
 let t0 = time::timer()
 for i in 0..frames {
-    render::render_frame(sx, sy, sz, sa)
+    let v = i % 6
+    let sx = vx[v] << 16
+    let sy = vy[v] << 16
+    let sz = render::floor_height_at(sx, sy) + (41 << 16)
+    render::render_frame(sx, sy, sz, (va[v] * 4294967296 / 360) & 0xFFFFFFFF)
     if sys::arg(1) != Some("nopal") { render::to_rgb(pal, rgb) }
 }
 let n = convert::to_float(frames)

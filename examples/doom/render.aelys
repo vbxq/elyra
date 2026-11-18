@@ -157,12 +157,6 @@ fn iabs(a: int) -> int {
     if a < 0 { -a } else { a }
 }
 
-// fixed section: same split math as fixed.aelys; only single-expression bodies get inlined
-@inline_always
-fn fmul(a: int, b: int) -> int {
-    (a >> 16) * b + (a & 0xFFFF) * (b >> 16) + (((a & 0xFFFF) * (b & 0xFFFF)) >> 16)
-}
-
 @inline_always
 fn ang(a: int) -> int { a & 0xFFFFFFFF }
 
@@ -182,7 +176,7 @@ fn fdiv(a: int, b: int) -> int {
         if (a ^ b) < 0 { return -2147483648 }
         return 2147483647
     }
-    (a / b) * 65536 + ((a % b) * 65536) / b
+    a.shl_div(b, 16)
 }
 
 fn name_slot(name: string) -> int {
@@ -798,7 +792,7 @@ fn scale_from_angle(visangle: int, normalangle: int, distance: int) -> int {
     let sinea = fixed::finesine[anglea >> 19]
     let sineb = fixed::finesine[angleb >> 19]
     let num = 160 * sineb
-    let den = fmul(distance, sinea)
+    let den = distance.mul_shr(sinea, 16)
     if den > (num >> 16) {
         let an = if num < 0 { -num } else { num }
         let ad = if den < 0 { -den } else { den }
@@ -925,7 +919,7 @@ fn wall_angles(seg: WallSeg, start: int, stop: int) {
     if offsetangle > 0x40000000 { offsetangle = 0x40000000 }
     let distangle = 0x40000000 - offsetangle
     w_hyp = point_to_dist(seg.x1, seg.y1)
-    w_distance = fmul(w_hyp, fixed::finesine[distangle >> 19])
+    w_distance = w_hyp.mul_shr(fixed::finesine[distangle >> 19], 16)
     let xtov = fixed::xtoviewangle
     w_scale1 = scale_from_angle(ang_add(viewangle, xtov[start]), normalangle, w_distance)
     w_scale2 = w_scale1
@@ -1018,7 +1012,7 @@ fn wall_texturing(seg: WallSeg, side: WallSide, front: Room) {
     let mut oa = delta
     if oa > 0x80000000 { oa = 0x100000000 - oa }
     if oa > 0x40000000 { oa = 0x40000000 }
-    let mut off = fmul(w_hyp, fixed::finesine[oa >> 19])
+    let mut off = w_hyp.mul_shr(fixed::finesine[oa >> 19], 16)
     if delta < 0x80000000 { off = -off }
     w_offset = off + side.xoff + seg.offset
     w_centerangle = ang_sub(viewangle + 0x40000000, w_normal)
@@ -1036,10 +1030,10 @@ fn wall_texturing(seg: WallSeg, side: WallSide, front: Room) {
 fn wall_steps(has_back: bool) {
     let top = w_worldtop >> 4
     let bottom = w_worldbottom >> 4
-    w_topstep = -fmul(w_scalestep, top)
-    w_topfrac = 409600 - fmul(top, w_scale1)
-    w_bottomstep = -fmul(w_scalestep, bottom)
-    w_bottomfrac = 409600 - fmul(bottom, w_scale1)
+    w_topstep = -w_scalestep.mul_shr(top, 16)
+    w_topfrac = 409600 - top.mul_shr(w_scale1, 16)
+    w_bottomstep = -w_scalestep.mul_shr(bottom, 16)
+    w_bottomfrac = 409600 - bottom.mul_shr(w_scale1, 16)
     w_pixhigh = 0
     w_pixhighstep = 0
     w_pixlow = 0
@@ -1048,12 +1042,12 @@ fn wall_steps(has_back: bool) {
         let high = w_worldhigh >> 4
         let low = w_worldlow >> 4
         if high < top {
-            w_pixhigh = 409600 - fmul(high, w_scale1)
-            w_pixhighstep = -fmul(w_scalestep, high)
+            w_pixhigh = 409600 - high.mul_shr(w_scale1, 16)
+            w_pixhighstep = -w_scalestep.mul_shr(high, 16)
         }
         if low > bottom {
-            w_pixlow = 409600 - fmul(low, w_scale1)
-            w_pixlowstep = -fmul(w_scalestep, low)
+            w_pixlow = 409600 - low.mul_shr(w_scale1, 16)
+            w_pixlowstep = -w_scalestep.mul_shr(low, 16)
         }
     }
 }
@@ -1170,7 +1164,7 @@ fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
         let mut level = 0
         let mut iscale = 0
         if segtextured {
-            texcol = (offset - fmul(ftan[((centerangle + xtov[x]) >> 19) & 4095], dist)) >> 16
+            texcol = (offset - (ftan[((centerangle + xtov[x]) >> 19) & 4095]).mul_shr(dist, 16)) >> 16
             let mut index = scale >> 12
             if index >= 48 { index = 47 }
             level = scalelight[lightrow + index]
@@ -1453,13 +1447,13 @@ fn project_sprite(a: Actor, lightrow: int) {
     if num_vs >= 128 { return () }
     let tr_x = a.x - viewx
     let tr_y = a.y - viewy
-    let gxt = fmul(tr_x, viewcos)
-    let gyt = -fmul(tr_y, viewsin)
+    let gxt = tr_x.mul_shr(viewcos, 16)
+    let gyt = -tr_y.mul_shr(viewsin, 16)
     let tz = gxt - gyt
     if tz < 262144 { return () }
     let xscale = fdiv(10485760, tz)
-    let gxt2 = -fmul(tr_x, viewsin)
-    let gyt2 = fmul(tr_y, viewcos)
+    let gxt2 = -tr_x.mul_shr(viewsin, 16)
+    let gyt2 = tr_y.mul_shr(viewcos, 16)
     let mut tx = -(gyt2 + gxt2)
     if iabs(tx) > (tz << 2) { return () }
     let def = sprite_defs[a.def]
@@ -1472,10 +1466,10 @@ fn project_sprite(a: Actor, lightrow: int) {
     let flip = def.flips[rot] != 0
     let pic = sprite_pics[pi]
     tx -= pic.left << 16
-    let x1 = (10485760 + fmul(tx, xscale)) >> 16
+    let x1 = (10485760 + tx.mul_shr(xscale, 16)) >> 16
     if x1 > 320 { return () }
     tx += pic.width << 16
-    let x2 = ((10485760 + fmul(tx, xscale)) >> 16) - 1
+    let x2 = ((10485760 + tx.mul_shr(xscale, 16)) >> 16) - 1
     if x2 < 0 { return () }
     let v = num_vs
     num_vs++
@@ -1564,21 +1558,21 @@ fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: i
     let mut ystep = 0
     if plane_height != cachedheight[y] {
         cachedheight[y] = plane_height
-        distance = fmul(plane_height, yslope[y])
+        distance = plane_height.mul_shr(yslope[y], 16)
         cacheddistance[y] = distance
-        xstep = fmul(distance, basexscale)
+        xstep = distance.mul_shr(basexscale, 16)
         cachedxstep[y] = xstep
-        ystep = fmul(distance, baseyscale)
+        ystep = distance.mul_shr(baseyscale, 16)
         cachedystep[y] = ystep
     } else {
         distance = cacheddistance[y]
         xstep = cachedxstep[y]
         ystep = cachedystep[y]
     }
-    let length = fmul(distance, distscale[x1])
+    let length = distance.mul_shr(distscale[x1], 16)
     let angle = fine_index(viewangle + fixed::xtoviewangle[x1])
-    let xfrac = viewx + fmul(fixed::finesine[angle + 2048], length)
-    let yfrac = -viewy - fmul(fixed::finesine[angle], length)
+    let xfrac = viewx + fixed::finesine[angle + 2048].mul_shr(length, 16)
+    let yfrac = -viewy - fixed::finesine[angle].mul_shr(length, 16)
     let mut index = distance >> 20
     if index >= 128 { index = 127 }
     let cmrow = cmap_rows[zlight[plane_zrow + index]]
@@ -1719,7 +1713,7 @@ fn render_masked_seg(d: int, x1: int, x2: int) {
             let mut index = yscale >> 12
             if index >= 48 { index = 47 }
             let cmrow = cmap_rows[scalelight[lightrow + index]]
-            let topscreen = 6553600 - fmul(texmid, yscale)
+            let topscreen = 6553600 - texmid.mul_shr(yscale, 16)
             let iscale = 0xFFFFFFFF / yscale
             draw_masked_column(pic, col & pic.widthmask, x, topscreen, yscale, texmid, iscale, cmrow, openings[tbase + x], openings[bbase + x])
             openings[mbase + x] = 32767
@@ -1780,7 +1774,7 @@ fn draw_sprite(v: int) {
     let pic = sprite_pics[vs_pic[v]]
     let yscale = vs_scale[v]
     let texmid = vs_texturemid[v]
-    let topscreen = 6553600 - fmul(texmid, yscale)
+    let topscreen = 6553600 - texmid.mul_shr(yscale, 16)
     let xiscale = vs_xiscale[v]
     let iscale = iabs(xiscale)
     let cmrow = cmap_rows[vs_cm[v]]

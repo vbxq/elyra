@@ -113,11 +113,6 @@ fn p_abs(a: int) -> int {
     if a < 0 { -a } else { a }
 }
 
-@inline_always
-fn p_fmul(a: int, b: int) -> int {
-    (a >> 16) * b + (a & 0xFFFF) * (b >> 16) + (((a & 0xFFFF) * (b & 0xFFFF)) >> 16)
-}
-
 fn p_push_int(mut v: Vec<int>, x: int) { v.push(x) }
 
 fn p_node_side(x: int, y: int, node: Node) -> int {
@@ -673,8 +668,8 @@ fn xy_movement() {
         pmomx = 0
         pmomy = 0
     } else {
-        pmomx = p_fmul(pmomx, 59392)
-        pmomy = p_fmul(pmomy, 59392)
+        pmomx = pmomx.mul_shr(59392, 16)
+        pmomy = pmomy.mul_shr(59392, 16)
     }
     ()
 }
@@ -702,7 +697,7 @@ fn z_movement() {
 }
 
 fn calc_height() {
-    let mut bob = (p_fmul(pmomx, pmomx) + p_fmul(pmomy, pmomy)) >> 2
+    let mut bob = (pmomx.mul_shr(pmomx, 16) + pmomy.mul_shr(pmomy, 16)) >> 2
     if bob > 1048576 { bob = 1048576 }
     if pz > pfloorz {
         pviewz = pz + pviewheight
@@ -710,7 +705,7 @@ fn calc_height() {
         return ()
     }
     let fa = (409 * leveltime) & 8191
-    let b = p_fmul(bob / 2, fixed::finesine[fa])
+    let b = (bob / 2).mul_shr(fixed::finesine[fa], 16)
     pviewheight += pdeltaview
     if pviewheight > 2686976 {
         pviewheight = 2686976
@@ -731,8 +726,8 @@ fn calc_height() {
 
 fn thrust(angle: int, amount: int) {
     let fi = (angle & 0xFFFFFFFF) >> 19
-    pmomx += p_fmul(amount, fixed::finesine[fi + 2048])
-    pmomy += p_fmul(amount, fixed::finesine[fi])
+    pmomx += amount.mul_shr(fixed::finesine[fi + 2048], 16)
+    pmomy += amount.mul_shr(fixed::finesine[fi], 16)
 }
 
 fn lowest_ceiling_around(sec: int) -> int {

@@ -1,10 +1,6 @@
 needs std::math as math
 needs std::convert as convert
 
-pub fn fixed_mul(a: int, b: int) -> int {
-    (a >> 16) * b + (a & 0xFFFF) * (b >> 16) + (((a & 0xFFFF) * (b & 0xFFFF)) >> 16)
-}
-
 fn int_abs(a: int) -> int {
     if a < 0 { -a } else { a }
 }
@@ -14,7 +10,7 @@ pub fn fixed_div(a: int, b: int) -> int {
         if (a ^ b) < 0 { return -2147483648 }
         return 2147483647
     }
-    (a / b) * 65536 + ((a % b) * 65536) / b
+    a.shl_div(b, 16)
 }
 
 pub fn ang(a: int) -> int { a & 0xFFFFFFFF }
@@ -68,7 +64,7 @@ fn make_viewangletox() -> Vec<int> {
             if ft < -131072 {
                 x = 321
             } else {
-                x = ((160 << 16) - fixed_mul(ft, focal) + 65535) >> 16
+                x = ((160 << 16) - ft.mul_shr(focal, 16) + 65535) >> 16
                 if x < -1 { x = -1 }
                 if x > 321 { x = 321 }
             }
