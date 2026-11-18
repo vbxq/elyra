@@ -2,7 +2,7 @@ use super::ops::sized::{sized_unary_value, wrap_binary};
 use super::ops::structs::integer_fits;
 use super::ops::sums::NONE_TAG;
 use crate::vm::{CallFrame, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
-use aelys_bytecode::object::{SumTag, UpvalueLocation};
+use aelys_bytecode::object::{SumTag, UpvalueLocation, VecData};
 use aelys_bytecode::{FunctionSchemas, OpCode, SizedInt, TypeDescriptor};
 use std::sync::Arc;
 
@@ -1014,11 +1014,14 @@ impl VM {
                     let ObjectKind::Vec(vector) = object!(get!(b)) else {
                         leave!();
                     };
-                    let Some(&value) = vector.data.as_ints().and_then(|items| items.get(index))
-                    else {
-                        leave!();
+                    let value = match &vector.data {
+                        VecData::Ints(items) => or_leave!(int48(*or_leave!(items.get(index)))),
+                        VecData::Bytes(items) => {
+                            Value::int(i64::from(*or_leave!(items.get(index))))
+                        }
+                        _ => leave!(),
                     };
-                    set!(a, or_leave!(int48(value)));
+                    set!(a, value);
                     next
                 }
                 VEC_LOAD_F | VEC_LOAD_B | VEC_LOAD_P => {
@@ -1055,14 +1058,13 @@ impl VM {
                     let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
                         leave!();
                     };
-                    let Some(slot) = vector
-                        .data
-                        .as_ints_mut()
-                        .and_then(|items| items.get_mut(index))
-                    else {
-                        leave!();
-                    };
-                    *slot = value;
+                    match &mut vector.data {
+                        VecData::Ints(items) => *or_leave!(items.get_mut(index)) = value,
+                        VecData::Bytes(items) => {
+                            *or_leave!(items.get_mut(index)) = or_leave!(u8::try_from(value).ok())
+                        }
+                        _ => leave!(),
+                    }
                     next
                 }
                 VEC_STORE_F => {

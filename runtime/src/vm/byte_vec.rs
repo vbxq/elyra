@@ -1,5 +1,5 @@
 use super::{GcRef, ObjectKind, VM, Value};
-use aelys_bytecode::object::{AelysVec, SumTag};
+use aelys_bytecode::object::{AelysVec, SumTag, VecData};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 use Order::{Big, Little};
@@ -187,43 +187,46 @@ fn element_byte(value: Option<Value>) -> u8 {
 }
 
 fn load_bytes(vm: &VM, sequence: GcRef, start: usize, out: &mut [u8]) {
-    let slots = match vm.heap.get(sequence).map(|object| &object.kind) {
-        Some(ObjectKind::Vec(vector)) => match vector.data.as_ints() {
-            Some(ints) => Some(ints),
-            None => {
+    match vm.heap.get(sequence).map(|object| &object.kind) {
+        Some(ObjectKind::Vec(vector)) => match &vector.data {
+            VecData::Bytes(bytes) => out.copy_from_slice(&bytes[start..start + out.len()]),
+            VecData::Ints(ints) => {
+                for (byte, slot) in out.iter_mut().zip(&ints[start..]) {
+                    *byte = *slot as u8;
+                }
+            }
+            _ => {
                 for (index, byte) in out.iter_mut().enumerate() {
                     *byte = element_byte(vector.get(start + index));
                 }
-                None
             }
         },
         Some(ObjectKind::Array(array)) => match array.data.as_ints() {
-            Some(ints) => Some(ints),
+            Some(ints) => {
+                for (byte, slot) in out.iter_mut().zip(&ints[start..]) {
+                    *byte = *slot as u8;
+                }
+            }
             None => {
                 for (index, byte) in out.iter_mut().enumerate() {
                     *byte = element_byte(array.get(start + index));
                 }
-                None
             }
         },
-        _ => None,
-    };
-    if let Some(ints) = slots {
-        for (byte, slot) in out.iter_mut().zip(&ints[start..]) {
-            *byte = *slot as u8;
-        }
+        _ => {}
     }
 }
 
 fn store_bytes(vm: &mut VM, sequence: GcRef, start: usize, bytes: &[u8]) {
     match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
-        Some(ObjectKind::Vec(vector)) => match vector.data.as_ints_mut() {
-            Some(ints) => {
+        Some(ObjectKind::Vec(vector)) => match &mut vector.data {
+            VecData::Bytes(slots) => slots[start..start + bytes.len()].copy_from_slice(bytes),
+            VecData::Ints(ints) => {
                 for (slot, byte) in ints[start..].iter_mut().zip(bytes) {
                     *slot = i64::from(*byte);
                 }
             }
-            None => {
+            _ => {
                 for (index, byte) in bytes.iter().enumerate() {
                     vector.set(start + index, Value::int(i64::from(*byte)));
                 }
@@ -421,6 +424,12 @@ fn vec_copy_within(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     let from = byte_window(vm, sequence, start, width, operation)?;
     let to = byte_window(vm, sequence, dest, width, operation)?;
+    if let Some(ObjectKind::Vec(vector)) = vm.heap.get_mut(sequence).map(|object| &mut object.kind)
+        && let VecData::Bytes(bytes) = &mut vector.data
+    {
+        bytes.copy_within(from..from + width, to);
+        return Ok(Value::unit());
+    }
     let mut bytes = vec![0u8; width];
     load_bytes(vm, sequence, from, &mut bytes);
     store_bytes(vm, sequence, to, &bytes);
@@ -428,7 +437,7 @@ fn vec_copy_within(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 pub(crate) fn bytes_vec(bytes: &[u8]) -> AelysVec {
-    AelysVec::from_ints(bytes.iter().map(|byte| i64::from(*byte)).collect())
+    AelysVec::from_bytes(bytes.to_vec())
 }
 
 pub(crate) fn string_to_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -448,6 +457,11 @@ pub(crate) fn string_to_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, Runt
 
 pub(crate) fn sequence_bytes(vm: &VM, value: Value) -> Option<Vec<u8>> {
     let reference = value.as_ptr().map(GcRef::new)?;
+    if let Some(ObjectKind::Vec(vector)) = vm.heap.get(reference).map(|object| &object.kind)
+        && let VecData::Bytes(bytes) = &vector.data
+    {
+        return Some(bytes.clone());
+    }
     if !matches!(
         vm.heap.get(reference).map(|object| &object.kind),
         Some(ObjectKind::Vec(_) | ObjectKind::Array(_))
@@ -459,34 +473,41 @@ pub(crate) fn sequence_bytes(vm: &VM, value: Value) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-pub(crate) fn sequence_bytes_into(vm: &mut VM, value: Value, slot: usize) -> Option<usize> {
+// a borrowed Vec<u8> lends its own packed storage; one still in wider storage is packed in place first
+pub(crate) fn lend_bytes(vm: &mut VM, value: Value, exclusive: bool) -> Option<(*mut u8, usize)> {
     let reference = value.as_ptr().map(GcRef::new)?;
-    if !matches!(
-        vm.heap.get(reference).map(|object| &object.kind),
-        Some(ObjectKind::Vec(_) | ObjectKind::Array(_))
-    ) {
-        return None;
-    }
-    while vm.native_byte_scratch.len() <= slot {
-        vm.native_byte_scratch.push(Vec::new());
-    }
-    let mut scratch = std::mem::take(&mut vm.native_byte_scratch[slot]);
-    scratch.clear();
-    scratch.resize(byte_len(vm, reference), 0);
-    load_bytes(vm, reference, 0, &mut scratch);
-    vm.native_byte_scratch[slot] = scratch;
-    Some(slot)
-}
-
-impl VM {
-    pub(crate) fn write_back_borrowed_bytes(&mut self, slot: usize, pointer: u64) {
-        let Some(scratch) = self.native_byte_scratch.get_mut(slot) else {
-            return;
+    let packed = match vm.heap.get(reference).map(|object| &object.kind) {
+        Some(ObjectKind::Vec(vector)) => vector.data.as_bytes().is_some(),
+        _ => return None,
+    };
+    if !packed {
+        let Some(ObjectKind::Vec(vector)) =
+            vm.heap.get_mut(reference).map(|object| &mut object.kind)
+        else {
+            return None;
         };
-        let bytes = std::mem::take(scratch);
-        let reference = GcRef::new(pointer as usize);
-        let length = byte_len(self, reference).min(bytes.len());
-        store_bytes(self, reference, 0, &bytes[..length]);
-        self.native_byte_scratch[slot] = bytes;
+        let before = vector.size_bytes();
+        if !vector.pack_bytes() {
+            return None;
+        }
+        let after = vector.size_bytes();
+        vm.heap.account_reallocation(before, after);
+    }
+    if exclusive {
+        match vm.heap.get_mut(reference).map(|object| &mut object.kind) {
+            Some(ObjectKind::Vec(vector)) => vector
+                .data
+                .as_bytes_mut()
+                .map(|bytes| (bytes.as_mut_ptr(), bytes.len())),
+            _ => None,
+        }
+    } else {
+        match vm.heap.get(reference).map(|object| &object.kind) {
+            Some(ObjectKind::Vec(vector)) => vector
+                .data
+                .as_bytes()
+                .map(|bytes| (bytes.as_ptr().cast_mut(), bytes.len())),
+            _ => None,
+        }
     }
 }

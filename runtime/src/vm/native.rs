@@ -99,23 +99,19 @@ impl RuntimeNativeContext {
             .chain(&self.spilled)
     }
 
-    // the scratch slot of a borrow is its position in the borrow list
-    fn find(&self, handle: u64) -> Option<(usize, Borrow)> {
+    fn find(&self, handle: u64) -> Option<Borrow> {
         self.borrows()
-            .enumerate()
-            .find(|(_, borrow)| borrow.handle == handle)
-            .map(|(slot, borrow)| (slot, *borrow))
+            .find(|borrow| borrow.handle == handle)
+            .copied()
     }
 
-    fn push(&mut self, borrow: Borrow) -> usize {
-        let slot = self.borrowed_len + self.spilled.len();
+    fn push(&mut self, borrow: Borrow) {
         if self.borrowed_len < INLINE_BORROWS_PER_CALL {
             self.borrowed[self.borrowed_len] = borrow;
             self.borrowed_len += 1;
         } else {
             self.spilled.push(borrow);
         }
-        slot
     }
 }
 
@@ -261,20 +257,7 @@ impl NativeFunctionImpl {
                 &mut out,
             )
         };
-        if context.borrows().any(|borrow| borrow.exclusive) {
-            let written: Vec<(usize, u64)> = context
-                .borrows()
-                .enumerate()
-                .filter(|(_, borrow)| borrow.exclusive)
-                .map(|(slot, borrow)| (slot, borrow.handle))
-                .collect();
-            drop(context);
-            for (slot, handle) in written {
-                vm.write_back_borrowed_bytes(slot, handle);
-            }
-        } else {
-            drop(context);
-        }
+        drop(context);
         if status != 0 {
             return match result {
                 _ if status == aelys_native::AELYS_NATIVE_PANIC => {
@@ -466,26 +449,22 @@ fn borrow_bytes(
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     }
     let key = pointer as u64;
-    let slot = match context.find(key) {
-        Some((_, held)) if exclusive || held.exclusive => {
-            return aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
-        }
-        Some((slot, _)) => slot,
-        None => {
-            let next = context.borrowed_len + context.spilled.len();
-            if crate::vm::byte_vec::sequence_bytes_into(vm, value, next).is_none() {
-                return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
-            }
-            context.push(Borrow {
-                handle: key,
-                exclusive,
-            })
-        }
+    let held = context.find(key);
+    if held.is_some_and(|held| exclusive || held.exclusive) {
+        return aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
+    }
+    let Some((data, len)) = crate::vm::byte_vec::lend_bytes(vm, value, exclusive) else {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     };
-    let scratch = &mut vm.native_byte_scratch[slot];
+    if held.is_none() {
+        context.push(Borrow {
+            handle: key,
+            exclusive,
+        });
+    }
     unsafe {
-        *out_ptr = scratch.as_mut_ptr();
-        *out_len = scratch.len();
+        *out_ptr = data;
+        *out_len = len;
     }
     0
 }

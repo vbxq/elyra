@@ -59,6 +59,7 @@ impl VM {
                     AelysVec::from_bools(values.iter().map(|byte| *byte != 0).collect())
                 }
                 VecData::Objects(values) => AelysVec::from_objects(values.clone()),
+                VecData::Bytes(values) => AelysVec::from_bytes(values.clone()),
             }),
             ObjectKind::Map(map) => ObjectKind::Map(Box::new(map.duplicate())),
             _ => return Ok(original),

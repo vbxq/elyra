@@ -533,7 +533,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
-                self.admit_boxed_int(array_ref, value);
+                self.admit_element(array_ref, value);
                 let stored =
                     self.heap
                         .get_mut(array_ref)
@@ -623,6 +623,9 @@ impl VM {
             }
             OpCode::VecNewI | OpCode::VecNewF | OpCode::VecNewB | OpCode::VecNewP => {
                 let vector = match inner_opcode {
+                    OpCode::VecNewI if c == usize::from(aelys_bytecode::VEC_NEW_BYTES) => {
+                        AelysVec::new_bytes()
+                    }
                     OpCode::VecNewI => AelysVec::new_ints(),
                     OpCode::VecNewF => AelysVec::new_floats(),
                     OpCode::VecNewB => AelysVec::new_bools(),
@@ -796,7 +799,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
-                self.admit_boxed_int(vec_ref, value);
+                self.admit_element(vec_ref, value);
                 let stored =
                     self.heap
                         .get_mut(vec_ref)

@@ -5,8 +5,9 @@ use crate::stdlib::helpers::{
     result_ok,
 };
 use crate::stdlib::{FileMode, FileResource, Resource, StdModuleExports, register_native};
-use crate::vm::byte_vec::{bytes_vec, sequence_bytes};
+use crate::vm::byte_vec::sequence_bytes;
 use crate::vm::{VM, Value};
+use aelys_bytecode::object::AelysVec;
 use aelys_common::error::RuntimeError;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -235,8 +236,8 @@ fn native_read_line(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     fs_fail(vm, "fs.read_line", "invalid handle")
 }
 
-fn new_byte_vec(vm: &mut VM, bytes: &[u8]) -> Result<Value, RuntimeError> {
-    let reference = vm.alloc_vec(bytes_vec(bytes))?;
+fn new_byte_vec(vm: &mut VM, bytes: Vec<u8>) -> Result<Value, RuntimeError> {
+    let reference = vm.alloc_vec(AelysVec::from_bytes(bytes))?;
     Ok(Value::ptr(reference.index()))
 }
 
@@ -256,7 +257,7 @@ fn native_read_chunk(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
             let mut buf = Vec::with_capacity(n as usize);
             return match reader.by_ref().take(n as u64).read_to_end(&mut buf) {
                 Ok(_) => {
-                    let value = new_byte_vec(vm, &buf)?;
+                    let value = new_byte_vec(vm, buf)?;
                     fs_ok(vm, value)
                 }
                 Err(e) => fs_fail(vm, "fs.read_chunk", format!("read: {e}")),
@@ -271,7 +272,7 @@ fn native_read_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     let path = get_string(vm, args[0], "fs.read_bytes")?.to_string();
     match read_whole_file(&path) {
         Ok(data) => {
-            let value = new_byte_vec(vm, &data)?;
+            let value = new_byte_vec(vm, data)?;
             fs_ok(vm, value)
         }
         Err(e) => fs_fail(vm, "fs.read_bytes", format!("'{path}': {e}")),

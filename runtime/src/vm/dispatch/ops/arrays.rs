@@ -413,7 +413,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(arr_ref, value);
+                        $vm.admit_element(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -467,7 +467,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(arr_ref, value);
+                        $vm.admit_element(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -521,7 +521,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(arr_ref, value);
+                        $vm.admit_element(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -575,7 +575,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(arr_ref, value);
+                        $vm.admit_element(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -630,9 +630,13 @@ macro_rules! execute_arrays {
             }
 
             148 => {
-                let (a, _, _) = decode_abc($instr);
+                let (a, _, c) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let vec = AelysVec::new_ints();
+                let vec = if c == aelys_bytecode::VEC_NEW_BYTES {
+                    AelysVec::new_bytes()
+                } else {
+                    AelysVec::new_ints()
+                };
                 $vm.frames[$current_frame_idx].ip = $ip;
                 match $vm.alloc_vec(vec) {
                     Ok(vec_ref) => {
@@ -1155,7 +1159,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(vec_ref, value);
+                        $vm.admit_element(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1209,7 +1213,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(vec_ref, value);
+                        $vm.admit_element(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1263,7 +1267,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
-                        $vm.admit_boxed_int(vec_ref, value);
+                        $vm.admit_element(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1315,7 +1319,7 @@ macro_rules! execute_arrays {
 
                 match container_len {
                     Some((true, len)) => {
-                        $vm.admit_boxed_int(vec_ref, value);
+                        $vm.admit_element(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1329,7 +1333,7 @@ macro_rules! execute_arrays {
                         $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     Some((false, len)) => {
-                        $vm.admit_boxed_int(vec_ref, value);
+                        $vm.admit_element(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -1553,9 +1557,10 @@ impl VM {
                 got: vector_value.type_name().to_string(),
             })
         })?;
-        let vector = match self.heap.get(crate::vm::GcRef::new(pointer)) {
+        let reference = crate::vm::GcRef::new(pointer);
+        let length = match self.heap.get(reference) {
             Some(object) => match &object.kind {
-                ObjectKind::Vec(vector) => vector.clone(),
+                ObjectKind::Vec(vector) => vector.len(),
                 _ => {
                     return Err(self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "vec slice",
@@ -1566,8 +1571,12 @@ impl VM {
             },
             None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
         };
-        let (start, end) = self.slice_bounds(range_value, vector.len())?;
-        let result = self.alloc_vec(vector.slice(start, end))?;
+        let (start, end) = self.slice_bounds(range_value, length)?;
+        let sliced = match self.heap.get(reference).map(|object| &object.kind) {
+            Some(ObjectKind::Vec(vector)) => vector.slice(start, end),
+            _ => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        let result = self.alloc_vec(sliced)?;
         Ok(Value::ptr(result.index()))
     }
 
