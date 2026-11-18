@@ -450,26 +450,12 @@ impl Compiler {
                 }
             };
 
-            let mut can_use_callglobal = true;
-            for i in 0..total_args {
-                let arg_reg = match arg_start
-                    .checked_add(u16::try_from(i).expect("register offset was range checked"))
-                {
-                    Some(r) => r,
-                    None => {
-                        can_use_callglobal = false;
-                        break;
-                    }
-                };
-                if (arg_reg as usize) >= self.register_pool.len()
-                    || self.register_pool[arg_reg as usize]
-                {
-                    can_use_callglobal = false;
-                    break;
-                }
-            }
-
-            if can_use_callglobal {
+            if call_window_available(
+                &self.register_pool,
+                self.next_register,
+                arg_start,
+                total_args,
+            ) {
                 for i in 0..total_args {
                     let arg_reg =
                         arg_start + u16::try_from(i).expect("register offset was range checked");
