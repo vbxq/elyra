@@ -91,6 +91,7 @@ let mut pl_tb: Vec<int> = vec![65280; 41216]
 let mut num_planes = 0
 
 let mut ds_x1: Vec<int> = vec![0; 256]
+let mut ds_cx1: Vec<int> = vec![0; 256]
 let mut ds_x2: Vec<int> = vec![0; 256]
 let mut ds_scale1: Vec<int> = vec![0; 256]
 let mut ds_scale2: Vec<int> = vec![0; 256]
@@ -861,8 +862,11 @@ fn find_plane(height: int, pic: int, light: int) -> int {
         h = 0
         l = 0
     }
+    let ph = pl_height
+    let pp = pl_pic
+    let pli = pl_light
     for i in 0..num_planes {
-        if pl_height[i] == h and pl_pic[i] == pic and pl_light[i] == l { return i }
+        if ph[i] == h and pp[i] == pic and pli[i] == l { return i }
     }
     if num_planes >= 128 { return -1 }
     let p = num_planes
@@ -890,13 +894,14 @@ fn check_plane(p: int, start: int, stop: int) -> int {
         intrh = maxx
         unionh = stop
     }
-    let base = p * 322 + 1
-    let mut x = intrl
-    while x <= intrh {
-        if pl_tb[base + x] != 65280 { break }
-        x++
+    let tb = pl_tb
+    let mut i = p * 322 + 1 + intrl
+    let iend = p * 322 + 1 + intrh
+    while i <= iend {
+        if tb[i] != 65280 { break }
+        i++
     }
-    if x > intrh {
+    if i > iend {
         pl_minx[p] = unionl
         pl_maxx[p] = unionh
         return p
@@ -930,29 +935,6 @@ fn draw_column(mut out: Vec<int>, cmrow: Vec<int>, col: Vec<int>, x: int, yl: in
                 if frac >= hf { frac -= hf }
             }
         }
-    }
-}
-
-fn draw_masked_column(pic: Picture, c: int, x: int, topscreen0: int, yscale: int, basemid: int, iscale: int, cmrow: Vec<int>, ceilclip: int, floorclip_v: int) {
-    let posts = pic.posts
-    let col = pic.mcols[c]
-    let mut p = pic.colpost[c]
-    while posts[p] >= 0 {
-        let topdelta = posts[p]
-        let topscreen = topscreen0 + yscale * topdelta
-        let mut yl = (topscreen + 65535) >> 16
-        let mut yh = (topscreen + yscale * posts[p + 1] - 1) >> 16
-        if yh >= floorclip_v { yh = floorclip_v - 1 }
-        if yl <= ceilclip { yl = ceilclip + 1 }
-        if yl <= yh {
-            let data = posts[p + 2]
-            let mut frac = basemid - (topdelta << 16) + (yl - 100) * iscale
-            for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
-                fb[d] = cmrow[col[data + (frac >> 16)]]
-                frac += iscale
-            }
-        }
-        p += 3
     }
 }
 
@@ -1283,6 +1265,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
     st[RS_DS] = d + 1
     st[RS_OPEN] = lastop
     ds_x1[d] = start
+    ds_cx1[d] = if sil == 0 and masked_base == -1000000 { 1000000 } else { start }
     ds_x2[d] = stop
     ds_scale1[d] = scale1
     ds_scale2[d] = scale2
@@ -1748,6 +1731,10 @@ fn render_masked_seg(d: int, x1: int, x2: int) {
     let back = sg_back[si]
     let mid = sg_mid[si]
     let pic = tex_pics[mid]
+    let wm = pic.widthmask
+    let posts = pic.posts
+    let colpost = pic.colpost
+    let mcols = pic.mcols
     let mut lightnum = (rm_light[front] >> 4) + sg_light[si]
     if lightnum < 0 { lightnum = 0 }
     if lightnum > 15 { lightnum = 15 }
@@ -1768,16 +1755,41 @@ fn render_masked_seg(d: int, x1: int, x2: int) {
         texmid = texmid - viewz
     }
     texmid += sg_yoff[si]
+    let mut opn = openings
+    let slight = scalelight
+    let cmaps = cmap_rows
+    let mut out = fb
     for x in x1..=x2 {
-        let col = openings[mbase + x]
-        if col != 32767 {
+        let c = opn[mbase + x]
+        if c != 32767 {
             let mut index = yscale >> 12
             if index >= 48 { index = 47 }
-            let cmrow = cmap_rows[scalelight[lightrow + index]]
-            let topscreen = 6553600 - texmid.mul_shr(yscale, 16)
+            let cmrow = cmaps[slight[lightrow + index]]
+            let topscreen0 = 6553600 - texmid.mul_shr(yscale, 16)
             let iscale = 0xFFFFFFFF / yscale
-            draw_masked_column(pic, col & pic.widthmask, x, topscreen, yscale, texmid, iscale, cmrow, openings[tbase + x], openings[bbase + x])
-            openings[mbase + x] = 32767
+            let cclip = opn[tbase + x]
+            let fclip = opn[bbase + x]
+            let col = c & wm
+            let mc = mcols[col]
+            let mut p = colpost[col]
+            let mut topdelta = posts[p]
+            while topdelta >= 0 {
+                let topscreen = topscreen0 + yscale * topdelta
+                let mut yl = (topscreen + 65535) >> 16
+                let mut yh = (topscreen + yscale * posts[p + 1] - 1) >> 16
+                if yh >= fclip { yh = fclip - 1 }
+                if yl <= cclip { yl = cclip + 1 }
+                if yl <= yh {
+                    let mut f = texmid - (topdelta << 16) + (yl - 100) * iscale + (posts[p + 2] << 16)
+                    for q in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                        out[q] = cmrow[mc[f >> 16]]
+                        f += iscale
+                    }
+                }
+                p += 3
+                topdelta = posts[p]
+            }
+            opn[mbase + x] = 32767
         }
         yscale += sstep
     }
@@ -1786,15 +1798,21 @@ fn render_masked_seg(d: int, x1: int, x2: int) {
 fn draw_sprite(v: int) {
     let sx1 = vs_x1[v]
     let sx2 = vs_x2[v]
+    let mut cb = clipbot
+    let mut ct = cliptop
+    let opn = openings
     for x in sx1..=sx2 {
-        clipbot[x] = -2
-        cliptop[x] = -2
+        cb[x] = -2
+        ct[x] = -2
     }
+    let cx1 = ds_cx1
+    let dsx2 = ds_x2
+    let vscale = vs_scale[v]
     let mut d = rs[RS_DS] - 1
     while d >= 0 {
-        let dx1 = ds_x1[d]
-        let dx2 = ds_x2[d]
-        if dx1 > sx2 or dx2 < sx1 or (ds_sil[d] == 0 and ds_masked[d] == -1000000) {
+        let dx1 = cx1[d]
+        let dx2 = dsx2[d]
+        if dx1 > sx2 or dx2 < sx1 {
             d--
             continue
         }
@@ -1802,11 +1820,11 @@ fn draw_sprite(v: int) {
         let r2 = if dx2 > sx2 { sx2 } else { dx2 }
         let mut lowscale = ds_scale1[d]
         let mut scale = ds_scale2[d]
-        if ds_scale1[d] > ds_scale2[d] {
-            lowscale = ds_scale2[d]
+        if lowscale > scale {
+            lowscale = scale
             scale = ds_scale1[d]
         }
-        if scale < vs_scale[v] or (lowscale < vs_scale[v] and seg_side(vs_gx[v], vs_gy[v], ds_seg[d]) == 0) {
+        if scale < vscale or (lowscale < vscale and seg_side(vs_gx[v], vs_gy[v], ds_seg[d]) == 0) {
             if ds_masked[d] != -1000000 { render_masked_seg(d, r1, r2) }
             d--
             continue
@@ -1817,33 +1835,56 @@ fn draw_sprite(v: int) {
         if (sil & 1) != 0 {
             let b = ds_botclip[d]
             for x in r1..=r2 {
-                if clipbot[x] == -2 { clipbot[x] = openings[b + x] }
+                if cb[x] == -2 { cb[x] = opn[b + x] }
             }
         }
         if (sil & 2) != 0 {
             let t = ds_topclip[d]
             for x in r1..=r2 {
-                if cliptop[x] == -2 { cliptop[x] = openings[t + x] }
+                if ct[x] == -2 { ct[x] = opn[t + x] }
             }
         }
         d--
     }
-    for x in sx1..=sx2 {
-        if clipbot[x] == -2 { clipbot[x] = 200 }
-        if cliptop[x] == -2 { cliptop[x] = -1 }
-    }
     let pic = sprite_pics[vs_pic[v]]
-    let yscale = vs_scale[v]
+    let pw = pic.width
+    let posts = pic.posts
+    let colpost = pic.colpost
+    let mcols = pic.mcols
+    let yscale = vscale
     let texmid = vs_texturemid[v]
-    let topscreen = 6553600 - texmid.mul_shr(yscale, 16)
+    let topscreen0 = 6553600 - texmid.mul_shr(yscale, 16)
     let xiscale = vs_xiscale[v]
     let iscale = iabs(xiscale)
     let cmrow = cmap_rows[vs_cm[v]]
+    let mut out = fb
     let mut frac = vs_startfrac[v]
     for x in sx1..=sx2 {
+        let mut fclip = cb[x]
+        let mut cclip = ct[x]
+        if fclip == -2 { fclip = 200 }
+        if cclip == -2 { cclip = -1 }
         let col = frac >> 16
-        if col >= 0 and col < pic.width {
-            draw_masked_column(pic, col, x, topscreen, yscale, texmid, iscale, cmrow, cliptop[x], clipbot[x])
+        if col >= 0 and col < pw {
+            let mc = mcols[col]
+            let mut p = colpost[col]
+            let mut topdelta = posts[p]
+            while topdelta >= 0 {
+                let topscreen = topscreen0 + yscale * topdelta
+                let mut yl = (topscreen + 65535) >> 16
+                let mut yh = (topscreen + yscale * posts[p + 1] - 1) >> 16
+                if yh >= fclip { yh = fclip - 1 }
+                if yl <= cclip { yl = cclip + 1 }
+                if yl <= yh {
+                    let mut f = texmid - (topdelta << 16) + (yl - 100) * iscale + (posts[p + 2] << 16)
+                    for q in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                        out[q] = cmrow[mc[f >> 16]]
+                        f += iscale
+                    }
+                }
+                p += 3
+                topdelta = posts[p]
+            }
         }
         frac += xiscale
     }
