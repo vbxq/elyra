@@ -23,6 +23,7 @@ mod resources;
 mod roots;
 
 mod arithmetic;
+pub(crate) mod byte_vec;
 mod call_data;
 mod calls;
 mod clone;
@@ -50,7 +51,8 @@ pub use core::{MAX_FRAMES, MAX_REGISTERS, PreludeScope, StepResult, VM};
 pub use frame::CallFrame;
 pub use gc::GcPauseStats;
 pub use native::{
-    ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,
+    ByteParams, ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl,
+    build_native_vm_api,
 };
 pub use roots::HostRoot;
 pub use verifier::{verify_emitted_function, verify_function};

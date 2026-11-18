@@ -521,11 +521,14 @@ fn register_native_module(
                     )
                 };
                 let func_ref = vm
-                    .alloc_foreign_with_result(
+                    .alloc_foreign_with_signature(
                         &qualified_name,
                         export.arity,
                         func,
-                        export.signature.as_ref().map(|signature| signature.result),
+                        export
+                            .signature
+                            .as_ref()
+                            .map(|signature| (signature.params.as_slice(), signature.result)),
                     )
                     .map_err(|err| err.to_string())?;
                 vm.set_global(qualified_name, aelys_runtime::Value::ptr(func_ref.index()));

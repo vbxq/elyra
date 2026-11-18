@@ -1,8 +1,8 @@
 use crate::prelude::DISPLAY_TRAIT;
 use crate::types::InferType;
 
-const NATIVE_MODULES: [&str; 9] = [
-    "io", "convert", "sys", "time", "fs", "net", "math", "string", "bytes",
+const NATIVE_MODULES: [&str; 8] = [
+    "io", "convert", "sys", "time", "fs", "net", "math", "string",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +40,10 @@ fn option(inner: InferType) -> InferType {
 
 fn result(ok: InferType, err: InferType) -> InferType {
     InferType::Result(Box::new(ok), Box::new(err))
+}
+
+fn byte_vec() -> InferType {
+    InferType::Vec(Box::new(InferType::U8))
 }
 
 pub fn function_signature(path: &str) -> Option<InferType> {
@@ -193,24 +197,24 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             vec![InferType::I64],
             result(option(InferType::String), InferType::String),
         ),
-        ("fs", "read_bytes") => function_with(
+        ("fs", "read_chunk") => function_with(
             vec![InferType::I64, InferType::I64],
-            result(InferType::I64, InferType::String),
+            result(byte_vec(), InferType::String),
         ),
-        ("fs", "read_file_bytes") => function_with(
+        ("fs", "read_bytes") => function_with(
             vec![InferType::String],
-            result(InferType::I64, InferType::String),
+            result(byte_vec(), InferType::String),
         ),
-        ("fs", "write" | "write_bytes" | "write_line") => function_with(
+        ("fs", "write" | "write_line") => function_with(
             vec![InferType::I64, InferType::String],
             result(InferType::I64, InferType::String),
         ),
-        ("fs", "write_buffer") => function_with(
-            vec![InferType::I64, InferType::I64],
+        ("fs", "write_chunk") => function_with(
+            vec![InferType::I64, byte_vec()],
             result(InferType::I64, InferType::String),
         ),
-        ("fs", "write_file_bytes") => function_with(
-            vec![InferType::String, InferType::I64],
+        ("fs", "write_bytes") => function_with(
+            vec![InferType::String, byte_vec()],
             result(InferType::Unit, InferType::String),
         ),
         ("fs", "read_text") => function_with(
@@ -365,6 +369,7 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             vec![InferType::String],
             InferType::Vec(Box::new(InferType::I64)),
         ),
+        ("string", "to_bytes") => function_with(vec![InferType::String], byte_vec()),
         ("string", "from_char") => function_with(vec![InferType::Char], InferType::String),
         ("string", "join" | "concat") => function_with(
             vec![InferType::String, InferType::String],
@@ -388,89 +393,6 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             "string",
             "is_empty" | "is_whitespace" | "is_numeric" | "is_alphabetic" | "is_alphanumeric",
         ) => function_with(vec![InferType::String], InferType::Bool),
-
-        ("bytes", "alloc") => function_with(vec![InferType::I64], InferType::I64),
-        ("bytes", "from_string") => function_with(vec![InferType::String], InferType::I64),
-        ("bytes", "clone" | "size" | "free") => function_with(
-            vec![InferType::I64],
-            if name == "free" {
-                InferType::Unit
-            } else {
-                InferType::I64
-            },
-        ),
-        ("bytes", "resize") => function_with(vec![InferType::I64, InferType::I64], InferType::Unit),
-        ("bytes", "equals") => function_with(vec![InferType::I64, InferType::I64], InferType::Bool),
-        (
-            "bytes",
-            "read_u8" | "read_i8" | "read_u16" | "read_i16" | "read_u16_be" | "read_i16_be"
-            | "read_u32" | "read_i32" | "read_u32_be" | "read_i32_be" | "read_u64" | "read_i64"
-            | "read_u64_be" | "read_i64_be",
-        ) => function_with(vec![InferType::I64, InferType::I64], InferType::I64),
-        ("bytes", "read_f32" | "read_f64" | "read_f32_be" | "read_f64_be") => {
-            function_with(vec![InferType::I64, InferType::I64], InferType::F64)
-        }
-        ("bytes", "write_string") => function_with(
-            vec![InferType::I64, InferType::I64, InferType::String],
-            InferType::I64,
-        ),
-        ("bytes", "find") => function_with(
-            vec![
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-            ],
-            InferType::I64,
-        ),
-        ("bytes", "decode") => function_with(
-            vec![InferType::I64, InferType::I64, InferType::I64],
-            InferType::String,
-        ),
-        (
-            "bytes",
-            "write_u8" | "write_i8" | "write_u16" | "write_i16" | "write_u16_be" | "write_i16_be"
-            | "write_u32" | "write_i32" | "write_u32_be" | "write_i32_be" | "write_u64"
-            | "write_i64" | "write_u64_be" | "write_i64_be",
-        ) => function_with(
-            vec![InferType::I64, InferType::I64, InferType::I64],
-            InferType::Unit,
-        ),
-        ("bytes", "write_f32" | "write_f64" | "write_f32_be" | "write_f64_be") => function_with(
-            vec![InferType::I64, InferType::I64, InferType::Numeric],
-            InferType::Unit,
-        ),
-        ("bytes", "copy") => function_with(
-            vec![
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-            ],
-            InferType::Unit,
-        ),
-        ("bytes", "copy_from_vec" | "copy_to_vec") => function_with(
-            vec![
-                InferType::I64,
-                InferType::I64,
-                InferType::Vec(Box::new(InferType::I64)),
-            ],
-            result(InferType::Unit, InferType::String),
-        ),
-        ("bytes", "fill") => function_with(
-            vec![
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-                InferType::I64,
-            ],
-            InferType::Unit,
-        ),
-        ("bytes", "reverse" | "swap") => function_with(
-            vec![InferType::I64, InferType::I64, InferType::I64],
-            InferType::Unit,
-        ),
 
         _ => return None,
     };
@@ -538,5 +460,50 @@ pub fn constant_signature(path: &str) -> Option<InferType> {
         "PI" | "E" | "TAU" | "INF" | "NEG_INF" | "math::PI" | "math::E" | "math::TAU"
         | "math::INF" | "math::NEG_INF" => Some(InferType::F64),
         _ => None,
+    }
+}
+
+pub fn removed_bytes_replacement(name: &str) -> &'static str {
+    match name {
+        "alloc" => "write `let mut v: Vec<u8> = vec![0; n]`",
+        "free" => "drop the call: a `Vec<u8>` is reclaimed by the garbage collector",
+        "size" => "write `v.len()`",
+        "resize" => "write `v.resize(n, 0)`",
+        "clone" => "write `v.clone()`",
+        "equals" => "write `v == w`",
+        "read_u8" => "write `v[offset]` (a `u8`) or `v.read_u8(offset)` (an `int`)",
+        "write_u8" => "write `v[offset] = x` or `v.write_u8(offset, x)`",
+        "read_i8" => "write `v.read_i8(offset)`",
+        "write_i8" => "write `v.write_i8(offset, x)`",
+        "read_u16" | "read_i16" | "read_u32" | "read_i32" | "read_u64" | "read_i64"
+        | "read_f32" | "read_f64" => {
+            "call the little-endian method on the Vec<u8>: `v.read_u16_le(offset)` (likewise `read_i16_le`, `read_u32_le`, `read_i32_le`, `read_u64_le`, `read_i64_le`, `read_f32_le`, `read_f64_le`)"
+        }
+        "write_u16" | "write_i16" | "write_u32" | "write_i32" | "write_u64" | "write_i64"
+        | "write_f32" | "write_f64" => {
+            "call the little-endian method on the Vec<u8>: `v.write_u16_le(offset, x)` (likewise for i16, u32, i32, u64, i64, f32 and f64)"
+        }
+        name if name.starts_with("read_") => {
+            "call the method on the Vec<u8>: `v.read_u16_be(offset)`"
+        }
+        name if name.starts_with("write_") => {
+            "call the method on the Vec<u8>: `v.write_u16_be(offset, x)`"
+        }
+        "copy" => {
+            "write `v.copy_within(start, end, dest)` inside one Vec<u8>, or index both Vecs in a loop"
+        }
+        "copy_from_vec" | "copy_to_vec" => {
+            "keep the data in a `Vec<u8>` and pass it to the native as `&v`, or `&mut v` when it writes"
+        }
+        "fill" => "write `v.fill(x)`",
+        "from_string" => "write `s.to_bytes()`",
+        "decode" => "write `v[start..end].to_utf8()`, which is `None` for invalid UTF-8",
+        "write_string" => {
+            "append `s.to_bytes()` with `v.extend(...)`, or store its bytes with indexing"
+        }
+        "find" => "write `v.index_of(b)`",
+        "reverse" => "write `v.reverse()`",
+        "swap" => "write `v.swap(i, j)`",
+        _ => "see the `Vec<u8>` methods in the standard library documentation",
     }
 }

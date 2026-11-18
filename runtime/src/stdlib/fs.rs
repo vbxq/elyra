@@ -4,9 +4,8 @@ use crate::stdlib::helpers::{
     get_handle, get_int, get_string, make_int_checked, make_string, option_some, result_err,
     result_ok,
 };
-use crate::stdlib::{
-    ByteBuffer, FileMode, FileResource, Resource, StdModuleExports, register_native,
-};
+use crate::stdlib::{FileMode, FileResource, Resource, StdModuleExports, register_native};
+use crate::vm::byte_vec::{bytes_vec, sequence_bytes};
 use crate::vm::{VM, Value};
 use aelys_common::error::RuntimeError;
 use std::fs::{self, OpenOptions};
@@ -17,6 +16,7 @@ use std::path::Path;
 use std::os::unix::fs::OpenOptionsExt;
 
 const MAX_BUF: usize = 16 * 1024 * 1024; // 16MB should be enough for anyone :)
+const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
 
 pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     let mut exports = Vec::new();
@@ -35,13 +35,11 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg!("close", 1, native_close);
     reg!("read", 1, native_read);
     reg!("read_line", 1, native_read_line);
-    reg!("read_bytes", 2, native_read_bytes);
+    reg!("read_chunk", 2, native_read_chunk);
     reg!("read_all", 1, native_read_all);
-    reg!("read_file_bytes", 1, native_read_file_bytes);
     reg!("write", 2, native_write);
-    reg!("write_bytes", 2, native_write_bytes);
     reg!("write_line", 2, native_write_line);
-    reg!("write_buffer", 2, native_write_buffer);
+    reg!("write_chunk", 2, native_write_chunk);
 
     // stat-like queries
     reg!("exists", 1, native_exists);
@@ -64,7 +62,8 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg!("read_text", 1, native_read_text);
     reg!("write_text", 2, native_write_text);
     reg!("append_text", 2, native_append_text);
-    reg!("write_file_bytes", 2, native_write_file_bytes);
+    reg!("read_bytes", 1, native_read_bytes);
+    reg!("write_bytes", 2, native_write_bytes);
 
     // path manipulation
     reg!("basename", 1, native_basename);
@@ -236,15 +235,20 @@ fn native_read_line(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     fs_fail(vm, "fs.read_line", "invalid handle")
 }
 
-fn native_read_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let h = get_handle(vm, args[0], "fs.read_bytes")?;
-    let n = get_int(vm, args[1], "fs.read_bytes")?;
+fn new_byte_vec(vm: &mut VM, bytes: &[u8]) -> Result<Value, RuntimeError> {
+    let reference = vm.alloc_vec(bytes_vec(bytes))?;
+    Ok(Value::ptr(reference.index()))
+}
+
+fn native_read_chunk(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let h = get_handle(vm, args[0], "fs.read_chunk")?;
+    let n = get_int(vm, args[1], "fs.read_chunk")?;
 
     if n < 0 {
-        return fs_fail(vm, "fs.read_bytes", "count must be non-negative");
+        return fs_fail(vm, "fs.read_chunk", "count must be non-negative");
     }
     if n as usize > MAX_BUF {
-        return fs_fail(vm, "fs.read_bytes", format!("count > {MAX_BUF} max"));
+        return fs_fail(vm, "fs.read_chunk", format!("count > {MAX_BUF} max"));
     }
 
     if let Some(Resource::File(f)) = vm.get_resource_mut(h) {
@@ -252,30 +256,30 @@ fn native_read_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
             let mut buf = Vec::with_capacity(n as usize);
             return match reader.by_ref().take(n as u64).read_to_end(&mut buf) {
                 Ok(_) => {
-                    let handle = vm.store_resource(Resource::ByteBuffer(ByteBuffer { data: buf }));
-                    fs_ok(vm, Value::int(handle as i64))
+                    let value = new_byte_vec(vm, &buf)?;
+                    fs_ok(vm, value)
                 }
-                Err(e) => fs_fail(vm, "fs.read_bytes", format!("read: {e}")),
+                Err(e) => fs_fail(vm, "fs.read_chunk", format!("read: {e}")),
             };
         }
-        return fs_fail(vm, "fs.read_bytes", "not opened for reading");
+        return fs_fail(vm, "fs.read_chunk", "not opened for reading");
     }
-    fs_fail(vm, "fs.read_bytes", "invalid handle")
+    fs_fail(vm, "fs.read_chunk", "invalid handle")
 }
 
-fn native_read_file_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let path = get_string(vm, args[0], "fs.read_file_bytes")?.to_string();
+fn native_read_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let path = get_string(vm, args[0], "fs.read_bytes")?.to_string();
     match read_whole_file(&path) {
         Ok(data) => {
-            let handle = vm.store_resource(Resource::ByteBuffer(ByteBuffer { data }));
-            fs_ok(vm, Value::int(handle as i64))
+            let value = new_byte_vec(vm, &data)?;
+            fs_ok(vm, value)
         }
-        Err(e) => fs_fail(vm, "fs.read_file_bytes", format!("'{path}': {e}")),
+        Err(e) => fs_fail(vm, "fs.read_bytes", format!("'{path}': {e}")),
     }
 }
 
 fn read_whole_file(path: &str) -> std::io::Result<Vec<u8>> {
-    let limit = crate::stdlib::bytes::MAX_ALLOC;
+    let limit = MAX_FILE_BYTES;
     let file = fs::File::open(path)?;
     let expected = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
     let mut data = Vec::new();
@@ -285,7 +289,7 @@ fn read_whole_file(path: &str) -> std::io::Result<Vec<u8>> {
     if data.len() > limit {
         return Err(std::io::Error::new(
             std::io::ErrorKind::FileTooLarge,
-            format!("larger than the {limit}-byte limit of a byte buffer"),
+            format!("larger than the {limit}-byte limit of fs::read_bytes"),
         ));
     }
     Ok(data)
@@ -314,38 +318,34 @@ fn native_write(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     fs_fail(vm, "fs.write", "invalid handle")
 }
 
-fn native_write_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    native_write(vm, args) // same thing, we're all strings anyway
+fn byte_vec_arg(vm: &VM, value: Value, op: &'static str) -> Result<Vec<u8>, RuntimeError> {
+    sequence_bytes(vm, value).ok_or_else(|| {
+        vm.runtime_error(aelys_common::error::RuntimeErrorKind::TypeError {
+            operation: op,
+            expected: "Vec<u8>",
+            got: vm.value_type_name(value).to_string(),
+        })
+    })
 }
 
-fn buffer_bytes(vm: &VM, handle: usize) -> Option<Vec<u8>> {
-    match vm.get_resource(handle) {
-        Some(Resource::ByteBuffer(buffer)) => Some(buffer.data.clone()),
-        _ => None,
-    }
-}
-
-fn native_write_buffer(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let h = get_handle(vm, args[0], "fs.write_buffer")?;
-    let b = get_handle(vm, args[1], "fs.write_buffer")?;
-    let Some(data) = buffer_bytes(vm, b) else {
-        return fs_fail(vm, "fs.write_buffer", "invalid buffer handle");
-    };
+fn native_write_chunk(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let h = get_handle(vm, args[0], "fs.write_chunk")?;
+    let data = byte_vec_arg(vm, args[1], "fs.write_chunk")?;
 
     if let Some(Resource::File(f)) = vm.get_resource_mut(h) {
         if let Some(w) = f.writer.as_mut() {
             return match w.write_all(&data) {
                 Ok(_) => {
                     let _ = w.flush();
-                    let written = make_int_checked(vm, data.len() as i64, "fs.write_buffer")?;
+                    let written = make_int_checked(vm, data.len() as i64, "fs.write_chunk")?;
                     fs_ok(vm, written)
                 }
-                Err(e) => fs_fail(vm, "fs.write_buffer", format!("write: {e}")),
+                Err(e) => fs_fail(vm, "fs.write_chunk", format!("write: {e}")),
             };
         }
-        return fs_fail(vm, "fs.write_buffer", "not opened for writing");
+        return fs_fail(vm, "fs.write_chunk", "not opened for writing");
     }
-    fs_fail(vm, "fs.write_buffer", "invalid handle")
+    fs_fail(vm, "fs.write_chunk", "invalid handle")
 }
 
 fn native_write_line(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -500,15 +500,12 @@ fn native_write_text(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     }
 }
 
-fn native_write_file_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let p = get_string(vm, args[0], "fs.write_file_bytes")?.to_string();
-    let b = get_handle(vm, args[1], "fs.write_file_bytes")?;
-    let Some(data) = buffer_bytes(vm, b) else {
-        return fs_fail(vm, "fs.write_file_bytes", "invalid buffer handle");
-    };
+fn native_write_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let p = get_string(vm, args[0], "fs.write_bytes")?.to_string();
+    let data = byte_vec_arg(vm, args[1], "fs.write_bytes")?;
     match fs::write(&p, &data) {
         Ok(()) => fs_ok(vm, Value::unit()),
-        Err(e) => fs_fail(vm, "fs.write_file_bytes", format!("'{}': {e}", p)),
+        Err(e) => fs_fail(vm, "fs.write_bytes", format!("'{}': {e}", p)),
     }
 }
 

@@ -1,4 +1,3 @@
-pub mod bytes;
 pub mod convert;
 pub mod fs;
 pub mod io;
@@ -22,7 +21,6 @@ pub enum Resource {
     TcpListener(TcpListener),
     UdpSocket(UdpSocketResource),
     Timer(Instant),
-    ByteBuffer(ByteBuffer),
 }
 
 #[derive(Debug)]
@@ -53,11 +51,6 @@ pub struct UdpSocketResource {
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug)]
-pub struct ByteBuffer {
-    pub data: Vec<u8>,
-}
-
 pub const STD_MODULES: &[&str] = &[
     "std.math",
     "std.io",
@@ -67,8 +60,16 @@ pub const STD_MODULES: &[&str] = &[
     "std.string",
     "std.convert",
     "std.sys",
-    "std.bytes",
 ];
+
+pub fn removed_std_module(path: &[String]) -> Option<&'static str> {
+    match path {
+        [std, module, ..] if std == "std" && module == "bytes" => Some(
+            "binary data is a `Vec<u8>` with methods such as `v.read_u16_le(offset)`, `v.write_u32_be(offset, x)` and `v.to_utf8()`; `s.to_bytes()` encodes a string, `fs::read_bytes(path)` and `fs::write_bytes(path, &v)` read and write files, and natives take `&v` or `&mut v`",
+        ),
+        _ => None,
+    }
+}
 
 pub fn is_std_module(path: &[String]) -> bool {
     if path.is_empty() || path[0] != "std" {
@@ -109,7 +110,6 @@ pub fn register_std_module(
         "string" => string::register(vm),
         "convert" => convert::register(vm),
         "sys" => sys::register(vm),
-        "bytes" => bytes::register(vm),
         _ => Err(
             vm.runtime_error(RuntimeErrorKind::UndefinedVariable(format!(
                 "std.{}",

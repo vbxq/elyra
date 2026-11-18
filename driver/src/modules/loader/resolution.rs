@@ -22,6 +22,17 @@ impl ModuleLoader {
             )));
         }
 
+        if let Some(replacement) = stdlib::removed_std_module(&needs.path) {
+            return Err(AelysError::Compile(CompileError::new(
+                CompileErrorKind::RemovedStdModule {
+                    module: needs.path.join("::"),
+                    replacement,
+                },
+                needs.span,
+                self.source.clone(),
+            )));
+        }
+
         if stdlib::is_std_module(&needs.path) {
             return Ok(());
         }

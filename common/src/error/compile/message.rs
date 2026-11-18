@@ -123,6 +123,10 @@ impl CompileErrorKind {
                 "standard library module '{}' is not yet implemented\n   = note: standard library will be available in a future version",
                 module
             ),
+            Self::RemovedStdModule {
+                module,
+                replacement,
+            } => format!("'{module}' was removed: {replacement}"),
             Self::SymbolNotFound { symbol, module } => {
                 format!("symbol '{}' not found in module '{}'", symbol, module)
             }

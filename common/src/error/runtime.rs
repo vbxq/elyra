@@ -103,6 +103,17 @@ pub enum RuntimeErrorKind {
         value: i64,
     },
     VecChangedDuringSort,
+    ByteRangeOutOfBounds {
+        operation: &'static str,
+        offset: i64,
+        width: usize,
+        length: usize,
+    },
+    ByteValueOutOfRange {
+        operation: &'static str,
+        value: i128,
+        target: &'static str,
+    },
 }
 
 pub const PANIC_EXIT_CODE: i32 = 101;
@@ -238,6 +249,20 @@ impl RuntimeErrorKind {
             Self::VecChangedDuringSort => {
                 "vector changed length while sort_by was running its comparator".to_string()
             }
+            Self::ByteRangeOutOfBounds {
+                operation,
+                offset,
+                width,
+                length,
+            } => format!(
+                "{operation}: bytes {offset}..{} are out of bounds for length {length}",
+                i128::from(*offset) + *width as i128
+            ),
+            Self::ByteValueOutOfRange {
+                operation,
+                value,
+                target,
+            } => format!("{operation}: value {value} does not fit in {target}"),
         }
     }
 }

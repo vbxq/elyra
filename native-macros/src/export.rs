@@ -23,13 +23,20 @@ pub enum ExportType {
     ResultStringString,
     ResultUnitString,
     Bytes,
+    BytesMut,
 }
 
 impl ExportType {
     fn is_parameter(self) -> bool {
         matches!(
             self,
-            Self::Int | Self::Float | Self::Bool | Self::String | Self::Unit | Self::Bytes
+            Self::Int
+                | Self::Float
+                | Self::Bool
+                | Self::String
+                | Self::Unit
+                | Self::Bytes
+                | Self::BytesMut
         )
     }
 
@@ -51,6 +58,7 @@ impl ExportType {
             Self::ResultStringString => quote! { ResultStringString },
             Self::ResultUnitString => quote! { ResultUnitString },
             Self::Bytes => quote! { Bytes },
+            Self::BytesMut => quote! { BytesMut },
         };
         quote! { ::aelys_native::AelysNativeType::#variant as u8 }
     }
@@ -227,7 +235,7 @@ fn parse_export_args(func: &ItemFn) -> syn::Result<ExportArgs> {
             } else if meta.path.is_ident("result") {
                 let expr: syn::Expr = meta.value()?.parse()?;
                 let result = named_export_type(&expr)?;
-                if matches!(result, ExportType::Bytes) {
+                if matches!(result, ExportType::Bytes | ExportType::BytesMut) {
                     return Err(syn::Error::new(
                         expr.span(),
                         "byte buffers are valid only as function parameters",
@@ -261,6 +269,7 @@ fn named_export_type(expr: &syn::Expr) -> syn::Result<ExportType> {
         "String" => ExportType::String,
         "Unit" => ExportType::Unit,
         "Bytes" => ExportType::Bytes,
+        "BytesMut" => ExportType::BytesMut,
         "OptionInt" => ExportType::OptionInt,
         "OptionFloat" => ExportType::OptionFloat,
         "OptionBool" => ExportType::OptionBool,
@@ -426,7 +435,7 @@ fn generate_extraction(
             quote! {
                 let #name: &mut [u8] = __aelys_ctx.borrow_bytes(unsafe { *args.add(#idx) })?;
             },
-            ExportType::Bytes,
+            ExportType::BytesMut,
         ),
         "&[u8]" => (
             quote! {

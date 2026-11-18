@@ -48,6 +48,7 @@ impl CompileErrorKind {
             Self::CircularDependency { .. } => 402,
             Self::SymbolNotPublic { .. } => 403,
             Self::StdlibNotAvailable { .. } => 404,
+            Self::RemovedStdModule { .. } => 480,
             Self::SymbolNotFound { .. } => 405,
             Self::InvalidNativeModule { .. } => 406,
             Self::NativeChecksumMismatch { .. } => 408,
