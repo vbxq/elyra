@@ -30,15 +30,7 @@ impl TypeInference {
 
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
         let callee_position = std::mem::take(&mut self.callee_position);
-        if !matches!(
-            expr.kind,
-            ExprKind::StructLiteral { .. }
-                | ExprKind::EnumLiteral { .. }
-                | ExprKind::GenericEnumLiteral { .. }
-                | ExprKind::Call { .. }
-        ) {
-            self.nominal_expectation = None;
-        }
+        self.drop_unused_expectation(expr);
         self.depth += 1;
         if self.depth > super::MAX_INFERENCE_DEPTH {
             self.errors.push(TypeError::recursion_limit(expr.span));
@@ -247,6 +239,20 @@ impl TypeInference {
         } else if literal_shaped(right) && matches!(left.ty, InferType::Var(_)) {
             let target = left.ty.clone();
             self.defer_int_literal(right, target);
+        }
+    }
+
+    // kept out of infer_expr: its debug frame bounds the nesting the depth limit test reaches
+    #[inline(never)]
+    fn drop_unused_expectation(&mut self, expr: &Expr) {
+        if !matches!(
+            expr.kind,
+            ExprKind::StructLiteral { .. }
+                | ExprKind::EnumLiteral { .. }
+                | ExprKind::GenericEnumLiteral { .. }
+                | ExprKind::Call { .. }
+        ) {
+            self.nominal_expectation = None;
         }
     }
 
