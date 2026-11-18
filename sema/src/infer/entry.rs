@@ -1614,6 +1614,12 @@ impl TypeInference {
     pub fn infer_program_full_with_native_signatures_in_module(
         inputs: InferenceInputs,
     ) -> Result<InferenceResult, Vec<crate::constraint::TypeError>> {
+        aelys_common::stack::with_deep_stack(move || Self::infer_inputs(inputs))
+    }
+
+    fn infer_inputs(
+        inputs: InferenceInputs,
+    ) -> Result<InferenceResult, Vec<crate::constraint::TypeError>> {
         let InferenceInputs {
             stmts,
             source,

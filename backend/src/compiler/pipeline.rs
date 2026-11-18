@@ -8,11 +8,17 @@ use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
 use aelys_syntax::Source;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 impl Compiler {
     pub fn compile_typed(
+        self,
+        program: &TypedProgram,
+    ) -> Result<(Function, HashMap<String, bool>)> {
+        aelys_common::stack::with_deep_stack(move || self.compile_typed_program(program))
+    }
+
+    fn compile_typed_program(
         mut self,
         program: &TypedProgram,
     ) -> Result<(Function, HashMap<String, bool>)> {
@@ -58,7 +64,7 @@ impl Compiler {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| poisoned_schema_error(&self.source))?;
-        self.struct_schemas = std::rc::Rc::new(struct_schemas);
+        self.struct_schemas = Arc::new(struct_schemas);
         self.current.struct_schemas = self.struct_schemas.as_ref().clone();
         let enum_schemas = program
             .type_table
@@ -137,7 +143,7 @@ impl Compiler {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| poisoned_schema_error(&self.source))?;
-        self.enum_schemas = std::rc::Rc::new(enum_schemas);
+        self.enum_schemas = Arc::new(enum_schemas);
         self.current.enum_schemas = self.enum_schemas.as_ref().clone();
         for stmt in &program.stmts {
             match &stmt.kind {
@@ -476,9 +482,9 @@ impl Compiler {
                 let mut native_globals = self.known_native_globals.as_ref().clone();
                 native_globals.extend(scope.known_native_globals);
                 (
-                    std::mem::replace(&mut self.module_aliases, Rc::new(scope.module_aliases)),
-                    std::mem::replace(&mut self.symbol_origins, Rc::new(scope.symbol_origins)),
-                    std::mem::replace(&mut self.known_native_globals, Rc::new(native_globals)),
+                    std::mem::replace(&mut self.module_aliases, Arc::new(scope.module_aliases)),
+                    std::mem::replace(&mut self.symbol_origins, Arc::new(scope.symbol_origins)),
+                    std::mem::replace(&mut self.known_native_globals, Arc::new(native_globals)),
                 )
             });
         DefinitionRestore { source, scope }
@@ -497,9 +503,9 @@ impl Compiler {
 }
 
 type ScopeRestore = (
-    Rc<std::collections::HashSet<String>>,
-    Rc<HashMap<String, String>>,
-    Rc<std::collections::HashSet<String>>,
+    Arc<std::collections::HashSet<String>>,
+    Arc<HashMap<String, String>>,
+    Arc<std::collections::HashSet<String>>,
 );
 
 #[derive(Default)]

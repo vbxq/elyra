@@ -58,7 +58,11 @@ impl Parser {
         }
     }
 
-    pub fn parse(mut self) -> Result<Vec<Stmt>> {
+    pub fn parse(self) -> Result<Vec<Stmt>> {
+        aelys_common::stack::with_deep_stack(move || self.parse_statements())
+    }
+
+    fn parse_statements(mut self) -> Result<Vec<Stmt>> {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {

@@ -262,6 +262,10 @@ impl Parser {
     }
 
     pub(crate) fn parse_pattern(&mut self) -> Result<Pattern> {
+        self.nested(Self::parse_pattern_alternatives)
+    }
+
+    fn parse_pattern_alternatives(&mut self) -> Result<Pattern> {
         let first = self.parse_pattern_atom()?;
         if !self.check(&TokenKind::Pipe) {
             return Ok(first);
