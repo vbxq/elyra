@@ -30,7 +30,6 @@ impl Lexer {
             "pub" => TokenKind::Pub,
             "needs" => TokenKind::Needs,
             "as" => TokenKind::As,
-            "from" => TokenKind::From,
             "for" => TokenKind::For,
             "in" => TokenKind::In,
             "struct" => TokenKind::Struct,

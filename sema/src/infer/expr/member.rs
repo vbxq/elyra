@@ -1240,11 +1240,19 @@ impl TypeInference {
                         });
                         InferType::Poison
                     } else {
-                        self.errors.push(TypeError {
-                            kind: TypeErrorKind::UnknownField {
+                        let kind = if callee_position {
+                            TypeErrorKind::UnknownMethod {
+                                structure: name.clone(),
+                                method: member.to_string(),
+                            }
+                        } else {
+                            TypeErrorKind::UnknownField {
                                 structure: name.clone(),
                                 field: member.to_string(),
-                            },
+                            }
+                        };
+                        self.errors.push(TypeError {
+                            kind,
                             span: _span,
                             reason: ConstraintReason::Other("struct field lookup".to_string()),
                         });

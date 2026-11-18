@@ -4,7 +4,7 @@ mod binary;
 mod call;
 pub(crate) use call::user_method_receiver;
 mod collections;
-mod if_expr;
+pub(super) mod if_expr;
 mod lambda;
 pub(crate) mod member;
 mod primary;

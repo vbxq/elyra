@@ -26,6 +26,39 @@ impl Compiler {
         }
     }
 
+    // a closure compiled later in an enclosing loop body may already hold an open upvalue here
+    pub(crate) fn close_upvalues_before_return(&mut self, span: aelys_syntax::Span) {
+        let loops = &self.loop_stack;
+        let lowest = self
+            .locals
+            .iter()
+            .filter(|local| {
+                local.is_captured
+                    || loops
+                        .iter()
+                        .any(|context| context.captured_names.contains(&local.name))
+            })
+            .map(|local| local.register)
+            .min();
+        if let Some(register) = lowest {
+            self.emit_a(OpCode::CloseUpvals, register, 0, 0, span);
+        }
+    }
+
+    pub(crate) fn end_function_scope(&mut self) {
+        self.scope_depth = self.scope_depth.saturating_sub(1);
+        if let Some(scope) = self.scopes.pop() {
+            let released: Vec<_> = self
+                .locals
+                .drain(scope.start..)
+                .map(|local| local.register)
+                .collect();
+            for register in released {
+                self.free_register(register);
+            }
+        }
+    }
+
     // End scope: close upvalues for captured variables, free registers.
     // Note: we only emit CloseUpvals if something was actually captured.
     // Earlier versions emitted it unconditionally which was wasteful

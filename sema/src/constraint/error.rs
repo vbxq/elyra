@@ -283,6 +283,10 @@ pub enum TypeErrorKind {
         structure: String,
         field: String,
     },
+    UnknownMethod {
+        structure: String,
+        method: String,
+    },
     MissingField {
         structure: String,
         field: String,
@@ -1003,6 +1007,9 @@ impl TypeError {
             ),
             TypeErrorKind::UnknownField { structure, field } => {
                 write!(f, "unknown field '{}' on struct {}", field, structure)
+            }
+            TypeErrorKind::UnknownMethod { structure, method } => {
+                write!(f, "unknown method '{}' on struct {}", method, structure)
             }
             TypeErrorKind::MissingField { structure, field } => {
                 write!(f, "missing field '{}' in struct {}", field, structure)
@@ -2021,7 +2028,7 @@ impl TypeErrorKind {
             Self::UndefinedFunction { .. } => 362,
             Self::AmbiguousImport { .. } => 445,
             Self::AssignToImmutableImport { .. } => 446,
-            Self::UnknownField { .. } => 363,
+            Self::UnknownField { .. } | Self::UnknownMethod { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,
             Self::InvalidMapKey { .. } => 470,

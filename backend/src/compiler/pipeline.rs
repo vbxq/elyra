@@ -207,9 +207,11 @@ impl Compiler {
             if Compiler::typed_stmt_yields_value(last_stmt) && !stmt_ends_in_assignment(last_stmt) {
                 let result_reg = self.alloc_register()?;
                 self.compile_typed_stmt_value(last_stmt, result_reg)?;
+                self.close_upvalues_before_return(last_stmt.span);
                 self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
             } else {
                 self.compile_typed_stmt(last_stmt)?;
+                self.close_upvalues_before_return(last_stmt.span);
                 self.emit_return0(last_stmt.span);
             }
             self.leave_definition_module(restore_last);

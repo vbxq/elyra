@@ -1,0 +1,168 @@
+needs items
+
+enum InvError {
+    NotFound(string),
+    Insufficient(string, int, int),
+    Invalid(string),
+}
+
+impl Display for InvError {
+    fn to_display(self) -> string {
+        match self {
+            InvError::NotFound(n) => "no such item: {n}",
+            InvError::Insufficient(n, have, want) => "not enough {n}: have {have}, want {want}",
+            InvError::Invalid(s) => "invalid command: {s}",
+        }
+    }
+}
+
+struct Order { item: string, qty: int, unit: int }
+
+impl Valued for Order {
+    fn value(self) -> int { self.qty * self.unit }
+}
+
+struct Inventory { slots: Map<string, Item>, log: Vec<string>, orders: Vec<Order> }
+
+impl Inventory {
+    fn new() -> Inventory { Inventory { slots: Map::new(), log: vec![], orders: vec![] } }
+
+    fn add(mut self, it: Item) {
+        if self.slots.contains_key(it.name) {
+            self.slots[it.name].qty += it.qty
+        } else {
+            self.slots[it.name] = it
+        }
+        self.log.push("add {it.name} x{it.qty}")
+    }
+
+    fn take(mut self, name: string, n: int) -> Result<int, InvError> {
+        if not self.slots.contains_key(name) { return Err(InvError::NotFound(name)) }
+        let have = self.slots[name].qty
+        if have < n { return Err(InvError::Insufficient(name, have, n)) }
+        self.slots[name].qty -= n
+        let unit = self.slots[name].price
+        self.orders.push(Order { item: name, qty: n, unit })
+        if self.slots[name].qty == 0 {
+            let _ = self.slots.remove(name)
+        }
+        self.log.push("take {name} x{n}")
+        Ok(have - n)
+    }
+
+    fn total(self) -> int {
+        let mut t = 0
+        for k in self.slots.keys() { t += self.slots[k].value() }
+        t
+    }
+
+    fn by_category(self) -> Map<string, int> {
+        let mut m: Map<string, int> = Map::new()
+        for k in self.slots.keys() {
+            let it = self.slots[k]
+            let c = cat_name(it.cat)
+            if m.contains_key(c) { m[c] += it.qty } else { m[c] = it.qty }
+        }
+        m
+    }
+}
+
+fn parse_cat(s: string) -> Result<Category, InvError> {
+    match s {
+        "tool" => Ok(Category::Tool),
+        "food" => Ok(Category::Food),
+        "gem" => Ok(Category::Gem),
+        _ => Err(InvError::Invalid("category {s}")),
+    }
+}
+
+fn parse_num(s: string) -> Result<int, InvError> {
+    match convert::parse_int(s) {
+        Some(n) => Ok(n),
+        None => Err(InvError::Invalid("number {s}")),
+    }
+}
+
+fn run(mut inv: Inventory, line: string) -> Result<string, InvError> {
+    let parts = line.split(" ")
+    if parts.is_empty() { return Err(InvError::Invalid(line)) }
+    let cmd = parts[0]
+    if cmd == "add" {
+        if parts.len() != 5 { return Err(InvError::Invalid(line)) }
+        let cat = parse_cat(parts[2])?
+        let qty = parse_num(parts[3])?
+        let price = parse_num(parts[4])?
+        inv.add(make(parts[1], cat, qty, price))
+        return Ok("ok")
+    }
+    if cmd == "take" {
+        if parts.len() != 3 { return Err(InvError::Invalid(line)) }
+        let n = parse_num(parts[2])?
+        let left = inv.take(parts[1], n)?
+        return Ok("left {left}")
+    }
+    if cmd == "total" {
+        return Ok("total {inv.total()}")
+    }
+    Err(InvError::Invalid(line))
+}
+
+let script = vec![
+    "add hammer tool 3 12",
+    "add apple food 10 2",
+    "add ruby gem 2 150",
+    "add apple food 5 2",
+    "take apple 4",
+    "take ruby 3",
+    "take pear 1",
+    "add saw tool x 9",
+    "add opal stone 1 1",
+    "take hammer 3",
+    "total",
+    "add saw tool 2 30",
+    "add bread food 4 3",
+    "frobnicate",
+    "take apple 11",
+    "total",
+]
+
+let mut inv = Inventory::new()
+let mut errors = 0
+let mut n = 0
+for line in script {
+    n += 1
+    match run(inv, line) {
+        Ok(msg) => println("{n}: {msg}"),
+        Err(e) => {
+            errors += 1
+            println("{n}: error: {e}")
+        }
+    }
+}
+
+println("errors: {errors}")
+println("created: {created}")
+println("by category: {inv.by_category()}")
+
+let mut names = inv.slots.keys()
+names.sort()
+println("items: {names}")
+
+let mut stock: Vec<Item> = vec![]
+for k in inv.slots.keys() { stock.push(inv.slots[k]) }
+stock.sort_by(fn(a: Item, b: Item) -> int { b.value() - a.value() })
+for it in stock {
+    println("{it.name} [{cat_name(it.cat)}] {it.qty} @ {it.price} -> {it.label()}")
+}
+
+match largest(stock) {
+    Some(it) => println("largest item: {it.name}"),
+    None => println("largest item: none"),
+}
+match largest(inv.orders) {
+    Some(o) => println("largest order: {o.item} {o.value()}"),
+    None => println("largest order: none"),
+}
+println("orders total: {sum_values(inv.orders)}")
+println("stock total: {sum_values(stock)}")
+println("log: {inv.log.len()} entries, last = {inv.log[inv.log.len() - 1]}")

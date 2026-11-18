@@ -21,7 +21,7 @@ pub(super) fn compile_typed_body(
 
     if func.body.is_empty() {
         nested_compiler.emit_a(OpCode::Return0, 0, 0, 0, func.span);
-        nested_compiler.end_scope();
+        nested_compiler.end_function_scope();
         return Ok(());
     }
 
@@ -45,12 +45,15 @@ pub(super) fn compile_typed_body(
         None
     };
 
+    let ends_in_return = matches!(last_stmt.kind, aelys_sema::TypedStmtKind::Return(_));
     if let Some(result_reg) = implicit_return_reg {
+        nested_compiler.close_upvalues_before_return(func.span);
         nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, func.span);
-    } else {
+    } else if !ends_in_return {
+        nested_compiler.close_upvalues_before_return(func.span);
         nested_compiler.emit_a(OpCode::Return0, 0, 0, 0, func.span);
     }
 
-    nested_compiler.end_scope();
+    nested_compiler.end_function_scope();
     Ok(())
 }

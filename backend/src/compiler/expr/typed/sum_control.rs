@@ -106,15 +106,7 @@ impl Compiler {
     }
 
     fn emit_return_from_try(&mut self, register: u16, span: Span) {
-        if let Some(from_reg) = self
-            .locals
-            .iter()
-            .filter(|local| local.is_captured)
-            .map(|local| local.register)
-            .min()
-        {
-            self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
-        }
+        self.close_upvalues_before_return(span);
         self.emit_a(OpCode::Return, register, 0, 0, span);
     }
 

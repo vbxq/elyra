@@ -109,6 +109,55 @@ pub(crate) fn settled_branch_type(then_ty: &InferType, else_ty: &InferType) -> O
             Some(other.clone())
         }
         (left, right) if left == right && left.is_concrete() => Some(left.clone()),
+        (left, right) if left.is_concrete() && fits_open(right, left) => Some(left.clone()),
+        (left, right) if right.is_concrete() && fits_open(left, right) => Some(right.clone()),
         _ => None,
+    }
+}
+
+pub(crate) fn settled_arm_type(arms: &[InferType]) -> Option<InferType> {
+    let settled = arms
+        .iter()
+        .find(|ty| ty.is_concrete() && !matches!(ty, InferType::Never))?;
+    arms.iter()
+        .all(|ty| matches!(ty, InferType::Never) || fits_open(ty, settled))
+        .then(|| settled.clone())
+}
+
+fn fits_open(open: &InferType, concrete: &InferType) -> bool {
+    match (open, concrete) {
+        (InferType::Var(_), _) => true,
+        (InferType::Option(open), InferType::Option(concrete))
+        | (InferType::Vec(open), InferType::Vec(concrete))
+        | (InferType::Array(open), InferType::Array(concrete)) => fits_open(open, concrete),
+        (InferType::FixedArray(open, open_len), InferType::FixedArray(concrete, concrete_len)) => {
+            open_len == concrete_len && fits_open(open, concrete)
+        }
+        (InferType::Result(open_ok, open_err), InferType::Result(ok, err))
+        | (InferType::Map(open_ok, open_err), InferType::Map(ok, err)) => {
+            fits_open(open_ok, ok) && fits_open(open_err, err)
+        }
+        (InferType::Tuple(open), InferType::Tuple(concrete)) => {
+            open.len() == concrete.len()
+                && open
+                    .iter()
+                    .zip(concrete)
+                    .all(|(open, concrete)| fits_open(open, concrete))
+        }
+        (
+            InferType::Applied {
+                name: open_name,
+                args: open,
+            },
+            InferType::Applied { name, args },
+        ) => {
+            open_name == name
+                && open.len() == args.len()
+                && open
+                    .iter()
+                    .zip(args)
+                    .all(|(open, concrete)| fits_open(open, concrete))
+        }
+        (open, concrete) => open == concrete,
     }
 }

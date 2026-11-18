@@ -339,7 +339,7 @@ impl InferType {
         self.any_param(&|param| param.ends_with(SHADOWED_METHOD_SUFFIX))
     }
 
-    fn any_param(&self, matches: &dyn Fn(&str) -> bool) -> bool {
+    pub(crate) fn any_param(&self, matches: &dyn Fn(&str) -> bool) -> bool {
         match self {
             InferType::Param(param) => matches(param),
             InferType::Function { params, ret, .. } => {

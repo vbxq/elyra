@@ -41,7 +41,7 @@ impl Compiler {
 
         compile_lambda_body(&mut lambda_compiler, body, span)?;
 
-        lambda_compiler.end_scope();
+        lambda_compiler.end_function_scope();
         lambda_compiler.finish_registers()?;
         lambda_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
             aelys_common::error::CompileError::new(
@@ -71,10 +71,12 @@ fn compile_lambda_body(lambda_compiler: &mut Compiler, body: &[Stmt], span: Span
         StmtKind::Expression(expr) => {
             let result_reg = lambda_compiler.alloc_register()?;
             lambda_compiler.compile_expr(expr, result_reg)?;
+            lambda_compiler.close_upvalues_before_return(last_stmt.span);
             lambda_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
         }
         _ => {
             lambda_compiler.compile_stmt(last_stmt)?;
+            lambda_compiler.close_upvalues_before_return(span);
             lambda_compiler.emit_return0(span);
         }
     }

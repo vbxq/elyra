@@ -196,7 +196,10 @@ const SHARED_CODES: &[(u16, &[&str])] = &[
         ],
     ),
     (338, &["MissingSupertraitImpl", "UnsatisfiedTraitBound"]),
-    (363, &["TupleFieldOutOfRange", "UnknownField"]),
+    (
+        363,
+        &["TupleFieldOutOfRange", "UnknownField", "UnknownMethod"],
+    ),
     (403, &["PrivateNominalNotExported", "SymbolNotPublic"]),
     (
         424,

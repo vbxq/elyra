@@ -57,6 +57,8 @@ pub struct TraitDef {
     pub methods: Vec<TraitMethod>,
     pub associated_types: Vec<String>,
     pub associated_consts: Vec<(String, InferType)>,
+    // an impl in an importing module adopts these bodies, so they travel with the definition
+    pub default_bodies: Vec<aelys_syntax::Function>,
 }
 
 /// a header's own spelling, with its parameters numbered by first appearance so
@@ -1533,18 +1535,19 @@ impl TypeTable {
             {
                 continue;
             }
-            let mut substitution = crate::unify::Substitution::new();
-            for (param, actual) in mapping {
-                substitution.bind_param(param, actual);
+            if definition
+                .trait_args
+                .iter()
+                .any(|argument| argument.any_param(&|param| !mapping.contains_key(param)))
+            {
+                return None;
             }
+            // one pass only: the subject may name the caller's own parameters, spelled like the impl's
             let args = definition
                 .trait_args
                 .iter()
-                .map(|argument| substitution.apply(argument))
+                .map(|argument| argument.substitute_params(&mapping))
                 .collect::<Vec<_>>();
-            if args.iter().any(InferType::mentions_any_param) {
-                return None;
-            }
             match &found {
                 Some(previous) if *previous != args => return None,
                 _ => found = Some(args),
