@@ -106,6 +106,10 @@ pub enum CompileErrorKind {
     StdlibNotAvailable {
         module: String,
     },
+    RemovedStdModule {
+        module: String,
+        replacement: &'static str,
+    },
     SymbolNotFound {
         symbol: String,
         module: String,

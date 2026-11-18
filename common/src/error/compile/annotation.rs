@@ -33,6 +33,7 @@ impl CompileErrorKind {
             Self::CircularDependency { .. } => "creates circular dependency",
             Self::SymbolNotPublic { .. } => "symbol is not public",
             Self::StdlibNotAvailable { .. } => "'std' modules are not yet implemented",
+            Self::RemovedStdModule { .. } => "this standard library module was removed",
             Self::SymbolNotFound { .. } => "symbol not found",
             Self::InvalidNativeModule { .. } => "invalid native module",
             Self::NativeChecksumMismatch { .. } => "checksum mismatch",

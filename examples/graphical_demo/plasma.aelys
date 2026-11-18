@@ -1,5 +1,4 @@
 use std::io
-use std::bytes
 use std::time
 use std::math
 
@@ -9,13 +8,13 @@ let ESC = (27 as char).to_string()
 
 @no_gc
 fn run() {
-    let sintab = bytes::alloc(256)
+    let mut sintab: Vec<u8> = vec![0; 256]
 
     for i in 0..256 {
         let rad = (i as float * 2.0 * math::PI) / 256.0
         let s = math::sin(rad)
         let v = ((s + 1.0) * 127.5) as int
-        bytes::write_u8(sintab, i, v)
+        sintab.write_u8(i, v)
     }
 
     io::print_inline(ESC + "[?25l")
@@ -26,10 +25,10 @@ fn run() {
 
         for y in 0..H {
             for x in 0..W {
-                let v1 = bytes::read_u8(sintab, (x * 4 + t * 3) % 256)
-                let v2 = bytes::read_u8(sintab, (y * 3 + t * 2) % 256)
-                let v3 = bytes::read_u8(sintab, ((x + y) * 2 + t) % 256)
-                let v4 = bytes::read_u8(sintab, ((x * 2 - y + t * 4) % 256 + 256) % 256)
+                let v1 = sintab.read_u8((x * 4 + t * 3) % 256)
+                let v2 = sintab.read_u8((y * 3 + t * 2) % 256)
+                let v3 = sintab.read_u8(((x + y) * 2 + t) % 256)
+                let v4 = sintab.read_u8(((x * 2 - y + t * 4) % 256 + 256) % 256)
 
                 let val = (v1 + v2 + v3 + v4) / 4
                 let hue = (val + t) % 256
@@ -62,7 +61,6 @@ fn run() {
     io::print_inline(ESC + "[?25h")
     io::print_inline(ESC + "[2J" + ESC + "[H")
 
-    bytes::free(sintab)
 }
 
 run()

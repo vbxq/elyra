@@ -404,19 +404,14 @@ fn an_undefined_variable_hint_stays_outside_the_quoted_name() {
 }
 
 #[test]
-fn write_file_bytes_writes_every_byte_of_a_buffer_unchanged() {
+fn write_bytes_writes_every_byte_of_a_vec_unchanged() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("out.bin");
     let source = format!(
         r#"
 use std::fs
-use std::bytes as bytes
-let b = bytes::alloc(4)
-bytes::write_u8(b, 0, 200)
-bytes::write_u8(b, 1, 0)
-bytes::write_u8(b, 2, 255)
-bytes::write_u8(b, 3, 128)
-let ok = match fs::write_file_bytes("{path}", b) {{
+let b: Vec<u8> = vec![200, 0, 255, 128]
+let ok = match fs::write_bytes("{path}", &b) {{
     Ok(_) => 1,
     Err(_) => 0,
 }}
@@ -429,20 +424,16 @@ ok
 }
 
 #[test]
-fn write_buffer_writes_the_raw_bytes_to_an_open_handle() {
+fn write_chunk_writes_the_raw_bytes_to_an_open_handle() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("out.bin");
     let source = format!(
         r#"
 use std::fs
-use std::bytes as bytes
-let b = bytes::alloc(3)
-bytes::write_u8(b, 0, 0xC8)
-bytes::write_u8(b, 1, 0x80)
-bytes::write_u8(b, 2, 0x0A)
+let b: Vec<u8> = vec![0xC8, 0x80, 0x0A]
 let f = fs::open("{path}", "w").unwrap()
-let first = fs::write_buffer(f, b).unwrap()
-let second = fs::write_buffer(f, b).unwrap()
+let first = fs::write_chunk(f, &b).unwrap()
+let second = fs::write_chunk(f, &b).unwrap()
 fs::close(f).unwrap()
 first + second
 "#,
@@ -456,43 +447,37 @@ first + second
 }
 
 #[test]
-fn binary_writes_report_a_bad_buffer_or_path_as_an_error_value() {
+fn binary_writes_report_a_bad_path_or_handle_as_an_error_value() {
     let dir = tempfile::tempdir().expect("temp dir");
     let missing = dir.path().join("no_such_dir").join("out.bin");
     let source = format!(
         r#"
 use std::fs
-use std::bytes as bytes
-let b = bytes::alloc(1)
-let bad_buffer = fs::write_file_bytes("{ok}", 987654).is_err()
-let bad_path = fs::write_file_bytes("{missing}", b).is_err()
-let f = fs::open("{ok}", "w").unwrap()
-let bad_handle_buffer = fs::write_buffer(f, 987654).is_err()
-fs::close(f).unwrap()
+let b: Vec<u8> = vec![1]
+let bad_path = fs::write_bytes("{missing}", &b).is_err()
+let bad_handle = fs::write_chunk(987654, &b).is_err()
 let mut n = 0
-if bad_buffer {{ n = n + 1 }}
 if bad_path {{ n = n + 10 }}
-if bad_handle_buffer {{ n = n + 100 }}
+if bad_handle {{ n = n + 100 }}
 n
 "#,
-        ok = aelys_path(&dir.path().join("ok.bin")),
         missing = aelys_path(&missing)
     );
-    assert_int_everywhere(&source, 111);
+    assert_int_everywhere(&source, 110);
 }
 
 #[test]
 fn binary_writes_are_typed_by_the_native_signature_table() {
     assert_rejected_with(
-        "use std::fs\nlet r = fs::write_file_bytes(\"x.bin\", \"text\")\n0",
+        "use std::fs\nlet t = \"text\"\nlet r = fs::write_bytes(\"x.bin\", &t)\n0",
         "E0301",
     );
     assert_rejected_with(
-        "use std::fs\nlet r: Result<int, string> = fs::write_file_bytes(\"x.bin\", 1)\n0",
+        "use std::fs\nlet v: Vec<u8> = vec![1]\nlet r: Result<int, string> = fs::write_bytes(\"x.bin\", &v)\n0",
         "E0301",
     );
     assert_rejected_with(
-        "use std::fs\nlet r = fs::write_buffer(1, \"text\")\n0",
+        "use std::fs\nlet v: Vec<int> = vec![1]\nlet r = fs::write_chunk(1, &v)\n0",
         "E0301",
     );
 }

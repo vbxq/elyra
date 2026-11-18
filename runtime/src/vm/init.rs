@@ -74,6 +74,7 @@ impl VM {
             jit_control_error: None,
             host_roots: Arc::new(super::roots::HostRootSet::new()),
             native_call_roots: Vec::new(),
+            native_byte_scratch: Vec::new(),
             id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
             current_global_mapping_id: 0,
             program_args,

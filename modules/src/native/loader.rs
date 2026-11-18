@@ -453,7 +453,7 @@ fn read_exports(
             }
             let result = AelysNativeType::try_from(signature.result)
                 .map_err(|_| NativeError::InvalidDescriptor("unknown function result type"))?;
-            if result == AelysNativeType::Bytes {
+            if matches!(result, AelysNativeType::Bytes | AelysNativeType::BytesMut) {
                 return Err(NativeError::InvalidDescriptor(
                     "byte buffers are valid only as function parameters",
                 ));

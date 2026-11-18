@@ -1,18 +1,17 @@
-use std::bytes
 use wad
 
 fn lump_bytes(w: Wad, index: int) -> Vec<int> {
     let l = w.lumps[index]
     let mut out: Vec<int> = vec![0; l.size]
     for i in 0..l.size {
-        out[i] = bytes::read_u8(w.buf, l.filepos + i)
+        out[i] = w.buf.read_u8(l.filepos + i)
     }
     out
 }
 
 fn load_pnames(w: Wad) -> Vec<string> {
     let l = w.lumps[w.find_lump("PNAMES")]
-    let n = bytes::read_i32(w.buf, l.filepos)
+    let n = w.buf.read_i32_le(l.filepos)
     let mut out: Vec<string> = vec![]
     out.reserve(n)
     for i in 0..n {
@@ -24,23 +23,23 @@ fn load_pnames(w: Wad) -> Vec<string> {
 fn load_texture_lump(w: Wad, index: int, mut out: Vec<TextureDef>) -> Vec<TextureDef> {
     let buf = w.buf
     let base = w.lumps[index].filepos
-    let n = bytes::read_i32(buf, base)
+    let n = buf.read_i32_le(base)
     for i in 0..n {
-        let p = base + bytes::read_i32(buf, base + 4 + 4 * i)
-        let count = bytes::read_i16(buf, p + 20)
+        let p = base + buf.read_i32_le(base + 4 + 4 * i)
+        let count = buf.read_i16_le(p + 20)
         let mut patches: Vec<PatchRef> = vec![]
         for j in 0..count {
             let q = p + 22 + 10 * j
             patches.push(PatchRef {
-                origin_x: bytes::read_i16(buf, q),
-                origin_y: bytes::read_i16(buf, q + 2),
-                patch: bytes::read_i16(buf, q + 4),
+                origin_x: buf.read_i16_le(q),
+                origin_y: buf.read_i16_le(q + 2),
+                patch: buf.read_i16_le(q + 4),
             })
         }
         out.push(TextureDef {
             name: wad::name8(buf, p),
-            width: bytes::read_i16(buf, p + 12),
-            height: bytes::read_i16(buf, p + 14),
+            width: buf.read_i16_le(p + 12),
+            height: buf.read_i16_le(p + 14),
             patches: patches,
         })
     }
@@ -83,16 +82,16 @@ pub fn load_graphics(w: Wad) -> Graphics {
 pub fn decode_patch(w: Wad, index: int) -> Patch {
     let buf = w.buf
     let base = w.lumps[index].filepos
-    let width = bytes::read_u16(buf, base)
+    let width = buf.read_u16_le(base)
     let mut columns: Vec<Vec<Post>> = vec![]
     columns.reserve(width)
     for x in 0..width {
-        let mut p = base + bytes::read_u32(buf, base + 8 + 4 * x)
+        let mut p = base + buf.read_u32_le(base + 8 + 4 * x)
         let mut posts: Vec<Post> = vec![]
         let mut prev = -1
-        while bytes::read_u8(buf, p) != 0xFF {
-            let delta = bytes::read_u8(buf, p)
-            let length = bytes::read_u8(buf, p + 1)
+        while buf.read_u8(p) != 0xFF {
+            let delta = buf.read_u8(p)
+            let length = buf.read_u8(p + 1)
             let top = if delta <= prev { prev + delta } else { delta }
             prev = top
             posts.push(Post { top: top, length: length, data: p + 3 })
@@ -102,9 +101,9 @@ pub fn decode_patch(w: Wad, index: int) -> Patch {
     }
     Patch {
         width: width,
-        height: bytes::read_u16(buf, base + 2),
-        left: bytes::read_i16(buf, base + 4),
-        top: bytes::read_i16(buf, base + 6),
+        height: buf.read_u16_le(base + 2),
+        left: buf.read_i16_le(base + 4),
+        top: buf.read_i16_le(base + 6),
         columns: columns,
     }
 }
@@ -126,7 +125,7 @@ pub fn compose_texture(w: Wad, g: Graphics, tex: TextureDef) -> Vec<int> {
                 for i in 0..post.length {
                     let ty = y0 + i
                     if ty >= 0 && ty < height {
-                        pixels[col + ty] = bytes::read_u8(w.buf, post.data + i)
+                        pixels[col + ty] = w.buf.read_u8(post.data + i)
                     }
                 }
             }

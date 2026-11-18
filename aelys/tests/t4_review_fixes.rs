@@ -10,7 +10,7 @@ mod fixes {
     mod exports {
         use aelys_native::{
             AelysValue, CallContext, NativeContext, alloc_string_from_context, value_as_int,
-            value_int,
+            value_int, with_call_context,
         };
 
         #[aelys_export]
@@ -89,30 +89,82 @@ mod fixes {
             count as i64
         }
 
-        #[aelys_export]
-        pub fn shared_by_context(context: &mut CallContext<'_>, view: &[u8], handle: i64) -> i64 {
-            let handle = value_int(handle).unwrap();
-            let again = match context.borrow_bytes_ref(handle) {
-                Ok(bytes) => bytes,
-                Err(code) => return -i64::from(code),
-            };
-            let third = match context.borrow_bytes_ref(handle) {
-                Ok(bytes) => bytes,
-                Err(code) => return -i64::from(code) * 10,
-            };
-            i64::from(view[0]) + i64::from(again[0]) * 100 + i64::from(third[0]) * 10000
+        fn reply(out: *mut AelysValue, value: i64) -> i32 {
+            unsafe { *out = value_int(value).unwrap() };
+            0
         }
 
-        #[aelys_export]
-        pub fn shared_then_mut(context: &mut CallContext<'_>, view: &[u8], handle: i64) -> i64 {
-            let handle = value_int(handle).unwrap();
-            match context.borrow_bytes(handle) {
-                Ok(bytes) => {
-                    bytes[0] = 99;
-                    1000 + i64::from(view[0])
-                }
-                Err(code) => i64::from(code),
-            }
+        #[aelys_export(params = [Bytes, Bytes], result = Int)]
+        pub unsafe extern "C" fn shared_by_context(
+            context: *mut NativeContext,
+            args: *const AelysValue,
+            _arg_count: usize,
+            out: *mut AelysValue,
+        ) -> i32 {
+            let (first, second) = unsafe { (*args, *args.add(1)) };
+            let value = unsafe {
+                with_call_context(context, |call| {
+                    let view = match call.borrow_bytes_ref(first) {
+                        Ok(bytes) => bytes,
+                        Err(code) => return -i64::from(code) * 100,
+                    };
+                    let again = match call.borrow_bytes_ref(second) {
+                        Ok(bytes) => bytes,
+                        Err(code) => return -i64::from(code),
+                    };
+                    let third = match call.borrow_bytes_ref(second) {
+                        Ok(bytes) => bytes,
+                        Err(code) => return -i64::from(code) * 10,
+                    };
+                    i64::from(view[0]) + i64::from(again[0]) * 100 + i64::from(third[0]) * 10000
+                })
+            };
+            reply(out, value)
+        }
+
+        #[aelys_export(params = [Bytes, BytesMut], result = Int)]
+        pub unsafe extern "C" fn shared_then_mut(
+            context: *mut NativeContext,
+            args: *const AelysValue,
+            _arg_count: usize,
+            out: *mut AelysValue,
+        ) -> i32 {
+            let (first, second) = unsafe { (*args, *args.add(1)) };
+            let value = unsafe {
+                with_call_context(context, |call| {
+                    let view = match call.borrow_bytes_ref(first) {
+                        Ok(bytes) => bytes,
+                        Err(code) => return -i64::from(code),
+                    };
+                    match call.borrow_bytes(second) {
+                        Ok(bytes) => {
+                            bytes[0] = 99;
+                            1000 + i64::from(view[0])
+                        }
+                        Err(code) => i64::from(code),
+                    }
+                })
+            };
+            reply(out, value)
+        }
+
+        #[aelys_export(params = [Bytes], result = Int)]
+        pub unsafe extern "C" fn write_through_shared(
+            context: *mut NativeContext,
+            args: *const AelysValue,
+            _arg_count: usize,
+            out: *mut AelysValue,
+        ) -> i32 {
+            let value = unsafe {
+                with_call_context(context, |call| match call.borrow_bytes(*args) {
+                    Ok(bytes) => {
+                        bytes[0] = 99;
+                        0
+                    }
+                    Err(code) => i64::from(code),
+                })
+            };
+            reply(out, value)
         }
 
         #[aelys_export]
@@ -221,7 +273,10 @@ fn a_string_allocated_during_a_native_call_survives_until_it_returns() {
 #[test]
 fn a_panic_in_a_typed_export_is_a_runtime_error_naming_the_native() {
     let cases = [
-        ("let a = bytes::alloc(4)\nfixes::boom(a)", "fixes::boom"),
+        (
+            "let mut a: Vec<u8> = vec![0; 4]\nfixes::boom(&mut a)",
+            "fixes::boom",
+        ),
         (
             "match fixes::boom_text(\"x\") { Ok(s) => s, Err(e) => e }",
             "fixes::boom_text",
@@ -253,45 +308,51 @@ fn a_panic_in_a_typed_export_is_a_runtime_error_naming_the_native() {
     );
     assert_eq!(run_ok("fixes::raw_boom(0) - fixes::raw_boom(-4)"), "-4");
     assert_eq!(
-        run_ok("let a = bytes::alloc(4)\nbytes::write_u8(a, 1, 7)\nfixes::pair(a, a)"),
+        run_ok("let mut a: Vec<u8> = vec![0; 4]\na[1] = 7\nfixes::pair(&a, &a)"),
         "47"
     );
 }
 
 #[test]
 fn the_same_buffer_passed_read_only_twice_is_allowed() {
-    let setup = "let a = bytes::alloc(4)\nbytes::write_u8(a, 0, 3)\nbytes::write_u8(a, 1, 5)\n";
-    assert_eq!(run_ok(&format!("{setup}fixes::pair(a, a)")), "3045");
+    let setup = "let mut a: Vec<u8> = vec![3, 5, 0, 0]\n";
+    assert_eq!(run_ok(&format!("{setup}fixes::pair(&a, &a)")), "3045");
     assert_eq!(
         run_ok(&format!(
-            "{setup}fn twice(h: int) -> int {{ return fixes::pair(h, h) }}\ntwice(a) + twice(a)"
+            "{setup}fn twice(h: Vec<u8>) -> int {{ return fixes::pair(&h, &h) }}\ntwice(a) + twice(a)"
         )),
         "6090"
     );
     assert_eq!(
         run_ok(&format!(
-            "{setup}let f = fn(h: int) -> int {{ return fixes::pair(h, h) }}\nlet mut s = 0\nfor i in 0..3 {{ s += f(a) }}\ns"
+            "{setup}let f = fn(h: Vec<u8>) -> int {{ return fixes::pair(&h, &h) }}\nlet mut s = 0\nfor i in 0..3 {{ s += f(a) }}\ns"
         )),
         "9135"
     );
     assert_eq!(
-        run_ok(&format!("{setup}fixes::shared_by_context(a, a)")),
+        run_ok(&format!("{setup}fixes::shared_by_context(&a, &a)")),
         "30303"
     );
     assert_eq!(
         run_ok(&format!(
-            "{setup}let b = bytes::alloc(2)\nbytes::write_u8(b, 0, 1)\nfixes::shared_then_mut(a, b) * 1000 + bytes::read_u8(b, 0)"
+            "{setup}let mut b: Vec<u8> = vec![1, 0]\nfixes::shared_then_mut(&a, &mut b) * 1000 + b.read_u8(0)"
         )),
         "1003099"
+    );
+    assert_eq!(
+        run_ok(&format!(
+            "{setup}fixes::write_through_shared(&a) * 1000 + a.read_u8(0)"
+        )),
+        "1003"
     );
 }
 
 #[test]
 fn a_mutable_borrow_still_conflicts_with_any_other_view_of_its_buffer() {
-    let setup = "let a = bytes::alloc(4)\nbytes::write_u8(a, 0, 3)\n";
+    let setup = "let mut a: Vec<u8> = vec![3, 0, 0, 0]\nlet mut o: Vec<u8> = vec![0]\nlet copy = fixes::copy_into\nlet ten = fixes::ten_mut\n";
     for call in [
-        "fixes::copy_into(a, a)",
-        "fixes::ten_mut(a, bytes::alloc(1), bytes::alloc(1), bytes::alloc(1), bytes::alloc(1), bytes::alloc(1), bytes::alloc(1), bytes::alloc(1), bytes::alloc(1), a)",
+        "copy(a, a)",
+        "ten(a, o.clone(), o.clone(), o.clone(), o.clone(), o.clone(), o.clone(), o.clone(), o.clone(), a)",
     ] {
         let (kind, text) = run_runtime_error(&format!("{setup}{call}"));
         assert!(
@@ -300,32 +361,41 @@ fn a_mutable_borrow_still_conflicts_with_any_other_view_of_its_buffer() {
         );
         assert!(text.contains("borrowed mutably"), "{text}");
     }
-    assert_eq!(run_ok(&format!("{setup}fixes::shared_then_mut(a, a)")), "5");
-    assert_eq!(run_ok(&format!("{setup}bytes::read_u8(a, 0)")), "3");
+    let shared_then_mut = format!("{setup}let f = fixes::shared_then_mut\nf(a, a)");
+    assert_eq!(run_ok(&shared_then_mut), "5");
+    assert_eq!(run_ok(&format!("{setup}a.read_u8(0)")), "3");
+    for call in [
+        "fixes::copy_into(&mut a, &a)",
+        "fixes::shared_then_mut(&a, &mut a)",
+    ] {
+        let error = run_with(&format!("{setup}{call}"), IsolateConfig::default())
+            .expect_err("two overlapping loans of one Vec<u8> are refused before the call");
+        assert!(error.to_string().contains("E041"), "{call}: {error}");
+    }
 }
 
 #[test]
 fn more_than_eight_distinct_buffers_borrow_in_one_call() {
     let lets: String = (1..=10)
-        .map(|n| format!("let b{n} = bytes::alloc({n})\n"))
+        .map(|n| format!("let mut b{n}: Vec<u8> = vec![0; {n}]\n"))
         .collect();
     let expected_nine: i64 = (1..=9).map(|n| n * n).sum();
     assert_eq!(
         run_ok(&format!(
-            "{lets}fixes::nine(b1, b2, b3, b4, b5, b6, b7, b8, b9)"
+            "{lets}fixes::nine(&b1, &b2, &b3, &b4, &b5, &b6, &b7, &b8, &b9)"
         )),
         expected_nine.to_string()
     );
     assert_eq!(
         run_ok(&format!(
-            "{lets}fixes::nine(b1, b1, b1, b1, b1, b1, b1, b1, b9)"
+            "{lets}fixes::nine(&b1, &b1, &b1, &b1, &b1, &b1, &b1, &b1, &b9)"
         )),
         (36 + 81).to_string()
     );
     let source = format!(
-        "{lets}let r = fixes::ten_mut(b1, b2, b3, b4, b5, b6, b7, b8, b9, b10)\nlet mut s = 0\n{}\ns * 100 + r",
+        "{lets}let r = fixes::ten_mut(&mut b1, &mut b2, &mut b3, &mut b4, &mut b5, &mut b6, &mut b7, &mut b8, &mut b9, &mut b10)\nlet mut s = 0\n{}\ns * 100 + r",
         (1..=10)
-            .map(|n| format!("s = s * 11 + bytes::read_u8(b{n}, 0)"))
+            .map(|n| format!("s = s * 11 + b{n}.read_u8(0)"))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -456,21 +526,21 @@ fn build_sizer_module() -> PathBuf {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names() {
+fn a_native_module_imported_after_fs_and_string_keeps_its_typed_qualified_names() {
     let library = build_sizer_module();
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(&library, dir.path().join("sizer.so")).unwrap();
     let file = script(dir.path(), "five.txt", "12345");
     let path = file.to_string_lossy().into_owned();
     let body = format!(
-        "let a = bytes::alloc(4)\nlet f = match fs::size(\"{path}\") {{ Ok(n) => n, Err(e) => -1 }}\nlet c = sizer::copy(\"q\")\nlet r = sizer::size(a) * 1000 + bytes::size(a) * 10 + f + c.len() * 100000000\n"
+        "let a: Vec<u8> = vec![0; 4]\nlet f = match fs::size(\"{path}\") {{ Ok(n) => n, Err(e) => -1 }}\nlet c = sizer::copy(\"q\")\nlet r = sizer::size(&a) * 1000 + string::len(\"four\") * 10 + f + c.len() * 100000000\n"
     );
     let expected = 1004 * 1000 + 4 * 10 + 5 + 7 * 100_000_000;
     for header in [
-        "use std::fs\nuse std::bytes\nuse sizer\n",
-        "use std::bytes\nuse std::fs\nuse sizer\n",
-        "use sizer\nuse std::fs\nuse std::bytes\n",
-        "use std::fs\nuse sizer\nuse std::bytes\n",
+        "use std::fs\nuse std::string\nuse sizer\n",
+        "use std::string\nuse std::fs\nuse sizer\n",
+        "use sizer\nuse std::fs\nuse std::string\n",
+        "use std::fs\nuse sizer\nuse std::string\n",
     ] {
         assert_eq!(
             run_file_int(dir.path(), &format!("{header}{body}r\n")),
@@ -488,7 +558,7 @@ fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names()
     }
     let message = run_file_error(
         dir.path(),
-        "use std::fs\nuse std::bytes\nuse sizer\nsize(bytes::alloc(1))\n",
+        "use std::fs\nuse std::string\nuse sizer\nlet a: Vec<u8> = vec![0]\nsize(&a)\n",
     );
     assert!(message.contains("E0445"), "{message}");
     assert!(message.contains("'sizer::size'"), "{message}");
@@ -496,8 +566,8 @@ fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names()
 
 #[cfg(target_os = "linux")]
 #[test]
-fn read_file_bytes_stops_an_endless_file_at_the_byte_buffer_limit() {
+fn read_bytes_stops_an_endless_file_at_its_size_limit() {
     let dir = tempfile::tempdir().unwrap();
-    let body = "use std::fs\nuse std::bytes\nuse std::string\nmatch fs::read_file_bytes(\"/dev/zero\") {\n    Ok(h) => -bytes::size(h),\n    Err(e) => if string::contains(e, \"/dev/zero\") && string::contains(e, \"268435456\") { 1 } else { 2 },\n}\n";
+    let body = "use std::fs\nuse std::string\nmatch fs::read_bytes(\"/dev/zero\") {\n    Ok(v) => 0 - v.len(),\n    Err(e) => if string::contains(e, \"/dev/zero\") && string::contains(e, \"268435456\") { 1 } else { 2 },\n}\n";
     assert_eq!(run_file_int(dir.path(), body), 1);
 }

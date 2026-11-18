@@ -579,9 +579,16 @@ impl Runtime {
             .lock()
             .expect("native module registry poisoned");
         for registration in modules.iter() {
-            for (qualified_name, arity, function, result_type) in &registration.functions {
+            for (qualified_name, arity, function, typed) in &registration.functions {
                 let reference = vm
-                    .alloc_foreign_with_result(qualified_name, *arity, *function, *result_type)
+                    .alloc_foreign_with_signature(
+                        qualified_name,
+                        *arity,
+                        *function,
+                        typed
+                            .as_ref()
+                            .map(|(params, result)| (params.as_slice(), *result)),
+                    )
                     .map_err(AelysError::Runtime)?;
                 vm.set_global(qualified_name.clone(), Value::ptr(reference.index()));
             }
@@ -628,7 +635,13 @@ fn reject_unprovided_needs(
             continue;
         }
         let module_path = needs.path.join(".");
-        let kind = if needs.path.first().is_some_and(|segment| segment == "std") {
+        let kind = if let Some(replacement) = aelys_runtime::stdlib::removed_std_module(&needs.path)
+        {
+            CompileErrorKind::RemovedStdModule {
+                module: needs.path.join("::"),
+                replacement,
+            }
+        } else if needs.path.first().is_some_and(|segment| segment == "std") {
             CompileErrorKind::StdlibNotAvailable {
                 module: module_path,
             }
@@ -703,11 +716,10 @@ enum RootJitResult {
 
 type StandardModuleRegister = fn(&mut VM) -> Result<StdModuleExports, RuntimeError>;
 
-const STANDARD_MODULES: [(&str, StandardModuleRegister); 4] = [
+const STANDARD_MODULES: [(&str, StandardModuleRegister); 3] = [
     ("sys", aelys_runtime::stdlib::sys::register),
     ("fs", aelys_runtime::stdlib::fs::register),
     ("net", aelys_runtime::stdlib::net::register),
-    ("bytes", aelys_runtime::stdlib::bytes::register),
 ];
 
 fn register_standard_modules(vm: &mut VM) -> Result<(), AelysError> {
@@ -717,8 +729,7 @@ fn register_standard_modules(vm: &mut VM) -> Result<(), AelysError> {
     Ok(())
 }
 
-const STANDARD_MODULE_ALIASES: [&str; 8] =
-    ["string", "io", "math", "time", "sys", "fs", "net", "bytes"];
+const STANDARD_MODULE_ALIASES: [&str; 7] = ["string", "io", "math", "time", "sys", "fs", "net"];
 
 fn is_standard_module_alias(alias: &str) -> bool {
     STANDARD_MODULE_ALIASES.contains(&alias)

@@ -589,6 +589,10 @@ pub enum TypeErrorKind {
         right: InferType,
         operand: String,
     },
+    RemovedBytesFunction {
+        name: String,
+        replacement: &'static str,
+    },
     FixedPointShiftOutOfRange {
         method: String,
         count: i64,
@@ -1676,6 +1680,10 @@ impl TypeError {
             TypeErrorKind::MangledSymbolCollision { name } => {
                 write!(f, "two instances of '{}' mangle to one symbol", name)
             }
+            TypeErrorKind::RemovedBytesFunction { name, replacement } => write!(
+                f,
+                "`bytes::{name}` no longer exists: std::bytes was removed and binary data is a `Vec<u8>`\n   = help: {replacement}"
+            ),
             TypeErrorKind::MixedIntegerOperands {
                 op,
                 left,
@@ -2005,6 +2013,7 @@ impl TypeErrorKind {
             Self::MangledSymbolCollision { .. } => 355,
             Self::IntegerLiteralOutOfRange { .. } => 209,
             Self::MixedIntegerOperands { .. } => 460,
+            Self::RemovedBytesFunction { .. } => 481,
             Self::FixedPointShiftOutOfRange { .. } => 462,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,

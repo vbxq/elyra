@@ -88,6 +88,22 @@ pub(crate) struct ResolvedNeeds {
     pub(crate) symbol: Option<String>,
 }
 
+pub fn native_signature_type(params: &[AelysNativeType], result: AelysNativeType) -> InferType {
+    InferType::Function {
+        modes: aelys_sema::types::ParamModes::from_flags(
+            params
+                .iter()
+                .map(|param| *param == AelysNativeType::BytesMut),
+        ),
+        params: params
+            .iter()
+            .copied()
+            .map(native_type_to_infer_type)
+            .collect(),
+        ret: Box::new(native_type_to_infer_type(result)),
+    }
+}
+
 pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
     match native_type {
         AelysNativeType::Int => InferType::I64,
@@ -96,7 +112,9 @@ pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
         AelysNativeType::String => InferType::String,
         AelysNativeType::Unit => InferType::Unit,
         AelysNativeType::Dynamic => InferType::Dynamic,
-        AelysNativeType::Bytes => InferType::I64,
+        AelysNativeType::Bytes | AelysNativeType::BytesMut => {
+            InferType::Vec(Box::new(InferType::U8))
+        }
         AelysNativeType::OptionInt => InferType::Option(Box::new(InferType::I64)),
         AelysNativeType::OptionFloat => InferType::Option(Box::new(InferType::F64)),
         AelysNativeType::OptionBool => InferType::Option(Box::new(InferType::Bool)),
