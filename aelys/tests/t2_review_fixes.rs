@@ -560,3 +560,42 @@ fn low_severity_diagnostics_and_receivers() {
         5,
     );
 }
+
+#[test]
+fn a_break_compiled_before_the_capturing_closure_still_closes_the_iteration() {
+    int_at_every_level(
+        r#"
+        fn labeled_continue() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            let mut i = 0
+            'o: while i < 2 {
+                i += 1
+                let x = i
+                for j in 0..3 {
+                    if j == 1 { continue 'o }
+                    fs.push(fn() -> int { x * 10 + j })
+                }
+            }
+            let p = 9
+            fs[0]() * 100 + fs[1]() + p * 0
+        }
+        fn labeled_break_mut() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            let mut i = 0
+            'outer: while i < 2 {
+                i += 1
+                let mut x = i * 100
+                for j in 0..3 {
+                    if j == 1 { continue 'outer }
+                    fs.push(fn() -> int { x })
+                    x += 5
+                }
+            }
+            let a = 777
+            fs[0]() * 1000 + fs[1]() + a * 0
+        }
+        labeled_continue() * 1000000 + labeled_break_mut()
+        "#,
+        1020 * 1_000_000 + 105_205,
+    );
+}

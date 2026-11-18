@@ -39,6 +39,7 @@ pub struct LoopContext {
     pub label: Option<String>,
     pub result: Option<u16>,
     pub locals_start: usize,
+    pub captured_names: std::collections::HashSet<String>,
 }
 
 impl LoopContext {
@@ -51,6 +52,7 @@ impl LoopContext {
             label: None,
             result: None,
             locals_start,
+            captured_names: std::collections::HashSet::new(),
         }
     }
 }

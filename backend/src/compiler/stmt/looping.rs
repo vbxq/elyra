@@ -17,6 +17,7 @@ impl Compiler {
 
         let mut context = super::super::LoopContext::new(loop_start, false, self.locals.len());
         context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
         self.loop_stack.push(context);
 
         let cond_reg = self.alloc_register()?;
@@ -94,6 +95,7 @@ impl Compiler {
 
         let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
         context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
         self.loop_stack.push(context);
 
         let opcode = if inclusive {
@@ -238,6 +240,7 @@ impl Compiler {
 
         let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
         context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
         self.loop_stack.push(context);
 
         let resolved = Self::infer_to_resolved(inner_type);
@@ -307,6 +310,7 @@ impl Compiler {
 
         let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
         context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
         self.loop_stack.push(context);
 
         self.add_local(

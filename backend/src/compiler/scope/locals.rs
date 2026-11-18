@@ -38,11 +38,11 @@ impl Compiler {
         let owner = self
             .locals
             .iter()
-            .rposition(|local| local.register == register && !local.is_freed)
+            .position(|local| local.register == register && !local.is_freed)
             .or_else(|| {
                 self.locals
                     .iter()
-                    .rposition(|local| local.register == register)
+                    .position(|local| local.register == register)
             });
         if let Some(index) = owner {
             self.locals[index].is_captured = true;

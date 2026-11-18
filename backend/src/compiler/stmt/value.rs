@@ -83,6 +83,7 @@ impl Compiler {
         let mut context = super::super::LoopContext::new(loop_start, false, self.locals.len());
         context.label = label.cloned();
         context.result = Some(dest);
+        context.captured_names = super::super::liveness::captured_names(body);
         self.loop_stack.push(context);
 
         self.begin_scope();
@@ -128,7 +129,9 @@ impl Compiler {
             .locals
             .iter()
             .skip(start)
-            .filter(|local| local.is_captured)
+            .filter(|local| {
+                local.is_captured || self.loop_stack[target].captured_names.contains(&local.name)
+            })
             .map(|local| local.register)
             .min();
         if let Some(register) = lowest {
