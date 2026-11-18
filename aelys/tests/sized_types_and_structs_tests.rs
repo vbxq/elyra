@@ -43,11 +43,11 @@ fn make_ann(name: &str) -> aelys_syntax::TypeAnnotation {
 #[test]
 fn infer_type_from_annotation_sized_integers() {
     assert_eq!(InferType::from_annotation(&make_ann("int")), InferType::I64);
-    assert_eq!(InferType::from_annotation(&make_ann("i64")), InferType::I64);
+    assert_eq!(InferType::from_annotation(&make_ann("i64")), InferType::Int64);
     assert_eq!(InferType::from_annotation(&make_ann("i32")), InferType::I32);
     assert_eq!(InferType::from_annotation(&make_ann("i16")), InferType::I16);
     assert_eq!(InferType::from_annotation(&make_ann("i8")), InferType::I8);
-    assert_eq!(InferType::from_annotation(&make_ann("u64")), InferType::I64);
+    assert_eq!(InferType::from_annotation(&make_ann("u64")), InferType::U64);
     assert_eq!(InferType::from_annotation(&make_ann("u32")), InferType::U32);
     assert_eq!(InferType::from_annotation(&make_ann("u16")), InferType::U16);
     assert_eq!(InferType::from_annotation(&make_ann("u8")), InferType::U8);
@@ -458,9 +458,11 @@ fn unify_struct_nominal_different_name_fails() {
 }
 
 #[test]
-fn e2e_i64_annotation_is_refused() {
-    let error = aelys::run("let x: i64 = 42\nx", "<test>").expect_err("i64 is refused");
-    assert!(error.to_string().contains("E0461"), "{error}");
+fn e2e_i64_annotation_is_a_wrapping_64_bit_integer() {
+    assert_eq!(
+        run_ok("let x: i64 = 9223372036854775807\n(x + 43) as int + 9223372036854775807").as_int(),
+        Some(41)
+    );
 }
 
 #[test]

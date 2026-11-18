@@ -125,9 +125,9 @@ fn int_constant_shifts_follow_the_runtime_mask_and_overflow_check() {
         "const Z = 1 >> -1\nconst O = 1 << 64\nconst T = 1 << 46\nlet n = -1\nlet z = 1 >> n\nZ * 1000 + O * 100 + z * 10 + T / (1 << 45)",
         102,
     );
-    let message = assert_rejected("const B = 1 << 48\nB", "E0395");
+    let message = assert_rejected("const B = 1 << 63\nB", "E0395");
     assert!(
-        message.contains("1 << 48 overflows the 48-bit int range"),
+        message.contains("1 << 63 overflows the int range"),
         "{message}"
     );
     assert_rejected("const B: u8 = 1 / 0\nB", "E0395");

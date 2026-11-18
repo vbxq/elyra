@@ -668,7 +668,7 @@ fn l4_a_non_finite_float_cast_to_a_sized_type_names_the_value_and_the_target() {
     }
     assert_traps_at_every_level(
         "fn id(x: float) -> float { x }\nlet v = id(0.0) / id(0.0)\nv as int",
-        "integer overflow outside the supported 48-bit range",
+        "integer overflow outside the int range (i64)",
     );
 }
 

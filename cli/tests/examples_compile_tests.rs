@@ -34,7 +34,7 @@ const KNOWN_FAILING: &[(&str, &str)] = &[
     ),
     (
         "main.aelys",
-        "E0461: the program itself is wrong, main is declared -> i64, which is refused, and its body ends in println",
+        "E0301: the program itself is wrong, main is declared -> i64 and its body ends in println",
     ),
 ];
 
