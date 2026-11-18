@@ -665,11 +665,9 @@ fn integer_registers(
                 }
             }
             for (register, integer) in defs {
-                if register < analysis.registers {
-                    if !integer && candidate.contains(register) {
-                        candidate.remove(register);
-                        changed = true;
-                    }
+                if register < analysis.registers && !integer && candidate.contains(register) {
+                    candidate.remove(register);
+                    changed = true;
                 }
             }
         }
@@ -2241,10 +2239,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             EnumTest | EnumLoad => {
                 let exit = self.exit();
                 let source = self.get(inst.b);
-                let schema = self
-                    .builder
-                    .ins()
-                    .iconst(types::I64, i64::try_from(inst.imm).unwrap_or(i64::MAX));
+                let schema = self.builder.ins().iconst(types::I64, inst.imm);
                 let call = self.builder.ins().call(
                     self.helpers.enumeration,
                     &[self.context, self.data, source, schema],
