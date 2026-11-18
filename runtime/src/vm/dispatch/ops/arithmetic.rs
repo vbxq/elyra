@@ -6,6 +6,14 @@ macro_rules! execute_arithmetic {
     ) => {{
         // Arithmetic: Add(5), Sub(6), Mul(7), Div(8), Mod(9), Neg(10),
         // plus the specialized int/float variants (AddI, AddII, AddFF, etc)
+        use aelys_bytecode::IntOp;
+
+        macro_rules! int_slow {
+            ($op:expr, $left:expr, $right:expr) => {{
+                $vm.frames[$current_frame_idx].ip = $ip;
+                $vm.int_binary($op, $left, $right)?
+            }};
+        }
 
         match $opcode_byte {
             // Add (5)
@@ -14,7 +22,6 @@ macro_rules! execute_arithmetic {
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
 
-                // int+int is common enough to deserve a fast path
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, $int_value!(l.wrapping_add(r)));
                 } else {
@@ -50,10 +57,14 @@ macro_rules! execute_arithmetic {
                 let right = $reg_get!($base + c as usize);
 
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                    $reg_set!(
-                        $base + a as usize,
-                        $int_value!(l.checked_mul(r).unwrap_or(i64::MAX))
-                    );
+                    let product = match l.checked_mul(r) {
+                        Some(product) => product,
+                        None => {
+                            $vm.frames[$current_frame_idx].ip = $ip;
+                            return Err($vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                        }
+                    };
+                    $reg_set!($base + a as usize, $int_value!(product));
                 } else {
                     $vm.frames[$current_frame_idx].ip = $ip;
                     match $vm.mul_values(left, right) {
@@ -105,66 +116,106 @@ macro_rules! execute_arithmetic {
             // AddI (42)
             42 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, $int_value!(l.wrapping_add(c as i64)));
+                let left = *$reg_ref!($base + b as usize);
+                if left.has_inline_int_bit() {
+                    $reg_set!(
+                        $base + a as usize,
+                        $int_value!(left.as_int_unchecked() + c as i64)
+                    );
+                } else {
+                    let result = int_slow!(IntOp::Add, left, Value::int(c as i64));
+                    $reg_set!($base + a as usize, result);
+                }
             }
 
             // SubI (43)
             43 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, $int_value!(l.wrapping_sub(c as i64)));
+                let left = *$reg_ref!($base + b as usize);
+                if left.has_inline_int_bit() {
+                    $reg_set!(
+                        $base + a as usize,
+                        $int_value!(left.as_int_unchecked() - c as i64)
+                    );
+                } else {
+                    let result = int_slow!(IntOp::Sub, left, Value::int(c as i64));
+                    $reg_set!($base + a as usize, result);
+                }
             }
 
             // AddII (49)
             49 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, $int_value!(l.wrapping_add(r)));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                if left.both_inline_int_bits(&right) {
+                    let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                    $reg_set!($base + a as usize, $int_value!(l + r));
+                } else {
+                    let result = int_slow!(IntOp::Add, left, right);
+                    $reg_set!($base + a as usize, result);
+                }
             }
 
             // SubII (50)
             50 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, $int_value!(l.wrapping_sub(r)));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                if left.both_inline_int_bits(&right) {
+                    let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                    $reg_set!($base + a as usize, $int_value!(l - r));
+                } else {
+                    let result = int_slow!(IntOp::Sub, left, right);
+                    $reg_set!($base + a as usize, result);
+                }
             }
 
             // MulII (51)
             51 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!(
-                    $base + a as usize,
-                    $int_value!(l.checked_mul(r).unwrap_or(i64::MAX))
-                );
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let product = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked().checked_mul(right.as_int_unchecked())
+                } else {
+                    None
+                };
+                match product {
+                    Some(product) => $reg_set!($base + a as usize, $int_value!(product)),
+                    None => {
+                        let result = int_slow!(IntOp::Mul, left, right);
+                        $reg_set!($base + a as usize, result);
+                    }
+                }
             }
 
             // DivII (52)
             52 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                if r == 0 {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::DivisionByZero));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                if left.both_inline_int_bits(&right) && right.as_int_unchecked() != 0 {
+                    let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                    $reg_set!($base + a as usize, $int_value!(l / r));
+                } else {
+                    let result = int_slow!(IntOp::Div, left, right);
+                    $reg_set!($base + a as usize, result);
                 }
-                $reg_set!($base + a as usize, $int_value!(l / r));
             }
 
             // ModII (53)
             53 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                if r == 0 {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::DivisionByZero));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                if left.both_inline_int_bits(&right) && right.as_int_unchecked() != 0 {
+                    let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                    $reg_set!($base + a as usize, $int_value!(l % r));
+                } else {
+                    let result = int_slow!(IntOp::Rem, left, right);
+                    $reg_set!($base + a as usize, result);
                 }
-                $reg_set!($base + a as usize, $int_value!(l % r));
             }
 
             // AddFF (54)
@@ -214,11 +265,12 @@ macro_rules! execute_arithmetic {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, $int_value!(l.wrapping_add(r)));
+                } else if $vm.is_int_value(left) && $vm.is_int_value(right) {
+                    let result = int_slow!(IntOp::Add, left, right);
+                    $reg_set!($base + a as usize, result);
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::float(l + r));
                     } else {
@@ -238,11 +290,12 @@ macro_rules! execute_arithmetic {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, $int_value!(l.wrapping_sub(r)));
+                } else if $vm.is_int_value(left) && $vm.is_int_value(right) {
+                    let result = int_slow!(IntOp::Sub, left, right);
+                    $reg_set!($base + a as usize, result);
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::float(l - r));
                     } else {
@@ -260,16 +313,12 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                    $reg_set!(
-                        $base + a as usize,
-                        $int_value!(l.checked_mul(r).unwrap_or(i64::MAX))
-                    );
+                if $vm.is_int_value(left) && $vm.is_int_value(right) {
+                    let result = int_slow!(IntOp::Mul, left, right);
+                    $reg_set!($base + a as usize, result);
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::float(l * r));
                     } else {
@@ -287,17 +336,12 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                    if r == 0 {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::DivisionByZero));
-                    }
-                    $reg_set!($base + a as usize, $int_value!(l / r));
+                if $vm.is_int_value(left) && $vm.is_int_value(right) {
+                    let result = int_slow!(IntOp::Div, left, right);
+                    $reg_set!($base + a as usize, result);
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::float(l / r));
                     } else {
@@ -315,17 +359,12 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                    if r == 0 {
-                        $vm.frames[$current_frame_idx].ip = $ip;
-                        return Err($vm.runtime_error(RuntimeErrorKind::DivisionByZero));
-                    }
-                    $reg_set!($base + a as usize, $int_value!(l % r));
+                if $vm.is_int_value(left) && $vm.is_int_value(right) {
+                    let result = int_slow!(IntOp::Rem, left, right);
+                    $reg_set!($base + a as usize, result);
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::float(l % r));
                     } else {
@@ -343,10 +382,8 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::float(l + r));
                 } else {
@@ -363,10 +400,8 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::float(l - r));
                 } else {
@@ -383,10 +418,8 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::float(l * r));
                 } else {
@@ -403,10 +436,8 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::float(l / r));
                 } else {
@@ -423,10 +454,8 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::float(l % r));
                 } else {
@@ -437,7 +466,6 @@ macro_rules! execute_arithmetic {
                     }
                 }
             }
-
             _ => unreachable!(),
         }
     }};

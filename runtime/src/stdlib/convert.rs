@@ -73,15 +73,16 @@ fn parse_digits(digits: &str, radix: u32, negative: bool) -> Option<i64> {
     }
     let magnitude = i128::from(u64::from_str_radix(digits, radix).ok()?);
     let value = if negative { -magnitude } else { magnitude };
-    i64::try_from(value)
-        .ok()
-        .filter(|value| Value::int_checked(*value).is_ok())
+    i64::try_from(value).ok()
 }
 
 fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "convert.parse_int")?;
     match parse_int_text(s) {
-        Some(n) => option_some(vm, Value::int(n)),
+        Some(n) => {
+            let value = vm.make_int(n)?;
+            option_some(vm, value)
+        }
         None => Ok(Value::none()),
     }
 }
@@ -105,7 +106,10 @@ fn native_parse_int_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
     match parse_digits(digits, radix, negative) {
-        Some(n) => option_some(vm, Value::int(n)),
+        Some(n) => {
+            let value = vm.make_int(n)?;
+            option_some(vm, value)
+        }
         None => Ok(Value::none()),
     }
 }
@@ -135,7 +139,7 @@ fn native_to_string(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 fn native_to_hex(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let n = get_int(vm, args[0], "convert.to_hex")?;
     let s = if n < 0 {
-        format!("-{:x}", -n)
+        format!("-{:x}", -i128::from(n))
     } else {
         format!("{:x}", n)
     };
@@ -149,7 +153,7 @@ fn native_to_binary(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         &if n >= 0 {
             format!("{:b}", n)
         } else {
-            format!("-{:b}", -n)
+            format!("-{:b}", -i128::from(n))
         },
     )
 }
@@ -159,7 +163,7 @@ fn native_to_octal(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if n >= 0 {
         make_string(vm, &format!("{:o}", n))
     } else {
-        make_string(vm, &format!("-{:o}", -n))
+        make_string(vm, &format!("-{:o}", -i128::from(n)))
     }
 }
 
@@ -207,12 +211,12 @@ fn native_to_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 /// to_int(value) - Convert to integer.
 /// Strings are parsed, floats are truncated, bools become 0/1.
-/// Returns an error if the result exceeds 48-bit range.
+/// Returns an error if the result exceeds the i64 range.
 fn native_to_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let value = args[0];
 
-    if let Some(i) = value.as_int() {
-        return Ok(Value::int(i));
+    if let Some(i) = vm.int_value(value) {
+        return vm.make_int(i as i64);
     }
     if let Some(f) = value.as_float() {
         return float_to_int_checked(vm, f, "convert.to_int");
@@ -225,13 +229,10 @@ fn native_to_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     if let Ok(s) = get_string(vm, value, "convert.to_int") {
-        return match parse_int_text(s) {
-            Some(n) => Ok(Value::int(n)),
-            None => Err(convert_error(
-                vm,
-                "convert.to_int",
-                format!("{s:?} is not an integer in the 48-bit range"),
-            )),
+        let parsed = parse_int_text(s).ok_or_else(|| format!("{s:?} is not an integer in the i64 range"));
+        return match parsed {
+            Ok(n) => vm.make_int(n),
+            Err(message) => Err(convert_error(vm, "convert.to_int", message)),
         };
     }
 
@@ -249,7 +250,7 @@ fn native_to_float(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = value.as_float() {
         return Ok(Value::float(f));
     }
-    if let Some(i) = value.as_int() {
+    if let Some(i) = vm.int_value(value) {
         return Ok(Value::float(i as f64));
     }
     if let Some(b) = value.as_bool() {
@@ -316,8 +317,8 @@ fn native_type_of(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 /// is_int(value) - Check if value is an integer.
-fn native_is_int(_vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    Ok(Value::bool(args[0].is_int()))
+fn native_is_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(Value::bool(vm.is_int_value(args[0])))
 }
 
 /// is_float(value) - Check if value is a float.

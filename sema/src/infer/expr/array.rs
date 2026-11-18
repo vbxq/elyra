@@ -2,7 +2,7 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind};
 use crate::types::{InferType, ResolvedType};
-use aelys_bytecode::Value;
+use aelys_bytecode::{IntOp, checked_int_op};
 use aelys_syntax::{BinaryOp, Expr, ExprKind, Span, TypeAnnotation, UnaryOp};
 
 impl TypeInference {
@@ -136,6 +136,7 @@ impl TypeInference {
                 | InferType::U8
                 | InferType::U16
                 | InferType::U32
+                | InferType::Int64
                 | InferType::U64
                 | InferType::F32
                 | InferType::F64
@@ -769,9 +770,7 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
         ExprKind::Unary {
             op: UnaryOp::Neg,
             operand,
-        } => constant_int_value(operand)?
-            .checked_neg()
-            .filter(|value| (Value::INT_MIN..=Value::INT_MAX).contains(value)),
+        } => constant_int_value(operand)?.checked_neg(),
         ExprKind::Unary {
             op: UnaryOp::BitNot,
             operand,
@@ -785,8 +784,8 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
                 BinaryOp::Mul => left.checked_mul(right),
                 BinaryOp::Div => left.checked_div(right),
                 BinaryOp::Mod => left.checked_rem(right),
-                BinaryOp::Shl => left.checked_shl(u32::try_from(right).ok()?),
-                BinaryOp::Shr => left.checked_shr(u32::try_from(right).ok()?),
+                BinaryOp::Shl => checked_int_op(IntOp::Shl, left, right).ok(),
+                BinaryOp::Shr => checked_int_op(IntOp::Shr, left, right).ok(),
                 BinaryOp::BitAnd => Some(left & right),
                 BinaryOp::BitOr => Some(left | right),
                 BinaryOp::BitXor => Some(left ^ right),
@@ -797,7 +796,7 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
                 | BinaryOp::Gt
                 | BinaryOp::Ge => None,
             };
-            folded.filter(|value| (Value::INT_MIN..=Value::INT_MAX).contains(value))
+            folded
         }
         _ => resolve(expr),
     }

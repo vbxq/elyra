@@ -8,6 +8,7 @@ pub enum InferType {
     I16,
     I32,
     I64,
+    Int64,
     U8,
     U16,
     U32,
@@ -223,6 +224,7 @@ impl InferType {
                 | InferType::I16
                 | InferType::I32
                 | InferType::I64
+                | InferType::Int64
                 | InferType::U8
                 | InferType::U16
                 | InferType::U32
@@ -236,10 +238,34 @@ impl InferType {
             InferType::I8
                 | InferType::I16
                 | InferType::I32
+                | InferType::Int64
                 | InferType::U8
                 | InferType::U16
                 | InferType::U32
+                | InferType::U64
         )
+    }
+
+    pub fn sized_int(&self) -> Option<aelys_bytecode::SizedInt> {
+        use aelys_bytecode::SizedInt;
+        match self {
+            InferType::I8 => Some(SizedInt::I8),
+            InferType::I16 => Some(SizedInt::I16),
+            InferType::I32 => Some(SizedInt::I32),
+            InferType::Int64 => Some(SizedInt::I64),
+            InferType::U8 => Some(SizedInt::U8),
+            InferType::U16 => Some(SizedInt::U16),
+            InferType::U32 => Some(SizedInt::U32),
+            InferType::U64 => Some(SizedInt::U64),
+            _ => None,
+        }
+    }
+
+    pub fn exact_int(&self, bits: i64) -> i128 {
+        match self {
+            InferType::U64 => i128::from(bits as u64),
+            _ => i128::from(bits),
+        }
     }
 
     pub fn wrap_int(&self, value: i64) -> i64 {
@@ -259,6 +285,7 @@ impl InferType {
             InferType::I8 | InferType::U8 => Some(8),
             InferType::I16 | InferType::U16 => Some(16),
             InferType::I32 | InferType::U32 => Some(32),
+            InferType::Int64 | InferType::U64 => Some(64),
             _ => None,
         }
     }
@@ -422,6 +449,7 @@ impl InferType {
             | InferType::I16
             | InferType::I32
             | InferType::I64
+            | InferType::Int64
             | InferType::U8
             | InferType::U16
             | InferType::U32
@@ -461,14 +489,15 @@ impl InferType {
         }
         let name_lower = ann.name.to_lowercase();
         match name_lower.as_str() {
-            "int" | "i64" | "int64" => InferType::I64,
+            "int" => InferType::I64,
+            "i64" | "int64" => InferType::Int64,
             "i8" | "int8" => InferType::I8,
             "i16" | "int16" => InferType::I16,
             "i32" | "int32" => InferType::I32,
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::I64,
+            "u64" | "uint64" => InferType::U64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
@@ -536,14 +565,15 @@ impl InferType {
 
     pub fn from_name(name: &str) -> Self {
         match name.to_lowercase().as_str() {
-            "int" | "i64" | "int64" => InferType::I64,
+            "int" => InferType::I64,
+            "i64" | "int64" => InferType::Int64,
             "i8" | "int8" => InferType::I8,
             "i16" | "int16" => InferType::I16,
             "i32" | "int32" => InferType::I32,
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::I64,
+            "u64" | "uint64" => InferType::U64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
@@ -578,7 +608,7 @@ impl InferType {
             InferType::I8 => i8::try_from(value).is_ok(),
             InferType::I16 => i16::try_from(value).is_ok(),
             InferType::I32 => i32::try_from(value).is_ok(),
-            InferType::I64 => true,
+            InferType::I64 | InferType::Int64 => true,
             InferType::U8 => u8::try_from(value).is_ok(),
             InferType::U16 => u16::try_from(value).is_ok(),
             InferType::U32 => u32::try_from(value).is_ok(),
@@ -593,6 +623,7 @@ impl InferType {
             InferType::I16,
             InferType::I32,
             InferType::I64,
+            InferType::Int64,
             InferType::U8,
             InferType::U16,
             InferType::U32,
@@ -618,6 +649,7 @@ impl fmt::Display for InferType {
             InferType::I16 => write!(f, "i16"),
             InferType::I32 => write!(f, "i32"),
             InferType::I64 => write!(f, "i64"),
+            InferType::Int64 => write!(f, "i64w"),
             InferType::U8 => write!(f, "u8"),
             InferType::U16 => write!(f, "u16"),
             InferType::U32 => write!(f, "u32"),
@@ -702,6 +734,7 @@ impl InferType {
     pub fn source_spelling(&self) -> String {
         match self {
             InferType::I64 => "int".to_string(),
+            InferType::Int64 => "i64".to_string(),
             InferType::F64 => "float".to_string(),
             InferType::Vec(inner) => format!("Vec<{}>", inner.source_spelling()),
             InferType::Map(key, value) => format!(

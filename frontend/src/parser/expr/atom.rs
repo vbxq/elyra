@@ -439,6 +439,7 @@ impl Parser {
             TokenKind::Minus => {
                 let value = match self.advance().kind {
                     TokenKind::Int(value) => -value,
+                    TokenKind::UInt(value) if value == 1 << 63 => i64::MIN,
                     _ => {
                         return Err(self.error(CompileErrorKind::ExpectedPattern));
                     }
@@ -488,7 +489,7 @@ impl Parser {
         };
         let end = if matches!(
             self.peek().kind,
-            TokenKind::Int(_) | TokenKind::Minus | TokenKind::Char(_)
+            TokenKind::Int(_) | TokenKind::UInt(_) | TokenKind::Minus | TokenKind::Char(_)
         ) {
             Some(self.range_pattern_bound()?)
         } else if inclusive {
@@ -538,6 +539,7 @@ impl Parser {
         let negative = self.match_token(&TokenKind::Minus);
         match self.advance().kind {
             TokenKind::Int(value) => Ok(if negative { -value } else { value }),
+            TokenKind::UInt(value) if negative && value == 1 << 63 => Ok(i64::MIN),
             _ => Err(self.error(CompileErrorKind::InvalidPattern {
                 reason: "a range pattern bound must be an integer literal".to_string(),
             })),
@@ -577,6 +579,7 @@ impl Parser {
 
         let kind = match token_kind {
             TokenKind::Int(n) => ExprKind::Int(n),
+            TokenKind::UInt(n) => unsigned_literal(n, span),
             TokenKind::Float(n) => ExprKind::Float(n),
             TokenKind::String(s) => ExprKind::String(s),
             TokenKind::Char(c) => ExprKind::Char(c),
@@ -1283,4 +1286,20 @@ fn remap_stmt_spans(stmt: &mut Stmt, span: aelys_syntax::Span) {
         }
         _ => {}
     }
+}
+
+// a literal above i64::MAX is a u64: it reaches the type checker as the cast of its bit pattern
+pub(crate) fn unsigned_literal(value: u64, span: aelys_syntax::Span) -> ExprKind {
+    ExprKind::Cast {
+        expr: Box::new(Expr::new(ExprKind::Int(value as i64), span)),
+        target: aelys_syntax::TypeAnnotation::new("u64".to_string(), span),
+    }
+}
+
+pub(crate) fn is_unsigned_int_min(expr: &Expr) -> bool {
+    matches!(
+        &expr.kind,
+        ExprKind::Cast { expr: inner, target }
+            if target.name == "u64" && target.span == inner.span && matches!(inner.kind, ExprKind::Int(i64::MIN))
+    )
 }

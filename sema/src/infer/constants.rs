@@ -3,9 +3,6 @@ use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::types::InferType;
 use aelys_syntax::{BinaryOp, Expr, ExprKind, MemberSeparator, Stmt, StmtKind, UnaryOp};
 
-const INT_MIN: i64 = -(1 << 47);
-const INT_MAX: i64 = (1 << 47) - 1;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstValue {
     Int(i64),
@@ -14,17 +11,12 @@ pub enum ConstValue {
     Str(String),
 }
 
-fn int(value: Option<i64>) -> Option<ConstValue> {
-    value
-        .filter(|value| (INT_MIN..=INT_MAX).contains(value))
-        .map(ConstValue::Int)
-}
-
+// a sized result wraps to its bit pattern; an int result outside i64 does not fold
 fn int_in(ty: &InferType, exact: i128) -> Option<ConstValue> {
     if ty.is_sized_integer() {
         return Some(ConstValue::Int(ty.wrap_int(exact as i64)));
     }
-    int(i64::try_from(exact).ok())
+    i64::try_from(exact).ok().map(ConstValue::Int)
 }
 
 pub(crate) type LeafValue<'a> = &'a dyn Fn(&Expr) -> Option<ConstValue>;
@@ -102,7 +94,9 @@ pub(crate) fn fold_const(
         ExprKind::String(value) => Some(ConstValue::Str(value.clone())),
         ExprKind::Grouping(inner) => fold(inner, context),
         ExprKind::Unary { op, operand } => match (op, fold(operand, context)?) {
-            (UnaryOp::Neg, ConstValue::Int(value)) => int_in(context, -i128::from(value)),
+            (UnaryOp::Neg, ConstValue::Int(value)) => {
+                int_in(context, -context.exact_int(value))
+            }
             (UnaryOp::Neg, ConstValue::Float(value)) => Some(ConstValue::Float(-value)),
             (UnaryOp::BitNot, ConstValue::Int(value)) => int_in(context, i128::from(!value)),
             (UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
@@ -140,29 +134,35 @@ pub(crate) fn fold_const(
             target,
         } => {
             let source = written_int_type(inner, leaf_type).unwrap_or(InferType::I64);
-            fold_cast(fold(inner, &source)?, &InferType::from_name(&target.name))
+            fold_cast(
+                fold(inner, &source)?,
+                &source,
+                &InferType::from_name(&target.name),
+            )
         }
         _ => leaf(expr),
     }
 }
 
-fn fold_cast(value: ConstValue, target: &InferType) -> Option<ConstValue> {
+fn fold_cast(value: ConstValue, source: &InferType, target: &InferType) -> Option<ConstValue> {
     match (value, target) {
         (ConstValue::Int(value), InferType::I64) => Some(ConstValue::Int(value)),
         (ConstValue::Int(value), target) if target.is_sized_integer() => {
             Some(ConstValue::Int(target.wrap_int(value)))
         }
-        (ConstValue::Int(value), InferType::F64) => Some(ConstValue::Float(value as f64)),
+        (ConstValue::Int(value), InferType::F64) => {
+            Some(ConstValue::Float(source.exact_int(value) as f64))
+        }
         (ConstValue::Float(value), InferType::F64) => Some(ConstValue::Float(value)),
         (ConstValue::Float(value), InferType::I64) if value.is_finite() => {
             let truncated = value.trunc();
-            (truncated >= INT_MIN as f64 && truncated <= INT_MAX as f64)
+            (truncated >= -9_223_372_036_854_775_808.0 && truncated < 9_223_372_036_854_775_808.0)
                 .then_some(ConstValue::Int(truncated as i64))
         }
         (ConstValue::Float(value), target) if target.is_sized_integer() && value.is_finite() => {
-            let modulus = (1u64 << target.int_bits()?) as f64;
+            let modulus = 2f64.powi(i32::try_from(target.int_bits()?).ok()?);
             Some(ConstValue::Int(
-                target.wrap_int((value.trunc() % modulus) as i64),
+                target.wrap_int((value.trunc() % modulus) as i128 as i64),
             ))
         }
         _ => None,
@@ -179,7 +179,7 @@ pub(crate) fn fold_failure(
     let failure = |expr: &Expr, context: &InferType| fold_failure(expr, leaf, leaf_type, context);
     match &expr.kind {
         ExprKind::Int(value) if int_in(context, i128::from(*value)).is_none() => {
-            Some(format!("{value} is outside the 48-bit int range"))
+            Some(format!("{value} is outside the int range"))
         }
         ExprKind::Grouping(inner) => failure(inner, context),
         ExprKind::Unary { op, operand } => {
@@ -188,9 +188,9 @@ pub(crate) fn fold_failure(
             }
             match (op, fold(operand, context)?) {
                 (UnaryOp::Neg, ConstValue::Int(value))
-                    if int_in(context, -i128::from(value)).is_none() =>
+                    if int_in(context, -context.exact_int(value)).is_none() =>
                 {
-                    Some(format!("-({value}) overflows the 48-bit int range"))
+                    Some(format!("-({value}) overflows the int range"))
                 }
                 _ => None,
             }
@@ -213,9 +213,7 @@ pub(crate) fn fold_failure(
             match op {
                 BinaryOp::Div if right == 0 => Some("division by zero".to_string()),
                 BinaryOp::Mod if right == 0 => Some("remainder by zero".to_string()),
-                _ => Some(format!(
-                    "{left} {op} {right} overflows the 48-bit int range"
-                )),
+                _ => Some(format!("{left} {op} {right} overflows the int range")),
             }
         }
         ExprKind::Cast {
@@ -251,25 +249,25 @@ fn fold_binary(
     use ConstValue::{Bool, Float, Int, Str};
     match (left, right) {
         (Int(left), Int(right)) => {
-            let (wide_left, wide_right) = (i128::from(left), i128::from(right));
+            let (wide_left, wide_right) = (ty.exact_int(left), ty.exact_int(right));
             match op {
                 BinaryOp::Add => int_in(ty, wide_left + wide_right),
                 BinaryOp::Sub => int_in(ty, wide_left - wide_right),
-                BinaryOp::Mul => int_in(ty, wide_left * wide_right),
+                BinaryOp::Mul => int_in(ty, wide_left.wrapping_mul(wide_right)),
                 BinaryOp::Div if right != 0 => int_in(ty, wide_left / wide_right),
-                BinaryOp::Mod if right != 0 => int_in(ty, wide_left % wide_right),
+                BinaryOp::Mod if right != 0 => int_in(ty, wide_left.wrapping_rem(wide_right)),
                 BinaryOp::Div | BinaryOp::Mod => None,
                 BinaryOp::Shl => int_in(ty, wide_left << (right & shift_mask(ty))),
                 BinaryOp::Shr => int_in(ty, wide_left >> (right & shift_mask(ty))),
                 BinaryOp::BitAnd => int_in(ty, wide_left & wide_right),
                 BinaryOp::BitOr => int_in(ty, wide_left | wide_right),
                 BinaryOp::BitXor => int_in(ty, wide_left ^ wide_right),
-                BinaryOp::Eq => Some(Bool(left == right)),
-                BinaryOp::Ne => Some(Bool(left != right)),
-                BinaryOp::Lt => Some(Bool(left < right)),
-                BinaryOp::Le => Some(Bool(left <= right)),
-                BinaryOp::Gt => Some(Bool(left > right)),
-                BinaryOp::Ge => Some(Bool(left >= right)),
+                BinaryOp::Eq => Some(Bool(wide_left == wide_right)),
+                BinaryOp::Ne => Some(Bool(wide_left != wide_right)),
+                BinaryOp::Lt => Some(Bool(wide_left < wide_right)),
+                BinaryOp::Le => Some(Bool(wide_left <= wide_right)),
+                BinaryOp::Gt => Some(Bool(wide_left > wide_right)),
+                BinaryOp::Ge => Some(Bool(wide_left >= wide_right)),
             }
         }
         (Float(left), Float(right)) => match op {

@@ -7,6 +7,7 @@ pub enum ResolvedType {
     I16,
     I32,
     I64,
+    Int64,
     U8,
     U16,
     U32,
@@ -74,6 +75,7 @@ impl ResolvedType {
                 | ResolvedType::I16
                 | ResolvedType::I32
                 | ResolvedType::I64
+                | ResolvedType::Int64
                 | ResolvedType::U8
                 | ResolvedType::U16
                 | ResolvedType::U32
@@ -122,6 +124,7 @@ impl ResolvedType {
             InferType::I16 => ResolvedType::I16,
             InferType::I32 => ResolvedType::I32,
             InferType::I64 => ResolvedType::I64,
+            InferType::Int64 => ResolvedType::Int64,
             InferType::U8 => ResolvedType::U8,
             InferType::U16 => ResolvedType::U16,
             InferType::U32 => ResolvedType::U32,
@@ -186,6 +189,7 @@ impl fmt::Display for ResolvedType {
             ResolvedType::I16 => write!(f, "i16"),
             ResolvedType::I32 => write!(f, "i32"),
             ResolvedType::I64 => write!(f, "i64"),
+            ResolvedType::Int64 => write!(f, "i64w"),
             ResolvedType::U8 => write!(f, "u8"),
             ResolvedType::U16 => write!(f, "u16"),
             ResolvedType::U32 => write!(f, "u32"),

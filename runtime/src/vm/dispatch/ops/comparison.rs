@@ -29,7 +29,7 @@ macro_rules! execute_comparison {
                 } else {
                     $vm.frames[$current_frame_idx].ip = $ip;
                     match $vm.compare_lt(left, right) {
-                        Ok(res) => $reg_set!($base + a as usize, Value::bool(res)),
+                        Ok(result) => $reg_set!($base + a as usize, Value::bool(result)),
                         Err(e) => return Err(e),
                     }
                 }
@@ -82,44 +82,80 @@ macro_rules! execute_comparison {
 
             59 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l < r));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let result = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked() < right.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, right, "<")?.is_lt()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             60 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l <= r));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let result = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked() <= right.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, right, "<=")?.is_le()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             61 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l > r));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let result = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked() > right.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, right, ">")?.is_gt()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             62 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l >= r));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let result = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked() >= right.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, right, ">=")?.is_ge()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             63 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l == r));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let result = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked() == right.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, right, "==")?.is_eq()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             64 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l != r));
+                let left = *$reg_ref!($base + b as usize);
+                let right = *$reg_ref!($base + c as usize);
+                let result = if left.both_inline_int_bits(&right) {
+                    left.as_int_unchecked() != right.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, right, "!=")?.is_ne()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             65 => {
@@ -166,26 +202,50 @@ macro_rules! execute_comparison {
 
             71 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l < c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() < c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), "<")?.is_lt()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             72 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l <= c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() <= c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), "<=")?.is_le()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             73 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l > c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() > c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), ">")?.is_gt()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             74 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l >= c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() >= c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), ">=")?.is_ge()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             92 => {
@@ -194,11 +254,11 @@ macro_rules! execute_comparison {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, Value::bool(l < r));
+                } else if let (Some(l), Some(r)) = ($vm.int_value(left), $vm.int_value(right)) {
+                    $reg_set!($base + a as usize, Value::bool(l < r));
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::bool(l < r));
                     } else {
@@ -213,11 +273,11 @@ macro_rules! execute_comparison {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, Value::bool(l <= r));
+                } else if let (Some(l), Some(r)) = ($vm.int_value(left), $vm.int_value(right)) {
+                    $reg_set!($base + a as usize, Value::bool(l <= r));
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::bool(l <= r));
                     } else {
@@ -232,11 +292,11 @@ macro_rules! execute_comparison {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, Value::bool(l > r));
+                } else if let (Some(l), Some(r)) = ($vm.int_value(left), $vm.int_value(right)) {
+                    $reg_set!($base + a as usize, Value::bool(l > r));
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::bool(l > r));
                     } else {
@@ -251,11 +311,11 @@ macro_rules! execute_comparison {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, Value::bool(l >= r));
+                } else if let (Some(l), Some(r)) = ($vm.int_value(left), $vm.int_value(right)) {
+                    $reg_set!($base + a as usize, Value::bool(l >= r));
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::bool(l >= r));
                     } else {
@@ -270,11 +330,11 @@ macro_rules! execute_comparison {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, Value::bool(l == r));
+                } else if let (Some(l), Some(r)) = ($vm.int_value(left), $vm.int_value(right)) {
+                    $reg_set!($base + a as usize, Value::bool(l == r));
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::bool(l == r));
                     } else {
@@ -290,11 +350,11 @@ macro_rules! execute_comparison {
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
                     $reg_set!($base + a as usize, Value::bool(l != r));
+                } else if let (Some(l), Some(r)) = ($vm.int_value(left), $vm.int_value(right)) {
+                    $reg_set!($base + a as usize, Value::bool(l != r));
                 } else {
-                    let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                    let r_float = right
-                        .as_float()
-                        .or_else(|| right.as_int().map(|i| i as f64));
+                    let l_float = $vm.number_as_f64(left);
+                    let r_float = $vm.number_as_f64(right);
                     if let (Some(l), Some(r)) = (l_float, r_float) {
                         $reg_set!($base + a as usize, Value::bool(l != r));
                     } else {
@@ -308,10 +368,8 @@ macro_rules! execute_comparison {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::bool(l < r));
                 } else {
@@ -323,10 +381,8 @@ macro_rules! execute_comparison {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::bool(l <= r));
                 } else {
@@ -338,10 +394,8 @@ macro_rules! execute_comparison {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::bool(l > r));
                 } else {
@@ -353,10 +407,8 @@ macro_rules! execute_comparison {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::bool(l >= r));
                 } else {
@@ -368,10 +420,8 @@ macro_rules! execute_comparison {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::bool(l == r));
                 } else {
@@ -384,10 +434,8 @@ macro_rules! execute_comparison {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
-                let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
-                let r_float = right
-                    .as_float()
-                    .or_else(|| right.as_int().map(|i| i as f64));
+                let l_float = $vm.number_as_f64(left);
+                let r_float = $vm.number_as_f64(right);
                 if let (Some(l), Some(r)) = (l_float, r_float) {
                     $reg_set!($base + a as usize, Value::bool(l != r));
                 } else {

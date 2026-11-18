@@ -5,13 +5,6 @@ use aelys_sema::{
 use aelys_syntax::{BinaryOp, UnaryOp};
 use std::collections::HashSet;
 
-const INT_MIN: i64 = -(1i64 << 47);
-const INT_MAX: i64 = (1i64 << 47) - 1;
-
-fn in_vm_range(value: i64) -> Option<i64> {
-    (INT_MIN..=INT_MAX).contains(&value).then_some(value)
-}
-
 // an expression may be deleted, duplicated or reordered only when it can neither write nor trap
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Effects {
@@ -290,13 +283,13 @@ fn binary_can_trap(whole: &TypedExpr, left: &TypedExpr, op: BinaryOp, right: &Ty
 
 pub(crate) fn const_int(expr: &TypedExpr) -> Option<i64> {
     match &expr.kind {
-        TypedExprKind::Int(n) => in_vm_range(*n),
+        TypedExprKind::Int(n) => Some(*n),
         TypedExprKind::Grouping(inner) => const_int(inner),
         _ if expr.ty.is_sized_integer() => None,
         TypedExprKind::Unary {
             op: UnaryOp::Neg,
             operand,
-        } => in_vm_range(const_int(operand)?.checked_neg()?),
+        } => const_int(operand)?.checked_neg(),
         TypedExprKind::Binary { left, op, right }
             if left.ty.is_integer() && right.ty.is_integer() && !left.ty.is_sized_integer() =>
         {
@@ -315,7 +308,7 @@ pub(crate) fn const_int(expr: &TypedExpr) -> Option<i64> {
                 BinaryOp::BitXor => a ^ b,
                 _ => return None,
             };
-            in_vm_range(value)
+            Some(value)
         }
         _ => None,
     }

@@ -90,15 +90,27 @@ impl VM {
                 && ip < bytecode_len
                 && super::hot::HOT[(unsafe { *bytecode_ptr.add(ip) } >> 24) as usize]
             {
-                let (hot_ip, changed) = self.run_hot::<JIT>(
-                    ip,
-                    base,
-                    func_ref,
-                    bytecode_ptr,
-                    bytecode_len,
-                    constants_ptr,
-                    constants_len,
-                );
+                let (hot_ip, changed) = if self.heap.boxed_ints_seen() {
+                    self.run_hot::<JIT, true>(
+                        ip,
+                        base,
+                        func_ref,
+                        bytecode_ptr,
+                        bytecode_len,
+                        constants_ptr,
+                        constants_len,
+                    )
+                } else {
+                    self.run_hot::<JIT, false>(
+                        ip,
+                        base,
+                        func_ref,
+                        bytecode_ptr,
+                        bytecode_len,
+                        constants_ptr,
+                        constants_len,
+                    )
+                };
                 if changed {
                     let last = self.frames.len() - 1;
                     self.frames[last].ip = hot_ip;
@@ -200,11 +212,12 @@ impl VM {
             }
             macro_rules! int_value {
                 ($value:expr) => {{
-                    match Value::int_checked($value) {
-                        Ok(value) => value,
-                        Err(_) => {
+                    let value: i64 = $value;
+                    match Value::inline_int(value) {
+                        Some(value) => value,
+                        None => {
                             self.frames[current_frame_idx].ip = ip;
-                            return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                            self.box_int(i128::from(value))?
                         }
                     }
                 }};
@@ -344,13 +357,14 @@ impl VM {
                         .copied()
                         .unwrap_or_else(Value::null);
                     let right_value = *reg_ref!(base + usize::from(source));
-                    let (Some(left), Some(right)) = (left_value.as_int(), right_value.as_int())
+                    let (Some(left), Some(right)) =
+                        (self.int64_value(left_value), self.int64_value(right_value))
                     else {
                         if left_value.is_uninit() {
                             self.frames[current_frame_idx].ip = ip;
                             return Err(self.uninitialized_global_error(usize::from(global)));
                         }
-                        let found = if left_value.as_int().is_some() {
+                        let found = if self.is_int_value(left_value) {
                             right_value
                         } else {
                             left_value
@@ -362,7 +376,11 @@ impl VM {
                             got: found.type_name().to_string(),
                         }));
                     };
-                    let result = int_value!(left.wrapping_add(right));
+                    let Some(sum) = left.checked_add(right) else {
+                        self.frames[current_frame_idx].ip = ip;
+                        return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                    };
+                    let result = int_value!(sum);
                     self.set_global_by_index(usize::from(global), result);
                     reg_set!(base + usize::from(dest), result);
                 }
@@ -1396,6 +1414,19 @@ impl VM {
 
                 229..=233 => {
                     super::ops::sized::execute(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        opcode_byte,
+                        instr,
+                    )?;
+                }
+
+                243..=255 => {
+                    super::ops::sized::execute_wide64(
                         self,
                         ip,
                         base,

@@ -454,7 +454,8 @@ fn native_random_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
         return result_err(vm, &format!("sys.random_int: min ({min}) > max ({max})"));
     }
 
-    let value = Value::int(vm.random_i64_inclusive(min, max));
+    let value = vm.random_i64_inclusive(min, max);
+    let value = vm.make_int(value)?;
     result_ok(vm, value)
 }
 
@@ -465,7 +466,8 @@ fn native_random_seed(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
 }
 
 fn native_random_state(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    Ok(Value::int_wrapping(vm.random_state() as i64))
+    let state = vm.random_state();
+    vm.make_int(i64::try_from(state).unwrap_or(i64::MAX))
 }
 
 fn native_random_set_state(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

@@ -23,6 +23,9 @@ impl Parser {
             let operand = self.nested(Self::unary)?;
             let span = start.merge(operand.span);
 
+            if super::atom::is_unsigned_int_min(&operand) {
+                return Ok(Expr::new(ExprKind::Int(i64::MIN), span));
+            }
             match operand.kind {
                 ExprKind::Int(n) => {
                     return Ok(Expr::new(ExprKind::Int(n.wrapping_neg()), span));

@@ -477,7 +477,8 @@ impl VM {
     // leaves before any effect of the instruction at the returned ip
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    pub(super) fn run_hot<const JIT: bool>(
+    // no boxed int exists before the first one is allocated, and the hot loop allocates none, so typed int operands are inline
+    pub(super) fn run_hot<const JIT: bool, const BOXED: bool>(
         &mut self,
         mut ip: usize,
         mut base: usize,
@@ -516,9 +517,13 @@ impl VM {
             }};
         }
         macro_rules! int {
-            ($index:expr) => {
-                get!($index).as_int_unchecked()
-            };
+            ($index:expr) => {{
+                let value = get!($index);
+                if BOXED && !value.has_inline_int_bit() {
+                    leave!();
+                }
+                value.as_int_unchecked()
+            }};
         }
         macro_rules! or_leave {
             ($option:expr) => {
@@ -1194,7 +1199,7 @@ impl VM {
                     next
                 }
                 NEG_W | NOT_W => {
-                    let kind = or_leave!(SizedInt::from_u8(c as u8));
+                    let kind = or_leave!(SizedInt::from_u8(c as u8).filter(|kind| kind.bits() < 64));
                     let opcode = if (instr >> 24) as u8 == NEG_W {
                         OpCode::NegW
                     } else {

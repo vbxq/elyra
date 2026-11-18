@@ -243,6 +243,15 @@ impl AelysVec {
         self.data.type_tag()
     }
 
+    // packed ints only ever hold inline-range values; a boxed int turns the storage into objects first
+    pub fn promote_ints_to_objects(&mut self) {
+        if let VecData::Ints(values) = &self.data {
+            let mut objects = Vec::with_capacity(values.capacity());
+            objects.extend(values.iter().map(|value| Value::int(*value)));
+            self.data = VecData::Objects(objects);
+        }
+    }
+
     pub fn get(&self, index: usize) -> Option<Value> {
         if index >= self.len() {
             return None;

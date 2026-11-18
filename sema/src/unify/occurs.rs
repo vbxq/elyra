@@ -23,6 +23,7 @@ pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
         | InferType::U8
         | InferType::U16
         | InferType::U32
+        | InferType::Int64
         | InferType::U64
         | InferType::F32
         | InferType::F64

@@ -3,7 +3,7 @@
 pub use aelys_native_macros::{aelys_export, aelys_module};
 
 pub const AELYS_ABI_VERSION: u32 = 5;
-pub const AELYS_API_VERSION: u32 = 4;
+pub const AELYS_API_VERSION: u32 = 5;
 pub const AELYS_NATIVE_INVALID_ARGUMENT: i32 = 1;
 pub const AELYS_NATIVE_INTEGER_OVERFLOW: i32 = 2;
 pub const AELYS_NATIVE_RESULT_ERROR: i32 = 3;
@@ -65,6 +65,45 @@ pub unsafe fn alloc_string_from_context(
     let alloc = api.alloc_string.ok_or(AELYS_NATIVE_INVALID_ARGUMENT)?;
     let mut output = value_null();
     let status = alloc(context, value.as_ptr(), value.len(), &mut output);
+    if status == 0 { Ok(output) } else { Err(status) }
+}
+
+// a host built before api version 5 passes a shorter table: its size says whether a field exists
+fn vm_api_field<T: Copy>(
+    api: &AelysVmApi,
+    offset: usize,
+    field: Option<T>,
+) -> Option<T> {
+    let size = usize::try_from(api.size).ok()?;
+    (size >= offset + core::mem::size_of::<usize>()).then_some(field).flatten()
+}
+
+// an int in -2^47..2^47 is inline, a larger one is a VM box read through the api
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn read_int_from_value(context: *mut NativeContext, value: AelysValue) -> Option<i64> {
+    if value_is_int(value) {
+        return Some(value_as_int(value));
+    }
+    let api = VM_API.get()?;
+    let read = vm_api_field(api, core::mem::offset_of!(AelysVmApi, read_int), api.read_int)?;
+    let mut out = 0i64;
+    (read(context, value, &mut out) == 0).then_some(out)
+}
+
+// an int outside -2^47..2^47 is allocated by the VM
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn alloc_int_from_context(
+    context: *mut NativeContext,
+    value: i64,
+) -> Result<AelysValue, i32> {
+    if let Some(inline) = value_int(value) {
+        return Ok(inline);
+    }
+    let api = VM_API.get().ok_or(AELYS_NATIVE_INTEGER_OVERFLOW)?;
+    let alloc = vm_api_field(api, core::mem::offset_of!(AelysVmApi, alloc_int), api.alloc_int)
+        .ok_or(AELYS_NATIVE_INTEGER_OVERFLOW)?;
+    let mut output = value_null();
+    let status = alloc(context, value, &mut output);
     if status == 0 { Ok(output) } else { Err(status) }
 }
 

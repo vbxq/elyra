@@ -161,7 +161,8 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ("sys", "gc_stats") => function(0, InferType::String),
         ("sys", "gc_collect") => function(0, InferType::Unit),
 
-        ("time", "now" | "now_us" | "now_ns") => function(0, InferType::F64),
+        ("time", "now") => function(0, InferType::F64),
+        ("time", "now_us" | "now_ns") => function(0, InferType::I64),
         ("time", "elapsed") => function_with(vec![InferType::I64], InferType::F64),
         ("time", "now_ms") => function(0, InferType::I64),
         ("time", "elapsed_ms" | "elapsed_us") => {

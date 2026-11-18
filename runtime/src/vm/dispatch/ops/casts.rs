@@ -10,17 +10,17 @@ impl VM {
     ) -> Result<Value, RuntimeError> {
         match target {
             CastTarget::Int => {
-                if let Some(value) = value.as_int() {
-                    return Value::int_checked(value)
-                        .map_err(|_| self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                if value.is_int() {
+                    return Ok(value);
+                }
+                if let Some(wide) = self.int_value(value) {
+                    return self.make_int(wide as i64);
                 }
                 if let Some(value) = value.as_float() {
-                    let truncated = value.trunc();
-                    if !(truncated >= Value::INT_MIN as f64 && truncated <= Value::INT_MAX as f64) {
-                        return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
-                    }
-                    return Value::int_checked(truncated as i64)
-                        .map_err(|_| self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                    return match crate::stdlib::helpers::float_to_i64(value) {
+                        Some(truncated) => self.make_int(truncated),
+                        None => Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow)),
+                    };
                 }
                 if let Some(value) = value.as_bool() {
                     return Ok(Value::int(if value { 1 } else { 0 }));
@@ -30,7 +30,7 @@ impl VM {
                 if let Some(value) = value.as_float() {
                     return Ok(Value::float(value));
                 }
-                if let Some(value) = value.as_int() {
+                if let Some(value) = self.int_value(value) {
                     return Ok(Value::float(value as f64));
                 }
                 if let Some(value) = value.as_bool() {
@@ -42,12 +42,14 @@ impl VM {
             | CastTarget::I32
             | CastTarget::U8
             | CastTarget::U16
-            | CastTarget::U32 => {
+            | CastTarget::U32
+            | CastTarget::I64
+            | CastTarget::U64 => {
                 let kind = target
                     .sized_kind()
                     .expect("a sized cast target names a width");
-                if let Some(value) = value.as_int() {
-                    return Ok(Value::int_wrapping(kind.wrap(value)));
+                if let Some(value) = self.int_bits(value) {
+                    return self.make_sized(kind, kind.wrap(value));
                 }
                 if let Some(value) = value.as_float() {
                     if !value.is_finite() {
@@ -63,10 +65,10 @@ impl VM {
                             target: kind.name(),
                         }));
                     }
-                    let modulus = (1u64 << kind.bits()) as f64;
+                    let modulus = 2f64.powi(kind.bits() as i32);
                     // fmod is exact, so the low bits survive any magnitude
                     let low = value.trunc() % modulus;
-                    return Ok(Value::int_wrapping(kind.wrap(low as i64)));
+                    return self.make_sized(kind, kind.wrap(low as i128 as i64));
                 }
                 if let Some(value) = value.as_bool() {
                     return Ok(Value::int(i64::from(value)));
@@ -76,7 +78,7 @@ impl VM {
                 if let Some(value) = value.as_bool() {
                     return Ok(Value::bool(value));
                 }
-                if let Some(value) = value.as_int() {
+                if let Some(value) = self.int_value(value) {
                     return Ok(Value::bool(value != 0));
                 }
                 if let Some(value) = value.as_float() {

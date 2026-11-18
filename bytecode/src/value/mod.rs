@@ -15,8 +15,7 @@ pub struct IntegerOverflowError {
 // everything else uses the NaN space (quiet NaN has 51 bits of payload).
 // This approach is used by LuaJIT, JavaScriptCore, etc. - proven fast.
 //
-// The 48-bit integer limit is a tradeoff: 64-bit ints would need heap
-// allocation or a different encoding. ±140 trillion should be enough...
+// an integer outside the 48-bit payload lives in a heap BoxedInt; every integer has exactly one encoding
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Value(u64);
@@ -38,6 +37,6 @@ const CHAR_FLAG: u64 = 0x0000_8000_0000_0000;
 const CANONICAL_NAN: u64 = QNAN | TAG_NAN | 1;
 
 impl Value {
-    pub const INT_MIN: i64 = -(1i64 << 47);
-    pub const INT_MAX: i64 = (1i64 << 47) - 1;
+    pub const INLINE_INT_MIN: i64 = -(1i64 << 47);
+    pub const INLINE_INT_MAX: i64 = (1i64 << 47) - 1;
 }

@@ -5,6 +5,7 @@ pub enum Constant {
     Null,
     Bool(bool),
     Int(i64),
+    UInt(u64),
     Float(u64),
     Char(u32),
     String(String),
@@ -35,7 +36,12 @@ impl Constant {
         match self {
             Self::Null => Value::null(),
             Self::Bool(value) => Value::bool(*value),
-            Self::Int(value) => Value::int(*value),
+            Self::Int(value) => heap
+                .alloc_int(i128::from(*value))
+                .expect("an i64 constant is an integer"),
+            Self::UInt(value) => heap
+                .alloc_int(i128::from(*value))
+                .expect("a u64 constant is an integer"),
             Self::Float(bits) => Value::float(f64::from_bits(*bits)),
             Self::Char(scalar) => char::from_u32(*scalar).map_or_else(Value::null, Value::char),
             Self::String(value) => Value::ptr(heap.intern_string(value).index()),
@@ -58,6 +64,13 @@ impl Constant {
         match self {
             Self::Int(value) => Some(*value),
             _ => None,
+        }
+    }
+
+    pub fn integer(value: i128) -> Option<Self> {
+        match i64::try_from(value) {
+            Ok(signed) => Some(Self::Int(signed)),
+            Err(_) => u64::try_from(value).ok().map(Self::UInt),
         }
     }
 

@@ -64,8 +64,8 @@ pub(crate) struct Checker<'a> {
     table: &'a TypeTable,
 }
 
-const INT_MIN: i128 = aelys_bytecode::Value::INT_MIN as i128;
-const INT_MAX: i128 = aelys_bytecode::Value::INT_MAX as i128;
+const INT_MIN: i128 = i64::MIN as i128;
+const INT_MAX: i128 = i64::MAX as i128;
 const SURROGATES: i128 = 0x800;
 const CHAR_LAST: i128 = 0x10FFFF - SURROGATES;
 
@@ -93,7 +93,8 @@ impl<'a> Checker<'a> {
             InferType::U8 => Shape::Int(0, u8::MAX.into()),
             InferType::U16 => Shape::Int(0, u16::MAX.into()),
             InferType::U32 => Shape::Int(0, u32::MAX.into()),
-            InferType::I64 => Shape::Int(INT_MIN, INT_MAX),
+            InferType::I64 | InferType::Int64 => Shape::Int(INT_MIN, INT_MAX),
+            InferType::U64 => Shape::Int(0, u64::MAX.into()),
             InferType::Char => Shape::Char,
             InferType::String => Shape::Str,
             InferType::Option(inner) => Shape::Sum(vec![

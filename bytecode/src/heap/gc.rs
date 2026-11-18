@@ -66,7 +66,10 @@ impl Heap {
     pub(super) fn may_have_children(kind: &ObjectKind) -> bool {
         !matches!(
             kind,
-            ObjectKind::String(_) | ObjectKind::Native(_) | ObjectKind::Range(_)
+            ObjectKind::String(_)
+                | ObjectKind::Native(_)
+                | ObjectKind::Range(_)
+                | ObjectKind::Int(_)
         )
     }
 
@@ -99,7 +102,10 @@ impl Heap {
                     children.push(GcRef::new(pointer));
                 }
             }
-            ObjectKind::String(_) | ObjectKind::Native(_) | ObjectKind::Range(_) => {}
+            ObjectKind::String(_)
+            | ObjectKind::Native(_)
+            | ObjectKind::Range(_)
+            | ObjectKind::Int(_) => {}
             ObjectKind::Array(array) => {
                 if let Some(objects) = array.data.as_objects() {
                     pointers(objects, children);
@@ -396,6 +402,7 @@ impl Heap {
             ObjectKind::Sum(_) => std::mem::size_of::<crate::object::AelysSum>(),
             ObjectKind::Enum(value) => value.size_bytes(),
             ObjectKind::Struct(structure) => structure.size_bytes(),
+            ObjectKind::Int(_) => std::mem::size_of::<crate::object::BoxedInt>(),
         }
     }
 

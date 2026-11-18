@@ -64,25 +64,27 @@ fn native_now(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::float(secs))
 }
 
-fn native_now_ms(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    let duration = SystemTime::now()
+fn since_epoch() -> std::time::Duration {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Ok(Value::int(duration.as_millis() as i64))
+        .unwrap_or_default()
 }
-fn native_now_us(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Ok(Value::float(duration.as_micros() as f64))
+
+fn int_of(vm: &mut VM, amount: u128) -> Result<Value, RuntimeError> {
+    vm.make_int(i64::try_from(amount).unwrap_or(i64::MAX))
+}
+
+fn native_now_ms(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    int_of(vm, since_epoch().as_millis())
+}
+
+fn native_now_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    int_of(vm, since_epoch().as_micros())
 }
 
 /// now_ns() - Get current timestamp in nanoseconds since Unix epoch.
-fn native_now_ns(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Ok(Value::float(duration.as_nanos() as f64))
+fn native_now_ns(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    int_of(vm, since_epoch().as_nanos())
 }
 
 /// timer() - Create a new timer.
@@ -114,7 +116,8 @@ fn native_elapsed_ms(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     let handle = get_handle(vm, args[0], "time.elapsed_ms")?;
 
     if let Some(Resource::Timer(instant)) = vm.get_resource(handle) {
-        Ok(Value::int(instant.elapsed().as_millis() as i64))
+        let elapsed = instant.elapsed().as_millis();
+        int_of(vm, elapsed)
     } else {
         Err(time_error(
             vm,
@@ -129,7 +132,8 @@ fn native_elapsed_us(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     let handle = get_handle(vm, args[0], "time.elapsed_us")?;
 
     if let Some(Resource::Timer(instant)) = vm.get_resource(handle) {
-        Ok(Value::int(instant.elapsed().as_micros() as i64))
+        let elapsed = instant.elapsed().as_micros();
+        int_of(vm, elapsed)
     } else {
         Err(time_error(
             vm,

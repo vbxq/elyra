@@ -281,6 +281,54 @@ extern "C" fn native_alloc_string_callback(
     0
 }
 
+extern "C" fn native_read_int_callback(
+    context: *mut aelys_native::NativeContext,
+    value: AelysValue,
+    out: *mut i64,
+) -> i32 {
+    if context.is_null() || out.is_null() {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let context = unsafe { &mut *(context as *mut RuntimeNativeContext) };
+    if context.magic != NATIVE_CONTEXT_MAGIC || context.vm.is_null() {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let vm = unsafe { &*context.vm };
+    let value = unsafe { std::mem::transmute::<AelysValue, Value>(value) };
+    match vm.int64_value(value) {
+        Some(int) => {
+            unsafe { *out = int };
+            0
+        }
+        None => aelys_native::AELYS_NATIVE_INVALID_ARGUMENT,
+    }
+}
+
+extern "C" fn native_alloc_int_callback(
+    context: *mut aelys_native::NativeContext,
+    value: i64,
+    out: *mut AelysValue,
+) -> i32 {
+    if context.is_null() || out.is_null() {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let context = unsafe { &mut *(context as *mut RuntimeNativeContext) };
+    if context.magic != NATIVE_CONTEXT_MAGIC || context.vm.is_null() {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let vm = unsafe { &mut *context.vm };
+    let Ok(int) = vm.make_int(value) else {
+        return aelys_native::AELYS_NATIVE_INTEGER_OVERFLOW;
+    };
+    if let Some(raw) = int.as_ptr() {
+        vm.native_call_roots.push(GcRef::new(raw));
+    }
+    unsafe {
+        *out = std::mem::transmute::<Value, AelysValue>(int);
+    }
+    0
+}
+
 extern "C" fn native_borrow_bytes_callback(
     context: *mut aelys_native::NativeContext,
     handle: AelysValue,
@@ -359,6 +407,8 @@ pub fn build_native_vm_api() -> AelysVmApi {
         borrow_bytes: Some(native_borrow_bytes_callback),
         borrow_bytes_shared: Some(native_borrow_bytes_shared_callback),
         _reserved: [0; 1],
+        read_int: Some(native_read_int_callback),
+        alloc_int: Some(native_alloc_int_callback),
     }
 }
 
@@ -445,7 +495,7 @@ impl VM {
             return Err(self.runtime_error(RuntimeErrorKind::NativeReturnedNull));
         }
         let valid = match expected {
-            ForeignPayloadKind::Int => value.is_int(),
+            ForeignPayloadKind::Int => self.is_int_value(value),
             ForeignPayloadKind::Float => value.is_float(),
             ForeignPayloadKind::Bool => value.is_bool(),
             ForeignPayloadKind::Unit => value.is_unit(),
