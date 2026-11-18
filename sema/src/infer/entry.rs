@@ -1714,6 +1714,10 @@ impl TypeInference {
         subst.close_modes();
 
         let mut resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
+        // the poisoned subtree is this limit, never an undetermined type of the later audits
+        if let Some(span) = inf.substitution_overflowed.get() {
+            inf.errors.push(TypeError::recursion_limit(span));
+        }
         inf.resolve_deferred_members(&mut resolved_stmts);
         let mut resolved_stmts = inf.monomorphize_program(resolved_stmts);
         inf.validate_collection_instances(&mut resolved_stmts);
@@ -1782,10 +1786,6 @@ impl TypeInference {
                 ),
             });
         }
-        if let Some(span) = inf.substitution_overflowed.get() {
-            inf.errors.push(TypeError::recursion_limit(span));
-        }
-
         inf.errors.sort_by_key(|error| {
             (
                 error_priority(&error.kind),
