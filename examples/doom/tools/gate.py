@@ -43,7 +43,7 @@ def parse(stdout):
             continue
         if f[0] == "gate":
             key, rest = f[1], f[2:]
-            if key in ("slowest_cause",):
+            if key in ("slowest_cause", "phase_ms"):
                 res[key] = " ".join(rest)
                 continue
             if key in ("slowest", "spike"):
