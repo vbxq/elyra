@@ -163,6 +163,7 @@ fn field_init_shorthand_reads_the_same_named_variable_in_every_literal_form() {
 struct P { x: int, y: int }
 struct W<T> { inner: T, tag: int }
 struct Outer { p: P, n: int }
+struct One { x: int }
 enum E { V { x: int, y: int }, U }
 impl P {
     fn swapped(self) -> P { let x = self.y; let y = self.x; P { x, y } }
@@ -190,7 +191,18 @@ for i in 0..400 {
     let inner = 5
     let tag = 7
     let w = W::<int> { inner, tag }
-    total += p.x + p.y + q.x + o.p.y + o.n + make(i).y + w.inner + w.tag + wrap(p, 1).inner.x + mk(1, 2).swapped().x + score(variant(1)) + sum(q)
+    let lone = Outer {
+        p,
+        n
+    }
+    let single = P {
+        x,
+        y: lone.n
+    }
+    let one = One {
+        x
+    }
+    total += p.x + p.y + q.x + o.p.y + o.n + make(i).y + w.inner + w.tag + wrap(p, 1).inner.x + mk(1, 2).swapped().x + score(variant(1)) + sum(q) + lone.p.x - single.x + one.x - x
 }
 total
 "#,

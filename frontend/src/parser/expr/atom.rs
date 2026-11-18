@@ -597,10 +597,11 @@ impl Parser {
                     && self.check(&TokenKind::LBrace)
                     && self.brace_construction_allowed()
                     && matches!(self.peek_at(1).kind, TokenKind::Identifier(_))
-                    && matches!(
+                    && (matches!(
                         self.peek_at(2).kind,
                         TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
-                    ) =>
+                    ) || (self.peek_at(2).kind == TokenKind::Semicolon
+                        && self.peek_at(3).kind == TokenKind::RBrace)) =>
             {
                 let name = name.clone();
                 return self.struct_literal(name, Vec::new(), span);
