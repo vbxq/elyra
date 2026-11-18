@@ -85,6 +85,16 @@ impl VM {
         }
 
         loop {
+            if !CONTROL && !REPORT {
+                ip = self.run_hot::<JIT>(
+                    ip,
+                    base,
+                    bytecode_ptr,
+                    bytecode_len,
+                    constants_ptr,
+                    constants_len,
+                );
+            }
             if ip >= bytecode_len {
                 let previous_gmap = global_mapping_id;
                 let caller_gmap = if self.frames.len() > 1 {
