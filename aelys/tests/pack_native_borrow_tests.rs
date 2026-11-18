@@ -104,3 +104,35 @@ fn every_kind_of_vec_u8_is_lent_packed() {
         "532 6 5 6 9 false",
     );
 }
+
+// a vec imported from the host arrives in object slots and is packed in place when a native borrows it
+#[test]
+fn a_host_imported_byte_vec_is_packed_when_a_native_borrows_it() {
+    use aelys::StructuredValue;
+    let runtime = Runtime::new();
+    unsafe { runtime.register_native_module(lend::descriptor()) }.unwrap();
+    let module = runtime
+        .compile(
+            "fn total(v: Vec<u8>) -> int { lend::total(&v) }\nfn both(mut v: Vec<u8>) -> string {\n    let before = lend::total(&v)\n    let _ = lend::stamp(&mut v, 7)\n    \"{before} {lend::total(&v)} {v[0]} {v[255]} {v.len()}\"\n}\n0",
+            CompileOptions::default(),
+        )
+        .unwrap();
+    let mut isolate = runtime.new_isolate(IsolateConfig::default());
+    isolate.execute(&module, RunOptions::default()).unwrap();
+    let both = isolate.get_function("both").unwrap();
+    let total = isolate.get_function("total").unwrap();
+    let bytes: Vec<StructuredValue> = (0..=255).map(StructuredValue::Int).collect();
+    let imported = isolate
+        .import_clone(&StructuredValue::Vec(bytes))
+        .expect("import");
+    let shown = isolate.call(&both, &[imported]).unwrap();
+    assert_eq!(isolate.value_to_string(shown), "32640 1792 7 7 256");
+
+    let wide = isolate
+        .import_clone(&StructuredValue::Vec(vec![
+            StructuredValue::Int(1),
+            StructuredValue::Int(300),
+        ]))
+        .expect("import");
+    assert!(isolate.call(&total, &[wide]).is_err());
+}
