@@ -73,7 +73,11 @@ fn compiled_loops_over_packed_bytes_compute_the_interpreter_values() {
     for flags in MODES {
         let outcome = run_with(&format!("{BYTE_LOOPS}println(total)\n"), flags);
         assert_eq!(outcome.code, Some(0), "{flags:?}\n{}", outcome.stderr);
-        assert_eq!(outcome.lines(), vec![want.to_string().as_str()], "{flags:?}");
+        assert_eq!(
+            outcome.lines(),
+            vec![want.to_string().as_str()],
+            "{flags:?}"
+        );
     }
     let interpreted = run_with(&format!("{BYTE_LOOPS}println(total)\n"), &["-ae.jit=off"]);
     assert_eq!(interpreted.lines(), vec![want.to_string().as_str()]);
