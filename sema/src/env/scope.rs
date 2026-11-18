@@ -205,6 +205,12 @@ impl TypeEnv {
         None
     }
 
+    pub fn is_imported_binding(&self, name: &str) -> bool {
+        !self.locals.iter().any(|scope| scope.contains_key(name))
+            && !self.captures.contains_key(name)
+            && self.functions.contains_key(name)
+    }
+
     pub fn contains(&self, name: &str) -> bool {
         self.lookup(name).is_some()
     }

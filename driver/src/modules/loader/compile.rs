@@ -35,6 +35,22 @@ impl ModuleLoader {
         let stmts = Parser::new_rust_collections(tokens, module_source.clone()).parse()?;
 
         let exports = self.collect_exports(&stmts, module_path_str)?;
+        if let Some((name, span)) = stmts.iter().find_map(|stmt| match &stmt.kind {
+            StmtKind::Function(func) if func.is_pub && !func.type_params.is_empty() => {
+                Some((func.name.clone(), func.span))
+            }
+            _ => None,
+        }) {
+            return Err(AelysError::Compile(CompileError::new(
+                CompileErrorKind::TypeNotExportable {
+                    module: module_path_str.replace('.', "::"),
+                    name,
+                    reason: "a generic function is specialized inside its own module, so no single body crosses the boundary; drop `pub` or make it non-generic".to_string(),
+                },
+                span,
+                module_source.clone(),
+            )));
+        }
 
         let module_name = needs
             .path
@@ -113,6 +129,7 @@ impl ModuleLoader {
         let mut global_renames: std::collections::HashMap<String, String> =
             prelude.symbol_origins.clone();
         let mut bare_imports = super::types::BareImports::default();
+        let mut immutable_imports = std::collections::BTreeSet::new();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -152,6 +169,8 @@ impl ModuleLoader {
                         wanted,
                         nested_needs.span,
                     );
+                    immutable_imports
+                        .extend(self.immutable_imports(&effective_kind, &nested_module_path));
                     for (name, target) in
                         self.import_renames(nested_needs, &effective_kind, &nested_module_path)
                     {
@@ -398,6 +417,7 @@ impl ModuleLoader {
         });
         let private_types = imported_types.clone();
         imported_types.ambiguous_imports = ambiguous_imports;
+        imported_types.immutable_imports = immutable_imports;
         let private_impls = imported_impl_stmts.clone();
         let private_nominals: std::collections::BTreeMap<String, String> = inherited_nominals
             .iter()

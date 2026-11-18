@@ -12,6 +12,15 @@ impl TypeInference {
         span: Span,
     ) -> (TypedExprKind, InferType) {
         self.check_write_binding(name, span, "assignment");
+        if self.immutable_imports.contains(name) && self.env.is_imported_binding(name) {
+            self.errors.push(TypeError {
+                kind: crate::constraint::TypeErrorKind::AssignToImmutableImport {
+                    name: name.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("assignment".to_string()),
+            });
+        }
         let typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {

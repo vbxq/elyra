@@ -706,9 +706,22 @@ With an alias (`needs std::math as m`), only the aliased form works: `m::sqrt()`
 
 After `needs sqrt from std::math`, you call `sqrt()` directly without the module prefix.
 
+A whole-module import without an alias also binds the module's exports by their
+bare names. Two such imports may export the same name: `needs std::fs` next to
+`needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
+both fine. Only an unqualified use of the shared name is refused, at the use, with
+E0410 `symbol 'size' is exported by multiple modules: bytes, fs`. A name imported
+by name with `needs size from std::bytes` wins over the whole-module imports, and
+two `needs size from ...` lines naming different modules are E0410 at the second
+line.
+
+Aliases and bare names belong to the file that writes them. `needs util as u` in
+one module and `needs other as u` in another give each module its own `u`, and a
+name a file imports never changes what another module's code reads.
+
 ### Standard Library Modules
 
-The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement:
+The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement, in the entry file and in every module it imports alike:
 
 - `std::io` - console I/O
 - `std::math` - math functions and constants
@@ -739,14 +752,41 @@ needs lib::helper        // imports lib/helper.aelys
 
 Top-level definitions in a file become the module's exports.
 
+A dotted path is resolved from the file that writes the `needs` line: `needs
+lib::util` in `game/mobj.aelys` looks for `game/lib/util.aelys` (then
+`game/lib/util/mod.aelys` and the native forms) first, and only then for
+`lib/util.aelys` under the project root, the directory of the entry file. The
+first file found is the module. Resolution depends only on the importing file and
+the path, never on the order of `needs` lines nor on what another file imported
+first.
+
+A module is its file. One file reached by two spellings, `needs game::lib::util`
+from the entry file and `needs lib::util` from `game/mobj.aelys`, is one module:
+its top-level code runs once and its variables exist once. Two different files
+that the same dotted path names from two different importers are two modules.
+
 A top-level `let` is a variable of the module that declares it, and it has one
 slot per module. Every reference inside that module resolves to that slot: the
 module's own top-level code, its free functions, and the bodies of its impls,
 whether such a body runs in the module or in a file that imported it. Two modules
 that each declare `v` hold two variables, and a file that imports one of them and
-also declares its own `v` holds a third. An importer's binding of an imported
-`pub let mut` holds the value the module had when it was imported; assigning to
-that binding moves the importer's binding and not the module's variable.
+also declares its own `v` holds a third, which shadows the import. An imported
+variable, read bare or as `module::v`, reads the declaring module's slot, so it
+always shows the module's current value. Assigning to a bare imported `pub let
+mut` writes the module's variable; assigning to an imported `pub let` is E0203
+`cannot assign to 'v': it is an immutable variable of the module that declares
+it`, and `module::v = ...` is not an assignment target.
+
+A `pub fn` with type parameters cannot be exported: monomorphization specializes
+it inside its own module, so no single body crosses the boundary. Importing a
+module that declares one is E0407, reported at the declaration. A private generic
+helper is unaffected.
+
+A struct or enum value keeps its type across modules at run time: a value built
+in one module is read, matched and passed as the same type in every module that
+uses it, nested in another struct, in a `Vec`, an array, an `Option` or an enum
+payload. A runtime error raised inside a module's function reports that module's
+file and line.
 
 ### Visibility
 
@@ -761,6 +801,9 @@ fn internal_function() {
     // ...
 }
 ```
+
+A method is reachable wherever its type is, so `pub` written on an item of an
+`impl` block (`pub fn new(...)`) is accepted and changes nothing.
 
 ### Cross-module types
 
@@ -793,6 +836,12 @@ name stays out of scope, and using one is E0378 `'Kind' is exported by module
 `needs` line that would fix it. The whole-module form `needs shapes` is
 unchanged and still brings every public type into scope.
 
+A public type that an imported function returns or takes is reachable without
+being named: `needs spawn from game::mobj` lets `spawn(5).hp` read a `pub` field
+of the returned `Mobj` and call `Mobj`'s inherent methods. Writing the name
+`Mobj` itself, in a literal or an annotation, still needs `needs Mobj from
+game::mobj` (E0378).
+
 An impl written in the defining module travels with its type, but only when
 every end of the impl is itself in scope. An inherent `impl Point` arrives with
 `Point`. A trait impl `impl Scorable for Point` arrives only when the importer
@@ -821,7 +870,9 @@ Importing a type that is not `pub` is E0403 `'Point' is not public in module
 An impl body the importer inlines is still checked and compiled in its defining
 module's terms. Everything that body reads travels with it: the types, traits and
 free functions the defining module imported, the names it reaches through a module
-path or through a module alias, the module's own globals, public or not, and the
+path or through a module alias (a standard library alias such as `needs std::bytes
+as by` included), the auto-registered modules, the module's own globals, public or
+not, and the types its free functions return, and the
 module's **own private `struct`, `enum` and `trait` declarations together with the
 impls over them**, on the same gate as its private globals. The
 importer never has to write those `needs` lines, and never sees the names they
@@ -2335,7 +2386,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 |------|------|---------|
 | E0201 | UndefinedVariable | no such name in scope |
 | E0202 | VariableAlreadyDefined | a name is declared twice in one scope |
-| E0203 | AssignToImmutable | assignment to a binding without `mut` |
+| E0203 | AssignToImmutable | assignment to a binding without `mut`, an imported `pub let` included |
 | E0204 | TooManyConstants | the constant pool limit is exceeded |
 | E0205 | TooManyRegisters | the register limit is exceeded |
 | E0206 | TooManyArguments | the argument limit is exceeded |
@@ -2443,10 +2494,10 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0404 | StdlibNotAvailable | the stdlib module is not available here |
 | E0405 | SymbolNotFound | no such symbol in that module |
 | E0406 | InvalidNativeModule | the native module is malformed |
-| E0407 | TypeNotExportable | a nominal value cannot cross a module boundary |
+| E0407 | TypeNotExportable | a nominal value or a generic `pub fn` cannot cross a module boundary |
 | E0408 | NativeChecksumMismatch | the native module checksum does not match |
 | E0409 | NativeVersionMismatch | the native module version does not match |
-| E0410 | SymbolConflict | two declarations of one name reach one file |
+| E0410 | SymbolConflict | two declarations of one name reach one file, or an unqualified use of a name two whole-module imports bind |
 | E0411 | ModulePathSeparator | a module path uses the wrong separator |
 | E0412 | PrivateFieldAccess | a private field is read or written outside its owner module |
 | E0413 | PrivateFieldConstruction | a private field is named in a literal or pattern outside its owner module |

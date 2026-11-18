@@ -18,6 +18,7 @@ pub struct ImportedTypes {
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
     pub module_scopes: BTreeMap<String, ModuleScope>,
     pub ambiguous_imports: BTreeMap<String, Vec<String>>,
+    pub immutable_imports: BTreeSet<String>,
 }
 
 // the names a module's own code reads beyond its globals, so a body carried out of it is
@@ -84,6 +85,7 @@ impl TypeInference {
         self.module_scoped_globals = imported.module_scoped_globals;
         self.module_scopes = imported.module_scopes;
         self.ambiguous_imports = imported.ambiguous_imports;
+        self.immutable_imports = imported.immutable_imports;
         self.private_nominals = imported.private_nominals;
         self.unexported_nominals = imported.unexported_nominals;
     }

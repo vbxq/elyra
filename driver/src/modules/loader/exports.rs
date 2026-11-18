@@ -221,6 +221,30 @@ impl ModuleLoader {
         renames
     }
 
+    pub(crate) fn immutable_imports(&self, kind: &ImportKind, module_key: &str) -> Vec<String> {
+        let Some(module_info) = self.loaded_modules.get(module_key) else {
+            return Vec::new();
+        };
+        let fixed = |name: &String| {
+            module_info
+                .exports
+                .get(name)
+                .is_some_and(|export| !export.is_function && !export.is_mutable)
+        };
+        match kind {
+            ImportKind::Module { alias: None } | ImportKind::Wildcard => module_info
+                .exports
+                .keys()
+                .filter(|name| fixed(name))
+                .cloned()
+                .collect(),
+            ImportKind::Module { alias: Some(_) } => Vec::new(),
+            ImportKind::Symbols(symbols) => {
+                symbols.iter().filter(|name| fixed(name)).cloned().collect()
+            }
+        }
+    }
+
     pub fn get_module(&self, module_path: &str) -> Option<&ModuleInfo> {
         self.loaded_modules.get(module_path)
     }

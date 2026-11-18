@@ -147,6 +147,9 @@ pub enum TypeErrorKind {
         name: String,
         modules: Vec<String>,
     },
+    AssignToImmutableImport {
+        name: String,
+    },
     RecursionLimit,
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -666,6 +669,11 @@ impl TypeError {
                     crate::unscoped_global_name(name)
                 )
             }
+            TypeErrorKind::AssignToImmutableImport { name } => write!(
+                f,
+                "cannot assign to '{}': it is an immutable variable of the module that declares it",
+                name
+            ),
             TypeErrorKind::AmbiguousImport { name, modules } => {
                 let qualified = modules
                     .iter()
@@ -1766,6 +1774,7 @@ impl TypeErrorKind {
             Self::InfiniteType { .. } => 361,
             Self::UndefinedFunction { .. } => 362,
             Self::AmbiguousImport { .. } => 410,
+            Self::AssignToImmutableImport { .. } => 203,
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,
