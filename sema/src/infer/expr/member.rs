@@ -1434,6 +1434,18 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         let typed_object = self.infer_expr(object);
         let typed_value = self.infer_expr(value);
+        self.infer_member_assign_typed(object, typed_object, member, typed_value, span)
+    }
+
+    pub(super) fn infer_member_assign_typed(
+        &mut self,
+        object: &Expr,
+        typed_object: TypedExpr,
+        member: &str,
+        typed_value: TypedExpr,
+        span: Span,
+    ) -> (TypedExprKind, InferType) {
+        let value_span = typed_value.span;
         let Some(root) = root_binding_name(object) else {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {
@@ -1525,7 +1537,7 @@ impl TypeInference {
         if !self.reject_dynamic(
             &typed_value.ty,
             &field_ty,
-            value.span,
+            value_span,
             ConstraintReason::Assignment {
                 var_name: format!("struct field {}", member),
             },
@@ -1533,7 +1545,7 @@ impl TypeInference {
             self.constraints.push(Constraint::equal(
                 field_ty.clone(),
                 typed_value.ty.clone(),
-                value.span,
+                value_span,
                 ConstraintReason::Assignment {
                     var_name: format!("struct field {}", member),
                 },

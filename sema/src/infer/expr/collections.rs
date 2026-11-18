@@ -2,7 +2,9 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind, TypedStmt};
 use crate::types::InferType;
-use aelys_syntax::{Expr, ExprKind, MemberSeparator, Span};
+use aelys_syntax::{
+    Expr, ExprKind, MatchArm, MatchArmBody, MemberSeparator, Pattern, PatternKind, Span,
+};
 
 pub(crate) fn map_key_types() -> Vec<InferType> {
     let mut keys = InferType::all_integer_types();
@@ -496,6 +498,10 @@ impl TypeInference {
         arg: &Expr,
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        if let Some(hoisted) = hoist_impure_place_operands(object, arg, span) {
+            let typed = self.infer_expr(&hoisted);
+            return (typed.kind, typed.ty);
+        }
         let typed_arg = self.infer_expr(arg);
         let reason = ConstraintReason::Argument {
             func_name: "string::push".to_string(),
@@ -534,16 +540,7 @@ impl TypeInference {
             span,
         );
         let ExprKind::Identifier(name) = &object.kind else {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::MutableCollectionRequired {
-                    method: "push".to_string(),
-                    place: crate::infer::places::render_place(object),
-                    root: crate::infer::places::place_root(object).map(str::to_string),
-                },
-                span: object.span,
-                reason: ConstraintReason::Other("string push needs a variable".to_string()),
-            });
-            return (call.kind, InferType::Poison);
+            return self.write_back_string_push(object, call, span);
         };
         self.check_write_binding(name, span, "assignment");
         let resolved = self.env.lookup_alias(name).unwrap_or(name).to_string();
@@ -554,6 +551,39 @@ impl TypeInference {
             },
             InferType::String,
         )
+    }
+
+    fn write_back_string_push(
+        &mut self,
+        place: &Expr,
+        call: TypedExpr,
+        span: Span,
+    ) -> (TypedExprKind, InferType) {
+        let errors = self.errors.len();
+        self.require_mutable_place(place, &InferType::String, "push", false);
+        if self.errors.len() > errors {
+            return (call.kind, InferType::Poison);
+        }
+        match &place.kind {
+            ExprKind::Grouping(inner) => self.write_back_string_push(inner, call, span),
+            ExprKind::Member {
+                object,
+                member,
+                separator: MemberSeparator::Dot,
+            } => {
+                let typed_object = self.infer_expr(object);
+                self.infer_member_assign_typed(object, typed_object, member, call, span)
+            }
+            ExprKind::Index { object, index } => {
+                self.check_write_access(object, span, "index assignment");
+                let typed_object = self.infer_expr(object);
+                let typed_index = self.infer_expr(index);
+                let (kind, _) =
+                    self.infer_index_assign_typed(object, typed_object, typed_index, call);
+                (kind, InferType::Unit)
+            }
+            _ => (call.kind, InferType::Poison),
+        }
     }
 
     fn reject_container_method(
@@ -663,5 +693,102 @@ fn narrow_literal(arg: &mut TypedExpr, expected: &InferType) {
         && InferType::int_fits(*value, expected)
     {
         arg.ty = expected.clone();
+    }
+}
+
+fn hoist_impure_place_operands(place: &Expr, arg: &Expr, span: Span) -> Option<Expr> {
+    if matches!(place.kind, ExprKind::Identifier(_)) || is_duplicable(place) {
+        return None;
+    }
+    let mut hoisted = Vec::new();
+    let place = hoist_operands(place, &mut hoisted);
+    if hoisted.is_empty() {
+        return None;
+    }
+    let callee = Expr::new(
+        ExprKind::Member {
+            object: Box::new(place),
+            member: "push".to_string(),
+            separator: MemberSeparator::Dot,
+        },
+        span,
+    );
+    let mut result = Expr::new(
+        ExprKind::Call {
+            callee: Box::new(callee),
+            args: vec![arg.clone()],
+        },
+        span,
+    );
+    for (name, operand) in hoisted.into_iter().rev() {
+        let pattern = Pattern {
+            kind: PatternKind::Binding(name),
+            span: operand.span,
+        };
+        result = Expr::new(
+            ExprKind::Match {
+                scrutinee: Box::new(operand),
+                arms: vec![MatchArm {
+                    pattern,
+                    guard: None,
+                    span,
+                    body: MatchArmBody::Expr(Box::new(result)),
+                }],
+            },
+            span,
+        );
+    }
+    Some(result)
+}
+
+fn hoist_operands(expr: &Expr, hoisted: &mut Vec<(String, Expr)>) -> Expr {
+    let kind = match &expr.kind {
+        ExprKind::Index { object, index } => {
+            let object = hoist_operands(object, hoisted);
+            let index = if is_duplicable(index) {
+                index.as_ref().clone()
+            } else {
+                let name = format!("__aelys_push{}_{}", expr.span.start, hoisted.len());
+                hoisted.push((name.clone(), index.as_ref().clone()));
+                Expr::new(ExprKind::Identifier(name), index.span)
+            };
+            ExprKind::Index {
+                object: Box::new(object),
+                index: Box::new(index),
+            }
+        }
+        ExprKind::Member {
+            object,
+            member,
+            separator: MemberSeparator::Dot,
+        } => ExprKind::Member {
+            object: Box::new(hoist_operands(object, hoisted)),
+            member: member.clone(),
+            separator: MemberSeparator::Dot,
+        },
+        ExprKind::Grouping(inner) => ExprKind::Grouping(Box::new(hoist_operands(inner, hoisted))),
+        other => other.clone(),
+    };
+    Expr::new(kind, expr.span)
+}
+
+fn is_duplicable(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::String(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Null
+        | ExprKind::Unit
+        | ExprKind::Identifier(_) => true,
+        ExprKind::Grouping(inner) => is_duplicable(inner),
+        ExprKind::Unary { operand, .. } => is_duplicable(operand),
+        ExprKind::Cast { expr, .. } => is_duplicable(expr),
+        ExprKind::Binary { left, right, .. }
+        | ExprKind::And { left, right }
+        | ExprKind::Or { left, right } => is_duplicable(left) && is_duplicable(right),
+        ExprKind::Member { object, .. } => is_duplicable(object),
+        ExprKind::Index { object, index } => is_duplicable(object) && is_duplicable(index),
+        _ => false,
     }
 }

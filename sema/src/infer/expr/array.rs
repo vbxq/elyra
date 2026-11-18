@@ -415,19 +415,30 @@ impl TypeInference {
         self.reject_constant_index(object, index);
         let typed_object = self.infer_expr(object);
         self.require_mutable_place(object, &typed_object.ty, "index assignment", true);
-        let mut typed_index = self.infer_expr(index);
-        let mut typed_value = self.infer_expr(value);
+        let typed_index = self.infer_expr(index);
+        let typed_value = self.infer_expr(value);
+        self.infer_index_assign_typed(object, typed_object, typed_index, typed_value)
+    }
 
+    pub(super) fn infer_index_assign_typed(
+        &mut self,
+        object: &Expr,
+        typed_object: TypedExpr,
+        mut typed_index: TypedExpr,
+        mut typed_value: TypedExpr,
+    ) -> (TypedExprKind, InferType) {
+        let index_span = typed_index.span;
+        let value_span = typed_value.span;
         if let InferType::Map(key, map_value) = &typed_object.ty {
             let map_value = map_value.as_ref().clone();
             self.constrain_map_key_argument(key, &mut typed_index);
             narrow_int_literal(&mut typed_value, &map_value);
             let reason = ConstraintReason::ArrayElement;
-            if !self.reject_dynamic(&typed_value.ty, &map_value, value.span, reason.clone()) {
+            if !self.reject_dynamic(&typed_value.ty, &map_value, value_span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
                     map_value,
                     typed_value.ty.clone(),
-                    value.span,
+                    value_span,
                     reason,
                 ));
             }
@@ -444,21 +455,21 @@ impl TypeInference {
         if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
-            index.span,
+            index_span,
             ConstraintReason::ArrayIndex,
         ) && !matches!(typed_index.ty, InferType::UntypedNative(_))
         {
             self.constraints.push(Constraint::equal(
                 InferType::I64,
                 typed_index.ty.clone(),
-                index.span,
+                index_span,
                 ConstraintReason::ArrayIndex,
             ));
         } else {
             self.reject_untyped_native(
                 &typed_index.ty,
                 &InferType::I64,
-                index.span,
+                index_span,
                 ConstraintReason::ArrayIndex,
             );
         }
@@ -466,18 +477,18 @@ impl TypeInference {
         let result_ty = match &typed_object.ty {
             InferType::Array(inner) | InferType::FixedArray(inner, _) | InferType::Vec(inner) => {
                 let reason = ConstraintReason::ArrayElement;
-                if !self.reject_dynamic(&typed_value.ty, inner, value.span, reason.clone())
+                if !self.reject_dynamic(&typed_value.ty, inner, value_span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,
                         inner,
-                        value.span,
+                        value_span,
                         reason.clone(),
                     )
                 {
                     self.constraints.push(Constraint::equal(
                         inner.as_ref().clone(),
                         typed_value.ty.clone(),
-                        value.span,
+                        value_span,
                         reason,
                     ));
                 }
@@ -505,18 +516,18 @@ impl TypeInference {
                     ConstraintReason::ArrayElement,
                 ));
                 let reason = ConstraintReason::ArrayElement;
-                if !self.reject_dynamic(&typed_value.ty, &element, value.span, reason.clone())
+                if !self.reject_dynamic(&typed_value.ty, &element, value_span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,
                         &element,
-                        value.span,
+                        value_span,
                         reason.clone(),
                     )
                 {
                     self.constraints.push(Constraint::equal(
                         element,
                         typed_value.ty.clone(),
-                        value.span,
+                        value_span,
                         reason,
                     ));
                 }
