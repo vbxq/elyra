@@ -132,8 +132,8 @@ The compiler emits type-specific opcodes too. `arr[i]` compiles to `ArrayLoadI` 
 ### Vec growth
 
 Vecs double in capacity when they run out of space:
-- Start at 4
-- Growth: 4 → 8 → 16 → 32 → ...
+- Start at 1
+- Growth: 1 → 2 → 4 → 8 → ...
 - Use `reserve(n)` to pre-allocate if you know the final size
 
 ```rust

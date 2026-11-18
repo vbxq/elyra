@@ -151,7 +151,7 @@ impl VM {
             Some(ObjectKind::Vec(vector)) => (vector.len(), vector.len() < vector.capacity()),
             _ => (0, false),
         };
-        if !spare && self.reserve_vec(vector_ref, length.max(4)).is_err() {
+        if !spare && self.reserve_vec(vector_ref, length.max(1)).is_err() {
             self.reserve_vec(vector_ref, 1)?;
         }
         let object = if value.as_ptr().is_some() {
