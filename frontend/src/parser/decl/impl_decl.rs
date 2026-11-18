@@ -32,7 +32,10 @@ impl Parser {
             if self_type.path.len() == 1 && is_builtin_type_name(&self_type.name) {
                 return Err(aelys_common::error::CompileError::new(
                     CompileErrorKind::PrimitiveImplUnsupported {
-                        trait_name: first_type.name,
+                        trait_name: match polarity {
+                            ImplPolarity::Negative => format!("!{}", first_type.name),
+                            ImplPolarity::Positive => first_type.name,
+                        },
                         ty: self_type.name,
                     },
                     self_type.span,

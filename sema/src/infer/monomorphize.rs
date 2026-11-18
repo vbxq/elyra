@@ -4925,8 +4925,13 @@ fn instance_arguments_mapping(
                 else {
                     continue;
                 };
-                for (formal, actual) in trait_args.iter().zip(&impl_args) {
-                    match_types(formal, actual, &mut mapping)?;
+                let mut deduced = mapping.clone();
+                if trait_args
+                    .iter()
+                    .zip(&impl_args)
+                    .all(|(formal, actual)| match_types(formal, actual, &mut deduced).is_some())
+                {
+                    mapping = deduced;
                 }
             }
             if mapping.len() == known {
