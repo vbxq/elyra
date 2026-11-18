@@ -67,7 +67,9 @@ pub enum RuntimeErrorKind {
         code: i32,
     },
     NativeReturnedNull,
-    NativePanic,
+    NativePanic {
+        name: String,
+    },
     SumUnwrapFailed {
         family: &'static str,
         message: Option<String>,
@@ -181,14 +183,15 @@ impl RuntimeErrorKind {
             Self::NativeError { code } => match code {
                 1 => "native error: code 1 (invalid argument)".to_string(),
                 2 => "native error: code 2 (integer outside the 48-bit int range)".to_string(),
-                5 => "native error: code 5 (byte buffer borrowed twice in one native call)"
+                5 => "native error: code 5 (byte buffer borrowed mutably while another borrow of it is live in the same native call)"
                     .to_string(),
                 _ => format!("native error: code {}", code),
             },
             Self::NativeReturnedNull => {
                 "native function returned the forbidden null sentinel".to_string()
             }
-            Self::NativePanic => "native function panicked".to_string(),
+            Self::NativePanic { name } if name.is_empty() => "native function panicked".to_string(),
+            Self::NativePanic { name } => format!("native function '{name}' panicked"),
             Self::SumUnwrapFailed { family, message } => message.clone().unwrap_or_else(|| {
                 format!("{family}::unwrap failed: value was not the success variant")
             }),

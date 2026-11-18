@@ -48,5 +48,6 @@ impl VM {
             self.runtime_error(RuntimeErrorKind::UndefinedVariable(native.name.clone()))
         })?;
         func.call(self, args)
+            .map_err(|error| self.name_panicking_native(error, |_| native.name.clone()))
     }
 }

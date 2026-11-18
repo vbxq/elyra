@@ -89,7 +89,10 @@ range is error code 2.
 
 `CallContext<'call>` is the native side of one call:
 
-- `alloc_string(&str) -> Result<AelysValue, i32>` creates an Elyra string;
+- `alloc_string(&str) -> Result<AelysValue, i32>` creates an Elyra string,
+  which stays alive until the native function returns, however many values
+  the call allocates after it (the raw `alloc_string_from_context` behaves the
+  same way);
 - `read_string(AelysValue) -> Option<String>` copies an Elyra string out;
 - `borrow_bytes(handle) -> Result<&'call mut [u8], i32>` and
   `borrow_bytes_ref(handle) -> Result<&'call [u8], i32>` borrow a byte buffer
@@ -147,7 +150,8 @@ The return status of a raw function is `0` on success, with the result in
 | 2 | `AELYS_NATIVE_INTEGER_OVERFLOW` | an int result outside 48 bits |
 | 3 | `AELYS_NATIVE_RESULT_ERROR` | `Err`: `*out` holds the message string |
 | 4 | `AELYS_NATIVE_OPTION_NONE` | `None` |
-| 5 | `AELYS_NATIVE_BORROW_CONFLICT` | a byte buffer borrowed twice in one call |
+| 5 | `AELYS_NATIVE_BORROW_CONFLICT` | a byte buffer borrowed mutably while another borrow of it is live in the call |
+| 6 | `AELYS_NATIVE_PANIC` | the function panicked |
 
 ## Borrow rules
 
@@ -156,13 +160,18 @@ The return status of a raw function is `0` on success, with the result in
   a static, a struct that outlives the call, or a thread that outlives the
   call. Scoped threads that finish before the function returns may work on a
   borrowed slice.
-- Each handle is borrowed at most once per call, whether through a `&[u8]` /
-  `&mut [u8]` parameter or through `CallContext::borrow_bytes`. Passing the same
-  buffer twice (`pixels::copy_into(a, a)`) is refused with status 5, and the
-  Elyra program stops with `native error: code 5 (byte buffer borrowed twice in
-  one native call)`. Two different buffers can be borrowed in one call.
-- At most 8 buffers are borrowed in one call; the ninth borrow is refused with
-  status 5.
+- Read-only borrows of one buffer coexist: a `&[u8]` parameter and
+  `CallContext::borrow_bytes_ref` can view the same handle any number of times
+  in one call (`sdl::present_indexed(px, px)` is accepted).
+- A mutable borrow is exclusive: a `&mut [u8]` parameter or
+  `CallContext::borrow_bytes` on a handle that already has any borrow in the
+  call, or any borrow of a handle already borrowed mutably, is refused with
+  status 5. Passing the same buffer as `&mut [u8]` and `&[u8]`
+  (`pixels::copy_into(a, a)`) stops the Elyra program with `native error: code
+  5 (byte buffer borrowed mutably while another borrow of it is live in the
+  same native call)`.
+- Any number of distinct buffers can be borrowed in one call; up to 8 are
+  tracked without allocating.
 - A buffer cannot be resized or freed while it is borrowed: no Elyra code runs
   during a native call and the ABI offers no way to free a buffer.
 - A handle that is not a live byte buffer (a timer, a closed handle, any other
@@ -174,8 +183,8 @@ A native function cannot call Elyra code: there is no way to call a closure,
 and the `register_function` / `register_constant` / `register_type` slots of the
 VM API are empty. Design APIs that Elyra polls (`sdl::poll()` returns one event
 per call) instead of callbacks. The VM API functions (`alloc_string`,
-`read_string`, `borrow_bytes`) may only be called during a native call, with the
-context of that call.
+`read_string`, `borrow_bytes`, `borrow_bytes_shared`) may only be called during
+a native call, with the context of that call.
 
 ## Threads
 
@@ -189,8 +198,12 @@ keeps state between calls (a window, a texture) should keep it in a
 
 Return `Result<T, String>` for errors the Elyra program should handle and
 `Option<T>` for absence. Any other non-zero status stops the program with
-`native error: code N (...)`. A Rust panic must not leave a native function: a
-panic unwinding out of an `extern "C"` function aborts the whole process.
+`native error: code N (...)`. A panic in a typed export (an out-of-bounds slice
+index, an `unwrap`) is caught by the generated wrapper, which returns status 6;
+the Elyra program stops with the runtime error `native function 'pixels::name'
+panicked` and the host process keeps running. A raw export catches its panics
+only when it is declared `unsafe extern "C-unwind" fn`; a panic inside a raw
+`extern "C"` function cannot leave it and aborts the whole process.
 
 ## Building and loading
 
@@ -243,8 +256,8 @@ Without network access, copy the workspace `Cargo.lock` to
 | function | meaning |
 |---|---|
 | `open(title, width, height, scale) -> Result<(), string>` | window of `width*scale` x `height*scale` with a `width` x `height` ARGB streaming texture, nearest-neighbour scaling |
-| `present_argb(frame)` -> `Result<(), string>` | upload `width*height*4` bytes, one little-endian `0xAARRGGBB` per pixel, and show them |
-| `present_indexed(pixels, palette)` -> `Result<(), string>` | `width*height` palette indices and a 768-byte RGB palette; the conversion to ARGB happens in the module, then the frame is shown |
+| `present_argb(frame)` -> `Result<(), string>` | upload exactly `width*height*4` bytes, one little-endian `0xAARRGGBB` per pixel, and show them; any other size is an `Err` |
+| `present_indexed(pixels, palette)` -> `Result<(), string>` | exactly `width*height` palette indices and a 768-byte RGB palette (any other size is an `Err`); the conversion to ARGB happens in the module, then the frame is shown |
 | `poll() -> int` | next event: 0 none left, 1 quit, 2 key down, 3 key up, 4 anything else (key repeats included) |
 | `event_key() -> int` | SDL scancode of the last key event `poll` returned |
 | `key_down(scancode) -> bool` | current keyboard state of a scancode |
@@ -258,4 +271,8 @@ Without network access, copy the workspace `Cargo.lock` to
 Run headless with `SDL_VIDEODRIVER=dummy`, or on a virtual X display
 (`Xvfb :99` and `DISPLAY=:99`). The test `aelys/tests/t4_sdl_module.rs` builds
 the module, runs `examples/sdl/gradient.aelys` with the dummy driver and
-checks the pixels read back; it is skipped when `pkg-config sdl2` fails.
+checks the pixels read back, then checks that frames of the wrong size are
+refused. It builds a copy of the module under the cargo target directory (with
+`--offline` and the workspace `Cargo.lock`), so it writes nothing into
+`modules/sdl`. It fails when `pkg-config sdl2` fails, unless
+`AELYS_SKIP_SDL_TESTS=1` is set.

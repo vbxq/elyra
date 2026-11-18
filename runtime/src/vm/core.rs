@@ -62,6 +62,7 @@ pub struct VM {
     pub(crate) execution_stats: ExecutionStats,
     pub(crate) jit_control_error: Option<aelys_common::error::RuntimeError>,
     pub(crate) host_roots: Arc<HostRootSet>,
+    pub(crate) native_call_roots: Vec<GcRef>,
     pub(crate) id: u64,
 
     pub(crate) current_global_mapping_id: usize,

@@ -97,6 +97,7 @@ impl VM {
         roots.extend(self.open_upvalues.iter().copied());
         roots.extend(self.current_upvalues.iter().copied());
         roots.extend(self.host_roots.references());
+        roots.extend(self.native_call_roots.iter().copied());
         roots
     }
 

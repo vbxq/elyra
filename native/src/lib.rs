@@ -9,6 +9,7 @@ pub const AELYS_NATIVE_INTEGER_OVERFLOW: i32 = 2;
 pub const AELYS_NATIVE_RESULT_ERROR: i32 = 3;
 pub const AELYS_NATIVE_OPTION_NONE: i32 = 4;
 pub const AELYS_NATIVE_BORROW_CONFLICT: i32 = 5;
+pub const AELYS_NATIVE_PANIC: i32 = 6;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

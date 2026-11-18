@@ -191,15 +191,20 @@ fn two_distinct_buffers_borrow_in_one_call() {
 }
 
 #[test]
-fn one_handle_passed_twice_to_one_call_is_refused() {
-    for call in ["buffers::copy_into(a, a)", "buffers::both_lengths(a, a)"] {
-        let (kind, text) = run_runtime_error(&format!("{SETUP}{call}"));
-        assert!(
-            matches!(kind, RuntimeErrorKind::NativeError { code: 5 }),
-            "{call}: {kind:?}"
-        );
-        assert!(text.contains("borrowed twice in one native call"), "{text}");
-    }
+fn one_handle_borrowed_mutably_and_again_in_one_call_is_refused() {
+    let (kind, text) = run_runtime_error(&format!("{SETUP}buffers::copy_into(a, a)"));
+    assert!(
+        matches!(kind, RuntimeErrorKind::NativeError { code: 5 }),
+        "{kind:?}"
+    );
+    assert!(
+        text.contains("borrowed mutably while another borrow of it is live"),
+        "{text}"
+    );
+    assert_eq!(
+        run_ok(&format!("{SETUP}buffers::both_lengths(a, a)")),
+        "4004"
+    );
     assert_eq!(
         run_ok(&format!(
             "{SETUP}let r = match buffers::borrow_by_handle(a) {{ Ok(n) => n, Err(e) => -2 }}\nr * 1000 + bytes::read_u8(a, 0)"

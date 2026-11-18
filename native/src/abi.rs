@@ -56,7 +56,15 @@ pub struct AelysVmApi {
             out_len: *mut usize,
         ) -> i32,
     >,
-    pub _reserved: [usize; 2],
+    pub borrow_bytes_shared: Option<
+        extern "C" fn(
+            context: *mut NativeContext,
+            handle: AelysValue,
+            out_ptr: *mut *const u8,
+            out_len: *mut usize,
+        ) -> i32,
+    >,
+    pub _reserved: [usize; 1],
 }
 
 #[repr(C)]

@@ -39,7 +39,22 @@ impl<'call> CallContext<'call> {
     }
 
     pub fn borrow_bytes_ref(&self, handle: AelysValue) -> Result<&'call [u8], i32> {
-        self.borrow_bytes(handle).map(|bytes| &*bytes)
+        let Some(borrow) = vm_api().and_then(|api| api.borrow_bytes_shared) else {
+            return self.borrow_bytes(handle).map(|bytes| &*bytes);
+        };
+        let mut pointer: *const u8 = core::ptr::null();
+        let mut length: usize = 0;
+        let status = borrow(self.raw, handle, &mut pointer, &mut length);
+        if status != 0 {
+            return Err(status);
+        }
+        if pointer.is_null() {
+            if length == 0 {
+                return Ok(&[]);
+            }
+            return Err(AELYS_NATIVE_INVALID_ARGUMENT);
+        }
+        Ok(unsafe { core::slice::from_raw_parts(pointer, length) })
     }
 
     pub fn as_raw(&self) -> *mut NativeContext {

@@ -3,15 +3,22 @@ use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use aelys_native::{AelysNativeFn, AelysValue, AelysVmApi};
 
 const NATIVE_CONTEXT_MAGIC: u64 = 0x4145_4c59_535f_5633;
-const MAX_BORROWS_PER_CALL: usize = 8;
+const INLINE_BORROWS_PER_CALL: usize = 8;
 const INLINE_NATIVE_ARGS: usize = 8;
+
+#[derive(Clone, Copy, Default)]
+struct Borrow {
+    handle: u64,
+    exclusive: bool,
+}
 
 #[repr(C)]
 struct RuntimeNativeContext {
     magic: u64,
     vm: *mut VM,
-    borrowed: [u64; MAX_BORROWS_PER_CALL],
+    borrowed: [Borrow; INLINE_BORROWS_PER_CALL],
     borrowed_len: usize,
+    spilled: Vec<Borrow>,
 }
 
 impl RuntimeNativeContext {
@@ -19,19 +26,27 @@ impl RuntimeNativeContext {
         Self {
             magic: NATIVE_CONTEXT_MAGIC,
             vm,
-            borrowed: [0; MAX_BORROWS_PER_CALL],
+            borrowed: [Borrow::default(); INLINE_BORROWS_PER_CALL],
             borrowed_len: 0,
+            spilled: Vec::new(),
         }
     }
 
-    fn claim(&mut self, handle: u64) -> bool {
-        if self.borrowed[..self.borrowed_len].contains(&handle)
-            || self.borrowed_len == MAX_BORROWS_PER_CALL
-        {
-            return false;
+    fn claim(&mut self, handle: u64, exclusive: bool) -> bool {
+        let held = self.borrowed[..self.borrowed_len]
+            .iter()
+            .chain(&self.spilled)
+            .find(|borrow| borrow.handle == handle);
+        if let Some(held) = held {
+            return !exclusive && !held.exclusive;
         }
-        self.borrowed[self.borrowed_len] = handle;
-        self.borrowed_len += 1;
+        let borrow = Borrow { handle, exclusive };
+        if self.borrowed_len < INLINE_BORROWS_PER_CALL {
+            self.borrowed[self.borrowed_len] = borrow;
+            self.borrowed_len += 1;
+        } else {
+            self.spilled.push(borrow);
+        }
         true
     }
 }
@@ -129,59 +144,19 @@ pub enum NativeFunctionImpl {
 impl NativeFunctionImpl {
     pub fn call(self, vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         let value = match self {
-            NativeFunctionImpl::Rust(f) => {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(vm, args)))
-                    .map_err(|_| vm.runtime_error(RuntimeErrorKind::NativePanic))?
-            }
+            NativeFunctionImpl::Rust(f) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                || f(vm, args),
+            ))
+            .map_err(|_| {
+                vm.runtime_error(RuntimeErrorKind::NativePanic {
+                    name: String::new(),
+                })
+            })?,
             NativeFunctionImpl::Foreign { function, result } => {
-                let mut out = aelys_native::value_null();
-                let mut context = RuntimeNativeContext::new(vm);
-                // both types are repr(transparent) over the same nan-boxed u64
-                let status = unsafe {
-                    function(
-                        (&mut context as *mut RuntimeNativeContext).cast(),
-                        args.as_ptr().cast::<AelysValue>(),
-                        args.len(),
-                        &mut out,
-                    )
-                };
-                if status != 0 {
-                    return match result {
-                        ForeignReturnKind::Result { err, .. }
-                            if status == aelys_native::AELYS_NATIVE_RESULT_ERROR =>
-                        {
-                            let message =
-                                vm.validate_foreign_payload(vm.import_native_value(out)?, err)?;
-                            let sum =
-                                vm.alloc_sum(aelys_bytecode::object::SumTag::ResultErr, message)?;
-                            Ok(Value::ptr(sum.index()))
-                        }
-                        ForeignReturnKind::Option(_)
-                            if status == aelys_native::AELYS_NATIVE_OPTION_NONE =>
-                        {
-                            Ok(Value::none())
-                        }
-                        _ => Err(vm.runtime_error(RuntimeErrorKind::NativeError { code: status })),
-                    };
-                }
-                let value = vm.import_native_value(out)?;
-                match result {
-                    ForeignReturnKind::Raw => Ok(value),
-                    ForeignReturnKind::Scalar(expected) => {
-                        vm.validate_foreign_payload(value, expected)
-                    }
-                    ForeignReturnKind::Option(expected) => {
-                        let value = vm.validate_foreign_payload(value, expected)?;
-                        let sum =
-                            vm.alloc_sum(aelys_bytecode::object::SumTag::OptionSome, value)?;
-                        Ok(Value::ptr(sum.index()))
-                    }
-                    ForeignReturnKind::Result { ok, .. } => {
-                        let value = vm.validate_foreign_payload(value, ok)?;
-                        let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultOk, value)?;
-                        Ok(Value::ptr(sum.index()))
-                    }
-                }
+                let roots_base = vm.native_call_roots.len();
+                let value = Self::call_foreign(vm, function, result, args);
+                vm.native_call_roots.truncate(roots_base);
+                value
             }
         }?;
 
@@ -189,6 +164,63 @@ impl NativeFunctionImpl {
             return Err(vm.runtime_error(RuntimeErrorKind::NativeReturnedNull));
         }
         Ok(value)
+    }
+
+    fn call_foreign(
+        vm: &mut VM,
+        function: AelysNativeFn,
+        result: ForeignReturnKind,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        let mut out = aelys_native::value_null();
+        let mut context = RuntimeNativeContext::new(vm);
+        // both types are repr(transparent) over the same nan-boxed u64
+        let status = unsafe {
+            function(
+                (&mut context as *mut RuntimeNativeContext).cast(),
+                args.as_ptr().cast::<AelysValue>(),
+                args.len(),
+                &mut out,
+            )
+        };
+        drop(context);
+        if status != 0 {
+            return match result {
+                _ if status == aelys_native::AELYS_NATIVE_PANIC => {
+                    Err(vm.runtime_error(RuntimeErrorKind::NativePanic {
+                        name: String::new(),
+                    }))
+                }
+                ForeignReturnKind::Result { err, .. }
+                    if status == aelys_native::AELYS_NATIVE_RESULT_ERROR =>
+                {
+                    let message = vm.validate_foreign_payload(vm.import_native_value(out)?, err)?;
+                    let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultErr, message)?;
+                    Ok(Value::ptr(sum.index()))
+                }
+                ForeignReturnKind::Option(_)
+                    if status == aelys_native::AELYS_NATIVE_OPTION_NONE =>
+                {
+                    Ok(Value::none())
+                }
+                _ => Err(vm.runtime_error(RuntimeErrorKind::NativeError { code: status })),
+            };
+        }
+        let value = vm.import_native_value(out)?;
+        match result {
+            ForeignReturnKind::Raw => Ok(value),
+            ForeignReturnKind::Scalar(expected) => vm.validate_foreign_payload(value, expected),
+            ForeignReturnKind::Option(expected) => {
+                let value = vm.validate_foreign_payload(value, expected)?;
+                let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::OptionSome, value)?;
+                Ok(Value::ptr(sum.index()))
+            }
+            ForeignReturnKind::Result { ok, .. } => {
+                let value = vm.validate_foreign_payload(value, ok)?;
+                let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultOk, value)?;
+                Ok(Value::ptr(sum.index()))
+            }
+        }
     }
 }
 
@@ -242,6 +274,7 @@ extern "C" fn native_alloc_string_callback(
     let Ok(reference) = vm.alloc_string(value) else {
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     };
+    vm.native_call_roots.push(reference);
     unsafe {
         *out = std::mem::transmute::<Value, AelysValue>(Value::ptr(reference.index()));
     }
@@ -253,6 +286,25 @@ extern "C" fn native_borrow_bytes_callback(
     handle: AelysValue,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
+) -> i32 {
+    borrow_bytes(context, handle, out_ptr, out_len, true)
+}
+
+extern "C" fn native_borrow_bytes_shared_callback(
+    context: *mut aelys_native::NativeContext,
+    handle: AelysValue,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) -> i32 {
+    borrow_bytes(context, handle, out_ptr.cast(), out_len, false)
+}
+
+fn borrow_bytes(
+    context: *mut aelys_native::NativeContext,
+    handle: AelysValue,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    exclusive: bool,
 ) -> i32 {
     if context.is_null() || out_ptr.is_null() || out_len.is_null() {
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
@@ -269,15 +321,27 @@ extern "C" fn native_borrow_bytes_callback(
     else {
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     };
-    let Some(crate::stdlib::Resource::ByteBuffer(buffer)) = vm.get_resource_mut(handle) else {
-        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    let memory = if exclusive {
+        match vm.get_resource_mut(handle) {
+            Some(crate::stdlib::Resource::ByteBuffer(buffer)) => {
+                (buffer.data.as_mut_ptr(), buffer.data.len())
+            }
+            _ => return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT,
+        }
+    } else {
+        match vm.get_resource(handle) {
+            Some(crate::stdlib::Resource::ByteBuffer(buffer)) => {
+                (buffer.data.as_ptr().cast_mut(), buffer.data.len())
+            }
+            _ => return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT,
+        }
     };
-    if !context.claim(handle as u64) {
+    if !context.claim(handle as u64, exclusive) {
         return aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
     }
     unsafe {
-        *out_ptr = buffer.data.as_mut_ptr();
-        *out_len = buffer.data.len();
+        *out_ptr = memory.0;
+        *out_len = memory.1;
     }
     0
 }
@@ -293,7 +357,8 @@ pub fn build_native_vm_api() -> AelysVmApi {
         alloc_string: Some(native_alloc_string_callback),
         read_string: Some(native_read_string_callback),
         borrow_bytes: Some(native_borrow_bytes_callback),
-        _reserved: [0; 2],
+        borrow_bytes_shared: Some(native_borrow_bytes_shared_callback),
+        _reserved: [0; 1],
     }
 }
 
@@ -339,14 +404,36 @@ impl VM {
                 max: self.registers.len(),
             }));
         };
-        if count <= INLINE_NATIVE_ARGS {
+        let result = if count <= INLINE_NATIVE_ARGS {
             let mut inline = [Value::null(); INLINE_NATIVE_ARGS];
             inline[..count].copy_from_slice(source);
             function.call(self, &inline[..count])
         } else {
             let spilled = source.to_vec();
             function.call(self, &spilled)
+        };
+        result.map_err(|error| {
+            self.name_panicking_native(error, |vm| match vm.heap.get(callee) {
+                Some(object) => match &object.kind {
+                    ObjectKind::Native(native) => native.name.clone(),
+                    _ => String::new(),
+                },
+                None => String::new(),
+            })
+        })
+    }
+
+    pub(crate) fn name_panicking_native(
+        &self,
+        mut error: RuntimeError,
+        name: impl FnOnce(&VM) -> String,
+    ) -> RuntimeError {
+        if let RuntimeErrorKind::NativePanic { name: slot } = &mut error.kind
+            && slot.is_empty()
+        {
+            *slot = name(self);
         }
+        error
     }
 
     fn validate_foreign_payload(
@@ -646,9 +733,9 @@ mod tests {
     }
 
     #[test]
-    fn borrow_bytes_callback_hands_out_each_handle_once_per_call() {
+    fn borrow_bytes_callback_shares_read_only_views_and_keeps_a_mutable_one_alone() {
         let mut vm = VM::new(Source::new("native-borrow-once", "")).unwrap();
-        let handles: Vec<usize> = (0..=MAX_BORROWS_PER_CALL)
+        let handles: Vec<usize> = (0..INLINE_BORROWS_PER_CALL + 3)
             .map(|_| {
                 vm.store_resource(crate::stdlib::Resource::ByteBuffer(
                     crate::stdlib::ByteBuffer { data: vec![0; 2] },
@@ -659,21 +746,29 @@ mod tests {
         let mut context = RuntimeNativeContext::new(&mut vm);
         let raw = (&mut context as *mut RuntimeNativeContext).cast();
         let mut pointer = std::ptr::null_mut();
+        let mut shared = std::ptr::null();
         let mut length = 0;
-        let mut borrow =
+        let mut exclusive =
             |handle| native_borrow_bytes_callback(raw, value(handle), &mut pointer, &mut length);
+        let conflict = aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
 
-        assert_eq!(borrow(handles[0]), 0);
-        assert_eq!(
-            borrow(handles[0]),
-            aelys_native::AELYS_NATIVE_BORROW_CONFLICT
-        );
-        for &handle in &handles[1..MAX_BORROWS_PER_CALL] {
-            assert_eq!(borrow(handle), 0);
+        assert_eq!(exclusive(handles[0]), 0);
+        assert_eq!(exclusive(handles[0]), conflict);
+        for &handle in &handles[1..INLINE_BORROWS_PER_CALL + 2] {
+            assert_eq!(exclusive(handle), 0);
         }
+        assert_eq!(exclusive(handles[INLINE_BORROWS_PER_CALL + 1]), conflict);
+        let last = handles[INLINE_BORROWS_PER_CALL + 2];
+        let mut share = |handle| {
+            native_borrow_bytes_shared_callback(raw, value(handle), &mut shared, &mut length)
+        };
+        assert_eq!(share(handles[0]), conflict);
+        assert_eq!(share(handles[INLINE_BORROWS_PER_CALL + 1]), conflict);
+        assert_eq!(share(last), 0);
+        assert_eq!(share(last), 0);
         assert_eq!(
-            borrow(handles[MAX_BORROWS_PER_CALL]),
-            aelys_native::AELYS_NATIVE_BORROW_CONFLICT
+            native_borrow_bytes_callback(raw, value(last), &mut pointer, &mut length),
+            conflict
         );
 
         let mut next_call = RuntimeNativeContext::new(&mut vm);

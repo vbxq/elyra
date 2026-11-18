@@ -150,11 +150,14 @@ pub fn generate_export_wrapper(
                 let ret = #module_ident::#fn_name(#(#call_args),*);
                 #return_conversion
             };
-            let result = unsafe { ::aelys_native::with_call_context(_context, body) };
+            let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| unsafe {
+                ::aelys_native::with_call_context(_context, body)
+            }));
 
             let result = match result {
-                Ok(value) => value,
-                Err(status) => return status,
+                Ok(Ok(value)) => value,
+                Ok(Err(status)) => return status,
+                Err(_) => return ::aelys_native::AELYS_NATIVE_PANIC,
             };
 
             unsafe {
@@ -290,11 +293,11 @@ fn generate_raw_wrapper(
         .abi
         .as_ref()
         .and_then(|abi| abi.name.as_ref())
-        .is_some_and(|name| name.value() == "C");
+        .is_some_and(|name| matches!(name.value().as_str(), "C" | "C-unwind"));
     if !is_c_abi || func.sig.inputs.len() != 4 {
         return Err(syn::Error::new(
             func.sig.span(),
-            "a raw export must be `unsafe extern \"C\" fn(*mut NativeContext, *const AelysValue, usize, *mut AelysValue) -> i32`",
+            "a raw export must be `unsafe extern \"C\" fn(*mut NativeContext, *const AelysValue, usize, *mut AelysValue) -> i32` (or `extern \"C-unwind\"` so a panic becomes a runtime error)",
         ));
     }
     let signature = match (declared.params, declared.result) {
@@ -346,7 +349,8 @@ fn generate_raw_wrapper(
             {
                 return ::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
             }
-            #call
+            ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| #call))
+                .unwrap_or(::aelys_native::AELYS_NATIVE_PANIC)
         }
     };
 
