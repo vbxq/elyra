@@ -19,6 +19,7 @@ impl CompileErrorKind {
             Self::UnexpectedToken { .. } => "unexpected token",
             Self::BorrowingReceiverDeferred { .. } => "borrowing receivers arrive in Stage 3",
             Self::TraitObjectDeferred { .. } => "trait objects arrive in Stage 3",
+            Self::PrimitiveImplUnsupported { .. } => "built-in type here",
             Self::InvalidDefaultMethod => "'default' is not allowed here",
             Self::ReservedIdentifier { .. } => "names starting with `__` are reserved",
             Self::ReservedName { .. } => "names starting with `AelysTuple` are reserved",

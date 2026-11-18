@@ -51,6 +51,10 @@ impl CompileErrorKind {
             Self::TraitObjectDeferred { trait_name } => format!(
                 "trait object 'dyn {trait_name}' is deferred to Stage 3\n   = help: take a generic type parameter bound by {trait_name} instead"
             ),
+            Self::PrimitiveImplUnsupported { trait_name, ty } => format!(
+                "impl {trait_name} for {ty}: a trait cannot be implemented for the built-in type '{ty}'\n   = help: wrap the value in a struct, `struct My{} {{ v: {ty} }}`, and implement {trait_name} for it",
+                capitalized(ty)
+            ),
             Self::ReservedName { name } => format!(
                 "'{name}' cannot be written: names starting with `AelysTuple` are reserved for the compiler's tuple types\n   = help: write a tuple type as `(int, string)`, or rename the item"
             ),
@@ -320,4 +324,12 @@ impl CompileErrorKind {
             }
         }
     }
+}
+
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
