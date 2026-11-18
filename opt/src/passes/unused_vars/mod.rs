@@ -1,7 +1,7 @@
 // unused variable elimination - removes `let x = ...` if x is never read
 // won't remove if initializer has side effects (function calls)
 
-mod analysis;
+pub(super) mod analysis;
 mod eliminate;
 
 use super::{OptimizationPass, OptimizationStats};

@@ -146,3 +146,21 @@ pub fn assert_traps_at_every_level(source: &str, lines: &[&str], message: &str) 
         );
     }
 }
+
+pub fn run_project(files: &[(&str, &str)], main: &str, flags: &[&str]) -> Outcome {
+    let directory = tempfile::tempdir().expect("temporary project directory");
+    for (name, source) in files {
+        std::fs::write(directory.path().join(name), source).expect("write project file");
+    }
+    let output = Command::new(cli_binary())
+        .arg("run")
+        .args(flags)
+        .arg(directory.path().join(main))
+        .output()
+        .expect("aelys-cli should run");
+    Outcome {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.status.code(),
+    }
+}
