@@ -2,7 +2,6 @@ use super::super::decode::decode_abc;
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-/// `<<` on `int` is checked like `*`: the count is taken modulo 64 and the exact product must stay in 48 bits
 #[inline(always)]
 pub(crate) fn checked_int_shl(left: i64, right: i64) -> Option<i64> {
     let exact = i128::from(left) << (right & 63);

@@ -740,7 +740,6 @@ impl OpCode {
         }
     }
 
-    /// `None` for an unsigned kind, whose quotient never leaves its range
     pub const fn wrapping_div(kind: SizedInt) -> Option<Self> {
         match kind {
             SizedInt::I8 => Some(Self::DivWI8),

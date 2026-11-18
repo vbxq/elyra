@@ -3,7 +3,7 @@ use crate::vm::{VM, Value};
 use aelys_bytecode::{FixedKind, OpCode, SizedInt};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-/// only 202 to 228, the ops that cannot fail: any other byte is read as ShrW32
+// only 202 to 228, the ops that cannot fail: any other byte is read as ShrW32
 #[inline(always)]
 pub(crate) fn wrap_unchecked(opcode_byte: u8, left: i64, right: i64) -> i64 {
     match opcode_byte {
@@ -95,7 +95,7 @@ pub(crate) fn execute(
                 "invalid integer width {right}"
             ))));
         };
-        // SAFETY: both register indices are checked against the stable register window above.
+        // safety: bounds checked above
         let value = unsafe { (*registers.add(left)).as_int_unchecked() };
         let opcode = if opcode_byte == OpCode::NegW as u8 {
             OpCode::NegW
@@ -115,7 +115,7 @@ pub(crate) fn execute(
             max: registers_len,
         }));
     }
-    // SAFETY: all three register indices are checked against the stable register window above.
+    // safety: bounds checked above
     let (l, r) = unsafe {
         (
             (*registers.add(left)).as_int_unchecked(),
@@ -132,7 +132,7 @@ pub(crate) fn execute(
     Ok(())
 }
 
-/// `None` is a division by zero, `Some(None)` a result outside the 48-bit range
+// none is a division by zero, some(none) a result outside the 48-bit range
 pub(crate) fn fixed_value(
     opcode: OpCode,
     kind: FixedKind,
@@ -198,7 +198,7 @@ pub(crate) fn execute_fixed(
             "invalid fixed-point width {kind}"
         ))));
     };
-    // SAFETY: every register index is checked against the stable register window above.
+    // safety: bounds checked above
     let (l, r, shift) = unsafe {
         (
             (*registers.add(left)).as_int_unchecked(),
