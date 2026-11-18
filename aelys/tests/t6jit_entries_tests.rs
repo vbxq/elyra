@@ -20,25 +20,27 @@ fn evaluate(source: &str) -> (Value, usize) {
 #[test]
 fn three_hot_loops_of_one_function_share_one_compile() {
     let source = r#"
-fn three(n: int) -> int {
-    let mut a = 0
-    for i in 0..n { a = (a + i * 3) & 0xFFFFFF }
-    let mut b = 0
-    let mut j = 0
-    while j < n {
-        b = (b + j * 5 + a) & 0xFFFFFF
-        j = j + 1
+fn pick(mode: int, n: int) -> int {
+    let mut s = mode
+    if mode == 0 {
+        for i in 0..n { s = (s + i * 3) & 0xFFFFFF }
+    } else if mode == 1 {
+        let mut j = 0
+        while j < n {
+            s = (s + j * 5) & 0xFFFFFF
+            j = j + 1
+        }
+    } else {
+        for k in 0..n { s = (s ^ (k * 7)) & 0xFFFFFF }
     }
-    let mut c = 0
-    for k in 0..n { c = (c ^ (k * 7 + b)) & 0xFFFFFF }
-    return a + b + c
+    return s
 }
-three(30000)
+pick(0, 30000) + pick(1, 30000) + pick(2, 30000)
 "#;
     let n = 30000i64;
-    let a = (0..n).fold(0i64, |a, i| (a + i * 3) & 0xFF_FFFF);
-    let b = (0..n).fold(0i64, |b, j| (b + j * 5 + a) & 0xFF_FFFF);
-    let c = (0..n).fold(0i64, |c, k| (c ^ (k * 7 + b)) & 0xFF_FFFF);
+    let a = (0..n).fold(0i64, |s, i| (s + i * 3) & 0xFF_FFFF);
+    let b = (0..n).fold(1i64, |s, j| (s + j * 5) & 0xFF_FFFF);
+    let c = (0..n).fold(2i64, |s, k| (s ^ (k * 7)) & 0xFF_FFFF);
     let (value, entries) = evaluate(source);
     assert_eq!(value, Value::int(a + b + c));
     if JIT_TARGET {
