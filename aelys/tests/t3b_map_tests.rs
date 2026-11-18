@@ -224,7 +224,6 @@ count(m, "a") * 10 + count(m, "b")
 }
 
 #[test]
-#[ignore = "fixed by T1 compound assignment; un-ignore at merge"]
 fn compound_assignment_evaluates_the_map_key_once() {
     assert_aelys_str(
         r#"
