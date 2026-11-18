@@ -1,0 +1,60 @@
+needs std::sys
+needs std::fs as fs
+needs std::bytes
+needs wad
+needs map
+needs gfx
+needs fixed
+needs render
+
+fn write_ppm(path: string, pal: Vec<int>, mut rgb: Vec<int>) {
+    render::to_rgb(pal, rgb)
+    let f = match fs::open(path, "w") {
+        Ok(h) => h,
+        Err(e) => { println("snap: {e}"); return () },
+    }
+    let _ = fs::write(f, "P3\n320 200\n255\n")
+    for y in 0..200 {
+        let mut line = ""
+        for x in 0..320 {
+            let c = rgb[y * 320 + x]
+            line += "{(c >> 16) & 255} {(c >> 8) & 255} {c & 255} "
+        }
+        let _ = fs::write(f, line + "\n")
+    }
+    let _ = fs::close(f)
+}
+
+fn view(n: int, x: int, y: int, angle_deg: int, pal: Vec<int>, rgb: Vec<int>, outdir: string) {
+    let fx = x << 16
+    let fy = y << 16
+    let z = render::floor_height_at(fx, fy) + (41 << 16)
+    let a = (angle_deg * 4294967296 / 360) & 0xFFFFFFFF
+    let t = time::timer()
+    render::render_frame(fx, fy, z, a)
+    let ms = time::elapsed(t) * 1000.0
+    println("view {n} at {x},{y} angle {angle_deg}: {ms} ms, {render::frame_stats()}")
+    write_ppm("{outdir}/snap_{n}.ppm", pal, rgb)
+}
+
+let path = match sys::arg(0) {
+    Some(p) => p,
+    None => "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad",
+}
+let outdir = match sys::arg(1) {
+    Some(p) => p,
+    None => "/home/vbxq/.local/share/elyra-runs/engine",
+}
+
+let w = Wad::open(path)
+let level = map::load_level(w, "E1M1")
+let g = gfx::load_graphics(w)
+render::setup(w, g, level)
+let pal = render::palette_rgb(g)
+let mut rgb: Vec<int> = vec![0; 64000]
+
+let mut p1 = level.things[0]
+for t in level.things {
+    if t.kind == 1 { p1 = t }
+}
+view(0, p1.x, p1.y, p1.angle, pal, rgb, outdir)

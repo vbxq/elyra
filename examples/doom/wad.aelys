@@ -62,6 +62,41 @@ pub struct Graphics {
     pub flats: Vec<Flat>,
 }
 
+pub struct Picture {
+    pub width: int,
+    pub height: int,
+    pub left: int,
+    pub top: int,
+    pub widthmask: int,
+    pub heightmask: int,
+    pub pixels: Vec<int>,
+    pub colpost: Vec<int>,
+    pub posts: Vec<int>,
+}
+
+pub struct Room { pub floor: int, pub ceil: int, pub floorpic: int, pub ceilpic: int, pub light: int }
+
+pub struct WallSide { pub xoff: int, pub yoff: int, pub top: int, pub mid: int, pub bottom: int, pub sector: int }
+
+pub struct WallSeg {
+    pub x1: int,
+    pub y1: int,
+    pub x2: int,
+    pub y2: int,
+    pub angle: int,
+    pub offset: int,
+    pub side: int,
+    pub flags: int,
+    pub front: int,
+    pub back: int,
+}
+
+pub struct ThingKind { pub sprite: string, pub frame: int, pub bright: bool, pub hang: int }
+
+pub struct SpriteDef { pub rotate: bool, pub pics: [int; 8], pub flips: [int; 8] }
+
+pub struct Actor { pub x: int, pub y: int, pub z: int, pub angle: int, pub def: int, pub bright: bool, pub sector: int }
+
 pub fn u8(buf: int, off: int) -> int { bytes::read_u8(buf, off) }
 pub fn u16(buf: int, off: int) -> int { bytes::read_u16(buf, off) }
 pub fn i16(buf: int, off: int) -> int { bytes::read_i16(buf, off) }
