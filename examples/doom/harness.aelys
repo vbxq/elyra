@@ -201,7 +201,8 @@ fn report(variant: string, realtime: bool, wall_us: int) {
     for v in s_rss {
         if v > rss_max { rss_max = v }
     }
-    println("gate rss_kb first {s_rss[0]} last {s_rss[k - 1]} max {rss_max} samples {k}")
+    let warm = if k > 2 { 1 } else { 0 }
+    println("gate rss_kb start {s_rss[0]} first {s_rss[warm]} last {s_rss[k - 1]} max {rss_max} samples {k}")
     println("gate heap_bytes first {s_heap[0]} last {s_heap[k - 1]}")
     let first = if k > 6 { 5 } else { 0 }
     let span_us = s_us[k - 1] - s_us[first]
