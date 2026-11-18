@@ -1517,6 +1517,42 @@ impl TypeTable {
         })
     }
 
+    pub fn unique_impl_trait_args(
+        &self,
+        trait_name: &str,
+        ty: &InferType,
+    ) -> Option<Vec<InferType>> {
+        let mut found: Option<Vec<InferType>> = None;
+        for definition in &self.trait_impl_defs {
+            if definition.trait_name != trait_name {
+                continue;
+            }
+            let mut mapping = HashMap::new();
+            if crate::infer::monomorphize::match_types(&definition.self_type, ty, &mut mapping)
+                .is_none()
+            {
+                continue;
+            }
+            let mut substitution = crate::unify::Substitution::new();
+            for (param, actual) in mapping {
+                substitution.bind_param(param, actual);
+            }
+            let args = definition
+                .trait_args
+                .iter()
+                .map(|argument| substitution.apply(argument))
+                .collect::<Vec<_>>();
+            if args.iter().any(InferType::mentions_any_param) {
+                return None;
+            }
+            match &found {
+                Some(previous) if *previous != args => return None,
+                _ => found = Some(args),
+            }
+        }
+        found
+    }
+
     /// the denial is read first, and before the prelude short circuit. a display
     pub fn select_bound_method(
         &self,
