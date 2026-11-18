@@ -25,6 +25,10 @@ impl Compiler {
             return Ok(());
         }
 
+        if self.try_compile_fixed_point_call(callee, args, dest, span)? {
+            return Ok(());
+        }
+
         if let TypedExprKind::StructMethod {
             object,
             symbol,

@@ -39,6 +39,24 @@ impl ConstantFolder {
             ))
         };
 
+        if let Some(bits) = original.ty.int_bits() {
+            let mask = i64::from(bits) - 1;
+            let wrapped = match op {
+                BinaryOp::Add => a.wrapping_add(b),
+                BinaryOp::Sub => a.wrapping_sub(b),
+                BinaryOp::Mul => a.wrapping_mul(b),
+                BinaryOp::Div if b != 0 => a.wrapping_div(b),
+                BinaryOp::Mod if b != 0 => a.wrapping_rem(b),
+                BinaryOp::Shl => a << (b & mask),
+                BinaryOp::Shr => a >> (b & mask),
+                BinaryOp::BitAnd => a & b,
+                BinaryOp::BitOr => a | b,
+                BinaryOp::BitXor => a ^ b,
+                _ => return None,
+            };
+            return int_result(self, original.ty.wrap_int(wrapped));
+        }
+
         match op {
             // comparisons -> bool
             BinaryOp::Lt => return bool_result(self, a < b),
