@@ -7,25 +7,7 @@ needs gfx
 needs fixed
 needs render
 
-fn write_ppm(path: string, pal: Vec<int>, mut rgb: Vec<int>) {
-    render::to_rgb(pal, rgb)
-    let f = match fs::open(path, "w") {
-        Ok(h) => h,
-        Err(e) => { println("snap: {e}"); return () },
-    }
-    let _ = fs::write(f, "P3\n320 200\n255\n")
-    for y in 0..200 {
-        let mut line = ""
-        for x in 0..320 {
-            let c = rgb[y * 320 + x]
-            line += "{(c >> 16) & 255} {(c >> 8) & 255} {c & 255} "
-        }
-        let _ = fs::write(f, line + "\n")
-    }
-    let _ = fs::close(f)
-}
-
-fn view(n: int, x: int, y: int, angle_deg: int, pal: Vec<int>, mut rgb: Vec<int>, outdir: string) {
+fn view(n: int, x: int, y: int, angle_deg: int, pal: Vec<int>, outdir: string) {
     let fx = x << 16
     let fy = y << 16
     let z = render::floor_height_at(fx, fy) + (41 << 16)
@@ -34,7 +16,10 @@ fn view(n: int, x: int, y: int, angle_deg: int, pal: Vec<int>, mut rgb: Vec<int>
     render::render_frame(fx, fy, z, a)
     let ms = time::elapsed(t) * 1000.0
     println("view {n} at {x},{y} angle {angle_deg}: {ms} ms, {render::frame_stats()}")
-    write_ppm("{outdir}/snap_{n}.ppm", pal, rgb)
+    match render::write_ppm("{outdir}/snap_{n}.ppm", pal) {
+        Ok(_) => (),
+        Err(e) => println("snap: {e}"),
+    }
 }
 
 let path = match sys::arg(0) {
@@ -57,12 +42,12 @@ let mut p1 = level.things[0]
 for t in level.things {
     if t.kind == 1 { p1 = t }
 }
-view(0, p1.x, p1.y, p1.angle, pal, rgb, outdir)
-view(1, 1700, 1700, 300, pal, rgb, outdir)
-view(2, 2296, -384, 90, pal, rgb, outdir)
-view(3, 700, 1976, 180, pal, rgb, outdir)
-view(4, 1136, -424, 0, pal, rgb, outdir)
-view(5, 2200, 1500, 200, pal, rgb, outdir)
+view(0, p1.x, p1.y, p1.angle, pal, outdir)
+view(1, 1700, 1700, 300, pal, outdir)
+view(2, 2296, -384, 90, pal, outdir)
+view(3, 700, 1976, 180, pal, outdir)
+view(4, 1136, -424, 0, pal, outdir)
+view(5, 2200, 1500, 200, pal, outdir)
 
 let frames = 30
 let sx = p1.x << 16

@@ -1,4 +1,5 @@
 needs std::bytes
+needs std::fs as fs
 needs std::convert as convert
 needs println from std::io
 needs std::time as time
@@ -1875,4 +1876,25 @@ pub fn palette_rgb(g: Graphics) -> Vec<int> {
 pub fn to_rgb(pal: Vec<int>, mut out: Vec<int>) {
     let src = fb
     for i in 0..64000 { out[i] = pal[src[i]] }
+}
+
+pub fn write_ppm(path: string, pal: Vec<int>) -> Result<(), string> {
+    let mut rgb: Vec<int> = vec![0; 192000]
+    let src = fb
+    for i in 0..64000 {
+        let c = pal[src[i]]
+        rgb[3 * i] = (c >> 16) & 255
+        rgb[3 * i + 1] = (c >> 8) & 255
+        rgb[3 * i + 2] = c & 255
+    }
+    let header = "P6\n320 200\n255\n"
+    let buf = bytes::alloc(header.len() + 192000)
+    let _ = bytes::write_string(buf, 0, header)
+    let copied = bytes::copy_from_vec(buf, header.len(), rgb)
+    let written = match copied {
+        Ok(_) => fs::write_file_bytes(path, buf),
+        Err(e) => Err(e),
+    }
+    let _ = bytes::free(buf)
+    written
 }

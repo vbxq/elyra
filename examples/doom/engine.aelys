@@ -1,5 +1,4 @@
 needs std::sys
-needs std::fs as fs
 needs std::time as time
 needs std::convert as convert
 needs println from std::io
@@ -12,7 +11,6 @@ needs play
 needs demo
 
 let mut pal: Vec<int> = vec![0]
-let mut rgb: Vec<int> = vec![0]
 let mut snap_dir = ""
 let mut snaps = false
 let mut frame_ms: Vec<float> = vec![0.0]
@@ -72,7 +70,6 @@ pub fn load(path: string) -> Graphics {
     render::setup(w, g, level)
     play::init_level(level, skill, nomonsters)
     pal = render::palette_rgb(g)
-    rgb = vec![0; 64000]
     snaps = has_flag("--snaps")
     snap_dir = flag_value("--snapdir", "/home/vbxq/.local/share/elyra-runs/engine")
     demo::init_demo(has_flag("--trace"))
@@ -91,24 +88,6 @@ pub fn load(path: string) -> Graphics {
     g
 }
 
-fn write_ppm(path: string) {
-    render::to_rgb(pal, rgb)
-    let f = match fs::open(path, "w") {
-        Ok(h) => h,
-        Err(e) => { println("snap: {e}"); return () },
-    }
-    let _ = fs::write(f, "P3\n320 200\n255\n")
-    for y in 0..200 {
-        let mut line = ""
-        for x in 0..320 {
-            let c = rgb[y * 320 + x]
-            line += "{(c >> 16) & 255} {(c >> 8) & 255} {c & 255} "
-        }
-        let _ = fs::write(f, line + "\n")
-    }
-    let _ = fs::close(f)
-}
-
 fn draw_view() {
     render::render_frame(play::player_x(), play::player_y(), play::player_viewz(), play::player_angle())
 }
@@ -117,7 +96,10 @@ fn snapshot() {
     let t = clock()
     draw_view()
     let path = "{snap_dir}/demo_{tics}.ppm"
-    write_ppm(path)
+    match render::write_ppm(path, pal) {
+        Ok(_) => (),
+        Err(e) => println("snap: {e}"),
+    }
     println("snap {path} tic {tics} pos {play::player_x() >> 16},{play::player_y() >> 16},{play::player_z() >> 16} angle {play::player_angle() * 360 / 4294967296} sector {play::player_sector()}")
     snap_ms += ms_since(t)
 }
