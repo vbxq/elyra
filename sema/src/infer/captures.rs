@@ -308,6 +308,7 @@ fn collect_pattern_bindings(pattern: &crate::typed_ast::TypedPattern, bound: &mu
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }

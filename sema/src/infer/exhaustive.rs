@@ -7,7 +7,6 @@ enum Ctor {
     Bool(bool),
     Int(i128, i128),
     Str(String),
-    Char(char),
     Variant(usize),
     Single,
     Opaque,
@@ -45,6 +44,7 @@ struct VariantShape {
 enum Shape {
     Bool,
     Int(i128, i128),
+    Char,
     Str,
     Sum(Vec<VariantShape>),
     Product {
@@ -66,6 +66,18 @@ pub(crate) struct Checker<'a> {
 
 const INT_MIN: i128 = aelys_bytecode::Value::INT_MIN as i128;
 const INT_MAX: i128 = aelys_bytecode::Value::INT_MAX as i128;
+const SURROGATES: i128 = 0x800;
+const CHAR_LAST: i128 = 0x10FFFF - SURROGATES;
+
+// the surrogate gap holds no char, so indices skip it and a range spanning it stays contiguous
+fn char_index(value: char) -> i128 {
+    let code = i128::from(u32::from(value));
+    if code >= 0xE000 {
+        code - SURROGATES
+    } else {
+        code
+    }
+}
 
 impl<'a> Checker<'a> {
     pub fn new(table: &'a TypeTable) -> Self {
@@ -82,7 +94,8 @@ impl<'a> Checker<'a> {
             InferType::U16 => Shape::Int(0, u16::MAX.into()),
             InferType::U32 => Shape::Int(0, u32::MAX.into()),
             InferType::I64 => Shape::Int(INT_MIN, INT_MAX),
-            InferType::String | InferType::Char => Shape::Str,
+            InferType::Char => Shape::Char,
+            InferType::String => Shape::Str,
             InferType::Option(inner) => Shape::Sum(vec![
                 VariantShape {
                     name: "None".to_string(),
@@ -234,7 +247,26 @@ impl<'a> Checker<'a> {
             ),
             PatternKind::Bool(value) => Pat::Ctor(Ctor::Bool(*value), Vec::new()),
             PatternKind::String(value) => Pat::Ctor(Ctor::Str(value.clone()), Vec::new()),
-            PatternKind::Char(value) => Pat::Ctor(Ctor::Char(*value), Vec::new()),
+            PatternKind::Char(value) => {
+                let index = char_index(*value);
+                Pat::Ctor(Ctor::Int(index, index), Vec::new())
+            }
+            PatternKind::CharRange {
+                start,
+                end,
+                inclusive,
+            } => {
+                let low = start.map_or(0, char_index);
+                let high = match end {
+                    Some(end) if *inclusive => char_index(*end),
+                    Some(end) => char_index(*end) - 1,
+                    None => CHAR_LAST,
+                };
+                if low > high {
+                    return Pat::Ctor(Ctor::Opaque, Vec::new());
+                }
+                Pat::Ctor(Ctor::Int(low, high), Vec::new())
+            }
             PatternKind::Int(value) => {
                 let value = i128::from(*value);
                 Pat::Ctor(Ctor::Int(value, value), Vec::new())
@@ -395,28 +427,36 @@ impl<'a> Checker<'a> {
                 (all, missing)
             }
             Shape::Product { .. } => (vec![Ctor::Single], None),
-            Shape::Int(min, max) => {
-                let mut cuts = vec![min, max + 1];
-                for ctor in present.iter().chain(probe) {
-                    if let Ctor::Int(low, high) = ctor {
-                        cuts.push((*low).clamp(min, max + 1));
-                        cuts.push((*high + 1).clamp(min, max + 1));
-                    }
-                }
-                cuts.sort_unstable();
-                cuts.dedup();
-                let pieces: Vec<Ctor> = cuts
-                    .windows(2)
-                    .map(|pair| Ctor::Int(pair[0], pair[1] - 1))
-                    .collect();
-                let missing = pieces
-                    .iter()
-                    .find(|piece| !present.iter().any(|ctor| ctor_covers(ctor, piece)))
-                    .cloned();
-                (pieces, missing)
-            }
+            Shape::Char => Self::int_signature(0, CHAR_LAST, present, probe),
+            Shape::Int(min, max) => Self::int_signature(min, max, present, probe),
             Shape::Str | Shape::Opaque => (Vec::new(), Some(Ctor::Opaque)),
         }
+    }
+
+    fn int_signature(
+        min: i128,
+        max: i128,
+        present: &[Ctor],
+        probe: Option<&Ctor>,
+    ) -> (Vec<Ctor>, Option<Ctor>) {
+        let mut cuts = vec![min, max + 1];
+        for ctor in present.iter().chain(probe) {
+            if let Ctor::Int(low, high) = ctor {
+                cuts.push((*low).clamp(min, max + 1));
+                cuts.push((*high + 1).clamp(min, max + 1));
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        let pieces: Vec<Ctor> = cuts
+            .windows(2)
+            .map(|pair| Ctor::Int(pair[0], pair[1] - 1))
+            .collect();
+        let missing = pieces
+            .iter()
+            .find(|piece| !present.iter().any(|ctor| ctor_covers(ctor, piece)))
+            .cloned();
+        (pieces, missing)
     }
 
     fn useful(&self, rows: &[Vec<Pat>], row: &[Pat], types: &[InferType]) -> bool {

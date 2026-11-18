@@ -735,6 +735,10 @@ impl TypeInference {
                 start: *start,
                 end: *end,
             },
+            TypedPatternKind::CharRange { start, end } => TypedPatternKind::CharRange {
+                start: *start,
+                end: *end,
+            },
         };
         TypedPattern {
             kind,
