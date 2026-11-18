@@ -4,9 +4,13 @@ use aelys_sema::{
     TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedPattern, TypedPatternKind,
     TypedProgram, TypedStmt, TypedStmtKind,
 };
+use std::collections::HashSet;
 
 pub struct LocalConstantPropagator {
     scopes: ScopeStack,
+    // top-level constants bound after top-level code first ran: a hoisted function may run before them
+    late: HashSet<String>,
+    function_depth: usize,
     folder: ConstantFolder,
     stats: OptimizationStats,
 }
@@ -15,6 +19,8 @@ impl LocalConstantPropagator {
     pub fn new() -> Self {
         Self {
             scopes: ScopeStack::new(),
+            late: HashSet::new(),
+            function_depth: 0,
             folder: ConstantFolder::new(),
             stats: OptimizationStats::new(),
         }
@@ -300,6 +306,7 @@ impl LocalConstantPropagator {
     }
 
     fn propagate_function(&mut self, func: &mut TypedFunction) {
+        self.function_depth += 1;
         self.scopes.push();
         for param in &func.params {
             self.scopes.shadow(param.name.clone());
@@ -308,6 +315,7 @@ impl LocalConstantPropagator {
             self.propagate_stmt(stmt);
         }
         self.scopes.pop();
+        self.function_depth -= 1;
     }
 
     fn shadow_pattern(&mut self, pattern: &TypedPattern) {
@@ -333,7 +341,10 @@ impl LocalConstantPropagator {
     fn propagate_expr(&mut self, expr: &mut TypedExpr) {
         match &mut expr.kind {
             TypedExprKind::Identifier(name) => {
-                if let Some(const_val) = self.scopes.get(name) {
+                let visible = self.scopes.get_with_depth(name).filter(|(depth, _)| {
+                    *depth > 0 || self.function_depth == 0 || !self.late.contains(name)
+                });
+                if let Some((_, const_val)) = visible {
                     let ty = if expr.ty.is_integer() && const_val.ty.is_integer() {
                         expr.ty.clone()
                     } else {
@@ -526,10 +537,27 @@ impl OptimizationPass for LocalConstantPropagator {
 
     fn run(&mut self, program: &mut TypedProgram) -> OptimizationStats {
         self.scopes = ScopeStack::new();
+        self.late.clear();
+        self.function_depth = 0;
         self.stats = OptimizationStats::new();
 
+        let mut code_ran = false;
         for stmt in program.stmts.iter_mut() {
             self.propagate_stmt(stmt);
+            match &stmt.kind {
+                TypedStmtKind::Let { name, .. } if self.scopes.get(name).is_some() => {
+                    if code_ran {
+                        self.late.insert(name.clone());
+                    }
+                }
+                TypedStmtKind::Function(_)
+                | TypedStmtKind::ImplDecl { .. }
+                | TypedStmtKind::StructDecl { .. }
+                | TypedStmtKind::TraitDecl { .. }
+                | TypedStmtKind::EnumDecl { .. }
+                | TypedStmtKind::Needs(_) => {}
+                _ => code_ran = true,
+            }
         }
 
         self.stats.clone()
