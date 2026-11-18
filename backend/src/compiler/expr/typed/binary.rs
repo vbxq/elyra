@@ -145,8 +145,16 @@ impl Compiler {
             None => return Ok(false),
         };
         let mut temporaries = Vec::new();
-        let mut operand = |this: &mut Self, expr: &aelys_sema::TypedExpr| -> Result<u16> {
-            if let Some(register) = this.get_typed_local_register(expr) {
+        let mut operand = |this: &mut Self,
+                           expr: &aelys_sema::TypedExpr,
+                           later: &[&aelys_sema::TypedExpr]|
+         -> Result<u16> {
+            let may_change = matches!(&expr.kind, aelys_sema::TypedExprKind::Identifier(name)
+                    if this.resolve_variable(name).is_some_and(|(_, mutable)| mutable))
+                && later
+                    .iter()
+                    .any(|operand| Self::typed_expr_may_have_side_effects(operand));
+            if !may_change && let Some(register) = this.get_typed_local_register(expr) {
                 return Ok(register);
             }
             let register = this.alloc_register()?;
@@ -154,15 +162,15 @@ impl Compiler {
             temporaries.push(register);
             Ok(register)
         };
-        let left_register = operand(self, object)?;
-        let right_register = operand(self, right)?;
+        let left_register = operand(self, object, &[right, shift])?;
+        let right_register = operand(self, right, &[shift])?;
         let shift = match &shift.kind {
             aelys_sema::TypedExprKind::Int(value) if (0..=63).contains(value) => {
                 aelys_bytecode::FixedShift::Immediate(
                     u8::try_from(*value).expect("the shift was range checked"),
                 )
             }
-            _ => aelys_bytecode::FixedShift::Register(operand(self, shift)?),
+            _ => aelys_bytecode::FixedShift::Register(operand(self, shift, &[])?),
         };
         let line = self.current_line(span);
         self.current.emit_fixed(

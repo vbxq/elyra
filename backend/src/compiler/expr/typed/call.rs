@@ -288,6 +288,11 @@ impl Compiler {
                 if !self.globals.contains_key(name) && !self.known_globals.contains(name) {
                     return self.compile_typed_call_fallback(callee, args, dest, span);
                 }
+                if self.globals.get(name).copied().unwrap_or(false)
+                    && args.iter().any(Self::typed_expr_may_have_side_effects)
+                {
+                    return self.compile_typed_call_fallback(callee, args, dest, span);
+                }
                 let actual_name = self.resolve_global_name(name).to_string();
                 let global_idx = self.get_or_create_global_index(name);
                 self.accessed_globals.insert(actual_name.clone());
@@ -332,8 +337,10 @@ impl Compiler {
             }
         }
 
+        // an argument can rebind a mutable function local, so that callee is copied before the arguments run
         if let aelys_sema::TypedExprKind::Identifier(name) = &callee.kind
-            && let Some((callee_reg, _mutable)) = self.resolve_variable(name)
+            && let Some((callee_reg, mutable)) = self.resolve_variable(name)
+            && !(mutable && args.iter().any(Self::typed_expr_may_have_side_effects))
         {
             let nargs = args.len();
             let Some(arg_start) = dest.checked_add(1) else {
