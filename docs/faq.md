@@ -19,9 +19,13 @@ Cold programs stay in the interpreter until a call or loop becomes hot. Hot loop
 Performance depends heavily on type information and workload shape. Typed numeric calls to qualified native-module globals can cross the JIT through a checked runtime callback; general dynamic calls, object-valued calls, and unsupported operations remain explicit interpreter boundaries. Run the repository's Criterion suite on the deployment machine before using a native module solely for speed.
 ### How does the GC work?
 
-The heap is non-moving and generational. Minor collections trace young objects from roots and the remembered set; the old generation uses incremental mark-and-sweep slices with write barriers on mutations.
+The heap is non-moving and generational. Every new object is young. A minor collection runs after 256 KiB of allocation (`-ae.gc-nursery=<size>`), traces young objects from the roots and the remembered set, frees the unreachable ones and promotes every survivor to the old generation. Its cost depends on the young objects and the remembered set, not on the size of the old heap.
 
-GC slices run at safepoints with a default 500 µs budget. Execution reports expose allocation, collection, and pause telemetry.
+Storing a pointer into an object runs a write barrier. An old object that receives a young value is remembered once, and a Vec or array is remembered per element, so the next minor collection reads only the written slots. While a major collection is marking, the barrier also marks the stored value (insertion barrier), so marking finishes in bounded work however often a large Vec is rewritten.
+
+A major collection starts when the heap reaches twice its size after the previous major (4 MiB at least). It marks and then sweeps in slices interleaved with minor collections. One slice runs per 32 KiB allocated, does work proportional to the heap so that the collection ends within one heap's worth of allocation, and stops after 1 ms. Large Vecs and arrays are marked in chunks of 2048 elements.
+
+`-ae.gc-stats=on` prints, when the VM exits, the number of minor and major collections, the maximum, p99 and total pause, the allocation count and bytes, and a pause histogram. A program can read the same figures at run time with the `sys::gc_*` functions (see the standard library). `-ae.gc-stress=on` collects after almost every allocation and is meant for testing.
 
 ## Practical
 

@@ -91,7 +91,15 @@ You can tune VM behavior with `-ae.<option>=<value>`:
 aelys-cli -ae.max-heap=128M program.aelys
 ```
 
-`max-heap` sets the heap size limit.
+| Option | Description |
+|--------|-------------|
+| `max-heap=<size>` | Heap size limit (at least 1M) |
+| `gc-nursery=<size>` | Bytes allocated between two minor collections (default 256K, at least 1K) |
+| `gc-stats=on` | Print collection counts, pause maximum, p99, total and histogram, allocations and bytes when the program exits |
+| `gc-stress=on` | Collect after almost every allocation (testing only) |
+| `jit=on` | Enable the tiered JIT |
+
+Sizes accept the suffixes `K`, `M` and `G`.
 
 **Development**
 
