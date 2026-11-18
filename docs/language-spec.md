@@ -1893,10 +1893,10 @@ generic parameter (`enum Tree<T> { Leaf, Node(Tree<T>, T, Tree<T>) }`), a `Vec` 
 `Option` field of a struct (`struct Node { v: int, next: Option<Node> }`). Nesting
 depth is bounded only by memory: a list a hundred thousand cells deep is built,
 collected and matched like a short one. At run time a constructor checks each
-payload slot against its declared type one level deep (an enum slot must hold a
-value of that enum, a struct slot a value of that struct); the slot's own
-contents were checked when it was built, so building a value costs the same at
-every depth.
+payload slot against its declared type. An enum value that a constructor built
+was checked then, so the check stops at it and building a value costs the same at
+every depth; an enum value the embedding host allocated is checked through its
+payload.
 
 Matching is exhaustive at compile time. The check is a usefulness analysis over
 the whole pattern, so it looks through every level of nesting: `Ok(_)`,
