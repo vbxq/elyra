@@ -852,8 +852,11 @@ fn main() -> int {
 }
 ```
 
-The same order holds everywhere: call arguments and collection literal elements
-in order; in `v[i]` the container, then the index; in an assignment `place = value`
+The same order holds everywhere: in a call, the function value, then the arguments
+in order (`cb(rebind())` calls the function `cb` held before `rebind` ran, whether `cb`
+is a local, a captured variable or a global `let mut`); the receiver of a method call
+before its arguments (`m.mul_shr(f(), 8)` and `m.shl_div(f(), 8)` read `m` first);
+collection literal elements in order; in `v[i]` the container, then the index; in an assignment `place = value`
 the container and indices of the place, then the value, then the store; and in a
 compound assignment `place op= value` the place is read once, before the value is
 evaluated (`x += f()` adds `f()` to the value `x` had before the call, `v[i] += f()`
@@ -2037,14 +2040,19 @@ accepted. A discarded `Result` or `Option` arm value is still E0303/E0304. The
 last statement of a script is its value, so a `match` there keeps its arm values.
 An assignment (`r = Some(3)`) is never a discarded value, whatever its type. A script
 whose last statement is an assignment (`a = 5`, `a += 2`, `v[i] = x`, `s.f *= 2`, or an
-`if`, block or `match` ending in one) has the value unit, like a function without a
-declared return type. The CLI prints a script's value after it runs only when that value
+block ending in one, or an `if`/`else` or `match` every branch of which ends in one or
+leaves by `return`, `break`, `continue` or a call that never returns) has the value unit,
+like a function without a declared return type. When some branch ends in a value instead,
+the script keeps the `if` or `match` value: `match a { 1 => 9, _ => { a = 2 } }` with
+`a == 1` gives 9. The CLI prints a script's value after it runs only when that value
 is neither unit nor null, so such a script prints nothing extra; the REPL follows the
 same rule for each line.
 A variable that is read anywhere in a loop (its condition included) and assigned
 later in the same loop body counts as used: the next iteration reads it, so
 `while let Some(n) = cur { cur = n.next }` is accepted. A value assigned in a
-loop and never read, in or after the loop, is still E0303/E0304.
+loop and never read, in or after the loop, is still E0303/E0304, and so is a value
+assigned and then followed, in the same block and with no read in between, by a
+`break` or `return` (`r = find(5); break`): no next iteration of that loop reads it.
 
 A bare name in a pattern that names a `const` in scope matches the constant's value, as
 a literal would; it does not bind a new variable, and E0392 never applies to it. A local
@@ -3553,7 +3561,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0365 | NotIterable | the value cannot be iterated |
 | E0366 | InvalidIndex | the value cannot be indexed that way |
 | E0367 | UntypedNativeTypeMismatch | a native signature does not match its use |
-| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree of 1024 nested nodes or more, so a chain of 1023 `+` is accepted and 1024 is rejected; a method call counts two nodes, the call and its `.` member |
+| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree of 1024 nested nodes or more, so a chain of 1023 `+` is accepted and 1024 is rejected; a method call counts two nodes, the call and its `.` member, so a chain of 511 calls is accepted and 512 is rejected |
 | E0369 | NamespaceIsNotAValue | a module path used where a value is required |
 | E0370 | NotANamespace | a path segment that names no module |
 | E0371 | NoSuchMember | no such member on that module |
