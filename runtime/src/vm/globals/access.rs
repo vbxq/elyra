@@ -15,11 +15,13 @@ impl VM {
     }
 
     pub fn set_global(&mut self, name: String, value: Value) {
+        self.bump_jit_global_epoch();
         self.globals.insert(name, value);
         self.invalidate_global_mapping();
     }
 
     pub fn remove_global(&mut self, name: &str) -> Option<Value> {
+        self.bump_jit_global_epoch();
         let value = self.globals.remove(name);
         self.invalidate_global_mapping();
         value
@@ -47,6 +49,7 @@ impl VM {
         }
         self.globals_by_index[idx] = value;
         self.global_generations[idx] = self.global_generations[idx].wrapping_add(1);
+        self.bump_jit_global_epoch();
         self.globals_by_index_cache.clear();
         self.globals_by_index_dirty = true;
     }
@@ -88,6 +91,7 @@ impl VM {
     }
 
     pub fn invalidate_global_mapping(&mut self) {
+        self.bump_jit_global_epoch();
         self.globals_by_index.clear();
         self.globals_by_index_cache.clear();
         self.current_global_mapping_id = usize::MAX;

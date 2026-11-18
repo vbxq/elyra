@@ -15,6 +15,7 @@ mod globals;
 mod init;
 mod inline_cache;
 mod jit;
+mod jit_frame;
 mod native;
 mod native_registry;
 mod random;
@@ -46,6 +47,10 @@ pub use config::{VmConfig, VmConfigError};
 pub use control::{ExecutionControl, ExecutionStats, InterruptHandle, call_jit_global};
 pub use core::{MAX_FRAMES, MAX_REGISTERS, StepResult, VM};
 pub use frame::CallFrame;
+pub use jit_frame::{
+    aelys_frame_call, aelys_frame_collection, aelys_frame_fmod, aelys_frame_global,
+    aelys_frame_push, aelys_frame_store_reference, aelys_frame_struct,
+};
 pub use native::{
     ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,
 };

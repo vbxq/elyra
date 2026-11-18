@@ -19,6 +19,7 @@ impl VM {
         self.jit_call_counts.clear();
         self.jit_backedge_counts.clear();
         self.jit_refused.clear();
+        self.reset_frame_jit();
     }
 
     pub fn alloc_function_with_jit_key(
@@ -157,7 +158,26 @@ impl VM {
         argument_start: usize,
         argument_count: u16,
     ) -> Result<JitRegisterCallResult, RuntimeError> {
+        match self.frame_jit_call(function, argument_start) {
+            super::jit_frame::FrameOutcome::Returned(value) => {
+                return Ok(JitRegisterCallResult::Returned(value));
+            }
+            super::jit_frame::FrameOutcome::Exited(bytecode_ip) => {
+                return Ok(JitRegisterCallResult::Deoptimized {
+                    bytecode_ip,
+                    registers: Vec::new(),
+                });
+            }
+            super::jit_frame::FrameOutcome::Interpret => {
+                return Ok(JitRegisterCallResult::Unsupported);
+            }
+            super::jit_frame::FrameOutcome::Legacy => {}
+        }
         if !self.prepare_jit_call(function) {
+            if self.function_jit_unsupported(function) || self.jit_refused.get(&function).is_some()
+            {
+                self.mark_frame_legacy_refused(function);
+            }
             return Ok(JitRegisterCallResult::Unsupported);
         }
         let argument_end = argument_start
@@ -208,6 +228,9 @@ impl VM {
         function: GcRef,
         bytecode_ip: usize,
     ) -> Result<Option<Value>, RuntimeError> {
+        if let Some(result) = self.frame_jit_backedge(function, bytecode_ip) {
+            return result;
+        }
         if self.function_jit_unsupported(function) || self.jit_refused.get(&function).is_some() {
             return Ok(None);
         }
@@ -314,6 +337,9 @@ impl VM {
     }
 
     pub(crate) fn finish_jit_osr(&mut self, result: Value) -> Result<Option<Value>, RuntimeError> {
+        if self.take_frame_osr_resume() {
+            return Ok(None);
+        }
         let current = self
             .frames
             .last()
@@ -449,6 +475,7 @@ impl VM {
         let heap = &self.heap;
         self.jit_refused
             .retain(|reference, _| heap.get(*reference).is_some());
+        self.sweep_frame_jit();
     }
 }
 

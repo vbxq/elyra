@@ -46,6 +46,7 @@ impl VM {
             jit_call_counts: crate::jit::InlineMap::default(),
             jit_backedge_counts: crate::jit::InlineMap::default(),
             jit_refused: crate::jit::InlineMap::default(),
+            frame_jit: super::jit_frame::FrameJitState::default(),
             schema_registry: HashMap::new(),
             schema_index: HashMap::new(),
             next_schema_id: 1,

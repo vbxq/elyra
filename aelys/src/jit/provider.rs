@@ -1,4 +1,5 @@
 use super::engine::{CompiledFunction, JitDeoptValue, JitEngine, JitExecution, JitKey, JitTier};
+use super::frame::{FrameCompiled, compile_frame, frame_isa};
 use super::optimize::{optimize_integer_ir, specialize_integer_parameters};
 use super::translate::{
     translate_controlled_integer_function, translate_controlled_integer_osr,
@@ -6,9 +7,10 @@ use super::translate::{
 };
 use aelys_bytecode::Function;
 use aelys_runtime::{
-    JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutionContext,
+    FrameCode, JitArgument, JitCallResult, JitDeoptValue as RuntimeDeoptValue, JitExecutionContext,
     JitExecutor, JitFunctionKey, Value,
 };
+use cranelift_codegen::isa::OwnedTargetIsa;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -64,6 +66,16 @@ pub(crate) struct JitProvider {
     refused: Mutex<HashSet<JitKey>>,
     deoptimizations: AtomicU64,
     osr_executions: AtomicU64,
+    frame_isa: OwnedTargetIsa,
+    frames: Mutex<FrameCache>,
+}
+
+type FrameKey = (u64, Arc<[u32]>, Option<u32>);
+
+#[derive(Default)]
+struct FrameCache {
+    compiled: HashMap<FrameKey, Arc<FrameCompiled>>,
+    refused: HashSet<FrameKey>,
 }
 
 impl JitProvider {
@@ -73,7 +85,10 @@ impl JitProvider {
         tier2_call_threshold: Option<u64>,
     ) -> Result<Self, String> {
         let engine = JitEngine::new(max_entries).map_err(|error| error.to_string())?;
+        let frame_isa = frame_isa()?;
         Ok(Self {
+            frame_isa,
+            frames: Mutex::new(FrameCache::default()),
             engine,
             call_threshold,
             tier2_call_threshold,
@@ -86,7 +101,12 @@ impl JitProvider {
     }
 
     pub(crate) fn cache_len(&self) -> usize {
-        self.engine.cache_len().unwrap_or(0)
+        let frames = self
+            .frames
+            .lock()
+            .map(|frames| frames.compiled.len())
+            .unwrap_or(0);
+        self.engine.cache_len().unwrap_or(0) + frames
     }
 
     pub(crate) fn deoptimizations(&self) -> u64 {
@@ -210,6 +230,45 @@ impl JitProvider {
 }
 
 impl JitExecutor for JitProvider {
+    fn compile_frame(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        osr_ip: Option<u32>,
+    ) -> Option<Arc<dyn FrameCode>> {
+        let cache_key: FrameKey = (key.module(), key.shared_path(), osr_ip);
+        let mut frames = self.frames.lock().ok()?;
+        if let Some(compiled) = frames.compiled.get(&cache_key) {
+            return Some(Arc::clone(compiled) as Arc<dyn FrameCode>);
+        }
+        if frames.refused.contains(&cache_key) {
+            return None;
+        }
+        match compile_frame(&self.frame_isa, function, osr_ip) {
+            Ok(compiled) => {
+                let compiled = Arc::new(compiled);
+                frames.compiled.insert(cache_key, Arc::clone(&compiled));
+                Some(compiled as Arc<dyn FrameCode>)
+            }
+            Err(_) => {
+                frames.refused.insert(cache_key);
+                None
+            }
+        }
+    }
+
+    fn frame_call_threshold(&self) -> u64 {
+        self.call_threshold
+    }
+
+    fn record_frame_osr_return(&self) {
+        self.osr_executions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_frame_exit(&self) {
+        self.deoptimizations.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool {
         if calls >= self.call_threshold {
             return !self.refuses(&self.tier_key(key, calls));

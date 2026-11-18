@@ -131,7 +131,7 @@ fn tiered_mode_promotes_to_an_optimized_cache_entry() {
 }
 
 #[test]
-fn profiled_numeric_guard_deoptimizes_to_the_exact_interpreter_state() {
+fn a_hot_numeric_call_compiles_once_and_never_leaves_machine_code() {
     let runtime = Runtime::with_jit_mode(JitMode::Tiered);
     let options = CompileOptions {
         optimization_level: OptimizationLevel::None,
@@ -156,8 +156,8 @@ increment(42)
         isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::int(43))
     );
-    assert_eq!(runtime.jit_cache_entries(), 2);
-    assert_eq!(runtime.jit_deoptimizations(), 1);
+    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_deoptimizations(), 0);
 }
 
 #[test]
@@ -682,7 +682,7 @@ result
         isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::int(42))
     );
-    assert_eq!(runtime.jit_cache_entries(), 2);
+    assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 0);
 }
 

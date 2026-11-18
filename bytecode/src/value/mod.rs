@@ -18,6 +18,7 @@ pub struct IntegerOverflowError {
 // The 48-bit integer limit is a tradeoff: 64-bit ints would need heap
 // allocation or a different encoding. ±140 trillion should be enough...
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Value(u64);
 
 // Tag bits are in bits 48-50, payload in bits 0-47
@@ -37,4 +38,12 @@ const CANONICAL_NAN: u64 = QNAN | TAG_NAN | 1;
 impl Value {
     pub const INT_MIN: i64 = -(1i64 << 47);
     pub const INT_MAX: i64 = (1i64 << 47) - 1;
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    pub const fn from_raw(bits: u64) -> Self {
+        Self(bits)
+    }
 }

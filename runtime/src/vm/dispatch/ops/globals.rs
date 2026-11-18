@@ -114,5 +114,6 @@ fn set_named_global(
         globals.insert(name.as_str().to_owned(), value);
     }
     globals_by_index_cache.clear();
+    vm.bump_jit_global_epoch();
     Ok(())
 }

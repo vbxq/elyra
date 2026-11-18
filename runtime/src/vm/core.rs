@@ -46,6 +46,7 @@ pub struct VM {
     pub(crate) jit_call_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
     pub(crate) jit_backedge_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
     pub(crate) jit_refused: crate::jit::InlineMap<GcRef, ()>,
+    pub(crate) frame_jit: super::jit_frame::FrameJitState,
     pub(crate) schema_registry: HashMap<SchemaId, StructSchema>,
     pub(crate) schema_index: HashMap<u64, Vec<SchemaId>>,
     pub(crate) next_schema_id: u32,

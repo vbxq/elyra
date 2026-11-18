@@ -129,6 +129,106 @@ impl JitFunctionKey {
     }
 }
 
+pub const FRAME_STATUS_OK: u64 = 0;
+pub const FRAME_STATUS_EXIT: u64 = 1;
+pub const FRAME_STATUS_CALL_IN_INTERPRETER: u64 = 2;
+
+// field offsets are read by generated code
+#[repr(C)]
+pub struct FrameJitContext {
+    pub vm: *mut c_void,
+    pub status: u64,
+    pub resume_ip: u64,
+    pub global_epoch: u64,
+    pub registers_end: u64,
+    pub depth: u64,
+    pub scratch0: u64,
+    pub scratch1: u64,
+}
+
+impl FrameJitContext {
+    pub const STATUS: i32 = 8;
+    pub const RESUME_IP: i32 = 16;
+    pub const GLOBAL_EPOCH: i32 = 24;
+    pub const REGISTERS_END: i32 = 32;
+    pub const DEPTH: i32 = 40;
+    pub const SCRATCH0: i32 = 48;
+    pub const SCRATCH1: i32 = 56;
+}
+
+// a per-vm block of u64 words: header then one site record per call or global site
+pub struct FrameData;
+
+impl FrameData {
+    pub const CONSTANTS: i32 = 0;
+    pub const FUNCTION: i32 = 8;
+    pub const CODE: i32 = 16;
+    pub const HEADER_WORDS: usize = 4;
+    pub const SITE_WORDS: usize = 5;
+    pub const SITE_EPOCH: i32 = 0;
+    pub const SITE_VALUE: i32 = 8;
+    pub const SITE_ENTRY: i32 = 16;
+    pub const SITE_DATA: i32 = 24;
+    pub const SITE_REGISTERS: i32 = 32;
+
+    pub fn site_offset(site: usize) -> Option<i32> {
+        let words = Self::HEADER_WORDS.checked_add(site.checked_mul(Self::SITE_WORDS)?)?;
+        i32::try_from(words.checked_mul(8)?).ok()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FrameSiteKind {
+    Global { name: Arc<str> },
+    CallGlobal { name: Arc<str> },
+    CallRegister,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameCollectionKind {
+    ArrayInts = 0,
+    ArrayFloats = 1,
+    ArrayBools = 2,
+    ArrayObjects = 3,
+    VecInts = 4,
+    VecFloats = 5,
+    VecBools = 6,
+    VecObjects = 7,
+    Length = 8,
+}
+
+impl FrameCollectionKind {
+    pub fn from_u64(value: u64) -> Option<Self> {
+        Some(match value {
+            0 => Self::ArrayInts,
+            1 => Self::ArrayFloats,
+            2 => Self::ArrayBools,
+            3 => Self::ArrayObjects,
+            4 => Self::VecInts,
+            5 => Self::VecFloats,
+            6 => Self::VecBools,
+            7 => Self::VecObjects,
+            8 => Self::Length,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct FrameCodeInfo {
+    pub address: usize,
+    pub num_registers: u32,
+    pub arity: u16,
+    pub osr_ip: Option<u32>,
+    pub sites: Vec<FrameSiteKind>,
+}
+
+pub trait FrameCode: Send + Sync {
+    fn info(&self) -> &FrameCodeInfo;
+}
+
+pub type FrameEntry = unsafe extern "C" fn(*mut FrameJitContext, *mut u64, *mut u64) -> u64;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum JitCallResult {
     Unsupported,
@@ -158,6 +258,25 @@ pub enum JitArgument<'a> {
 
 pub trait JitExecutor: Send + Sync {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
+
+    /// machine code that runs on the register window and exits to the interpreter at any bytecode ip
+    fn compile_frame(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        osr_ip: Option<u32>,
+    ) -> Option<Arc<dyn FrameCode>> {
+        let _ = (key, function, osr_ip);
+        None
+    }
+
+    fn frame_call_threshold(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn record_frame_osr_return(&self) {}
+
+    fn record_frame_exit(&self) {}
 
     /// true when no later call can compile this function, so the VM can stop asking
     fn refuses_forever(&self, key: &JitFunctionKey) -> bool {
