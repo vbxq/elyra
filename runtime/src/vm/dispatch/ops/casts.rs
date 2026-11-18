@@ -15,7 +15,11 @@ impl VM {
                         .map_err(|_| self.runtime_error(RuntimeErrorKind::IntegerOverflow));
                 }
                 if let Some(value) = value.as_float() {
-                    return Value::int_checked(value as i64)
+                    let truncated = value.trunc();
+                    if !(truncated >= Value::INT_MIN as f64 && truncated <= Value::INT_MAX as f64) {
+                        return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                    }
+                    return Value::int_checked(truncated as i64)
                         .map_err(|_| self.runtime_error(RuntimeErrorKind::IntegerOverflow));
                 }
                 if let Some(value) = value.as_bool() {
@@ -33,6 +37,29 @@ impl VM {
                     return Ok(Value::float(if value { 1.0 } else { 0.0 }));
                 }
             }
+            CastTarget::I8
+            | CastTarget::I16
+            | CastTarget::I32
+            | CastTarget::U8
+            | CastTarget::U16
+            | CastTarget::U32 => {
+                let kind = target.sized_kind().expect("a sized cast target names a width");
+                if let Some(value) = value.as_int() {
+                    return Ok(Value::int_wrapping(kind.wrap(value)));
+                }
+                if let Some(value) = value.as_float() {
+                    if !value.is_finite() {
+                        return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                    }
+                    let modulus = (1u64 << kind.bits()) as f64;
+                    // fmod is exact, so the low bits survive any magnitude
+                    let low = value.trunc() % modulus;
+                    return Ok(Value::int_wrapping(kind.wrap(low as i64)));
+                }
+                if let Some(value) = value.as_bool() {
+                    return Ok(Value::int(i64::from(value)));
+                }
+            }
             CastTarget::Bool => {
                 if let Some(value) = value.as_bool() {
                     return Ok(Value::bool(value));
@@ -47,9 +74,9 @@ impl VM {
         }
 
         let expected = match target {
-            CastTarget::Int => "integer",
             CastTarget::Float => "float",
             CastTarget::Bool => "boolean",
+            _ => "integer",
         };
         Err(self.runtime_error(RuntimeErrorKind::TypeError {
             operation: "as",
@@ -87,6 +114,7 @@ pub(crate) fn execute(
         )))
     })?;
     let value = unsafe { *registers.add(source) };
+    vm.frames[current_frame_idx].ip = ip;
     let result = vm.cast_value(value, target)?;
     unsafe {
         *registers.add(dest) = result;

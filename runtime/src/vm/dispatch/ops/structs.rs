@@ -37,6 +37,7 @@ impl VM {
         let first = unsafe { *bytecode_ptr.add(ip) };
         let second = unsafe { *bytecode_ptr.add(ip + 1) };
         *instruction_pointer = ip + 2;
+        self.frames[state.frame_index].ip = ip + 2;
         if instr & 0x00ff_0000 != 0
             || (opcode_byte == u8::from(OpCode::EnumTest) && second & 0xffff != 0)
         {
@@ -287,6 +288,7 @@ impl VM {
         let first = unsafe { *bytecode_ptr.add(ip) };
         let second = unsafe { *bytecode_ptr.add(ip + 1) };
         *instruction_pointer = ip + 2;
+        self.frames[state.frame_index].ip = ip + 2;
         if instr & 0x00ff_0000 != 0 || second & 0xffff != 0 {
             return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                 "struct instruction has non-zero reserved bits".to_string(),

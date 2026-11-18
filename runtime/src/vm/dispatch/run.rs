@@ -1264,6 +1264,51 @@ impl VM {
                     );
                 }
 
+                202..=228 => {
+                    let (a, b, c) = decode_abc(instr);
+                    let left = reg_ref!(base + b as usize).as_int_unchecked();
+                    let right = reg_ref!(base + c as usize).as_int_unchecked();
+                    reg_set!(
+                        base + a as usize,
+                        Value::int_wrapping(super::ops::sized::wrap_unchecked(
+                            opcode_byte,
+                            left,
+                            right
+                        ))
+                    );
+                }
+
+                229..=233 => {
+                    super::ops::sized::execute(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        opcode_byte,
+                        instr,
+                    )?;
+                }
+
+                234..=235 => {
+                    let first = unsafe { *bytecode_ptr.add(ip) };
+                    let second = unsafe { *bytecode_ptr.add(ip + 1) };
+                    ip += 2;
+                    super::ops::sized::execute_fixed(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        opcode_byte,
+                        instr,
+                        first,
+                        second,
+                    )?;
+                }
+
                 191 => {
                     super::ops::casts::execute(
                         self,

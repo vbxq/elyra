@@ -113,6 +113,14 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             {
                 return Err(format!("invalid wide cast target {wide_c}"));
             }
+            if matches!(inner, OpCode::NegW | OpCode::NotW)
+                && u8::try_from(wide_c)
+                    .ok()
+                    .and_then(aelys_bytecode::SizedInt::from_u8)
+                    .is_none()
+            {
+                return Err(format!("invalid wide integer width {wide_c}"));
+            }
             if inner == OpCode::MatchFail && wide_a > 2 {
                 return Err(format!("invalid wide match failure family {wide_a}"));
             }
@@ -466,6 +474,39 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 }
             }
             ip += 2;
+            continue;
+        }
+
+        if opcode.format() == InstructionFormat::Fixed {
+            let first = bytecode
+                .as_slice()
+                .get(ip + 1)
+                .ok_or_else(|| format!("{opcode:?} at {ip} is missing operand word 1"))?;
+            let second = bytecode
+                .as_slice()
+                .get(ip + 2)
+                .ok_or_else(|| format!("{opcode:?} at {ip} is missing operand word 2"))?;
+            if aelys_bytecode::FixedKind::from_u8(a as u8).is_none() {
+                return Err(format!("{opcode:?} at {ip} has invalid width {a}"));
+            }
+            match b {
+                0 => {
+                    if second & 0xffff != 0 {
+                        return Err(format!("{opcode:?} at {ip} has non-zero reserved bits"));
+                    }
+                }
+                1 => {
+                    if c != 0 {
+                        return Err(format!("{opcode:?} at {ip} has non-zero reserved bits"));
+                    }
+                    verify_reg((second & 0xffff) as usize, num_regs, "fixed-point shift")?;
+                }
+                _ => return Err(format!("{opcode:?} at {ip} has invalid shift mode {b}")),
+            }
+            verify_reg((first >> 16) as usize, num_regs, "fixed-point operand")?;
+            verify_reg((first & 0xffff) as usize, num_regs, "fixed-point operand")?;
+            verify_reg((second >> 16) as usize, num_regs, "fixed-point operand")?;
+            ip += 3;
             continue;
         }
 

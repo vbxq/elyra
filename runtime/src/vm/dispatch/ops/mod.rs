@@ -8,6 +8,7 @@ pub(super) mod closures;
 pub(super) mod comparison;
 pub(super) mod control_flow;
 pub(super) mod globals;
+pub(crate) mod sized;
 pub(super) mod load_store;
 pub(super) mod structs;
 pub(super) mod sums;

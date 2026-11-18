@@ -2,6 +2,17 @@ use super::super::decode::decode_abc;
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
+/// `<<` on `int` is checked like `*`: the count is taken modulo 64 and the exact product must stay in 48 bits
+#[inline(always)]
+pub(crate) fn checked_int_shl(left: i64, right: i64) -> Option<i64> {
+    let exact = i128::from(left) << (right & 63);
+    if exact >= i128::from(Value::INT_MIN) && exact <= i128::from(Value::INT_MAX) {
+        Some(exact as i64)
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn execute_xor(
@@ -106,8 +117,11 @@ pub(crate) fn execute(
             let right = reg_get!(base + c as usize);
 
             if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                // Mask shift amount to 0-63 range (branchless, prevents Rust UB)
-                reg_set!(base + a as usize, Value::int_wrapping(l << (r & 63)));
+                let Some(result) = checked_int_shl(l, r) else {
+                    vm.frames[current_frame_idx].ip = ip;
+                    return Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                };
+                reg_set!(base + a as usize, Value::int_wrapping(result));
             } else {
                 vm.frames[current_frame_idx].ip = ip;
                 return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -224,8 +238,11 @@ pub(crate) fn execute(
             let (a, b, c) = decode_abc(instr);
             let l = reg_ref!(base + b as usize).as_int_unchecked();
             let r = reg_ref!(base + c as usize).as_int_unchecked();
-            // Mask shift amount to 0-63 range (branchless, prevents Rust UB)
-            reg_set!(base + a as usize, Value::int_wrapping(l << (r & 63)));
+            let Some(result) = checked_int_shl(l, r) else {
+                vm.frames[current_frame_idx].ip = ip;
+                return Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
+            };
+            reg_set!(base + a as usize, Value::int_wrapping(result));
         }
 
         // ShrII (112) - Type-specialized right shift
@@ -272,11 +289,11 @@ pub(crate) fn execute(
         117 => {
             let (a, b, c) = decode_abc(instr);
             let l = reg_ref!(base + b as usize).as_int_unchecked();
-            // Mask shift amount to 0-63 range (branchless, prevents Rust UB)
-            reg_set!(
-                base + a as usize,
-                Value::int_wrapping(l << ((c & 63) as i64))
-            );
+            let Some(result) = checked_int_shl(l, i64::from(c)) else {
+                vm.frames[current_frame_idx].ip = ip;
+                return Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
+            };
+            reg_set!(base + a as usize, Value::int_wrapping(result));
         }
 
         // ShrIImm (118) - Right shift with immediate
