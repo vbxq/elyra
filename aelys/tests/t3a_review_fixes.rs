@@ -343,3 +343,69 @@ fn c1_the_vm_refuses_a_multi_word_instruction_cut_by_the_end_of_the_bytecode() {
         }
     }
 }
+
+const LEVELS: [OptimizationLevel; 4] = [
+    OptimizationLevel::None,
+    OptimizationLevel::Basic,
+    OptimizationLevel::Standard,
+    OptimizationLevel::Aggressive,
+];
+
+fn run_at(source: &str, level: OptimizationLevel) -> Result<Option<i64>, String> {
+    let mut vm = aelys::new_vm().expect("vm");
+    aelys::run_with_vm_and_opt(&mut vm, source, "<test>", level)
+        .map(|value| value.as_int())
+        .map_err(|error| error.to_string())
+}
+
+fn assert_traps_at_every_level(source: &str, message: &str) {
+    for level in LEVELS {
+        let error = run_at(source, level).expect_err(&format!("{level:?} must trap on\n{source}"));
+        assert!(error.contains(message), "{level:?}: {error}\n{source}");
+    }
+}
+
+fn assert_int_at_every_level(source: &str, expected: i64) {
+    for level in LEVELS {
+        assert_eq!(
+            run_at(source, level),
+            Ok(Some(expected)),
+            "{level:?}\n{source}"
+        );
+    }
+}
+
+#[test]
+fn h1_folded_int_shift_left_traps_like_the_runtime() {
+    for source in [
+        "let a = 16 << 63\na",
+        "16 << 63",
+        "fn sh(a: int, b: int) -> int { a << b }\nsh(16, 63)",
+        "@inline\nfn sh(a: int, b: int) -> int { a << b }\nsh(16, 63)",
+        "fn c() -> int {\n    let r: int = (((-35) * 16171857) / (16 << 63))\n    r\n}\nc()",
+        "fn c() -> int {\n    let r: int = (((23 * ((-140737488355328) << 27)) << 70368744177664) ^ (-18))\n    r\n}\nc()",
+        "1 << 47",
+        "(-1) << 48",
+        "3 << 46",
+        "let mut x = 1\nx = x << 60\nx",
+    ] {
+        assert_traps_at_every_level(source, "integer overflow");
+    }
+}
+
+#[test]
+fn h1_folded_int_shift_counts_are_masked_like_the_runtime() {
+    let cases: [(&str, i64); 7] = [
+        ("1 << 46", 1 << 46),
+        ("(-1) << 47", -(1 << 47)),
+        ("5 << 64", 5),
+        ("5 << 65", 10),
+        ("(-8) >> 1", -4),
+        ("(-8) >> 65", -4),
+        ("1024 >> -54", 1),
+    ];
+    for (source, expected) in cases {
+        assert_int_at_every_level(source, expected);
+    }
+    assert_traps_at_every_level("1 << -1", "integer overflow");
+}
