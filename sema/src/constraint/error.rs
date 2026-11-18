@@ -247,10 +247,6 @@ pub enum TypeErrorKind {
     UnorderedSortElement {
         element: InferType,
     },
-    SharedAggregateFill {
-        method: String,
-        element: InferType,
-    },
     UnknownField {
         structure: String,
         field: String,
@@ -927,12 +923,6 @@ impl TypeError {
             TypeErrorKind::UnorderedSortElement { element } => write!(
                 f,
                 "sort needs elements with a built-in order (an integer, float, string, char or bool), found {}; use sort_by with a comparator",
-                element.source_spelling()
-            ),
-            TypeErrorKind::SharedAggregateFill { method, element } => write!(
-                f,
-                "'{}' would store the same {} object in every slot; push a fresh value per slot instead",
-                method,
                 element.source_spelling()
             ),
             TypeErrorKind::UnknownField { structure, field } => {
@@ -1872,7 +1862,6 @@ impl TypeErrorKind {
             Self::NotIterable { .. } => 365,
             Self::InvalidMapKey { .. } => 470,
             Self::UnorderedSortElement { .. } => 471,
-            Self::SharedAggregateFill { .. } => 472,
             Self::InvalidIndex { .. } => 366,
             Self::UntypedNativeTypeMismatch { .. } => 367,
             Self::RecursionLimit => 368,

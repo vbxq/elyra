@@ -250,12 +250,11 @@ fn sort_rejects_elements_without_an_order() {
 }
 
 #[test]
-fn fill_and_resize_with_an_aggregate_are_rejected() {
-    let err =
-        run_aelys_err("struct P { x: int }\nlet mut v = vec![P { x: 1 }]\nv.fill(P { x: 2 })\n0");
-    assert!(err.contains("E0472"), "{err}");
-    let err = run_aelys_err("let mut v = vec![vec![1]]\nv.resize(3, vec![0])\n0");
-    assert!(err.contains("E0472"), "{err}");
+fn fill_and_resize_with_an_aggregate_copy_it_into_every_slot() {
+    assert_aelys_str(
+        "struct P { x: int }\nlet mut v = vec![P { x: 1 }, P { x: 1 }]\nv.fill(P { x: 2 })\nv[0].x = 5\nlet mut w = vec![vec![1]]\nw.resize(3, vec![0])\nw[1].push(4)\n\"{v[0].x} {v[1].x} {w[1].len()} {w[2].len()}\"",
+        "5 2 2 1",
+    );
 }
 
 #[test]

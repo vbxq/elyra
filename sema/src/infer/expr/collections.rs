@@ -56,22 +56,6 @@ fn container_method_name(member: &str) -> bool {
     )
 }
 
-// a slot written from one shared value aliases every slot when the value is a reference type
-fn holds_aggregate(ty: &InferType) -> bool {
-    match ty {
-        InferType::Struct(_)
-        | InferType::Applied { .. }
-        | InferType::Array(_)
-        | InferType::FixedArray(_, _)
-        | InferType::Vec(_)
-        | InferType::Map(_, _)
-        | InferType::Tuple(_) => true,
-        InferType::Option(inner) => holds_aggregate(inner),
-        InferType::Result(ok, err) => holds_aggregate(ok) || holds_aggregate(err),
-        _ => false,
-    }
-}
-
 struct MethodShape {
     params: Vec<InferType>,
     output: InferType,
@@ -133,12 +117,6 @@ fn instance_element_error(expr: &TypedExpr) -> Option<TypeErrorKind> {
     match (member.as_str(), args.len()) {
         ("sort", 0) if element.is_concrete() && !ordered_element_types().contains(element) => {
             Some(TypeErrorKind::UnorderedSortElement {
-                element: element.as_ref().clone(),
-            })
-        }
-        ("fill", 1) | ("resize", 2) if holds_aggregate(element) => {
-            Some(TypeErrorKind::SharedAggregateFill {
-                method: member.clone(),
                 element: element.as_ref().clone(),
             })
         }
@@ -344,14 +322,11 @@ impl TypeInference {
                 InferType::Unit,
                 true,
             ))?,
-            ("resize", 2) => {
-                self.reject_shared_fill(member, element, span);
-                vec_only(MethodShape::new(
-                    vec![InferType::I64, t],
-                    InferType::Unit,
-                    true,
-                ))?
-            }
+            ("resize", 2) => vec_only(MethodShape::new(
+                vec![InferType::I64, t],
+                InferType::Unit,
+                true,
+            ))?,
             ("swap", 2) => {
                 MethodShape::new(vec![InferType::I64, InferType::I64], InferType::Unit, true)
             }
@@ -376,10 +351,7 @@ impl TypeInference {
                 MethodShape::new(Vec::new(), InferType::Option(Box::new(t)), false)
             }
             ("set", 2) => MethodShape::new(vec![InferType::I64, t], InferType::Unit, true),
-            ("fill", 1) => {
-                self.reject_shared_fill(member, element, span);
-                MethodShape::new(vec![t], InferType::Unit, true)
-            }
+            ("fill", 1) => MethodShape::new(vec![t], InferType::Unit, true),
             ("join", 1) => {
                 self.constraints.push(Constraint::equal(
                     InferType::String,
@@ -412,19 +384,6 @@ impl TypeInference {
                 span,
                 ConstraintReason::Other("sort element".to_string()),
             ));
-        }
-    }
-
-    fn reject_shared_fill(&mut self, member: &str, element: &InferType, span: Span) {
-        if holds_aggregate(element) {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::SharedAggregateFill {
-                    method: member.to_string(),
-                    element: element.clone(),
-                },
-                span,
-                reason: ConstraintReason::Other("shared aggregate fill".to_string()),
-            });
         }
     }
 

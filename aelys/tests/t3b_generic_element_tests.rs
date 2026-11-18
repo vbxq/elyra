@@ -61,32 +61,33 @@ sort_arr(fs)
 }
 
 #[test]
-fn generic_fill_and_resize_of_aggregates_are_rejected_at_the_instantiation() {
-    for (element, value) in [
-        ("P", "P { k: 0 }"),
-        ("Vec<int>", "vec![0]"),
-        ("Map<int, int>", "Map::new()"),
-        ("[int; 2]", "[0, 0]"),
+fn generic_fill_and_resize_of_aggregates_copy_into_every_slot() {
+    for (element, value, change, read) in [
+        ("P", "P { k: 0 }", "ps[i].k = 9", "ps[j].k"),
+        ("Vec<int>", "vec![0]", "ps[i].push(9)", "ps[j].len()"),
+        ("Map<int, int>", "Map::new()", "ps[i][4] = 9", "ps[j].len()"),
+        ("[int; 2]", "[0, 0]", "ps[i][1] = 9", "ps[j][1]"),
     ] {
+        let expected = if element == "Vec<int>" { "1" } else { "0" };
         let forms = [
             format!(
-                "fn fill_it<T>(mut v: Vec<T>, x: T) {{ v.fill(x) }}\nlet mut ps: Vec<{element}> = vec![{value}]\nfill_it(ps, {value})\n0"
+                "fn fill_it<T>(mut v: Vec<T>, x: T) {{ v.fill(x) }}\nlet mut ps: Vec<{element}> = vec![{value}, {value}]\nfill_it(ps, {value})\n"
             ),
             format!(
-                "fn fill_it<T>(mut a: [T; 2], x: T) {{ a.fill(x) }}\nlet mut ps: [{element}; 2] = [{value}, {value}]\nfill_it(ps, {value})\n0"
+                "fn fill_it<T>(mut a: [T; 2], x: T) {{ a.fill(x) }}\nlet mut ps: [{element}; 2] = [{value}, {value}]\nfill_it(ps, {value})\n"
             ),
             format!(
-                "fn grow<T>(mut v: Vec<T>, x: T) {{ v.resize(3, x) }}\nlet mut ps: Vec<{element}> = vec![{value}]\ngrow(ps, {value})\n0"
+                "fn grow<T>(mut v: Vec<T>, x: T) {{ v.resize(3, x) }}\nlet mut ps: Vec<{element}> = vec![]\ngrow(ps, {value})\n"
             ),
             format!(
-                "fn grow<T>(mut v: Vec<T>, x: T) {{ v.resize(3, x) }}\nfn outer<U>(v: Vec<U>, x: U) {{ grow(v, x) }}\nlet ps: Vec<{element}> = vec![{value}]\nouter(ps, {value})\n0"
-            ),
-            format!(
-                "struct Filler {{ n: int }}\nimpl Filler {{\n    fn reset<T>(self, mut v: Vec<T>, x: T) {{ v.fill(x) }}\n}}\nlet mut ps: Vec<{element}> = vec![{value}]\nFiller {{ n: 0 }}.reset(ps, {value})\n0"
+                "struct Filler {{ n: int }}\nimpl Filler {{\n    fn reset<T>(self, mut v: Vec<T>, x: T) {{ v.fill(x) }}\n}}\nlet mut ps: Vec<{element}> = vec![{value}, {value}]\nFiller {{ n: 0 }}.reset(ps, {value})\n"
             ),
         ];
         for form in forms {
-            assert_code(&format!("{STRUCT}{form}"), "E0472");
+            assert_aelys_str(
+                &format!("{STRUCT}{form}let i = 0\nlet j = 1\n{change}\n\"{{{read}}}\""),
+                expected,
+            );
         }
     }
 }

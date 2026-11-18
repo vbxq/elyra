@@ -284,6 +284,12 @@ fn vec_resize(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let target = usize::try_from(length).map_err(|_| out_of_bounds(vm, length, current))?;
     if target <= current {
         with_vec(vm, vector, "vec resize", |inner| inner.truncate(target))?;
+    } else if is_fresh_per_slot(vm, args[2])? {
+        vm.reserve_vec(vector, target - current)?;
+        for _ in current..target {
+            let copy = vm.deep_clone_value(args[2])?;
+            push_all(vm, vector, &[copy], "vec resize")?;
+        }
     } else {
         let fill = vec![args[2]; target - current];
         push_all(vm, vector, &fill, "vec resize")?;
@@ -596,9 +602,57 @@ fn seq_set(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn seq_fill(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let sequence = object(vm, args[0], "fill")?;
     let length = sequence_len(vm, sequence, "fill")?;
+    if is_fresh_per_slot(vm, args[1])? {
+        for index in 0..length {
+            let copy = vm.deep_clone_value(args[1])?;
+            write_sequence_slot(vm, sequence, index, copy, "fill")?;
+        }
+        return Ok(Value::unit());
+    }
     let values = vec![args[1]; length];
     write_sequence(vm, sequence, &values, "fill")?;
     Ok(Value::unit())
+}
+
+fn is_fresh_per_slot(vm: &VM, value: Value) -> Result<bool, RuntimeError> {
+    let Some(raw) = value.as_ptr() else {
+        return Ok(false);
+    };
+    match vm.heap.get(GcRef::new(raw)).map(|object| &object.kind) {
+        Some(
+            ObjectKind::Struct(_)
+            | ObjectKind::Enum(_)
+            | ObjectKind::Sum(_)
+            | ObjectKind::Array(_)
+            | ObjectKind::Vec(_)
+            | ObjectKind::Map(_),
+        ) => Ok(true),
+        Some(_) => Ok(false),
+        None => Err(vm.runtime_error(RuntimeErrorKind::UseAfterFree)),
+    }
+}
+
+fn write_sequence_slot(
+    vm: &mut VM,
+    sequence: GcRef,
+    index: usize,
+    value: Value,
+    operation: &'static str,
+) -> Result<(), RuntimeError> {
+    let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
+        Some(ObjectKind::Vec(vector)) => vector.set(index, value),
+        Some(ObjectKind::Array(array)) => array.set(index, value),
+        _ => false,
+    };
+    if written {
+        Ok(())
+    } else {
+        Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+            operation,
+            expected: "matching element type",
+            got: "incompatible element".to_string(),
+        }))
+    }
 }
 
 fn seq_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
