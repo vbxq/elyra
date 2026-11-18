@@ -54,9 +54,10 @@ impl Compiler {
 
         let result_reg = nested_compiler.alloc_register()?;
         nested_compiler.compile_typed_expr(body, result_reg)?;
+        nested_compiler.close_upvalues_before_return(body.span);
         nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, body.span);
 
-        nested_compiler.end_scope();
+        nested_compiler.end_function_scope();
         nested_compiler.finish_registers()?;
         nested_compiler.current.global_layout = nested_compiler.build_global_layout()?;
         nested_compiler.current.compute_global_layout_hash();

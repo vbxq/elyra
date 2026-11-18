@@ -68,38 +68,13 @@ impl Parser {
         ))
     }
 
-    fn starts_destructuring_pattern(&self) -> bool {
-        match &self.peek().kind {
-            TokenKind::LParen => true,
-            TokenKind::Identifier(name) => {
-                name.chars().next().is_some_and(char::is_uppercase)
-                    && matches!(
-                        self.peek_at(1).kind,
-                        TokenKind::LBrace | TokenKind::LParen | TokenKind::ColonColon
-                    )
-            }
-            _ => false,
-        }
-    }
-
-    fn destructuring_let(&mut self, start_span: Span, mutable: bool, is_pub: bool) -> Result<Stmt> {
-        let pattern = self.parse_pattern()?;
-        if is_pub {
-            return Err(self.error(CompileErrorKind::InvalidPattern {
-                reason: "a destructuring `let` cannot be `pub`".to_string(),
-            }));
-        }
-        let type_annotation = if self.match_token(&TokenKind::Colon) {
-            Some(self.parse_type_annotation()?)
-        } else {
-            None
-        };
-        self.consume(&TokenKind::Eq, "=")?;
-        let initializer = self.expression()?;
-        self.consume_semicolon()?;
-        let span = start_span.merge(self.previous().span);
-
-        let check = irrefutable_check_pattern(&pattern).map_err(|reason| {
+    pub(in crate::parser) fn destructure(
+        &mut self,
+        pattern: &Pattern,
+        context: &str,
+        mutable: bool,
+    ) -> Result<(String, Vec<Stmt>)> {
+        let check = irrefutable_check_pattern(pattern, context).map_err(|reason| {
             aelys_common::error::AelysError::from(aelys_common::error::CompileError::new(
                 CompileErrorKind::InvalidPattern { reason },
                 pattern.span,
@@ -130,9 +105,44 @@ impl Parser {
             },
             pattern.span,
         );
-        self.pending
-            .push(Stmt::new(StmtKind::Expression(checker), pattern.span));
-        bind_pattern(&pattern, temp_expr, mutable, &mut self.pending);
+        let mut bindings = vec![Stmt::new(StmtKind::Expression(checker), pattern.span)];
+        bind_pattern(pattern, temp_expr, mutable, &mut bindings);
+        Ok((temp, bindings))
+    }
+
+    pub(in crate::parser) fn starts_destructuring_pattern(&self) -> bool {
+        match &self.peek().kind {
+            TokenKind::LParen => true,
+            TokenKind::Identifier(name) => {
+                name.chars().next().is_some_and(char::is_uppercase)
+                    && matches!(
+                        self.peek_at(1).kind,
+                        TokenKind::LBrace | TokenKind::LParen | TokenKind::ColonColon
+                    )
+            }
+            _ => false,
+        }
+    }
+
+    fn destructuring_let(&mut self, start_span: Span, mutable: bool, is_pub: bool) -> Result<Stmt> {
+        let pattern = self.parse_pattern()?;
+        if is_pub {
+            return Err(self.error(CompileErrorKind::InvalidPattern {
+                reason: "a destructuring `let` cannot be `pub`".to_string(),
+            }));
+        }
+        let type_annotation = if self.match_token(&TokenKind::Colon) {
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+        self.consume(&TokenKind::Eq, "=")?;
+        let initializer = self.expression()?;
+        self.consume_semicolon()?;
+        let span = start_span.merge(self.previous().span);
+
+        let (temp, bindings) = self.destructure(&pattern, "let", mutable)?;
+        self.pending.extend(bindings);
 
         Ok(Stmt::new(
             StmtKind::Let {
@@ -148,7 +158,10 @@ impl Parser {
     }
 }
 
-fn irrefutable_check_pattern(pattern: &Pattern) -> std::result::Result<Pattern, String> {
+fn irrefutable_check_pattern(
+    pattern: &Pattern,
+    context: &str,
+) -> std::result::Result<Pattern, String> {
     let kind = match &pattern.kind {
         PatternKind::Wildcard | PatternKind::Binding(_) => PatternKind::Wildcard,
         PatternKind::Struct {
@@ -159,7 +172,7 @@ fn irrefutable_check_pattern(pattern: &Pattern) -> std::result::Result<Pattern, 
         } if path.len() == 1 => {
             let mut kept = Vec::new();
             for field in fields {
-                let checked = irrefutable_check_pattern(&field.pattern)?;
+                let checked = irrefutable_check_pattern(&field.pattern, context)?;
                 if !matches!(checked.kind, PatternKind::Wildcard) {
                     kept.push(StructPatternField {
                         name: field.name.clone(),
@@ -176,10 +189,9 @@ fn irrefutable_check_pattern(pattern: &Pattern) -> std::result::Result<Pattern, 
             }
         }
         _ => {
-            return Err(
-                "refutable pattern in `let`: only names, `_`, tuples and struct patterns can be destructured; use `match` or `if let` for a pattern that can fail"
-                    .to_string(),
-            );
+            return Err(format!(
+                "refutable pattern in `{context}`: only names, `_`, tuples and struct patterns can be destructured; use `match` or `if let` for a pattern that can fail"
+            ));
         }
     };
     Ok(Pattern {

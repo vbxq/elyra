@@ -270,12 +270,18 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 | `s.trim()` | Remove whitespace from both ends |
 | `s.trim_start()` | Remove from start |
 | `s.trim_end()` | Remove from end |
-| `s.pad_left(width, char)` | Pad start to width |
-| `s.pad_right(width, char)` | Pad end to width |
+| `s.pad_left(width, fill: string)` | Pad start to `width` characters with the first character of `fill` |
+| `s.pad_right(width, fill: string)` | Pad end to `width` characters with the first character of `fill` |
+
+`fill` is a `string`, not a `char` (`'0'` is E0301): only its first character is
+used, an empty `fill` pads with spaces, and a string already `width` characters or
+longer is returned unchanged.
 
 ```rust
 "  hello  ".trim()        // "hello"
 "42".pad_left(5, "0")     // "00042"
+"42".pad_right(5, "ab")   // "42aaa"
+"4242".pad_left(2, "0")   // "4242"
 ```
 
 ### Splitting

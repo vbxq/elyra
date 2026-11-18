@@ -79,30 +79,12 @@ impl Compiler {
             let reg = self.alloc_register()?;
             self.compile_expr(expr, reg)?;
 
-            let lowest_captured = self
-                .locals
-                .iter()
-                .filter(|l| l.is_captured)
-                .map(|l| l.register)
-                .min();
-
-            if let Some(from_reg) = lowest_captured {
-                self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
-            }
+            self.close_upvalues_before_return(span);
 
             self.emit_a(OpCode::Return, reg, 0, 0, span);
             self.free_register(reg);
         } else {
-            let lowest_captured = self
-                .locals
-                .iter()
-                .filter(|l| l.is_captured)
-                .map(|l| l.register)
-                .min();
-
-            if let Some(from_reg) = lowest_captured {
-                self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
-            }
+            self.close_upvalues_before_return(span);
 
             self.emit_return0(span);
         }
@@ -127,30 +109,12 @@ impl Compiler {
             let reg = self.alloc_register()?;
             self.compile_typed_expr(e, reg)?;
 
-            let lowest_captured = self
-                .locals
-                .iter()
-                .filter(|l| l.is_captured)
-                .map(|l| l.register)
-                .min();
-
-            if let Some(from_reg) = lowest_captured {
-                self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
-            }
+            self.close_upvalues_before_return(span);
 
             self.emit_a(OpCode::Return, reg, 0, 0, span);
             self.free_register(reg);
         } else {
-            let lowest_captured = self
-                .locals
-                .iter()
-                .filter(|l| l.is_captured)
-                .map(|l| l.register)
-                .min();
-
-            if let Some(from_reg) = lowest_captured {
-                self.emit_a(OpCode::CloseUpvals, from_reg, 0, 0, span);
-            }
+            self.close_upvalues_before_return(span);
 
             self.emit_a(OpCode::Return0, 0, 0, 0, span);
         }

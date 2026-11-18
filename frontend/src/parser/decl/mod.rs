@@ -62,7 +62,9 @@ impl Parser {
             return self.impl_declaration();
         }
 
-        if self.check(&TokenKind::Fn) {
+        let lambda_statement =
+            self.peek_at(1).kind == TokenKind::LParen && !is_pub && decorators.is_empty();
+        if self.check(&TokenKind::Fn) && !lambda_statement {
             return self.function_declaration(decorators, is_pub);
         }
 

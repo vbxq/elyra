@@ -634,6 +634,16 @@ println(square(4))
 A lambda whose parameters are unannotated draws them from its call sites, on the
 same terms as an unannotated `fn`; with no call site it is E0353.
 
+`fn` followed directly by `(` starts a lambda expression, so a lambda can be the
+last expression of a function body, a block or a match arm and is returned from it:
+
+```rust
+fn adder(n: int) -> fn(int) -> int {
+    fn(x: int) -> int { x + n }
+}
+println(adder(2)(5))   // 7
+```
+
 ### Closures
 
 Functions capture variables from their enclosing scope:
@@ -656,8 +666,8 @@ counter()  // 3
 The inner function holds a reference to `count`, which persists across calls.
 
 A captured variable belongs to the scope that declares it. When control leaves that
-scope, by reaching its end or by `break`, `continue`, `return`, `?`, the end of a
-`match` arm, a failing arm guard, or the end of an `if let` or `while let` body,
+scope, by reaching its end or by `break`, `continue`, `return`, `?`, the function's
+last expression or the end of its body, the end of a `match` arm, a failing arm guard, or the end of an `if let` or `while let` body,
 every closure that captured one of its variables keeps the value the variable had
 then; a later variable reusing the slot never shows through. A closure made in a
 match arm, an `if let` branch or a loop iteration and stored in a `Vec` reads its
@@ -1108,6 +1118,21 @@ for c in "café" {
     count++
 }
 // count == 4 (not 5, because é is considered as one character)
+```
+
+The loop variable can be an irrefutable pattern, a tuple or a struct pattern whose
+parts are names, `_` or further such patterns. Its bindings are immutable, like
+those of a destructuring `let`. A refutable pattern such as `Some(x)` is E0108; use
+`match` or `if let` inside the body:
+
+```rust
+let pairs = vec![(1, "a"), (2, "b")]
+for (k, name) in pairs {
+    println("{k}{name}")
+}
+for (k, _) in pairs {
+    println(k)
+}
 ```
 
 You can use `break` and `continue` inside for-each loops:
@@ -2245,9 +2270,20 @@ an error: a field write is E0330, an index write or `push`/`pop`/`reserve` is
 E0318, and calling a `mut self` method is E0331. A temporary, such as the
 result of a call, cannot be the root of a write.
 
-Because aggregates are shared, creating a mutable alias of an aggregate that
-is reachable from an immutable binding would let the immutable binding change.
-It is E0323, at every place where an alias is created:
+`let` immutability applies to the binding, not to the object. You cannot write
+through an immutable binding, but the object it names can still change through
+another, mutable reference to the same object. E0323 prevents creating such a
+mutable alias directly from a place whose root is an immutable binding. It is
+checked at exactly these points:
+
+- `let mut b = e`, with or without a type annotation, where `e` is such a place,
+  a parenthesised place, or a block, `if` or `match` whose result is such a place;
+- an assignment `d = e` to a mutable binding `d`;
+- passing such a place to a `mut` parameter, directly or through a function value
+  whose type has `mut` at that position;
+- `let mut q = p` where `p` is the iteration variable of `for p in ps` or a binding
+  of a `match` or `if let` pattern, and the root of the iterated or matched place is
+  immutable.
 
 ```rust
 let a = P { x: 1, y: 2 }
@@ -2264,11 +2300,32 @@ bump(a)                        // ✗ error[E0323]: cannot pass `a` to the `mut`
 
 The message names the place and its root and suggests `a.clone()` or `let mut
 a`. When the root is mutable, `let mut b = a`, `d = a` and passing `a` to a
-`mut` parameter are allowed and share the object. Storing an aggregate in a
-container or a field (`v.push(a)`, `S { inner: a }`) always shares it and is
-never an error. A function that receives an immutable parameter can still
-return it, and the caller may bind the result mutably: a returned value is a
-fresh binding, and this route is not tracked.
+`mut` parameter are allowed and share the object.
+
+No other route is checked. Each of the following shares the object and is never
+an error:
+
+- storing it in a container, a field or a slot: `v.push(a)`, `d.inner = a`,
+  `v[i] = a`, `m[k] = a`;
+- building a container or a value that holds it: `vec![a]`, `[a, a]`, `(a, 1)`,
+  `S { inner: a }`, an enum payload `E::V(a)`, `Some(a)`, `Ok(a)`, including when
+  that literal is passed straight to a `mut` parameter (`grow(vec![a])`);
+- returning it from a function or a closure: a function that receives an
+  immutable parameter can return it, and the caller may bind the result mutably,
+  because a returned value is a fresh binding.
+
+Through any of these routes a mutable reference can change an object that an
+immutable binding still names:
+
+```rust
+let a = P { x: 1, y: 2 }
+let mut c = vec![a]
+c[0].x = 9
+println(a.x)                   // 9: `a` and `c[0]` are the same object
+let mut d = vec![a.clone()]    // copy first when the container must be independent
+d[0].x = 4
+println(a.x)                   // still 9
+```
 A call through a function value applies the same rule at the `mut` positions
 of the function's type (`fn(mut P) -> R`), see
 [Mutable Parameters](#mutable-parameters).
