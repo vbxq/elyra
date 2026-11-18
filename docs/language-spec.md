@@ -336,15 +336,37 @@ fn foo() -> int {
 Functions without a returned value have type `unit`. A function with a concrete
 return type must return that type on every reachable path.
 
-In a function without a return annotation, a bare `return` (also directly before
-`}`) and `return ()` return `unit`, and a trailing assignment (`x = v`,
-`s.f = v`, `v[i] = v`) is a statement, not a returned value: such a function has
-type `unit`. With an explicit return type, a trailing assignment still yields the
-assigned value.
+In a function or lambda without a return annotation, a bare `return` (also
+directly before `}`) and `return ()` return `unit`, and a trailing assignment
+(`x = v`, `x += v`, `s.f = v`, `v[i] = v`, an `if`/`else` or a `match` whose
+branches all end in an assignment) is a statement, not a returned value: such a
+function has type `unit` and returns `()` at run time. With an explicit return
+type, a trailing assignment still yields the assigned value.
+
+An unannotated function that returns a value with `return v` takes the type of
+`v`, so every path must yield a value: ending on a trailing assignment (or any
+other statement) after such a `return` is E0215.
+
+```rust
+let mut g = 0
+fn f(c: bool) {
+    if c { return 7 }
+    g = 5          // E0215: this path falls through without a value
+}
+```
 
 Every top-level `fn` and `impl` of a file is bound before the file's top-level
 code runs, so a top-level `let` initializer may call a function declared further
-down the same file or module.
+down the same file or module. Top-level `let` bindings still run in source order:
+a function that reads a global whose `let` has not run yet stops the program with
+the runtime error ``global `b` read before its initialiser ran``, pointing at the
+reading line. The value is never read as a default.
+
+```rust
+let a = f()        // runtime error: global `b` read before its initialiser ran
+let b = 10
+fn f() -> int { b + 1 }
+```
 
 ### Lambdas (Anonymous Functions)
 
@@ -2419,7 +2441,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0202 | VariableAlreadyDefined | a name is declared twice in one scope |
 | E0203 | AssignToImmutable | assignment to a binding without `mut` |
 | E0204 | TooManyConstants | the constant pool limit is exceeded |
-| E0205 | TooManyRegisters | the register limit is exceeded |
+| E0205 | TooManyRegisters | the register limit is exceeded, or an instruction with no wide form would need a register above 255; reported at the line that needs it, never compiled into a truncated register |
 | E0206 | TooManyArguments | the argument limit is exceeded |
 | E0207 | BreakOutsideLoop | `break` outside a loop |
 | E0208 | ContinueOutsideLoop | `continue` outside a loop |

@@ -534,7 +534,8 @@ Strings are UTF-8, so a byte of 0x80 or more cannot pass through `write`,
 `write_bytes` or `write_text` unchanged. Binary files go through a byte buffer:
 
 ```rust
-needs std::bytes
+needs std::fs
+needs std::bytes as bytes
 let buffer = bytes::alloc(2)
 bytes::write_u8(buffer, 0, 0xC8)
 bytes::write_u8(buffer, 1, 0xFF)
