@@ -158,7 +158,7 @@ mod exports {
     pub fn present_argb(frame: &[u8]) -> Result<(), String> {
         with_state(|state| {
             state.screen.check_argb(frame)?;
-            upload(state, &frame[..state.screen.argb_len()])
+            upload(state, frame)
         })
     }
 

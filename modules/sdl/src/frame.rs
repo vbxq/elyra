@@ -23,7 +23,7 @@ impl Screen {
     }
 
     pub fn check_argb(&self, frame: &[u8]) -> Result<(), String> {
-        if frame.len() < self.argb_len() {
+        if frame.len() != self.argb_len() {
             return Err(format!(
                 "the ARGB frame holds {} bytes, a {}x{} screen needs {}",
                 frame.len(),
@@ -51,7 +51,7 @@ impl Screen {
         palette: &[u8],
         out: &mut [u8],
     ) -> Result<(), String> {
-        if pixels.len() < self.pixel_count() {
+        if pixels.len() != self.pixel_count() {
             return Err(format!(
                 "the indexed frame holds {} bytes, a {}x{} screen needs {}",
                 pixels.len(),
@@ -60,7 +60,7 @@ impl Screen {
                 self.pixel_count()
             ));
         }
-        if palette.len() < 768 {
+        if palette.len() != 768 {
             return Err(format!(
                 "the palette holds {} bytes, 256 RGB entries need 768",
                 palette.len()
@@ -73,7 +73,7 @@ impl Screen {
                 | (u32::from(rgb[1]) << 8)
                 | u32::from(rgb[2]);
         }
-        for (target, &index) in out.chunks_exact_mut(4).zip(&pixels[..self.pixel_count()]) {
+        for (target, &index) in out.chunks_exact_mut(4).zip(pixels) {
             target.copy_from_slice(&lookup[usize::from(index)].to_le_bytes());
         }
         Ok(())
@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn short_frames_and_palettes_are_refused() {
+    fn wrong_sized_frames_and_palettes_are_refused() {
         let screen = Screen::new(320, 200).unwrap();
         let mut out = vec![0u8; screen.argb_len()];
         assert!(
@@ -124,7 +124,18 @@ mod tests {
                 .indexed_to_argb(&[0; 64_000], &[0; 767], &mut out)
                 .is_err()
         );
+        assert!(
+            screen
+                .indexed_to_argb(&[0; 64_001], &[0; 768], &mut out)
+                .is_err()
+        );
+        assert!(
+            screen
+                .indexed_to_argb(&[0; 64_000], &[0; 769], &mut out)
+                .is_err()
+        );
         assert!(screen.check_argb(&[0; 255_999]).is_err());
+        assert!(screen.check_argb(&[0; 256_004]).is_err());
         assert!(screen.check_argb(&[0; 256_000]).is_ok());
         assert!(Screen::new(0, 200).is_err());
         assert!(screen.check_point(320, 0).is_err());
