@@ -17,7 +17,19 @@ impl TypeInference {
         stmts.iter().map(|s| self.infer_stmt(s)).collect()
     }
 
+    // the last statement of a script is its value, so a match there keeps its arm values
+    pub(super) fn infer_program_stmts(&mut self, stmts: &[Stmt]) -> Vec<TypedStmt> {
+        let Some((last, prefix)) = stmts.split_last() else {
+            return Vec::new();
+        };
+        let mut typed = self.infer_stmts(prefix);
+        self.script_tail = true;
+        typed.push(self.infer_stmt(last));
+        typed
+    }
+
     pub(super) fn infer_stmt(&mut self, stmt: &Stmt) -> TypedStmt {
+        let script_tail = std::mem::take(&mut self.script_tail);
         let previous_module = self.current_module.clone();
         let mut definition_scope = false;
         let mut definition_mark = None;
@@ -34,9 +46,12 @@ impl TypeInference {
         }
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
-                self.statement_match = matches!(expr.kind, aelys_syntax::ExprKind::Match { .. });
+                self.statement_match =
+                    !script_tail && matches!(expr.kind, aelys_syntax::ExprKind::Match { .. });
                 let typed_expr = self.infer_expr(expr);
-                self.record_must_use_value(&typed_expr);
+                if !super::functions::is_assignment(expr) {
+                    self.record_must_use_value(&typed_expr);
+                }
                 TypedStmtKind::Expression(typed_expr)
             }
             StmtKind::Let {

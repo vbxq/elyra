@@ -624,3 +624,23 @@ fn a_break_compiled_before_the_capturing_closure_still_closes_the_iteration() {
         1020 * 1_000_000 + 105_205,
     );
 }
+
+#[test]
+fn an_assignment_is_never_a_discarded_value_and_a_script_tail_match_keeps_its_value() {
+    int_at_every_level(
+        r#"
+        let mut shared: Option<int> = Some(42)
+        fn set_to_none() { shared = None }
+        fn g(k: int) -> Option<int> {
+            let mut r: Option<int> = None
+            if k > 0 { r = if k == 1 { None } else { Some(k) } }
+            r = Some(k + 1)
+            r
+        }
+        set_to_none()
+        let o = g(4)
+        match shared { Some(_) => 0, None => match o { Some(v) => v, None => -1 } }
+        "#,
+        5,
+    );
+}

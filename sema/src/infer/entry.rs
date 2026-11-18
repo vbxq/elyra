@@ -65,6 +65,7 @@ impl Default for TypeInference {
             bound_residuals: Vec::new(),
             fall_through_residuals: Vec::new(),
             statement_match: false,
+            script_tail: false,
             surface_dynamic_spans: HashSet::new(),
             sum_type_residuals: Vec::new(),
             explicit_dynamic_functions: HashSet::new(),
@@ -1615,7 +1616,7 @@ impl TypeInference {
         inf.validate_associated_type_cycles();
         inf.collect_global_bindings(&stmts);
 
-        let typed_stmts = inf.infer_stmts(&stmts);
+        let typed_stmts = inf.infer_program_stmts(&stmts);
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
