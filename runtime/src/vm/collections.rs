@@ -400,7 +400,12 @@ fn seq_sort(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             .iter()
             .find(|value| vm.order_values(first, **value).is_none())
     {
-        return Err(type_error(vm, "sort", "elements with a built-in order", bad));
+        return Err(type_error(
+            vm,
+            "sort",
+            "elements with a built-in order",
+            bad,
+        ));
     }
     values.sort_by(|left, right| {
         vm.order_values(*left, *right)

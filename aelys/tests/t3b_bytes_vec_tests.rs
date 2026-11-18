@@ -90,7 +90,9 @@ let t2 = time::now_ms()
     .expect("the program runs");
     let heap = vm.heap();
     let object = heap
-        .get(aelys_runtime::vm::GcRef::new(value.as_ptr().expect("a string")))
+        .get(aelys_runtime::vm::GcRef::new(
+            value.as_ptr().expect("a string"),
+        ))
         .expect("a live string");
     let aelys_runtime::vm::ObjectKind::String(text) = &object.kind else {
         panic!("a string");

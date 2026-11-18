@@ -900,10 +900,12 @@ fn byte_window(
     op: &'static str,
 ) -> Result<Result<usize, String>, RuntimeError> {
     let buf_len = get_buf_len(vm, handle, op)?;
-    Ok(check_offset(offset, op).and_then(|start| match bounds_err(length, start, buf_len) {
-        Some(message) => Err(format!("{op}: {message}")),
-        None => Ok(start),
-    }))
+    Ok(
+        check_offset(offset, op).and_then(|start| match bounds_err(length, start, buf_len) {
+            Some(message) => Err(format!("{op}: {message}")),
+            None => Ok(start),
+        }),
+    )
 }
 
 fn native_copy_from_vec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -941,7 +943,11 @@ fn native_copy_to_vec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
         Some(Resource::ByteBuffer(buf)) => buf.data[start..start + length].to_vec(),
         _ => return Err(err(vm, "copy_to_vec", "invalid handle".into())),
     };
-    match vm.heap_mut().get_mut(sequence).map(|object| &mut object.kind) {
+    match vm
+        .heap_mut()
+        .get_mut(sequence)
+        .map(|object| &mut object.kind)
+    {
         Some(ObjectKind::Vec(vector)) => match vector.data.as_ints_mut() {
             Some(ints) => {
                 for (slot, byte) in ints.iter_mut().zip(&bytes) {

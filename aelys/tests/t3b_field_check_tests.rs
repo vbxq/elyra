@@ -16,7 +16,10 @@ fn timings(source: &str) -> (i64, i64) {
     let aelys_runtime::vm::ObjectKind::String(text) = &object.kind else {
         panic!("the program returns a string");
     };
-    let mut parts = text.as_str().split(' ').map(|part| part.parse::<i64>().unwrap());
+    let mut parts = text
+        .as_str()
+        .split(' ')
+        .map(|part| part.parse::<i64>().unwrap());
     (parts.next().unwrap(), parts.next().unwrap())
 }
 

@@ -67,7 +67,10 @@ fn the_doubled_capacity_of_a_copied_concatenation_is_charged() {
 
 #[test]
 fn hidden_buffers_exhaust_the_heap_budget_with_a_clean_error() {
-    for keep in ["keep.push(small)", "keep.push(small)\n    let mut t: string = small\n    t.push('!')"] {
+    for keep in [
+        "keep.push(small)",
+        "keep.push(small)\n    let mut t: string = small\n    t.push('!')",
+    ] {
         let source = format!(
             "{}let mut keep: Vec<string> = vec![]\nlet mut i = 0\nwhile i < 100 {{\n    let small = \"k\" + \"{{i}}\"\n    let grown = small + big\n    if grown.len() != small.len() + big.len() {{ keep.push(\"BAD\") }}\n    {keep}\n    i += 1\n}}\nkeep.len()\n",
             big_prelude()
@@ -105,7 +108,11 @@ fn error_line(message: &str) -> Option<u32> {
 #[test]
 fn map_growth_past_the_budget_fails_at_the_insert() {
     for insert in ["m[i] = i", "let _ = m.insert(i, i)", "m[\"k{i}\"] = i"] {
-        let key = if insert.contains('"') { "string" } else { "int" };
+        let key = if insert.contains('"') {
+            "string"
+        } else {
+            "int"
+        };
         let source = format!(
             "let mut m: Map<{key}, int> = Map::new()\nlet mut i = 0\nwhile i < 3000000 {{ {insert}; i += 1 }}\nprintln(\"filled {{m.len()}}\")\n"
         );

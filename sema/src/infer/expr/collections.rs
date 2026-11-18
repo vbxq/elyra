@@ -150,7 +150,13 @@ impl TypeInference {
         let mut reported = self
             .errors
             .iter()
-            .map(|error| (error.kind.diagnostic_code(), error.span.start, error.span.end))
+            .map(|error| {
+                (
+                    error.kind.diagnostic_code(),
+                    error.span.start,
+                    error.span.end,
+                )
+            })
             .collect::<std::collections::HashSet<_>>();
         let mut reported_keys = self
             .errors
