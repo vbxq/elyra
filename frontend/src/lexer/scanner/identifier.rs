@@ -33,7 +33,6 @@ impl Lexer {
             "from" => TokenKind::From,
             "for" => TokenKind::For,
             "in" => TokenKind::In,
-            "step" => TokenKind::Step,
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
             "trait" => TokenKind::Trait,

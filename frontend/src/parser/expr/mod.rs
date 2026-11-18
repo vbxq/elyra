@@ -178,7 +178,6 @@ impl Parser {
                 | TokenKind::RBrace
                 | TokenKind::Comma
                 | TokenKind::Eof
-                | TokenKind::Step
         ) {
             None
         } else {

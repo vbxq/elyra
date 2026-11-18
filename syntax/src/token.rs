@@ -50,7 +50,6 @@ pub enum TokenKind {
     From, // module system
     For,
     In,
-    Step,
     Struct,
     Enum,
     Trait,
@@ -177,7 +176,6 @@ impl std::fmt::Display for TokenKind {
             Self::From => write!(f, "from"),
             Self::For => write!(f, "for"),
             Self::In => write!(f, "in"),
-            Self::Step => write!(f, "step"),
             Self::Struct => write!(f, "struct"),
             Self::Enum => write!(f, "enum"),
             Self::Trait => write!(f, "trait"),

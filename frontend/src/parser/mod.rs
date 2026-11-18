@@ -136,6 +136,16 @@ impl Parser {
         self.peek().kind == *kind
     }
 
+    // `step` is a keyword only after the range of a `for` header
+    fn match_step_keyword(&mut self) -> bool {
+        if matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "step") {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
     fn match_token(&mut self, kind: &TokenKind) -> bool {
         if self.check(kind) {
             self.advance();

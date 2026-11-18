@@ -270,7 +270,7 @@ impl Parser {
             inclusive,
         } = first_expr.kind
         {
-            let step = if self.match_token(&TokenKind::Step) {
+            let step = if self.match_step_keyword() {
                 Some(self.with_brace_construction(false, Parser::expression)?)
             } else {
                 None
@@ -303,7 +303,7 @@ impl Parser {
             };
             let end = self.with_brace_construction(false, Parser::expression)?;
 
-            let step = if self.match_token(&TokenKind::Step) {
+            let step = if self.match_step_keyword() {
                 Some(self.with_brace_construction(false, Parser::expression)?)
             } else {
                 None
