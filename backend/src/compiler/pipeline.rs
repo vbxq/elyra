@@ -162,8 +162,27 @@ impl Compiler {
             self.emit_return0(aelys_syntax::Span::dummy());
         } else {
             let last_idx = program.stmts.len() - 1;
+            let is_definition = |stmt: &aelys_sema::TypedStmt| {
+                matches!(
+                    stmt.kind,
+                    TypedStmtKind::Function(_) | TypedStmtKind::ImplDecl { .. }
+                )
+            };
 
-            for stmt in &program.stmts[..last_idx] {
+            // top-level code may call a function declared further down, so every definition is bound first
+            for stmt in program.stmts.iter().filter(|stmt| is_definition(stmt)) {
+                let restore = self.enter_definition_module(stmt);
+                let compiled = self.compile_typed_stmt(stmt);
+                if let Some(source) = restore {
+                    self.source = source;
+                }
+                compiled?;
+            }
+
+            for stmt in program.stmts[..last_idx]
+                .iter()
+                .filter(|stmt| !is_definition(stmt))
+            {
                 let restore = self.enter_definition_module(stmt);
                 let compiled = self.compile_typed_stmt(stmt);
                 if let Some(source) = restore {
@@ -203,6 +222,9 @@ impl Compiler {
                     let result_reg = self.alloc_register()?;
                     self.compile_typed_if_branch_for_return(last_stmt, result_reg)?;
                     self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
+                }
+                _ if is_definition(last_stmt) => {
+                    self.emit_return0(last_stmt.span);
                 }
                 _ => {
                     self.compile_typed_stmt(last_stmt)?;
