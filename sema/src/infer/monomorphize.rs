@@ -1346,6 +1346,25 @@ impl TypeInference {
             });
             resolve_deferred_statement_types(stmt);
         }
+        // the bound check already answered a receiver it could see, inside this same call
+        errors.retain(|error| {
+            let TypeErrorKind::UnsatisfiedTraitBound { trait_name, ty, .. } = &error.kind else {
+                return true;
+            };
+            !self.errors.iter().any(|known| {
+                matches!(
+                    &known.kind,
+                    TypeErrorKind::UnsatisfiedTraitBound {
+                        trait_name: known_trait,
+                        ty: known_ty,
+                        ..
+                    } if known_trait == trait_name
+                        && known_ty == ty
+                        && known.span.start >= error.span.start
+                        && known.span.end <= error.span.end
+                )
+            })
+        });
         self.errors.extend(errors);
     }
 
@@ -1451,6 +1470,7 @@ impl TypeInference {
             for stmt in &mut function.body {
                 visit_exprs_stmt(stmt, &mut |expr| {
                     resolve_bound_marker(expr, type_table, gate, &mut marker_errors);
+                    resolve_specialized_to_string(expr, type_table, &mut marker_errors);
                 });
             }
             errors.append(&mut marker_errors);
@@ -1469,13 +1489,21 @@ impl TypeInference {
         }
         let mut function_types = Vec::new();
         collect_function_types(&function, &mut function_types);
-        if function_types
+        if let Some((open, _)) = function_types
             .iter()
-            .any(|(ty, _)| contains_open_generic_type(ty))
+            .find(|(ty, _)| contains_open_generic_type(ty))
         {
+            let named = std::cell::RefCell::new(None);
+            open.any_param(&|param| {
+                named.borrow_mut().get_or_insert_with(|| param.to_string());
+                true
+            });
+            let named = named.into_inner();
             errors.push(TypeError {
                 kind: TypeErrorKind::UnresolvedGenericType {
-                    name: key.name.clone(),
+                    name: named
+                        .or_else(|| template.type_params.first().cloned())
+                        .unwrap_or_else(|| key.name.clone()),
                 },
                 span: template.span,
                 reason: ConstraintReason::Other(
@@ -1830,6 +1858,7 @@ impl TypeInference {
                         marker_errors,
                     );
                     resolve_bound_marker(expr, type_table, gate, marker_errors);
+                    resolve_specialized_to_string(expr, type_table, marker_errors);
                 });
             }
             // resolving a display marker drops the node the bound marker lives on,
@@ -3151,23 +3180,134 @@ fn resolve_deferred_field_assign(
     expr.ty = field_ty;
 }
 
-fn resolve_deferred_member(
+// a tuple keeps the built-in rendering, which no impl can replace
+fn resolve_to_string_member(
     expr: &mut TypedExpr,
     type_table: &crate::types::TypeTable,
-    hidden: &dyn Fn(&str) -> bool,
     errors: &mut Vec<TypeError>,
-) {
+    report_missing: bool,
+) -> bool {
     let TypedExprKind::Member {
         object,
         member,
         separator: MemberSeparator::Dot,
     } = &mut expr.kind
     else {
+        return false;
+    };
+    if member != "to_string" || !object.ty.is_concrete() {
+        return false;
+    }
+    let Some((name, _)) = crate::infer::expr::member::nominal_parts(&object.ty, type_table) else {
+        return false;
+    };
+    if aelys_syntax::tuple_arity(&name).is_some() {
+        return true;
+    }
+    let declared = type_table
+        .method(&name, member)
+        .is_some_and(|method| method.has_self)
+        || type_table
+            .trait_methods(&name, member)
+            .iter()
+            .any(|method| method.has_self);
+    if declared {
+        return false;
+    }
+    match type_table.select_bound_method(
+        crate::prelude::DISPLAY_TRAIT,
+        &object.ty,
+        crate::prelude::DISPLAY_METHOD,
+    ) {
+        BoundSelection::Selected(symbol) => {
+            let receiver = std::mem::replace(
+                object,
+                Box::new(TypedExpr::new(
+                    TypedExprKind::Unit,
+                    InferType::Unit,
+                    expr.span,
+                )),
+            );
+            expr.kind = TypedExprKind::StructMethod {
+                object: receiver,
+                symbol,
+                method: member.clone(),
+                separator: MemberSeparator::Dot,
+            };
+            expr.ty = InferType::function(Vec::new(), InferType::String);
+        }
+        _ if report_missing => errors.push(TypeError {
+            kind: TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name: crate::prelude::DISPLAY_TRAIT.to_string(),
+                trait_args: Vec::new(),
+                ty: object.ty.clone(),
+                denied: false,
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("to_string method".to_string()),
+        }),
+        _ => {}
+    }
+    true
+}
+
+// the receiver of a generic body is known once specialized, so its `to_string` is chosen there
+fn resolve_specialized_to_string(
+    expr: &mut TypedExpr,
+    type_table: &crate::types::TypeTable,
+    errors: &mut Vec<TypeError>,
+) {
+    let TypedExprKind::Call { callee, .. } = &mut expr.kind else {
         return;
     };
-    if matches!(expr.ty, InferType::Poison) {
+    if !resolve_to_string_member(callee, type_table, errors, true)
+        && matches!(&callee.kind, TypedExprKind::Member { member, .. } if member == "to_string")
+    {
+        resolve_deferred_member(callee, type_table, &|_| false, errors);
+    }
+}
+
+fn resolve_deferred_member(
+    expr: &mut TypedExpr,
+    type_table: &crate::types::TypeTable,
+    hidden: &dyn Fn(&str) -> bool,
+    errors: &mut Vec<TypeError>,
+) {
+    if !matches!(
+        expr.kind,
+        TypedExprKind::Member {
+            separator: MemberSeparator::Dot,
+            ..
+        }
+    ) || matches!(expr.ty, InferType::Poison)
+    {
         return;
     }
+    let TypedExprKind::Member { object, .. } = &mut expr.kind else {
+        return;
+    };
+    // the walk reaches an outer member first, so an inner one still open is settled here
+    if crate::infer::expr::member::nominal_parts(&object.ty, type_table).is_none()
+        && matches!(
+            object.kind,
+            TypedExprKind::Member {
+                separator: MemberSeparator::Dot,
+                ..
+            }
+        )
+    {
+        let reported = errors.len();
+        resolve_deferred_member(object, type_table, hidden, errors);
+        if matches!(object.kind, TypedExprKind::Member { .. }) {
+            errors.truncate(reported);
+        }
+    }
+    if resolve_to_string_member(expr, type_table, errors, true) {
+        return;
+    }
+    let TypedExprKind::Member { object, member, .. } = &mut expr.kind else {
+        return;
+    };
     let Some((name, substitutions)) =
         crate::infer::expr::member::nominal_parts(&object.ty, type_table)
     else {
@@ -3694,8 +3834,9 @@ fn resolve_display_marker(expr: &mut TypedExpr, type_table: &crate::types::TypeT
         crate::prelude::DISPLAY_METHOD,
     ) {
         // the object still carries the projection it was written with; the call it
-        object.ty = receiver;
+        object.ty = receiver.clone();
         *symbol = resolved;
+        callee.ty = InferType::function(vec![receiver], InferType::String);
         return;
     }
     strip_display_marker(expr);
