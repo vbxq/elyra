@@ -275,13 +275,15 @@ impl TypeInference {
         body: &[Stmt],
         label: Option<&String>,
     ) -> (TypedExprKind, InferType) {
-        let (typed_body, frame) = self.with_loop_frame(label, true, |inference| {
+        let while_let = is_while_let_body(body);
+        let (typed_body, frame) = self.with_loop_frame(label, !while_let, |inference| {
             inference.env.push_scope();
             let typed = inference.infer_stmts(body);
             inference.env.pop_scope();
             typed
         });
         let ty = match (frame.broken, frame.value) {
+            _ if while_let => InferType::Unit,
             (true, Some(value)) => value,
             _ => InferType::Never,
         };
@@ -329,17 +331,13 @@ impl TypeInference {
             match (&frame.value, &typed_value) {
                 (Some(target), Some(found)) => {
                     let target = target.clone();
-                    if !self.reject_dynamic(
-                        &found.ty,
-                        &target,
-                        found.span,
-                        ConstraintReason::IfBranches,
-                    ) {
+                    let reason = ConstraintReason::Other("`break` values of one loop".to_string());
+                    if !self.reject_dynamic(&found.ty, &target, found.span, reason.clone()) {
                         self.constraints.push(Constraint::equal(
                             target,
                             found.ty.clone(),
                             found.span,
-                            ConstraintReason::IfBranches,
+                            reason,
                         ));
                     }
                 }
@@ -349,7 +347,7 @@ impl TypeInference {
                         target,
                         InferType::Unit,
                         span,
-                        ConstraintReason::IfBranches,
+                        ConstraintReason::Other("`break` values of one loop".to_string()),
                     ));
                 }
                 (None, Some(_)) => self.errors.push(TypeError {
@@ -384,6 +382,31 @@ pub(crate) struct LoopFrame {
     label: Option<String>,
     value: Option<InferType>,
     broken: bool,
+}
+
+// the parser spells `while let` as a loop over a match whose synthetic last arm breaks
+fn is_while_let_body(body: &[Stmt]) -> bool {
+    let [stmt] = body else {
+        return false;
+    };
+    let aelys_syntax::StmtKind::Expression(Expr {
+        kind: aelys_syntax::ExprKind::Match { arms, .. },
+        ..
+    }) = &stmt.kind
+    else {
+        return false;
+    };
+    arms.last().is_some_and(|arm| {
+        arm.synthetic
+            && matches!(
+                &arm.body,
+                aelys_syntax::MatchArmBody::Block(stmts)
+                    if matches!(
+                        stmts.as_slice(),
+                        [Stmt { kind: aelys_syntax::StmtKind::Break { label: None, value: None }, .. }]
+                    )
+            )
+    })
 }
 
 fn collection_binding_name(expr: &aelys_syntax::Expr) -> Option<&str> {

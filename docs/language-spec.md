@@ -697,7 +697,8 @@ let first_square_above_50 = loop {
 println(first_square_above_50)   // 8
 ```
 
-`break value` is only allowed for `loop`; on a `while` or `for` it is E0391.
+`break value` is only allowed for `loop`; on a `while`, `while let` or `for` it is
+E0391. The `break` values of one `loop` must share a type (E0301).
 
 ### for
 
@@ -843,7 +844,8 @@ are aggregate values shared by reference (like structs, see
 [Structs](#structs)), which is never observable because no element can change.
 `==` compares them element by element. Tuples can be returned, passed, stored in
 `Vec`, arrays, struct fields and enum payloads, used in generic functions, and
-returned from a module. A tuple has no `Display`; print its elements. Reading an
+returned from a module; the tuple fields and payloads of a type imported from
+another module read and match like local ones. A tuple has no `Display`; print its elements. Reading an
 element past the arity, `t.2` on a pair, is E0363 `tuple (int, int) has no field
 2`. Names starting with `AelysTuple` are reserved for the compiler's tuple types:
 writing one anywhere (a type, a struct, a variable) is E0394.

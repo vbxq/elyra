@@ -46,7 +46,10 @@ impl Parser {
             TokenKind::LParen => true,
             TokenKind::Identifier(name) => {
                 name.chars().next().is_some_and(char::is_uppercase)
-                    && self.peek_at(1).kind == TokenKind::LBrace
+                    && matches!(
+                        self.peek_at(1).kind,
+                        TokenKind::LBrace | TokenKind::LParen | TokenKind::ColonColon
+                    )
             }
             _ => false,
         }

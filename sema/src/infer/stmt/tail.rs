@@ -97,6 +97,11 @@ impl TypeInference {
         match live.as_slice() {
             [] => None,
             [(ty, _)] => ty.clone(),
+            [(Some(first), _), rest @ ..]
+                if first.is_concrete() && rest.iter().all(|(ty, _)| ty.as_ref() == Some(first)) =>
+            {
+                Some(first.clone())
+            }
             _ => {
                 if live
                     .iter()

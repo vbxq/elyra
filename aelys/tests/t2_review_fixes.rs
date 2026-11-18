@@ -522,3 +522,41 @@ fn an_undefined_name_in_a_destructured_tuple_is_reported_first() {
     let error = rejected("let (p, (q, r)) = (1, zz.b)\np");
     assert!(error.contains("undefined variable: zz"), "{error}");
 }
+
+#[test]
+fn low_severity_diagnostics_and_receivers() {
+    for source in [
+        "let mut v = vec![1, 2, 3]\nwhile let Some(x) = v.pop() {\n if x == 2 { break 99 }\n}\nv.len()",
+        "let mut v = vec![1, 2]\n'a: while let Some(x) = v.pop() { loop { break 'a 5 } }\nv.len()",
+    ] {
+        let error = rejected_with(source, "E0391");
+        assert!(!error.contains("if/else"), "{error}");
+    }
+    let mixed = rejected_with("let c = true\nlet r = loop { if c { break 1 }\n break \"a\" }\nr", "E0301");
+    assert!(mixed.contains("`break` values of one loop"), "{mixed}");
+    for source in [
+        "fn f() -> (int, Option<int>) { (1, None) }\nlet Some(q) = f().1\nq",
+        "enum C { R, G }\nlet C::R = C::G\n1",
+    ] {
+        let error = rejected_with(source, "E0108");
+        assert!(error.contains("refutable pattern"), "{error}");
+    }
+    int_at_every_level("let Foo = 3\nFoo + 1", 4);
+    int_at_every_level(
+        r#"
+        struct P { a: int, b: string }
+        impl P { fn get(self) -> int { self.a } }
+        fn probe(k: int) -> int {
+            let n = (if k == 0 { P { a: 1, b: "x" } } else { P { a: 2, b: "y" } }).get()
+            n
+        }
+        fn length(k: int) -> int { (if k == 0 { vec![1, 2] } else { vec![3] }).len() }
+        probe(0) * 1000 + probe(1) * 100 + length(0) * 10 + length(1)
+        "#,
+        1221,
+    );
+    int_at_every_level(
+        "let mut v = vec![1, 2, 3]\nlet mut s = 0\nwhile let Some(x) = v.pop() { if x == 1 { break }\n s += x }\ns",
+        5,
+    );
+}
