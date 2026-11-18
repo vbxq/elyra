@@ -424,14 +424,15 @@ impl TypeInference {
 
         let name_lower = ann.name.to_lowercase();
         match name_lower.as_str() {
-            "int" | "i64" | "int64" => InferType::I64,
+            "int" => InferType::I64,
+            "i64" | "int64" => InferType::Int64,
             "i8" | "int8" => InferType::I8,
             "i16" | "int16" => InferType::I16,
             "i32" | "int32" => InferType::I32,
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::I64,
+            "u64" | "uint64" => InferType::U64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
@@ -605,22 +606,6 @@ impl TypeInference {
                 self.check_type_annotation(param);
             }
             return;
-        }
-
-        if matches!(name_lower.as_str(), "i64" | "int64" | "u64" | "uint64")
-            && self
-                .surface_dynamic_spans
-                .insert((ann.span.start, ann.span.end))
-        {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::WideIntegerUnavailable {
-                    name: ann.name.clone(),
-                },
-                span: ann.span,
-                reason: ConstraintReason::TypeAnnotation {
-                    var_name: ann.name.clone(),
-                },
-            });
         }
 
         if KNOWN_TYPE_NAMES.contains(&name_lower.as_str()) {

@@ -389,10 +389,11 @@ fn generate_extraction(
     let (extraction, export_type) = match ty_str.as_str() {
         "i64" => (
             quote! {
-                if !unsafe { ::aelys_native::value_is_int(*args.add(#idx)) } {
+                let Some(#name) = (unsafe {
+                    ::aelys_native::read_int_from_value(_context, *args.add(#idx))
+                }) else {
                     return Err(::aelys_native::AELYS_NATIVE_INVALID_ARGUMENT);
-                }
-                let #name: i64 = unsafe { ::aelys_native::value_as_int(*args.add(#idx)) };
+                };
             },
             ExportType::Int,
         ),
@@ -519,8 +520,7 @@ fn scalar_return_conversion(
     let (conversion, export_type) = match ty_str {
         "i64" => (
             quote! {
-                ::aelys_native::value_int(#value)
-                    .ok_or(::aelys_native::AELYS_NATIVE_INTEGER_OVERFLOW)
+                unsafe { ::aelys_native::alloc_int_from_context(_context, #value) }
             },
             ExportType::Int,
         ),

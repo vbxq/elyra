@@ -35,26 +35,26 @@ fn underlined_line(source: &str, rendered: &str) -> String {
 
 const OVERFLOWING_LITERAL: &str = "\
 fn probe() -> int {
-    let a = 9223372036854775807
+    let a = 18446744073709551616
     a + 1
 }
 ";
 
 #[test]
-fn e0209_underlines_the_literal_it_names() {
+fn e0003_underlines_the_literal_it_names() {
     let rendered = rendered_error(OVERFLOWING_LITERAL);
     assert!(
-        rendered.contains("error[E0209]"),
-        "expected E0209, got:\n{rendered}"
+        rendered.contains("error[E0003]"),
+        "expected E0003, got:\n{rendered}"
     );
     assert!(
-        rendered.contains("integer literal '9223372036854775807'"),
+        rendered.contains("invalid number '18446744073709551616'"),
         "expected the message to name the literal, got:\n{rendered}"
     );
     let underlined = underlined_line(OVERFLOWING_LITERAL, &rendered);
     assert!(
-        underlined.contains("9223372036854775807"),
-        "E0209 names `9223372036854775807` but underlines `{}`:\n{rendered}",
+        underlined.contains("18446744073709551616"),
+        "E0003 names `18446744073709551616` but underlines `{}`:\n{rendered}",
         underlined.trim()
     );
 }
@@ -62,7 +62,7 @@ fn e0209_underlines_the_literal_it_names() {
 // the binding is never read, so dead code elimination drops it before the backend sees the literal
 const DEAD_OVERFLOWING_LITERAL: &str = "\
 fn probe() -> int {
-    let a = 9223372036854775807
+    let a: int = 9223372036854775808
     7
 }
 probe()
@@ -72,14 +72,13 @@ probe()
 fn an_out_of_range_literal_is_refused_whatever_the_optimizer_does_with_it() {
     let rendered = rendered_error(DEAD_OVERFLOWING_LITERAL);
     assert!(
-        rendered.contains("error[E0209]")
-            && rendered.contains("integer literal '9223372036854775807'"),
+        rendered.contains("error[E0301]") && rendered.contains("expected int, found u64"),
         "an optimizer that removes the binding cannot make the program valid:\n{rendered}"
     );
     let underlined = underlined_line(DEAD_OVERFLOWING_LITERAL, &rendered);
     assert!(
-        underlined.contains("9223372036854775807"),
-        "E0209 must underline the literal, not `{}`:\n{rendered}",
+        underlined.contains("9223372036854775808"),
+        "E0301 must underline the literal, not `{}`:\n{rendered}",
         underlined.trim()
     );
 }
@@ -88,7 +87,7 @@ fn an_out_of_range_literal_is_refused_whatever_the_optimizer_does_with_it() {
 fn the_smallest_representable_integer_is_still_writable() {
     let source = "\
 fn probe() -> int {
-    let a = -140737488355328
+    let a = -9223372036854775808
     return a
 }
 probe()

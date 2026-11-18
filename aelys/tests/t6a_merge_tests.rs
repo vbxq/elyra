@@ -256,7 +256,7 @@ x
         ),
         (
             "    let big = 100000000000\n    let q = big * big * s\n",
-            "48-bit",
+            "integer overflow",
             8,
         ),
         (

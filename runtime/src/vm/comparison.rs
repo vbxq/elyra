@@ -19,10 +19,14 @@ impl VM {
         ) else {
             return false;
         };
-        if let (ObjectKind::String(left_text), ObjectKind::String(right_text)) =
-            (&left_object.kind, &right_object.kind)
-        {
-            return left_text == right_text;
+        match (&left_object.kind, &right_object.kind) {
+            (ObjectKind::String(left_text), ObjectKind::String(right_text)) => {
+                return left_text == right_text;
+            }
+            (ObjectKind::Int(left_int), ObjectKind::Int(right_int)) => {
+                return left_int.value() == right_int.value();
+            }
+            _ => {}
         }
         self.values_equal_deep(left, right)
     }
@@ -132,6 +136,11 @@ impl VM {
                         pending.push((left_value, right_value));
                     }
                 }
+                (ObjectKind::Int(left_int), ObjectKind::Int(right_int)) => {
+                    if left_int.value() != right_int.value() {
+                        return false;
+                    }
+                }
                 (ObjectKind::Range(left_range), ObjectKind::Range(right_range)) => {
                     if left_range.start != right_range.start
                         || left_range.end != right_range.end
@@ -154,19 +163,12 @@ impl VM {
     }
 
     pub fn compare_lt(&self, left: Value, right: Value) -> Result<bool, RuntimeError> {
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
+        if let (Some(a), Some(b)) = (self.int_value(left), self.int_value(right)) {
             return Ok(a < b);
         }
 
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
+        if let (Some(a), Some(b)) = (self.number_as_f64(left), self.number_as_f64(right)) {
             return Ok(a < b);
-        }
-
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-            return Ok((a as f64) < b);
-        }
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-            return Ok(a < (b as f64));
         }
 
         if let Some(ordering) = self.ordered_text(left, right) {
@@ -185,19 +187,12 @@ impl VM {
     }
 
     pub fn compare_le(&self, left: Value, right: Value) -> Result<bool, RuntimeError> {
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
+        if let (Some(a), Some(b)) = (self.int_value(left), self.int_value(right)) {
             return Ok(a <= b);
         }
 
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
+        if let (Some(a), Some(b)) = (self.number_as_f64(left), self.number_as_f64(right)) {
             return Ok(a <= b);
-        }
-
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-            return Ok((a as f64) <= b);
-        }
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-            return Ok(a <= (b as f64));
         }
 
         if let Some(ordering) = self.ordered_text(left, right) {
@@ -216,19 +211,12 @@ impl VM {
     }
 
     pub fn compare_gt(&self, left: Value, right: Value) -> Result<bool, RuntimeError> {
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
+        if let (Some(a), Some(b)) = (self.int_value(left), self.int_value(right)) {
             return Ok(a > b);
         }
 
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
+        if let (Some(a), Some(b)) = (self.number_as_f64(left), self.number_as_f64(right)) {
             return Ok(a > b);
-        }
-
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-            return Ok((a as f64) > b);
-        }
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-            return Ok(a > (b as f64));
         }
 
         if let Some(ordering) = self.ordered_text(left, right) {
@@ -247,19 +235,12 @@ impl VM {
     }
 
     pub fn compare_ge(&self, left: Value, right: Value) -> Result<bool, RuntimeError> {
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
+        if let (Some(a), Some(b)) = (self.int_value(left), self.int_value(right)) {
             return Ok(a >= b);
         }
 
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
+        if let (Some(a), Some(b)) = (self.number_as_f64(left), self.number_as_f64(right)) {
             return Ok(a >= b);
-        }
-
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-            return Ok((a as f64) >= b);
-        }
-        if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-            return Ok(a >= (b as f64));
         }
 
         if let Some(ordering) = self.ordered_text(left, right) {

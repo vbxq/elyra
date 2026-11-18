@@ -65,6 +65,10 @@ pub struct AelysVmApi {
         ) -> i32,
     >,
     pub _reserved: [usize; 1],
+    pub read_int:
+        Option<extern "C" fn(context: *mut NativeContext, value: AelysValue, out: *mut i64) -> i32>,
+    pub alloc_int:
+        Option<extern "C" fn(context: *mut NativeContext, value: i64, out: *mut AelysValue) -> i32>,
 }
 
 #[repr(C)]

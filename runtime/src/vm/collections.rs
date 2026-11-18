@@ -71,8 +71,7 @@ fn object(vm: &VM, value: Value, operation: &'static str) -> Result<GcRef, Runti
 }
 
 fn int_arg(vm: &VM, value: Value, operation: &'static str) -> Result<i64, RuntimeError> {
-    value
-        .as_int()
+    vm.int64_value(value)
         .ok_or_else(|| type_error(vm, operation, "int", value))
 }
 
@@ -141,6 +140,9 @@ fn write_sequence(
     values: &[Value],
     operation: &'static str,
 ) -> Result<(), RuntimeError> {
+    for value in values {
+        vm.admit_boxed_int(sequence, *value);
+    }
     let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
         Some(ObjectKind::Vec(vector)) => values
             .iter()
@@ -189,6 +191,7 @@ fn vec_insert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         .filter(|position| *position <= length)
         .ok_or_else(|| out_of_bounds(vm, index, length))?;
     vm.reserve_vec(vector, 1)?;
+    vm.admit_boxed_int(vector, args[2]);
     if with_vec(vm, vector, "vec insert", |inner| {
         inner.insert(position, args[2])
     })? {
@@ -242,6 +245,9 @@ fn push_all(
     operation: &'static str,
 ) -> Result<(), RuntimeError> {
     vm.reserve_vec(vector, values.len())?;
+    for value in values {
+        vm.admit_boxed_int(vector, *value);
+    }
     let start = sequence_len(vm, vector, operation)?;
     let pushed = with_vec(vm, vector, operation, |inner| {
         values.iter().all(|value| inner.push(*value))
@@ -362,7 +368,7 @@ fn seq_index_of(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 impl VM {
     pub(crate) fn order_values(&self, left: Value, right: Value) -> Option<Ordering> {
-        if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
+        if let (Some(a), Some(b)) = (self.int_value(left), self.int_value(right)) {
             return Some(a.cmp(&b));
         }
         if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
@@ -388,6 +394,9 @@ impl VM {
     }
 
     pub(crate) fn map_key(&self, value: Value) -> Option<MapKey> {
+        if let Some(wide) = self.heap.boxed_int(value) {
+            return Some(MapKey::Wide(wide));
+        }
         if value.as_ptr().is_some() {
             return self
                 .string_bytes(value)
@@ -602,6 +611,7 @@ fn seq_set(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let index = int_arg(vm, args[1], "set")?;
     let length = sequence_len(vm, sequence, "set")?;
     let position = checked_index(vm, index, length)?;
+    vm.admit_boxed_int(sequence, args[2]);
     let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
         Some(ObjectKind::Vec(inner)) => inner.set(position, args[2]),
         Some(ObjectKind::Array(inner)) => inner.set(position, args[2]),
@@ -655,6 +665,7 @@ fn write_sequence_slot(
     value: Value,
     operation: &'static str,
 ) -> Result<(), RuntimeError> {
+    vm.admit_boxed_int(sequence, value);
     let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
         Some(ObjectKind::Vec(vector)) => vector.set(index, value),
         Some(ObjectKind::Array(array)) => array.set(index, value),
@@ -818,7 +829,10 @@ fn map_clear(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn typed_vec(tag: TypeTag, values: Vec<Value>) -> AelysVec {
     match tag {
-        TypeTag::Int => AelysVec::from_ints(values.iter().filter_map(Value::as_int).collect()),
+        TypeTag::Int if values.iter().all(Value::is_int) => {
+            AelysVec::from_ints(values.iter().filter_map(Value::as_int).collect())
+        }
+        TypeTag::Int => AelysVec::from_objects(values),
         TypeTag::Float => {
             AelysVec::from_floats(values.iter().filter_map(Value::as_float).collect())
         }

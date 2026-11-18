@@ -150,7 +150,7 @@ pub mod helpers {
     pub fn get_number(vm: &VM, value: Value, op: &'static str) -> Result<f64, RuntimeError> {
         if let Some(f) = value.as_float() {
             Ok(f)
-        } else if let Some(i) = value.as_int() {
+        } else if let Some(i) = vm.int_value(value) {
             Ok(i as f64)
         } else {
             Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -162,7 +162,7 @@ pub mod helpers {
     }
 
     pub fn get_int(vm: &VM, value: Value, op: &'static str) -> Result<i64, RuntimeError> {
-        value.as_int().ok_or_else(|| {
+        vm.int64_value(value).ok_or_else(|| {
             vm.runtime_error(RuntimeErrorKind::TypeError {
                 operation: op,
                 expected: "int",
@@ -205,7 +205,7 @@ pub mod helpers {
     }
 
     pub fn get_handle(vm: &VM, value: Value, op: &'static str) -> Result<usize, RuntimeError> {
-        let handle = value.as_int().ok_or_else(|| {
+        let handle = vm.int64_value(value).ok_or_else(|| {
             vm.runtime_error(RuntimeErrorKind::TypeError {
                 operation: op,
                 expected: "handle (int)",
@@ -222,35 +222,31 @@ pub mod helpers {
         Ok(handle as usize)
     }
 
-    // the range test runs on the f64 itself: `f as i64` saturates and would hide the overflow
-    pub fn float_to_int_checked(vm: &VM, f: f64, op: &'static str) -> Result<Value, RuntimeError> {
-        let truncated = f.trunc();
-        if !truncated.is_finite()
-            || truncated < Value::INT_MIN as f64
-            || truncated > Value::INT_MAX as f64
-        {
-            return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+    pub fn float_to_int_checked(
+        vm: &mut VM,
+        f: f64,
+        op: &'static str,
+    ) -> Result<Value, RuntimeError> {
+        match float_to_i64(f) {
+            Some(n) => vm.make_int(n),
+            None => Err(vm.runtime_error(RuntimeErrorKind::TypeError {
                 operation: op,
-                expected: "float with an integer value in the 48-bit range",
+                expected: "float with an integer value in the i64 range",
                 got: format!("{f}"),
-            }));
+            })),
         }
-        make_int_checked(vm, truncated as i64, op)
     }
 
-    pub fn make_int_checked(vm: &VM, n: i64, op: &'static str) -> Result<Value, RuntimeError> {
-        Value::int_checked(n).map_err(|_| {
-            vm.runtime_error(RuntimeErrorKind::TypeError {
-                operation: op,
-                expected: "integer in 48-bit range",
-                got: format!(
-                    "value {} exceeds range ({} to {})",
-                    n,
-                    Value::INT_MIN,
-                    Value::INT_MAX
-                ),
-            })
-        })
+    // the range test runs on the f64 itself: `f as i64` saturates and would hide the overflow
+    pub fn float_to_i64(f: f64) -> Option<i64> {
+        let truncated = f.trunc();
+        (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0)
+            .contains(&truncated)
+            .then_some(truncated as i64)
+    }
+
+    pub fn make_int_checked(vm: &mut VM, n: i64, _op: &'static str) -> Result<Value, RuntimeError> {
+        vm.make_int(n)
     }
 }
 

@@ -1,6 +1,5 @@
 use super::ConstraintReason;
 use crate::types::{InferType, TypeVarId};
-use aelys_bytecode::Value;
 use aelys_syntax::{ModuleId, Span};
 use std::fmt;
 
@@ -589,9 +588,6 @@ pub enum TypeErrorKind {
         left: InferType,
         right: InferType,
         operand: String,
-    },
-    WideIntegerUnavailable {
-        name: String,
     },
     FixedPointShiftOutOfRange {
         method: String,
@@ -1697,17 +1693,12 @@ impl TypeError {
             TypeErrorKind::FixedPointShiftOutOfRange { method, count } => {
                 write!(f, "shift count {} of '{}' is outside 0..=63", count, method)
             }
-            TypeErrorKind::WideIntegerUnavailable { name } => write!(
-                f,
-                "{} is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping arithmetic",
-                name
-            ),
             TypeErrorKind::IntegerLiteralOutOfRange { value } => write!(
                 f,
-                "integer literal '{}' exceeds 48-bit signed range ({} to {})",
+                "integer literal '{}' exceeds the int range ({} to {})",
                 value,
-                Value::INT_MIN,
-                Value::INT_MAX
+                i64::MIN,
+                i64::MAX
             ),
             TypeErrorKind::EnumLayoutTooLarge {
                 enum_name,
@@ -1913,18 +1904,6 @@ impl TypeError {
             reason: ConstraintReason::Other("recursion limit".to_string()),
         }
     }
-
-    /// the parser folds a leading `-` into the literal, so `int_min` arrives here already negative
-    pub fn integer_literal_out_of_range(value: i64, span: Span) -> Option<Self> {
-        if (Value::INT_MIN..=Value::INT_MAX).contains(&value) {
-            return None;
-        }
-        Some(TypeError {
-            kind: TypeErrorKind::IntegerLiteralOutOfRange { value },
-            span,
-            reason: ConstraintReason::Other("integer literal".to_string()),
-        })
-    }
 }
 
 impl TypeErrorKind {
@@ -2026,7 +2005,6 @@ impl TypeErrorKind {
             Self::MangledSymbolCollision { .. } => 355,
             Self::IntegerLiteralOutOfRange { .. } => 209,
             Self::MixedIntegerOperands { .. } => 460,
-            Self::WideIntegerUnavailable { .. } => 461,
             Self::FixedPointShiftOutOfRange { .. } => 462,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,

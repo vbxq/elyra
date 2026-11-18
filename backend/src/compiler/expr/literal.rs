@@ -1,5 +1,5 @@
 use super::Compiler;
-use aelys_bytecode::{OpCode, Value};
+use aelys_bytecode::{Constant, OpCode, Value};
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::Span;
@@ -15,22 +15,39 @@ impl Compiler {
             Some(imm) => {
                 self.emit_b(OpCode::LoadI, dest, imm, span);
             }
-            None => {
-                let val = Value::int_checked(n).map_err(|_| {
-                    CompileError::new(
-                        CompileErrorKind::IntegerOverflow {
-                            value: n.to_string(),
-                            min: Value::INT_MIN,
-                            max: Value::INT_MAX,
-                        },
-                        span,
-                        self.source.clone(),
-                    )
-                })?;
-                let k = self.add_constant(val, span)?;
-                self.emit_load_constant(dest, k, span);
-            }
+            None => self.compile_wide_literal(i128::from(n), dest, span)?,
         }
+        Ok(())
+    }
+
+    // a u64 literal carries its bit pattern, so its value is read through the type
+    pub fn compile_typed_literal_int(
+        &mut self,
+        n: i64,
+        unsigned: bool,
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
+        if unsigned && n < 0 {
+            return self.compile_wide_literal(i128::from(n as u64), dest, span);
+        }
+        self.compile_literal_int(n, dest, span)
+    }
+
+    fn compile_wide_literal(&mut self, value: i128, dest: u16, span: Span) -> Result<()> {
+        let constant = Constant::integer(value).ok_or_else(|| {
+            CompileError::new(
+                CompileErrorKind::IntegerOverflow {
+                    value: value.to_string(),
+                    min: i64::MIN,
+                    max: i64::MAX,
+                },
+                span,
+                self.source.clone(),
+            )
+        })?;
+        let k = self.current.add_structural_constant(constant);
+        self.emit_load_constant(dest, k, span);
         Ok(())
     }
 

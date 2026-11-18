@@ -6,7 +6,12 @@ impl Compiler {
         use aelys_sema::TypedExprKind;
 
         match &expr.kind {
-            TypedExprKind::Int(n) => self.compile_literal_int(*n, dest, expr.span),
+            TypedExprKind::Int(n) => self.compile_typed_literal_int(
+                *n,
+                matches!(expr.ty, aelys_sema::InferType::U64),
+                dest,
+                expr.span,
+            ),
             TypedExprKind::Float(f) => self.compile_literal_float(*f, dest, expr.span),
             TypedExprKind::String(s) => self.compile_literal_string(s, dest, expr.span),
             TypedExprKind::Char(c) => self.compile_literal_char(*c, dest, expr.span),

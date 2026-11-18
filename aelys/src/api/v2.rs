@@ -1097,6 +1097,9 @@ impl Isolate {
                 ObjectKind::Sum(_) => Err(StructuredCloneError::Unsupported("sum")),
                 ObjectKind::Enum(_) => Err(StructuredCloneError::Unsupported("enum")),
                 ObjectKind::Struct(_) => Err(StructuredCloneError::StructValuesUnsupported),
+                ObjectKind::Int(boxed) => i64::try_from(boxed.value())
+                    .map(StructuredValue::Int)
+                    .map_err(|_| StructuredCloneError::Unsupported("integer above i64::MAX")),
             },
             None => Err(StructuredCloneError::InvalidHandle),
         };
@@ -1115,8 +1118,10 @@ impl Isolate {
         match value {
             StructuredValue::Null => Ok(Value::null()),
             StructuredValue::Bool(value) => Ok(Value::bool(*value)),
-            StructuredValue::Int(value) => Value::int_checked(*value)
-                .map_err(|_| StructuredCloneError::Unsupported("out-of-range integer")),
+            StructuredValue::Int(value) => self
+                .vm
+                .make_int(*value)
+                .map_err(StructuredCloneError::Runtime),
             StructuredValue::Float(value) => Ok(Value::float(*value)),
             StructuredValue::String(value) => self
                 .vm

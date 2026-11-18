@@ -153,6 +153,7 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
         InferType::I16 => push_len_prefixed(result, "i16"),
         InferType::I32 => push_len_prefixed(result, "i32"),
         InferType::I64 => push_len_prefixed(result, "i64"),
+        InferType::Int64 => push_len_prefixed(result, "i64w"),
         InferType::U8 => push_len_prefixed(result, "u8"),
         InferType::U16 => push_len_prefixed(result, "u16"),
         InferType::U32 => push_len_prefixed(result, "u32"),
@@ -353,6 +354,7 @@ fn collect_nominal_applications(
         | InferType::U8
         | InferType::U16
         | InferType::U32
+        | InferType::Int64
         | InferType::U64
         | InferType::F32
         | InferType::F64

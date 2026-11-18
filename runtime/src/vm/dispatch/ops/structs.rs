@@ -412,9 +412,9 @@ impl VM {
         match descriptor {
             TypeDescriptor::Unit => value.is_unit(),
             TypeDescriptor::Bool => value.as_bool().is_some(),
-            TypeDescriptor::Int(width) => value
-                .as_int()
-                .is_some_and(|value| integer_fits(*width, value)),
+            TypeDescriptor::Int(width) => self
+                .int_value(value)
+                .is_some_and(|value| wide_integer_fits(*width, value)),
             TypeDescriptor::Float(_) => value.as_float().is_some(),
             TypeDescriptor::String => {
                 self.is_object_kind(value, |kind| matches!(kind, ObjectKind::String(_)))
@@ -645,6 +645,19 @@ pub(in crate::vm::dispatch) fn integer_fits(width: IntWidth, value: i64) -> bool
         IntWidth::U16 => u16::try_from(value).is_ok(),
         IntWidth::U32 => u32::try_from(value).is_ok(),
         IntWidth::U64 => value >= 0,
+    }
+}
+
+fn wide_integer_fits(width: IntWidth, value: i128) -> bool {
+    match width {
+        IntWidth::I8 => i8::try_from(value).is_ok(),
+        IntWidth::I16 => i16::try_from(value).is_ok(),
+        IntWidth::I32 => i32::try_from(value).is_ok(),
+        IntWidth::I64 => i64::try_from(value).is_ok(),
+        IntWidth::U8 => u8::try_from(value).is_ok(),
+        IntWidth::U16 => u16::try_from(value).is_ok(),
+        IntWidth::U32 => u32::try_from(value).is_ok(),
+        IntWidth::U64 => u64::try_from(value).is_ok(),
     }
 }
 

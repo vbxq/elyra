@@ -198,6 +198,7 @@ impl Heap {
                 ObjectKind::Sum(_) => "Sum",
                 ObjectKind::Enum(_) => "Enum",
                 ObjectKind::Struct(_) => "Struct",
+                ObjectKind::Int(_) => "Int",
             }
         } else {
             "Unknown"

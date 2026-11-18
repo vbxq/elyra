@@ -1491,7 +1491,7 @@ pub unsafe extern "C" fn aelys_frame_shl_div(
         return 0;
     }
     let exact = (i128::from(left) << (shift & 63)) / i128::from(right);
-    if exact < i128::from(Value::INT_MIN) || exact > i128::from(Value::INT_MAX) {
+    if exact < i128::from(Value::INLINE_INT_MIN) || exact > i128::from(Value::INLINE_INT_MAX) {
         return 0;
     }
     context.scratch0 = exact as u64;

@@ -193,7 +193,7 @@ Error messages include line numbers. The compiler tries to be helpful but some m
 
 ### "integer overflow"
 
-You've exceeded the 48-bit integer range (±140 trillion). Use floats for larger values.. or refactor your code
+An `int` operation left the 64-bit range (-9223372036854775808 to 9223372036854775807). Use `i64` or `u64` for wrapping arithmetic, or floats for approximate larger values.
 
 ### "invalid bytecode"
 

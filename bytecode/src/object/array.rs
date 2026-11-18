@@ -193,6 +193,14 @@ impl AelysArray {
         self.data.type_tag()
     }
 
+    // packed ints only ever hold inline-range values; a boxed int turns the storage into objects first
+    pub fn promote_ints_to_objects(&mut self) {
+        if let ArrayData::Ints(values) = &self.data {
+            let objects = values.iter().map(|value| Value::int(*value)).collect();
+            self.data = ArrayData::Objects(objects);
+        }
+    }
+
     pub fn get(&self, index: usize) -> Option<Value> {
         if index >= self.len() {
             return None;

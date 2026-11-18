@@ -238,7 +238,7 @@ grow()
     assert_aelys_error_contains(
         r#"
 fn grow() -> int {
-    let mut x = 140737488355000
+    let mut x = 9223372036854775000
     for i in 0..1000 { x = x + 1 }
     return x
 }

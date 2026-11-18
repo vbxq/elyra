@@ -29,13 +29,7 @@ impl ConstantFolder {
                 ))
             }
             (TypedExprKind::Int(n), UnaryOp::Neg) => {
-                if !super::super::is_in_vm_range(*n) {
-                    return None;
-                }
                 let result = n.checked_neg()?;
-                if !super::super::is_in_vm_range(result) {
-                    return None;
-                }
                 self.stats.constants_folded += 1;
                 Some(TypedExpr::new(
                     TypedExprKind::Int(result),
@@ -60,9 +54,6 @@ impl ConstantFolder {
                 ))
             }
             (TypedExprKind::Int(n), UnaryOp::BitNot) => {
-                if !super::super::is_in_vm_range(*n) {
-                    return None;
-                }
                 self.stats.constants_folded += 1;
                 Some(TypedExpr::new(
                     TypedExprKind::Int(!*n),

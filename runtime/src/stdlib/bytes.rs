@@ -38,6 +38,23 @@ fn bounds_err(size: usize, off: usize, buf_len: usize) -> Option<String> {
     }
 }
 
+enum ReadOut {
+    Value(Value),
+    Int(Option<i64>),
+}
+
+impl From<Value> for ReadOut {
+    fn from(value: Value) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl From<Option<i64>> for ReadOut {
+    fn from(value: Option<i64>) -> Self {
+        Self::Int(value)
+    }
+}
+
 macro_rules! impl_read {
     ($name:ident, $op:literal, $size:expr, $ty:ty, $conv:ident, $to_val:expr) => {
         fn $name(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -50,8 +67,13 @@ macro_rules! impl_read {
                 let mut arr = [0u8; $size];
                 arr.copy_from_slice(&buf.data[off..off + $size]);
                 let v = <$ty>::$conv(arr);
-                let value: Option<Value> = ($to_val(v)).into();
-                value.ok_or_else(|| err(vm, $op, format!("value {v} exceeds the 48-bit int range")))
+                match ReadOut::from($to_val(v)) {
+                    ReadOut::Value(value) => Ok(value),
+                    ReadOut::Int(Some(n)) => vm.make_int(n),
+                    ReadOut::Int(None) => {
+                        Err(err(vm, $op, format!("value {v} exceeds the int range")))
+                    }
+                }
             } else {
                 Err(err(vm, $op, "invalid handle".into()))
             }
@@ -93,7 +115,7 @@ macro_rules! impl_write_float {
             let off = check_offset(get_int(vm, args[1], $op)?, $op).map_err(|e| err(vm, $op, e))?;
             let val: $ty = if let Some(f) = args[2].as_float() {
                 f as $ty
-            } else if let Some(i) = args[2].as_int() {
+            } else if let Some(i) = vm.int_value(args[2]) {
                 i as $ty
             } else {
                 return Err(err(
@@ -385,7 +407,7 @@ impl_read!(
     2,
     u16,
     from_le_bytes,
-    |v: u16| Value::int(v as i64)
+    |v: u16| Some(v as i64)
 );
 impl_read!(
     native_read_i16,
@@ -393,7 +415,7 @@ impl_read!(
     2,
     i16,
     from_le_bytes,
-    |v: i16| Value::int(v as i64)
+    |v: i16| Some(v as i64)
 );
 impl_read!(
     native_read_u16_be,
@@ -401,7 +423,7 @@ impl_read!(
     2,
     u16,
     from_be_bytes,
-    |v: u16| Value::int(v as i64)
+    |v: u16| Some(v as i64)
 );
 impl_read!(
     native_read_i16_be,
@@ -409,7 +431,7 @@ impl_read!(
     2,
     i16,
     from_be_bytes,
-    |v: i16| Value::int(v as i64)
+    |v: i16| Some(v as i64)
 );
 
 impl_write_int!(
@@ -455,7 +477,7 @@ impl_read!(
     4,
     u32,
     from_le_bytes,
-    |v: u32| Value::int(v as i64)
+    |v: u32| Some(v as i64)
 );
 impl_read!(
     native_read_i32,
@@ -463,7 +485,7 @@ impl_read!(
     4,
     i32,
     from_le_bytes,
-    |v: i32| Value::int(v as i64)
+    |v: i32| Some(v as i64)
 );
 impl_read!(
     native_read_u32_be,
@@ -471,7 +493,7 @@ impl_read!(
     4,
     u32,
     from_be_bytes,
-    |v: u32| Value::int(v as i64)
+    |v: u32| Some(v as i64)
 );
 impl_read!(
     native_read_i32_be,
@@ -479,7 +501,7 @@ impl_read!(
     4,
     i32,
     from_be_bytes,
-    |v: i32| Value::int(v as i64)
+    |v: i32| Some(v as i64)
 );
 
 impl_write_int!(
@@ -525,9 +547,7 @@ impl_read!(
     8,
     u64,
     from_le_bytes,
-    |v: u64| i64::try_from(v)
-        .ok()
-        .and_then(|v| Value::int_checked(v).ok())
+    |v: u64| i64::try_from(v).ok()
 );
 impl_read!(
     native_read_i64,
@@ -535,7 +555,7 @@ impl_read!(
     8,
     i64,
     from_le_bytes,
-    |v: i64| Value::int_checked(v).ok()
+    |v: i64| Some(v)
 );
 impl_read!(
     native_read_u64_be,
@@ -543,9 +563,7 @@ impl_read!(
     8,
     u64,
     from_be_bytes,
-    |v: u64| i64::try_from(v)
-        .ok()
-        .and_then(|v| Value::int_checked(v).ok())
+    |v: u64| i64::try_from(v).ok()
 );
 impl_read!(
     native_read_i64_be,
@@ -553,7 +571,7 @@ impl_read!(
     8,
     i64,
     from_be_bytes,
-    |v: i64| Value::int_checked(v).ok()
+    |v: i64| Some(v)
 );
 
 impl_write_int!(
@@ -881,8 +899,7 @@ fn sequence_byte_count(vm: &VM, sequence: GcRef) -> Result<usize, String> {
     let mut ints = Vec::with_capacity(values.len());
     for (index, value) in values.iter().enumerate() {
         ints.push(
-            value
-                .as_int()
+            vm.int64_value(*value)
                 .ok_or_else(|| format!("element {index} is not an int"))?,
         );
     }

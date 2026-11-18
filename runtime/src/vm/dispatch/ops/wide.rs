@@ -34,11 +34,12 @@ impl VM {
         }
         macro_rules! int_value {
             ($value:expr) => {{
-                match Value::int_checked($value) {
-                    Ok(value) => value,
-                    Err(_) => {
+                let value: i64 = $value;
+                match Value::inline_int(value) {
+                    Some(value) => value,
+                    None => {
                         self.frames[current_frame_idx].ip = ip;
-                        return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                        self.box_int(i128::from(value))?
                     }
                 }
             }};
@@ -187,6 +188,14 @@ impl VM {
                 };
                 reg_set!(base + a, sum.payload);
             }
+            aelys_bytecode::sized_binary_opcodes!() if inner_opcode.is_wide_sized_binary() => {
+                let left = reg_get!(base + b);
+                let right = reg_get!(base + c);
+                let (op, kind) = super::sized::wide_parts(inner_byte);
+                self.frames[current_frame_idx].ip = ip;
+                let result = self.sized_binary(op, kind, left, right)?;
+                reg_set!(base + a, result);
+            }
             aelys_bytecode::sized_binary_opcodes!() => {
                 let left = reg_get!(base + b);
                 let right = reg_get!(base + c);
@@ -219,17 +228,9 @@ impl VM {
                         )))
                     })?;
                 let value = reg_get!(base + b);
-                let value = value.as_int().ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "wide sized integer",
-                        expected: "integer",
-                        got: self.value_type_name(value).to_string(),
-                    })
-                })?;
-                reg_set!(
-                    base + a,
-                    Value::int_wrapping(super::sized::sized_unary_value(inner_opcode, kind, value))
-                );
+                self.frames[current_frame_idx].ip = ip;
+                let result = self.sized_unary(inner_opcode == OpCode::NegW, kind, value)?;
+                reg_set!(base + a, result);
             }
             OpCode::Cast => {
                 let target = u8::try_from(c)
@@ -292,8 +293,12 @@ impl VM {
             OpCode::Mul | OpCode::MulII | OpCode::MulFF | OpCode::MulIIG | OpCode::MulFFG => {
                 let left = reg_get!(base + b);
                 let right = reg_get!(base + c);
-                let result = if let (Some(left), Some(right)) = (left.as_int(), right.as_int()) {
-                    int_value!(left.checked_mul(right).unwrap_or(i64::MAX))
+                let product = match (left.as_int(), right.as_int()) {
+                    (Some(left), Some(right)) => left.checked_mul(right),
+                    _ => None,
+                };
+                let result = if let Some(product) = product {
+                    int_value!(product)
                 } else {
                     self.frames[current_frame_idx].ip = ip;
                     self.mul_values(left, right)?
@@ -304,34 +309,32 @@ impl VM {
                 let left = reg_get!(base + b);
                 let right = reg_get!(base + c);
                 self.frames[current_frame_idx].ip = ip;
-                reg_set!(base + a, self.div_values(left, right)?);
+                let result = self.div_values(left, right)?;
+                reg_set!(base + a, result);
             }
             OpCode::Mod | OpCode::ModII | OpCode::ModFF | OpCode::ModIIG | OpCode::ModFFG => {
                 let left = reg_get!(base + b);
                 let right = reg_get!(base + c);
                 self.frames[current_frame_idx].ip = ip;
-                reg_set!(base + a, self.mod_values(left, right)?);
+                let result = self.mod_values(left, right)?;
+                reg_set!(base + a, result);
             }
             OpCode::Neg => {
                 let value = reg_get!(base + b);
                 self.frames[current_frame_idx].ip = ip;
-                reg_set!(base + a, self.neg_value(value)?);
+                let result = self.neg_value(value)?;
+                reg_set!(base + a, result);
             }
             OpCode::AddI | OpCode::SubI => {
                 let source = reg_get!(base + b);
-                let value = source.as_int().ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "wide integer immediate",
-                        expected: "integer",
-                        got: self.value_type_name(source).to_string(),
-                    })
-                })?;
-                let result = if inner_opcode == OpCode::AddI {
-                    value.wrapping_add(c as i64)
+                let op = if inner_opcode == OpCode::AddI {
+                    aelys_bytecode::IntOp::Add
                 } else {
-                    value.wrapping_sub(c as i64)
+                    aelys_bytecode::IntOp::Sub
                 };
-                reg_set!(base + a, int_value!(result));
+                self.frames[current_frame_idx].ip = ip;
+                let result = self.int_binary(op, source, Value::int(c as i64))?;
+                reg_set!(base + a, result);
             }
             OpCode::Eq
             | OpCode::Ne
@@ -392,14 +395,14 @@ impl VM {
             }
             OpCode::LtIImm | OpCode::LeIImm | OpCode::GtIImm | OpCode::GeIImm => {
                 let source = reg_get!(base + b);
-                let left = source.as_int().ok_or_else(|| {
+                let left = self.int_value(source).ok_or_else(|| {
                     self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "wide integer comparison",
                         expected: "integer",
                         got: self.value_type_name(source).to_string(),
                     })
                 })?;
-                let right = c as i64;
+                let right = c as i128;
                 let result = match inner_opcode {
                     OpCode::LtIImm => left < right,
                     OpCode::LeIImm => left <= right,
@@ -426,45 +429,22 @@ impl VM {
             | OpCode::XorII => {
                 let left_value = reg_get!(base + b);
                 let right_value = reg_get!(base + c);
-                let left = left_value.as_int().ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "wide bitwise",
-                        expected: "integer",
-                        got: self.value_type_name(left_value).to_string(),
-                    })
-                })?;
-                let right = right_value.as_int().ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "wide bitwise",
-                        expected: "integer",
-                        got: self.value_type_name(right_value).to_string(),
-                    })
-                })?;
-                let result = match inner_opcode {
-                    OpCode::Shl | OpCode::ShlII => {
-                        let Some(result) = super::bitwise::checked_int_shl(left, right) else {
-                            self.frames[current_frame_idx].ip = ip;
-                            return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
-                        };
-                        result
-                    }
-                    OpCode::Shr | OpCode::ShrII => left >> (right & 63),
-                    OpCode::BitAnd | OpCode::AndII => left & right,
-                    OpCode::BitOr | OpCode::OrII => left | right,
-                    _ => left ^ right,
+                let op = match inner_opcode {
+                    OpCode::Shl | OpCode::ShlII => aelys_bytecode::IntOp::Shl,
+                    OpCode::Shr | OpCode::ShrII => aelys_bytecode::IntOp::Shr,
+                    OpCode::BitAnd | OpCode::AndII => aelys_bytecode::IntOp::And,
+                    OpCode::BitOr | OpCode::OrII => aelys_bytecode::IntOp::Or,
+                    _ => aelys_bytecode::IntOp::Xor,
                 };
-                reg_set!(base + a, Value::int_wrapping(result));
+                self.frames[current_frame_idx].ip = ip;
+                let result = self.int_binary(op, left_value, right_value)?;
+                reg_set!(base + a, result);
             }
             OpCode::BitNot | OpCode::NotI => {
                 let value = reg_get!(base + b);
-                let value = value.as_int().ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "wide bitwise not",
-                        expected: "integer",
-                        got: self.value_type_name(value).to_string(),
-                    })
-                })?;
-                reg_set!(base + a, Value::int_wrapping(!value));
+                self.frames[current_frame_idx].ip = ip;
+                let result = self.int_not(value)?;
+                reg_set!(base + a, result);
             }
             OpCode::ShlIImm
             | OpCode::ShrIImm
@@ -472,33 +452,21 @@ impl VM {
             | OpCode::OrIImm
             | OpCode::XorIImm => {
                 let value = reg_get!(base + b);
-                let value = value.as_int().ok_or_else(|| {
-                    self.runtime_error(RuntimeErrorKind::TypeError {
-                        operation: "wide bitwise immediate",
-                        expected: "integer",
-                        got: self.value_type_name(value).to_string(),
-                    })
-                })?;
-                let immediate = c as i64;
-                let result = match inner_opcode {
-                    OpCode::ShlIImm => {
-                        let Some(result) = super::bitwise::checked_int_shl(value, immediate) else {
-                            self.frames[current_frame_idx].ip = ip;
-                            return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
-                        };
-                        result
-                    }
-                    OpCode::ShrIImm => value >> (immediate & 63),
-                    OpCode::AndIImm => value & immediate,
-                    OpCode::OrIImm => value | immediate,
-                    _ => value ^ immediate,
+                let op = match inner_opcode {
+                    OpCode::ShlIImm => aelys_bytecode::IntOp::Shl,
+                    OpCode::ShrIImm => aelys_bytecode::IntOp::Shr,
+                    OpCode::AndIImm => aelys_bytecode::IntOp::And,
+                    OpCode::OrIImm => aelys_bytecode::IntOp::Or,
+                    _ => aelys_bytecode::IntOp::Xor,
                 };
-                reg_set!(base + a, Value::int_wrapping(result));
+                self.frames[current_frame_idx].ip = ip;
+                let result = self.int_binary(op, value, Value::int(c as i64))?;
+                reg_set!(base + a, result);
             }
             OpCode::ArrayLoadI | OpCode::ArrayLoadF | OpCode::ArrayLoadB | OpCode::ArrayLoadP => {
                 let array_value = reg_get!(base + b);
                 let index_value = reg_get!(base + c);
-                let index = index_value.as_int().unwrap_or(-1);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 if index < 0 {
                     self.frames[current_frame_idx].ip = ip;
                     return Err(
@@ -533,7 +501,8 @@ impl VM {
             }
             OpCode::ArrayGetI | OpCode::ArrayGetF | OpCode::ArrayGetB | OpCode::ArrayGetP => {
                 let array_value = reg_get!(base + b);
-                let index = reg_get!(base + c).as_int().unwrap_or(-1);
+                let index_value = reg_get!(base + c);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 let value = self.array_get_option(array_value, index)?;
                 reg_set!(base + a, value);
             }
@@ -542,7 +511,8 @@ impl VM {
             | OpCode::ArrayStoreB
             | OpCode::ArrayStoreP => {
                 let array_value = reg_get!(base + a);
-                let index = reg_get!(base + b).as_int().unwrap_or(-1);
+                let index_value = reg_get!(base + b);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 let value = reg_get!(base + c);
                 let index_usize = usize::try_from(index).map_err(|_| {
                     self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
@@ -563,6 +533,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
+                self.admit_boxed_int(array_ref, value);
                 let stored =
                     self.heap
                         .get_mut(array_ref)
@@ -579,7 +550,8 @@ impl VM {
                     .write_barrier_element(array_ref, index_usize, value);
             }
             OpCode::ArrayNewI | OpCode::ArrayNewF | OpCode::ArrayNewB | OpCode::ArrayNewP => {
-                let count = reg_get!(base + b).as_int().unwrap_or(0);
+                let count_value = reg_get!(base + b);
+                let count = self.int64_value(count_value).unwrap_or(0);
                 if count < 0 {
                     return Err(self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "array allocation",
@@ -721,7 +693,8 @@ impl VM {
             }
             OpCode::VecReserve => {
                 let vector_value = reg_get!(base + a);
-                let additional = reg_get!(base + b).as_int().unwrap_or(0);
+                let additional_value = reg_get!(base + b);
+                let additional = self.int64_value(additional_value).unwrap_or(0);
                 if additional < 0 {
                     return Err(self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "vec reserve",
@@ -741,7 +714,8 @@ impl VM {
             }
             OpCode::VecLoadI | OpCode::VecLoadF | OpCode::VecLoadB | OpCode::VecLoadP => {
                 let vec_value = reg_get!(base + b);
-                let index = reg_get!(base + c).as_int().unwrap_or(-1);
+                let index_value = reg_get!(base + c);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 let index_usize = usize::try_from(index).map_err(|_| {
                     self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
                 })?;
@@ -793,13 +767,15 @@ impl VM {
             }
             OpCode::VecGetI | OpCode::VecGetF | OpCode::VecGetB | OpCode::VecGetP => {
                 let vec_value = reg_get!(base + b);
-                let index = reg_get!(base + c).as_int().unwrap_or(-1);
+                let index_value = reg_get!(base + c);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 let value = self.vec_get_option(vec_value, index)?;
                 reg_set!(base + a, value);
             }
             OpCode::VecStoreI | OpCode::VecStoreF | OpCode::VecStoreB | OpCode::VecStoreP => {
                 let vec_value = reg_get!(base + a);
-                let index = reg_get!(base + b).as_int().unwrap_or(-1);
+                let index_value = reg_get!(base + b);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 let value = reg_get!(base + c);
                 let index_usize = usize::try_from(index).map_err(|_| {
                     self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
@@ -820,6 +796,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
+                self.admit_boxed_int(vec_ref, value);
                 let stored =
                     self.heap
                         .get_mut(vec_ref)
@@ -836,7 +813,8 @@ impl VM {
             }
             OpCode::StringLoadChar => {
                 let string_value = reg_get!(base + b);
-                let index = reg_get!(base + c).as_int().unwrap_or(-1);
+                let index_value = reg_get!(base + c);
+                let index = self.int64_value(index_value).unwrap_or(-1);
                 let string_ref = GcRef::new(string_value.as_ptr().unwrap_or(0));
                 let character = match self.heap.get(string_ref) {
                     Some(object) => match &object.kind {
@@ -898,14 +876,16 @@ impl VM {
             }
             OpCode::CloseUpvals => self.close_upvalues_from(base + a),
             OpCode::WhileLoopLt => {
-                let iter = reg_get!(base + a).as_int().ok_or_else(|| {
+                let iter_value = reg_get!(base + a);
+                let iter = self.int_value(iter_value).ok_or_else(|| {
                     self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "wide while loop",
                         expected: "integer",
                         got: "non-integer value".to_string(),
                     })
                 })?;
-                let limit = reg_get!(base + a + 1).as_int().ok_or_else(|| {
+                let limit_value = reg_get!(base + a + 1);
+                let limit = self.int_value(limit_value).ok_or_else(|| {
                     self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "wide while loop",
                         expected: "integer",

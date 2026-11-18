@@ -11,8 +11,8 @@ impl Value {
         Self::int_checked(n).unwrap_or_else(|_| {
             panic!(
                 "integer {n} is outside the supported range {}..={}",
-                Self::INT_MIN,
-                Self::INT_MAX
+                Self::INLINE_INT_MIN,
+                Self::INLINE_INT_MAX
             )
         })
     }
@@ -20,11 +20,16 @@ impl Value {
     #[inline(always)]
     /// Construct an integer without panicking on out-of-range host data.
     pub fn int_checked(n: i64) -> Result<Self, IntegerOverflowError> {
-        if (Self::INT_MIN..=Self::INT_MAX).contains(&n) {
+        Self::inline_int(n).ok_or(IntegerOverflowError { value: n })
+    }
+
+    #[inline(always)]
+    pub fn inline_int(n: i64) -> Option<Self> {
+        if (n << 16) >> 16 == n {
             let bits = u64::from_ne_bytes(n.to_ne_bytes());
-            Ok(Self(QNAN | TAG_INT | (bits & PAYLOAD_MASK)))
+            Some(Self(QNAN | TAG_INT | (bits & PAYLOAD_MASK)))
         } else {
-            Err(IntegerOverflowError { value: n })
+            None
         }
     }
 

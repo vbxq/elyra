@@ -14,6 +14,7 @@ mod gc;
 mod globals;
 mod init;
 mod inline_cache;
+mod ints;
 mod jit;
 mod jit_frame;
 mod native;

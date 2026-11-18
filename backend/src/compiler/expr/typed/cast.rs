@@ -42,6 +42,7 @@ impl Compiler {
                 to == from || (to.contains(from.min()) && to.contains(from.max()))
             }
             (Some(_), None) => false,
+            (None, Some(aelys_bytecode::SizedInt::U64)) => false,
             (None, _) => {
                 (inner.ty.is_integer() && target == CastTarget::Int)
                     || (inner.ty.is_float() && target == CastTarget::Float)

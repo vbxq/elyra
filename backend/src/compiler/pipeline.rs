@@ -351,7 +351,9 @@ fn type_descriptor_bounded(
         InferType::I8 => TypeDescriptor::Int(IntWidth::I8),
         InferType::I16 => TypeDescriptor::Int(IntWidth::I16),
         InferType::I32 => TypeDescriptor::Int(IntWidth::I32),
-        InferType::I64 | InferType::Numeric => TypeDescriptor::Int(IntWidth::I64),
+        InferType::I64 | InferType::Int64 | InferType::Numeric => {
+            TypeDescriptor::Int(IntWidth::I64)
+        }
         InferType::U8 => TypeDescriptor::Int(IntWidth::U8),
         InferType::U16 => TypeDescriptor::Int(IntWidth::U16),
         InferType::U32 => TypeDescriptor::Int(IntWidth::U32),

@@ -330,7 +330,7 @@ let mut result = 0
 for index in 0..10000 {
     result = overflow(41)
 }
-overflow(140737488355327)
+overflow(9223372036854775807)
 "#;
 
     for mode in [JitMode::Off, JitMode::Baseline, JitMode::Tiered] {
@@ -476,7 +476,7 @@ add_one(39) + add_two(0)
 
 #[test]
 fn jit_arithmetic_overflow_falls_back_to_the_structured_interpreter_error() {
-    for expression in ["(value + 1) - 1", "value * value"] {
+    for expression in ["(value * value) - 1", "value * (value + 1)"] {
         let source = format!(
             "fn overflow(value: int) -> int {{ return {expression} }}\noverflow(140737488355327)"
         );

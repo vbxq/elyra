@@ -1,97 +1,36 @@
 use super::super::VM;
 use super::super::Value;
-use aelys_common::error::{RuntimeError, RuntimeErrorKind};
+use aelys_bytecode::IntOp;
+use aelys_common::error::RuntimeError;
 
-pub(super) fn try_add_numbers(left: Value, right: Value) -> Option<Value> {
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
-        return Some(Value::int(a.wrapping_add(b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
-        return Some(Value::float(a + b));
-    }
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-        return Some(Value::float(a as f64 + b));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-        return Some(Value::float(a + b as f64));
-    }
-    None
+fn both_ints(vm: &VM, left: Value, right: Value) -> bool {
+    vm.is_int_value(left) && vm.is_int_value(right)
 }
 
-pub(super) fn try_sub_numbers(left: Value, right: Value) -> Option<Value> {
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
-        return Some(Value::int(a.wrapping_sub(b)));
+fn floats(vm: &VM, left: Value, right: Value) -> Option<(f64, f64)> {
+    if left.as_float().is_none() && right.as_float().is_none() {
+        return None;
     }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
-        return Some(Value::float(a - b));
-    }
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-        return Some(Value::float(a as f64 - b));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-        return Some(Value::float(a - b as f64));
-    }
-    None
+    Some((vm.number_as_f64(left)?, vm.number_as_f64(right)?))
 }
 
-pub(super) fn try_mul_numbers(left: Value, right: Value) -> Option<Value> {
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
-        return Some(Value::int(a.wrapping_mul(b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
-        return Some(Value::float(a * b));
-    }
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-        return Some(Value::float(a as f64 * b));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-        return Some(Value::float(a * b as f64));
-    }
-    None
-}
-
-pub(super) fn try_div_numbers(
-    vm: &VM,
+pub(super) fn try_numbers(
+    vm: &mut VM,
+    op: IntOp,
     left: Value,
     right: Value,
 ) -> Result<Option<Value>, RuntimeError> {
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
-        if b == 0 {
-            return Err(vm.runtime_error(RuntimeErrorKind::DivisionByZero));
-        }
-        return Ok(Some(Value::int(a / b)));
+    if both_ints(vm, left, right) {
+        return vm.int_binary(op, left, right).map(Some);
     }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
-        return Ok(Some(Value::float(a / b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-        return Ok(Some(Value::float(a as f64 / b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-        return Ok(Some(Value::float(a / b as f64)));
-    }
-    Ok(None)
-}
-
-pub(super) fn try_mod_numbers(
-    vm: &VM,
-    left: Value,
-    right: Value,
-) -> Result<Option<Value>, RuntimeError> {
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
-        if b == 0 {
-            return Err(vm.runtime_error(RuntimeErrorKind::DivisionByZero));
-        }
-        return Ok(Some(Value::int(a % b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
-        return Ok(Some(Value::float(a % b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_int(), right.as_float()) {
-        return Ok(Some(Value::float(a as f64 % b)));
-    }
-    if let (Some(a), Some(b)) = (left.as_float(), right.as_int()) {
-        return Ok(Some(Value::float(a % b as f64)));
-    }
-    Ok(None)
+    let Some((a, b)) = floats(vm, left, right) else {
+        return Ok(None);
+    };
+    Ok(Some(Value::float(match op {
+        IntOp::Add => a + b,
+        IntOp::Sub => a - b,
+        IntOp::Mul => a * b,
+        IntOp::Div => a / b,
+        _ => a % b,
+    })))
 }

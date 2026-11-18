@@ -1,16 +1,7 @@
 use super::super::decode::decode_abc;
 use crate::vm::{VM, Value};
+use aelys_bytecode::IntOp;
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
-
-#[inline(always)]
-pub(crate) fn checked_int_shl(left: i64, right: i64) -> Option<i64> {
-    let exact = i128::from(left) << (right & 63);
-    if exact >= i128::from(Value::INT_MIN) && exact <= i128::from(Value::INT_MAX) {
-        Some(exact as i64)
-    } else {
-        None
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
@@ -37,24 +28,17 @@ pub(crate) fn execute_xor(
     }
     // SAFETY: all three register indices are checked against the stable register window above.
     let (left, right) = unsafe { (*registers.add(left), *registers.add(right)) };
-    if let (Some(left), Some(right)) = (left.as_int(), right.as_int()) {
-        // SAFETY: the destination register index is checked against the stable window above.
-        unsafe {
-            *registers.add(dest) = Value::int_wrapping(left ^ right);
-        }
-        Ok(())
+    let result = if let (Some(left), Some(right)) = (left.as_int(), right.as_int()) {
+        Value::int_wrapping(left ^ right)
     } else {
         vm.frames[current_frame_idx].ip = ip;
-        Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-            operation: "^",
-            expected: "integer",
-            got: format!(
-                "{} and {}",
-                vm.value_type_name(left),
-                vm.value_type_name(right)
-            ),
-        }))
+        vm.int_binary(IntOp::Xor, left, right)?
+    };
+    // SAFETY: the destination register index is checked against the stable window above.
+    unsafe {
+        *registers.add(dest) = result;
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -83,11 +67,6 @@ pub(crate) fn execute(
             unsafe { *registers.add(index) }
         }};
     }
-    macro_rules! reg_ref {
-        ($index:expr) => {
-            reg_get!($index)
-        };
-    }
     macro_rules! reg_set {
         ($index:expr, $value:expr) => {{
             let index = $index;
@@ -104,227 +83,262 @@ pub(crate) fn execute(
             }
         }};
     }
+    macro_rules! slow {
+        ($op:expr, $left:expr, $right:expr) => {{
+            vm.frames[current_frame_idx].ip = ip;
+            vm.int_binary($op, $left, $right)?
+        }};
+    }
 
     // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),
     // BitNot(110), ShlII(111)-XorII(115), NotI(116), ShlIImm(117)-XorIImm(121)
 
+    let (a, b, c) = decode_abc(instr);
+    let dest = base + a as usize;
     match opcode_byte {
-        // Shl (105) - Generic left shift
         105 => {
-            let (a, b, c) = decode_abc(instr);
             let left = reg_get!(base + b as usize);
             let right = reg_get!(base + c as usize);
-
-            if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                let Some(result) = checked_int_shl(l, r) else {
-                    vm.frames[current_frame_idx].ip = ip;
-                    return Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
-                };
-                reg_set!(base + a as usize, Value::int_wrapping(result));
-            } else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-                    operation: "<<",
-                    expected: "integer",
-                    got: format!(
-                        "{} and {}",
-                        vm.value_type_name(left),
-                        vm.value_type_name(right)
-                    ),
-                }));
-            }
+            let fast = match (left.as_int(), right.as_int()) {
+                (Some(l), Some(r)) => aelys_bytecode::checked_int_op(IntOp::Shl, l, r)
+                    .ok()
+                    .and_then(Value::inline_int),
+                _ => None,
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Shl, left, right),
+            };
+            reg_set!(dest, result);
         }
 
-        // Shr (106) - Generic arithmetic right shift
         106 => {
-            let (a, b, c) = decode_abc(instr);
             let left = reg_get!(base + b as usize);
             let right = reg_get!(base + c as usize);
-
-            if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                // Mask shift amount to 0-63 range (branchless, prevents Rust UB)
-                reg_set!(base + a as usize, Value::int_wrapping(l >> (r & 63)));
-            } else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-                    operation: ">>",
-                    expected: "integer",
-                    got: format!(
-                        "{} and {}",
-                        vm.value_type_name(left),
-                        vm.value_type_name(right)
-                    ),
-                }));
-            }
+            let fast = match (left.as_int(), right.as_int()) {
+                (Some(l), Some(r)) => Some(Value::int_wrapping(l >> (r & 63))),
+                _ => None,
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Shr, left, right),
+            };
+            reg_set!(dest, result);
         }
 
-        // BitAnd (107) - Generic bitwise AND
         107 => {
-            let (a, b, c) = decode_abc(instr);
             let left = reg_get!(base + b as usize);
             let right = reg_get!(base + c as usize);
-
-            if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                reg_set!(base + a as usize, Value::int_wrapping(l & r));
-            } else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-                    operation: "&",
-                    expected: "integer",
-                    got: format!(
-                        "{} and {}",
-                        vm.value_type_name(left),
-                        vm.value_type_name(right)
-                    ),
-                }));
-            }
+            let fast = match (left.as_int(), right.as_int()) {
+                (Some(l), Some(r)) => Some(Value::int_wrapping(l & r)),
+                _ => None,
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::And, left, right),
+            };
+            reg_set!(dest, result);
         }
 
-        // BitOr (108) - Generic bitwise OR
         108 => {
-            let (a, b, c) = decode_abc(instr);
             let left = reg_get!(base + b as usize);
             let right = reg_get!(base + c as usize);
-
-            if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                reg_set!(base + a as usize, Value::int_wrapping(l | r));
-            } else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-                    operation: "|",
-                    expected: "integer",
-                    got: format!(
-                        "{} and {}",
-                        vm.value_type_name(left),
-                        vm.value_type_name(right)
-                    ),
-                }));
-            }
+            let fast = match (left.as_int(), right.as_int()) {
+                (Some(l), Some(r)) => Some(Value::int_wrapping(l | r)),
+                _ => None,
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Or, left, right),
+            };
+            reg_set!(dest, result);
         }
 
-        // BitXor (109) - Generic bitwise XOR
-        109 => {
-            execute_xor(
-                vm,
-                ip,
-                base,
-                current_frame_idx,
-                registers,
-                registers_len,
-                instr,
-            )?;
-        }
-
-        // BitNot (110) - Generic bitwise NOT
         110 => {
-            let (a, b, _) = decode_abc(instr);
             let value = reg_get!(base + b as usize);
+            let result = match value.as_int() {
+                Some(n) => Value::int_wrapping(!n),
+                None => {
+                    vm.frames[current_frame_idx].ip = ip;
+                    vm.int_not(value)?
+                }
+            };
+            reg_set!(dest, result);
+        }
 
-            if let Some(n) = value.as_int() {
-                reg_set!(base + a as usize, Value::int_wrapping(!n));
+        111 => {
+            let left = reg_get!(base + b as usize);
+            let right = reg_get!(base + c as usize);
+            let fast = if left.both_inline_int_bits(&right) {
+                let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                aelys_bytecode::checked_int_op(IntOp::Shl, l, r)
+                    .ok()
+                    .and_then(Value::inline_int)
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Shl, left, right),
+            };
+            reg_set!(dest, result);
+        }
+
+        112 => {
+            let left = reg_get!(base + b as usize);
+            let right = reg_get!(base + c as usize);
+            let fast = if left.both_inline_int_bits(&right) {
+                let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                Some(Value::int_wrapping(l >> (r & 63)))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Shr, left, right),
+            };
+            reg_set!(dest, result);
+        }
+
+        113 => {
+            let left = reg_get!(base + b as usize);
+            let right = reg_get!(base + c as usize);
+            let fast = if left.both_inline_int_bits(&right) {
+                let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                Some(Value::int_wrapping(l & r))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::And, left, right),
+            };
+            reg_set!(dest, result);
+        }
+
+        114 => {
+            let left = reg_get!(base + b as usize);
+            let right = reg_get!(base + c as usize);
+            let fast = if left.both_inline_int_bits(&right) {
+                let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                Some(Value::int_wrapping(l | r))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Or, left, right),
+            };
+            reg_set!(dest, result);
+        }
+
+        115 => {
+            let left = reg_get!(base + b as usize);
+            let right = reg_get!(base + c as usize);
+            let fast = if left.both_inline_int_bits(&right) {
+                let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
+                Some(Value::int_wrapping(l ^ r))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Xor, left, right),
+            };
+            reg_set!(dest, result);
+        }
+
+        116 => {
+            let value = reg_get!(base + b as usize);
+            let result = if value.has_inline_int_bit() {
+                Value::int_wrapping(!value.as_int_unchecked())
             } else {
                 vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
-                    operation: "~",
-                    expected: "integer",
-                    got: vm.value_type_name(value).to_string(),
-                }));
-            }
-        }
-
-        // ShlII (111) - Type-specialized left shift
-        111 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            let r = reg_ref!(base + c as usize).as_int_unchecked();
-            let Some(result) = checked_int_shl(l, r) else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
+                vm.int_not(value)?
             };
-            reg_set!(base + a as usize, Value::int_wrapping(result));
+            reg_set!(dest, result);
         }
 
-        // ShrII (112) - Type-specialized right shift
-        112 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            let r = reg_ref!(base + c as usize).as_int_unchecked();
-            // Mask shift amount to 0-63 range (branchless, prevents Rust UB)
-            reg_set!(base + a as usize, Value::int_wrapping(l >> (r & 63)));
-        }
-
-        // AndII (113) - Type-specialized bitwise AND
-        113 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            let r = reg_ref!(base + c as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(l & r));
-        }
-
-        // OrII (114) - Type-specialized bitwise OR
-        114 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            let r = reg_ref!(base + c as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(l | r));
-        }
-
-        // XorII (115) - Type-specialized bitwise XOR
-        115 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            let r = reg_ref!(base + c as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(l ^ r));
-        }
-
-        // NotI (116) - Type-specialized bitwise NOT
-        116 => {
-            let (a, b, _) = decode_abc(instr);
-            let n = reg_ref!(base + b as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(!n));
-        }
-
-        // ShlIImm (117) - Left shift with immediate
         117 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            let Some(result) = checked_int_shl(l, i64::from(c)) else {
-                vm.frames[current_frame_idx].ip = ip;
-                return Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow));
+            let left = reg_get!(base + b as usize);
+            let r = c as i64;
+            let fast = if left.has_inline_int_bit() {
+                let l = left.as_int_unchecked();
+                aelys_bytecode::checked_int_op(IntOp::Shl, l, r)
+                    .ok()
+                    .and_then(Value::inline_int)
+            } else {
+                None
             };
-            reg_set!(base + a as usize, Value::int_wrapping(result));
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Shl, left, Value::int(r)),
+            };
+            reg_set!(dest, result);
         }
 
-        // ShrIImm (118) - Right shift with immediate
         118 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            // Mask shift amount to 0-63 range (branchless, prevents Rust UB)
-            reg_set!(
-                base + a as usize,
-                Value::int_wrapping(l >> ((c & 63) as i64))
-            );
+            let left = reg_get!(base + b as usize);
+            let r = c as i64;
+            let fast = if left.has_inline_int_bit() {
+                let l = left.as_int_unchecked();
+                Some(Value::int_wrapping(l >> (r & 63)))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Shr, left, Value::int(r)),
+            };
+            reg_set!(dest, result);
         }
 
-        // AndIImm (119) - Bitwise AND with immediate
         119 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(l & (c as i64)));
+            let left = reg_get!(base + b as usize);
+            let r = c as i64;
+            let fast = if left.has_inline_int_bit() {
+                let l = left.as_int_unchecked();
+                Some(Value::int_wrapping(l & r))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::And, left, Value::int(r)),
+            };
+            reg_set!(dest, result);
         }
 
-        // OrIImm (120) - Bitwise OR with immediate
         120 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(l | (c as i64)));
+            let left = reg_get!(base + b as usize);
+            let r = c as i64;
+            let fast = if left.has_inline_int_bit() {
+                let l = left.as_int_unchecked();
+                Some(Value::int_wrapping(l | r))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Or, left, Value::int(r)),
+            };
+            reg_set!(dest, result);
         }
 
-        // XorIImm (121) - Bitwise XOR with immediate
         121 => {
-            let (a, b, c) = decode_abc(instr);
-            let l = reg_ref!(base + b as usize).as_int_unchecked();
-            reg_set!(base + a as usize, Value::int_wrapping(l ^ (c as i64)));
+            let left = reg_get!(base + b as usize);
+            let r = c as i64;
+            let fast = if left.has_inline_int_bit() {
+                let l = left.as_int_unchecked();
+                Some(Value::int_wrapping(l ^ r))
+            } else {
+                None
+            };
+            let result = match fast {
+                Some(result) => result,
+                None => slow!(IntOp::Xor, left, Value::int(r)),
+            };
+            reg_set!(dest, result);
         }
 
         _ => unreachable!(),

@@ -102,26 +102,24 @@ nested(1, 2)
 
 #[test]
 fn test_large_integers() {
-    // Integers exceeding 48-bit range should produce an error
-    let err = run_aelys_err(
+    let result = run_aelys(
         r#"
 let a = 9007199254740000
-a
+a / 1000
 "#,
     );
-    assert!(err.contains("integer") && err.contains("exceeds") && err.contains("range"));
+    assert_eq!(result.as_int(), Some(9007199254740));
 }
 
 #[test]
 fn test_negative_large_integer() {
-    // Negative integers exceeding 48-bit range should produce an error
-    let err = run_aelys_err(
+    let result = run_aelys(
         r#"
 let c = -9007199254740991
-c
+c % 1000000
 "#,
     );
-    assert!(err.contains("integer") && err.contains("exceeds") && err.contains("range"));
+    assert_eq!(result.as_int(), Some(-740991));
 }
 
 #[test]
@@ -603,9 +601,10 @@ fn test_max_int_value() {
     let result = run_aelys("140737488355327");
     assert_eq!(result.as_int(), Some(140737488355327));
 
-    // Values exceeding 48-bit range should error
-    let err = run_aelys_err("140737488355328");
-    assert!(err.contains("integer") && err.contains("exceeds") && err.contains("range"));
+    let result = run_aelys("140737488355328 - 1");
+    assert_eq!(result.as_int(), Some(140737488355327));
+    let err = run_aelys_err("9223372036854775807 + 1");
+    assert!(err.contains("integer overflow"), "{err}");
 }
 
 #[test]
@@ -616,8 +615,11 @@ fn test_min_int_value() {
     let result = run_aelys("-140737488355328");
     assert_eq!(result.as_int(), Some(-140737488355328));
 
-    let err = run_aelys_err("-140737488355329");
-    assert!(err.contains("integer") && err.contains("exceeds") && err.contains("range"));
+    let result = run_aelys("-140737488355329 + 1");
+    assert_eq!(result.as_int(), Some(-140737488355328));
+
+    let err = run_aelys_err("-9223372036854775807 - 2");
+    assert!(err.contains("integer overflow"), "{err}");
 }
 
 #[test]

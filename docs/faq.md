@@ -2,11 +2,11 @@
 
 ## Language Design
 
-### Why 48-bit integers?
+### How big is an `int`?
 
-The VM uses NaN-boxing for value representation. A 64-bit float has certain bit patterns that represent NaN (Not a Number). Since there are many such patterns but we only need one NaN, I use the extras to encode other types.
+`int` is a 64-bit signed integer whose arithmetic traps on overflow; `i64` and `u64` are the wrapping 64-bit types.
 
-After encoding type tags, there are 48 bits left for integer payloads. That's roughly ±140 trillion - enough for most purposes. If you need bigger numbers, use floats (with some precision loss) or wait until I add bigints.
+The VM uses NaN-boxing for value representation. A 64-bit float has certain bit patterns that represent NaN (Not a Number). Since there are many such patterns but we only need one NaN, I use the extras to encode other types. After the type tags there are 48 bits left, so an integer in -2^47..2^47 (about ±140 trillion) lives inside the value itself and costs nothing. A larger integer is stored as a small immutable heap object; it behaves exactly like a small one (comparisons, `Map` keys, sorting, printing are by value) and only costs an allocation when it is produced.
 
 ## Performance
 

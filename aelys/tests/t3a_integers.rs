@@ -688,22 +688,18 @@ fn mixing_integer_types_in_a_binary_operation_is_refused_with_help() {
 }
 
 #[test]
-fn i64_and_u64_are_refused_because_int_is_48_bits() {
+fn i64_and_u64_are_accepted_as_wrapping_64_bit_types() {
     for source in [
-        "let a: i64 = 1",
-        "let a: u64 = 1",
-        "fn f(x: i64) -> int { 0 }",
-        "fn f() -> u64 { 0 }",
-        "struct S { v: i64 }",
-        "let x = 100 as i64",
-        "let v: Vec<u64> = vec![]",
-        "let a: int64 = 1",
+        "let a: i64 = 1\n0",
+        "let a: u64 = 1\n0",
+        "fn f(x: i64) -> int { 0 }\nf(1)",
+        "fn f() -> u64 { 0 }\nf() as int",
+        "struct S { v: i64 }\nS { v: 1 }.v as int - 1",
+        "let x = 100 as i64\n(x - 100) as int",
+        "let v: Vec<u64> = vec![]\nv.len()",
+        "let a: int64 = 1\n(a - 1) as int",
     ] {
-        let error = run_aelys_err(source);
-        assert!(
-            error.contains("E0461") && error.contains("int is a 48-bit integer"),
-            "{source}: {error}"
-        );
+        assert_aelys_int(source, 0);
     }
 }
 
@@ -792,7 +788,9 @@ fn int_shift_left_traps_on_overflow_like_multiplication() {
     assert_aelys_int(&format!("{source}shl(1, 46)"), 1 << 46);
     assert_aelys_int(&format!("{source}shl(-1, 47)"), -(1 << 47));
     assert_aelys_int(&format!("{source}shl(0, 63)"), 0);
-    for call in ["shl(1, 47)", "shl(3, 46)", "shl(-3, 46)", "shl(1, 63)"] {
+    assert_aelys_int(&format!("{source}shl(1, 62) >> 60"), 4);
+    assert_aelys_int(&format!("{source}shl(-1, 63) >> 62"), -2);
+    for call in ["shl(1, 63)", "shl(3, 62)", "shl(-3, 62)", "shl(2, 62)"] {
         assert_aelys_error_contains(&format!("{source}{call}"), "integer overflow");
     }
 }

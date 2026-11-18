@@ -40,19 +40,19 @@ fn an_unused_out_of_bounds_fixed_array_index_still_traps() {
 
 #[test]
 fn an_unused_overflowing_multiplication_still_traps() {
-    let source = "let a = 140737488355327\nlet b = 2\nlet _x = a * b\nprintln(\"after\")\n";
+    let source = "let a = 9223372036854775807\nlet b = 2\nlet _x = a * b\nprintln(\"after\")\n";
     assert_traps_at_every_level(source, &[], "integer overflow");
 }
 
 #[test]
 fn an_unused_overflowing_addition_of_constants_still_traps() {
-    let source = "let _x = 140737488355327 + 1\nprintln(\"after\")\n";
+    let source = "let _x = 9223372036854775807 + 1\nprintln(\"after\")\n";
     assert_traps_at_every_level(source, &[], "integer overflow");
 }
 
 #[test]
 fn an_unused_overflowing_negation_still_traps() {
-    let source = "let a = -140737488355328\nlet _x = -a\nprintln(\"after\")\n";
+    let source = "let a = -9223372036854775808\nlet _x = -a\nprintln(\"after\")\n";
     assert_traps_at_every_level(source, &[], "integer overflow");
 }
 

@@ -1,6 +1,6 @@
 use super::{
     AelysArray, AelysClosure, AelysEnum, AelysFunction, AelysMap, AelysRange, AelysString,
-    AelysStruct, AelysSum, AelysUpvalue, AelysVec, NativeFunction,
+    AelysStruct, AelysSum, AelysUpvalue, AelysVec, BoxedInt, NativeFunction,
 };
 
 #[derive(Debug)]
@@ -17,4 +17,5 @@ pub enum ObjectKind {
     Sum(AelysSum),
     Enum(AelysEnum),
     Struct(Box<AelysStruct>),
+    Int(BoxedInt),
 }

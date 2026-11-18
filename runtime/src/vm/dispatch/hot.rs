@@ -422,6 +422,10 @@ impl VM {
         let Some(kind) = FixedKind::from_u8((instr >> 16) as u8) else {
             return false;
         };
+        let inline = |index: usize| unsafe { (*regs.add(index)).is_int() };
+        if !inline(left) || !inline(right) || (mode != 0 && !inline(shift_register)) {
+            return false;
+        }
         let int = |index: usize| unsafe { (*regs.add(index)).as_int_unchecked() };
         let shift = if mode == 0 {
             i64::from(instr as u8)
@@ -434,10 +438,13 @@ impl VM {
             OpCode::ShlDiv
         };
         match fixed_value(opcode, kind, int(left), int(right), shift) {
-            Some(Some(result)) => {
-                unsafe { *regs.add(target) = Value::int_wrapping(result) };
-                true
-            }
+            Some(Some(result)) => match int48(result) {
+                Some(value) => {
+                    unsafe { *regs.add(target) = value };
+                    true
+                }
+                None => false,
+            },
             _ => false,
         }
     }
@@ -548,7 +555,8 @@ impl VM {
     // leaves before any effect of the instruction at the returned ip
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    pub(super) fn run_hot<const JIT: bool>(
+    // no boxed int exists before the first one is allocated, and the hot loop allocates none, so typed int operands are inline
+    pub(super) fn run_hot<const JIT: bool, const BOXED: bool>(
         &mut self,
         mut ip: usize,
         mut base: usize,
@@ -587,9 +595,13 @@ impl VM {
             }};
         }
         macro_rules! int {
-            ($index:expr) => {
-                get!($index).as_int_unchecked()
-            };
+            ($index:expr) => {{
+                let value = get!($index);
+                if BOXED && !value.has_inline_int_bit() {
+                    leave!();
+                }
+                value.as_int_unchecked()
+            }};
         }
         macro_rules! or_leave {
             ($option:expr) => {
@@ -1355,7 +1367,8 @@ impl VM {
                     next
                 }
                 NEG_W | NOT_W => {
-                    let kind = or_leave!(SizedInt::from_u8(c as u8));
+                    let kind =
+                        or_leave!(SizedInt::from_u8(c as u8).filter(|kind| kind.bits() < 64));
                     let opcode = if (instr >> 24) as u8 == NEG_W {
                         OpCode::NegW
                     } else {
