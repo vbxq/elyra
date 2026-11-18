@@ -1409,13 +1409,15 @@ let mut c = a.clone()          // ✓
 let h = World { ps: vec![], ids: [0; 4] }
 let mut ps = h.ps              // ✗ error[E0323]
 let mut b = if c { a } else { P { x: 0, y: 0 } }   // ✗ error[E0323]
+let mut d = P { x: 0, y: 0 }
+d = a                          // ✗ error[E0323]: cannot assign `a` to the mutable binding `d`
 fn bump(mut p: P) { p.x += 1 }
 bump(a)                        // ✗ error[E0323]: cannot pass `a` to the `mut` parameter `p`
 ```
 
 The message names the place and its root and suggests `a.clone()` or `let mut
-a`. When the root is mutable, `let mut b = a` and passing `a` to a `mut`
-parameter are allowed and share the object. Storing an aggregate in a
+a`. When the root is mutable, `let mut b = a`, `d = a` and passing `a` to a
+`mut` parameter are allowed and share the object. Storing an aggregate in a
 container or a field (`v.push(a)`, `S { inner: a }`) always shares it and is
 never an error. A function that receives an immutable parameter can still
 return it, and the caller may bind the result mutably: a returned value is a
@@ -2533,7 +2535,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0320 | UnconsumedCollectionIterator | a bare `iter()` is not a value |
 | E0321 | ConstantIndexOutOfBounds | a constant index leaves the collection |
 | E0322 | CollectionCollectRequiresPipeline | `collect` needs a pipeline |
-| E0323 | MutableCollectionAlias | a mutable alias (`let mut`, a `mut` parameter) of an aggregate reachable from an immutable binding |
+| E0323 | MutableCollectionAlias | a mutable alias (`let mut`, an assignment to a mutable binding, a `mut` parameter) of an aggregate reachable from an immutable binding |
 | E0324 | NonExhaustiveStruct | a struct match needs `_` or an irrefutable field pattern |
 | E0325 | GenericStructDeferred | this generic struct form is not delivered |
 | E0326 | DuplicateNominal | two declarations share a name |

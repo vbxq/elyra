@@ -94,7 +94,11 @@ impl TypeInference {
         };
 
         if mutable {
-            self.record_mutable_alias(initializer, &var_type, None);
+            self.record_mutable_alias(
+                initializer,
+                &var_type,
+                crate::constraint::AliasSite::Binding,
+            );
         }
 
         if name != "_" {

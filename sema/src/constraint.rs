@@ -4,6 +4,7 @@ mod reason;
 
 pub use definition::Constraint;
 pub use error::{
-    AssociatedItemDisagreement, ItemNamespace, ProjectionFailure, TypeError, TypeErrorKind,
+    AliasSite, AssociatedItemDisagreement, ItemNamespace, ProjectionFailure, TypeError,
+    TypeErrorKind,
 };
 pub use reason::ConstraintReason;

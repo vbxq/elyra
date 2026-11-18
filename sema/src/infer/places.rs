@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
+use crate::constraint::{AliasSite, ConstraintReason, TypeError, TypeErrorKind};
 use crate::types::InferType;
 use aelys_syntax::{Expr, ExprKind, ReferenceKind, Span, Stmt, StmtKind};
 
@@ -8,7 +8,7 @@ pub(crate) struct AliasResidual {
     span: Span,
     place: String,
     root: String,
-    parameter: Option<String>,
+    site: AliasSite,
 }
 
 pub(crate) fn place_root(expr: &Expr) -> Option<&str> {
@@ -125,12 +125,7 @@ impl TypeInference {
         }
     }
 
-    pub(crate) fn record_mutable_alias(
-        &mut self,
-        source: &Expr,
-        ty: &InferType,
-        parameter: Option<&str>,
-    ) {
+    pub(crate) fn record_mutable_alias(&mut self, source: &Expr, ty: &InferType, site: AliasSite) {
         let mut places = Vec::new();
         source_places(source, &mut places);
         for place in places {
@@ -148,7 +143,7 @@ impl TypeInference {
                 span: place.span,
                 place: render_place(place),
                 root: root.to_string(),
-                parameter: parameter.map(str::to_string),
+                site: site.clone(),
             });
         }
     }
@@ -164,7 +159,7 @@ impl TypeInference {
                 kind: TypeErrorKind::MutableCollectionAlias {
                     place: residual.place,
                     root: residual.root,
-                    parameter: residual.parameter,
+                    site: residual.site,
                 },
                 span: residual.span,
                 reason: ConstraintReason::Other("mutable alias".to_string()),

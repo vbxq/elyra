@@ -186,7 +186,11 @@ impl TypeInference {
         ));
         for (index, (arg, typed_arg)) in args.iter().zip(&typed_args).enumerate() {
             if let Some(Some(parameter)) = mutable_params.get(index + receiver_offset) {
-                self.record_mutable_alias(arg, &typed_arg.ty, Some(parameter));
+                self.record_mutable_alias(
+                    arg,
+                    &typed_arg.ty,
+                    crate::constraint::AliasSite::Parameter(parameter.to_string()),
+                );
             }
         }
         let argument_indices = effective_argument_indices(&typed_args);

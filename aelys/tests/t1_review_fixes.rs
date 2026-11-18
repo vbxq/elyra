@@ -251,3 +251,74 @@ a
         41,
     );
 }
+
+const ALIAS_SHAPES: &str = r#"
+struct In { c: int }
+struct S { x: int, inner: In, items: Vec<int> }
+fn mk() -> S { S { x: 0, inner: In { c: 0 }, items: vec![] } }
+"#;
+
+fn alias_program(body: &str) -> String {
+    format!("{ALIAS_SHAPES}\n{body}")
+}
+
+#[test]
+fn assigning_an_immutable_aggregate_to_a_mutable_binding_is_rejected_everywhere() {
+    let cases = [
+        "let a = mk()\nlet mut b = mk()\nb = a\nb.x = 99",
+        "fn f(a: S) -> int { let mut b = mk(); b = a; b.x = 99; a.x }",
+        "let a = mk()\nlet mut g = mk()\nfn run() { g = a; g.x = 99 }",
+        "let v = vec![1, 2]\nlet mut w: Vec<int> = vec![]\nw = v\nw.push(3)",
+        "let a = mk()\nlet mut i = In { c: 1 }\ni = a.inner",
+        "let a = mk()\nlet mut xs = vec![0]\nxs = a.items",
+        "let a = [[1, 2], [3, 4]]\nlet mut row = [0, 0]\nrow = a[1]",
+        "let a = mk()\nlet mut b = mk()\nlet c = true\nb = if c { a } else { mk() }",
+        "let a = mk()\nlet mut b = mk()\nb = match a.x { 0 => a, _ => mk() }",
+        "impl S { fn grab(self) -> int { let mut xs = vec![0]; xs = self.items; xs.len() } }",
+        "let a = mk()\nlet mut b = mk()\nlet f = fn() { b = a }",
+        "fn g<T>(a: Vec<T>) { let mut w: Vec<T> = vec![]; w = a }",
+    ];
+    for body in cases {
+        let message = assert_rejected(&alias_program(body), "E0323");
+        assert!(
+            message.contains("to the mutable binding"),
+            "the message must name the assignment:\n{message}"
+        );
+    }
+}
+
+#[test]
+fn assignments_that_do_not_alias_an_immutable_root_are_accepted() {
+    let cases = [
+        "let a = mk()\nlet mut b = mk()\nb = a.clone()\nb.x = 99",
+        "let mut a = mk()\nlet mut b = mk()\nb = a\nb.x = 99",
+        "let a = mk()\nlet mut n = 0\nn = a.x",
+        "let a = In { c: 1 }\nlet mut s = mk()\ns.inner = a",
+        "let a = vec![1]\nlet mut ws = vec![vec![0]]\nws[0] = a",
+        "fn f(mut a: S) { let mut b = mk(); b = a; b.x = 1 }",
+        "let mut b = mk()\nb = mk()",
+    ];
+    for body in cases {
+        assert_accepted(&alias_program(body));
+    }
+}
+
+#[test]
+fn assignment_through_a_mutable_binding_shares_with_a_mutable_source() {
+    assert_int_everywhere(
+        &alias_program(
+            r#"
+let mut a = mk()
+let mut b = mk()
+b = a
+b.x = 7
+let c = mk()
+let mut d = mk()
+d = c.clone()
+d.x = 9
+a.x * 100 + c.x * 10 + d.x
+"#,
+        ),
+        7 * 100 + 9,
+    );
+}

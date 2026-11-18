@@ -114,6 +114,13 @@ pub enum ProjectionFailure {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AliasSite {
+    Binding,
+    Parameter(String),
+    Assignment(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum TypeErrorKind {
     Mismatch {
@@ -279,7 +286,7 @@ pub enum TypeErrorKind {
     MutableCollectionAlias {
         place: String,
         root: String,
-        parameter: Option<String>,
+        site: AliasSite,
     },
     GenericStructDeferred {
         name: String,
@@ -941,16 +948,15 @@ impl TypeError {
                 f,
                 "the initializer of constant `{name}` is not a compile-time constant\n   = help: use literals, arithmetic, comparisons, `as` casts and other constants, or declare `{name}` with `let`"
             ),
-            TypeErrorKind::MutableCollectionAlias {
-                place,
-                root,
-                parameter,
-            } => {
-                let site = match parameter {
-                    Some(parameter) => {
+            TypeErrorKind::MutableCollectionAlias { place, root, site } => {
+                let site = match site {
+                    AliasSite::Parameter(parameter) => {
                         format!("pass `{place}` to the `mut` parameter `{parameter}`")
                     }
-                    None => format!("bind `{place}` mutably"),
+                    AliasSite::Binding => format!("bind `{place}` mutably"),
+                    AliasSite::Assignment(target) => {
+                        format!("assign `{place}` to the mutable binding `{target}`")
+                    }
                 };
                 write!(
                     f,
