@@ -406,7 +406,7 @@ fn write_file_bytes_writes_every_byte_of_a_buffer_unchanged() {
     let source = format!(
         r#"
 needs std::fs
-needs std::bytes
+needs std::bytes as bytes
 let b = bytes::alloc(4)
 bytes::write_u8(b, 0, 200)
 bytes::write_u8(b, 1, 0)
@@ -431,7 +431,7 @@ fn write_buffer_writes_the_raw_bytes_to_an_open_handle() {
     let source = format!(
         r#"
 needs std::fs
-needs std::bytes
+needs std::bytes as bytes
 let b = bytes::alloc(3)
 bytes::write_u8(b, 0, 0xC8)
 bytes::write_u8(b, 1, 0x80)
@@ -458,7 +458,7 @@ fn binary_writes_report_a_bad_buffer_or_path_as_an_error_value() {
     let source = format!(
         r#"
 needs std::fs
-needs std::bytes
+needs std::bytes as bytes
 let b = bytes::alloc(1)
 let bad_buffer = fs::write_file_bytes("{ok}", 987654).is_err()
 let bad_path = fs::write_file_bytes("{missing}", b).is_err()
