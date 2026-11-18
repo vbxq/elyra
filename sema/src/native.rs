@@ -152,9 +152,11 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ("sys", "random_state") => function(0, InferType::I64),
 
         ("time", "now" | "now_us" | "now_ns") => function(0, InferType::F64),
-        ("time", "elapsed" | "elapsed_us") => function_with(vec![InferType::I64], InferType::F64),
+        ("time", "elapsed") => function_with(vec![InferType::I64], InferType::F64),
         ("time", "now_ms") => function(0, InferType::I64),
-        ("time", "elapsed_ms") => function_with(vec![InferType::I64], InferType::I64),
+        ("time", "elapsed_ms" | "elapsed_us") => {
+            function_with(vec![InferType::I64], InferType::I64)
+        }
         (
             "time",
             "year" | "month" | "day" | "hour" | "minute" | "second" | "weekday" | "yearday",
@@ -183,6 +185,10 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ),
         ("fs", "read_bytes") => function_with(
             vec![InferType::I64, InferType::I64],
+            result(InferType::I64, InferType::String),
+        ),
+        ("fs", "read_file_bytes") => function_with(
+            vec![InferType::String],
             result(InferType::I64, InferType::String),
         ),
         ("fs", "write" | "write_bytes" | "write_line") => function_with(

@@ -373,7 +373,8 @@ impl VM {
                                 constants_len: usize,
                             },
                             Native {
-                                native: crate::vm::NativeFunction,
+                                arity: u16,
+                                func: Option<crate::vm::NativeFunctionImpl>,
                             },
                             Closure {
                                 arity: u16,
@@ -444,7 +445,8 @@ impl VM {
                                         }
                                     }
                                     ObjectKind::Native(native) => CallData::Native {
-                                        native: native.clone(),
+                                        arity: native.arity,
+                                        func: self.native_impl(native),
                                     },
                                     ObjectKind::Closure(closure) => {
                                         let inner_gmap = self
@@ -576,24 +578,21 @@ impl VM {
                                     reload_frame_state!();
                                 }
 
-                                CallData::Native { native } => {
-                                    if native.arity != nargs {
+                                CallData::Native { arity, func } => {
+                                    if arity != nargs {
                                         return Err(self.runtime_error(
                                             RuntimeErrorKind::ArityMismatch {
-                                                expected: native.arity,
+                                                expected: arity,
                                                 got: nargs,
                                             },
                                         ));
                                     }
-
-                                    let mut args = Vec::with_capacity(usize::from(nargs));
-                                    for i in 0..nargs {
-                                        args.push(reg_get!(
-                                            base + usize::from(func_reg) + 1 + usize::from(i)
-                                        ));
-                                    }
-
-                                    match self.call_cached_native(&native, &args) {
+                                    match self.call_native_registers(
+                                        func,
+                                        callee_ref,
+                                        base + usize::from(func_reg) + 1,
+                                        usize::from(nargs),
+                                    ) {
                                         Ok(result) => {
                                             self.registers[base + usize::from(dest)] = result;
                                             regs_ptr = self.registers.as_mut_ptr();
@@ -750,7 +749,8 @@ impl VM {
                                 const_len: usize,
                             },
                             Native {
-                                native: crate::vm::NativeFunction,
+                                arity: u16,
+                                func: Option<crate::vm::NativeFunctionImpl>,
                             },
                             Closure {
                                 arity: u16,
@@ -884,7 +884,8 @@ impl VM {
                                         }
                                     }
                                     ObjectKind::Native(native) => CallData::Native {
-                                        native: native.clone(),
+                                        arity: native.arity,
+                                        func: self.native_impl(native),
                                     },
                                     ObjectKind::Closure(closure) => {
                                         let inner_gmap = self
@@ -1017,20 +1018,21 @@ impl VM {
                                     self.frames.push(new_frame);
                                     reload_frame_state!();
                                 }
-                                CallData::Native { native } => {
-                                    if native.arity != u16::from(nargs) {
+                                CallData::Native { arity, func } => {
+                                    if arity != u16::from(nargs) {
                                         return Err(self.runtime_error(
                                             RuntimeErrorKind::ArityMismatch {
-                                                expected: native.arity,
+                                                expected: arity,
                                                 got: u16::from(nargs),
                                             },
                                         ));
                                     }
-                                    let mut args = Vec::with_capacity(nargs as usize);
-                                    for i in 0..nargs {
-                                        args.push(reg_get!(base + dest as usize + 1 + i as usize));
-                                    }
-                                    match self.call_cached_native(&native, &args) {
+                                    match self.call_native_registers(
+                                        func,
+                                        callee_ref,
+                                        base + dest as usize + 1,
+                                        usize::from(nargs),
+                                    ) {
                                         Ok(result) => {
                                             self.registers[base + dest as usize] = result;
                                             regs_ptr = self.registers.as_mut_ptr();

@@ -37,6 +37,7 @@ pub struct ModuleImports {
     pub known_native_globals: HashSet<String>, // native funcs for codegen opt
     pub native_signatures: HashMap<String, InferType>,
     pub symbol_origins: HashMap<String, String>, // symbol -> module_path
+    pub ambiguous_globals: HashMap<String, Vec<String>>,
     pub imported_types: aelys_sema::infer::imports::ImportedTypes,
     pub imported_impl_stmts: Vec<aelys_syntax::Stmt>,
     pub impl_body_globals: HashSet<String>,
@@ -68,6 +69,7 @@ pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
         AelysNativeType::String => InferType::String,
         AelysNativeType::Unit => InferType::Unit,
         AelysNativeType::Dynamic => InferType::Dynamic,
+        AelysNativeType::Bytes => InferType::I64,
         AelysNativeType::OptionInt => InferType::Option(Box::new(InferType::I64)),
         AelysNativeType::OptionFloat => InferType::Option(Box::new(InferType::F64)),
         AelysNativeType::OptionBool => InferType::Option(Box::new(InferType::Bool)),

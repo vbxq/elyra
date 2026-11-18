@@ -636,7 +636,7 @@ fn native_panic_is_structured_and_vm_can_be_reused() {
     let failing_ref = vm.alloc_function(failing).unwrap();
 
     let error = vm.execute(failing_ref).unwrap_err();
-    assert!(matches!(error.kind, RuntimeErrorKind::NativePanic));
+    assert!(matches!(error.kind, RuntimeErrorKind::NativePanic { .. }));
     assert_eq!(vm.frame_count(), 0);
 
     let mut recovery = Function::new(Some("recovery".to_string()), 0);

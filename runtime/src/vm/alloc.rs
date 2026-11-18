@@ -288,9 +288,10 @@ impl VM {
         arity: u16,
         func: NativeFn,
     ) -> Result<GcRef, RuntimeError> {
-        self.native_registry
-            .insert(name.to_string(), NativeFunctionImpl::Rust(func));
-        let obj = GcObject::new(ObjectKind::Native(NativeFunction::new(name, arity)));
+        let slot = self.register_native_impl(name, NativeFunctionImpl::Rust(func));
+        let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
+            name, arity, slot,
+        )));
         self.alloc_object(obj)
     }
 
@@ -300,14 +301,16 @@ impl VM {
         arity: u16,
         func: AelysNativeFn,
     ) -> Result<GcRef, RuntimeError> {
-        self.native_registry.insert(
-            name.to_string(),
+        let slot = self.register_native_impl(
+            name,
             NativeFunctionImpl::Foreign {
                 function: func,
                 result: super::ForeignReturnKind::Raw,
             },
         );
-        let obj = GcObject::new(ObjectKind::Native(NativeFunction::new(name, arity)));
+        let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
+            name, arity, slot,
+        )));
         self.alloc_object(obj)
     }
 
@@ -318,14 +321,16 @@ impl VM {
         func: AelysNativeFn,
         result_type: Option<AelysNativeType>,
     ) -> Result<GcRef, RuntimeError> {
-        self.native_registry.insert(
-            name.to_string(),
+        let slot = self.register_native_impl(
+            name,
             NativeFunctionImpl::Foreign {
                 function: func,
                 result: super::ForeignReturnKind::from_native_type(result_type),
             },
         );
-        let obj = GcObject::new(ObjectKind::Native(NativeFunction::new(name, arity)));
+        let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
+            name, arity, slot,
+        )));
         self.alloc_object(obj)
     }
 

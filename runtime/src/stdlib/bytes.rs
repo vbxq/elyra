@@ -3,7 +3,7 @@ use crate::stdlib::{ByteBuffer, Resource, StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-const MAX_ALLOC: usize = 256 * 1024 * 1024;
+pub(crate) const MAX_ALLOC: usize = 256 * 1024 * 1024;
 
 fn err(vm: &VM, op: &'static str, msg: String) -> RuntimeError {
     vm.runtime_error(RuntimeErrorKind::TypeError {

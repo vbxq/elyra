@@ -52,6 +52,7 @@ pub fn run_with_vm_and_opt(
         }
     }
     let mut symbol_origins = resolved.symbol_origins;
+    let mut ambiguous_globals = std::collections::HashMap::new();
 
     let main_stmts = if has_needs {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -76,6 +77,7 @@ pub fn run_with_vm_and_opt(
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
         vm.add_repl_symbol_origins(&imports.symbol_origins);
+        ambiguous_globals = imports.ambiguous_globals;
 
         stmts
             .into_iter()
@@ -95,6 +97,11 @@ pub fn run_with_vm_and_opt(
     )
     .map_err(|errors| {
         if let Some(err) = errors.first() {
+            if let aelys_sema::constraint::TypeErrorKind::UntypedNativeBoundary { name } = &err.kind
+                && let Some(owners) = ambiguous_globals.get(name)
+            {
+                return crate::modules::ambiguous_use_error(name, owners, err.span, src.clone());
+            }
             AelysError::Compile(CompileError::new(
                 CompileErrorKind::NamedTypeError {
                     code: err.diagnostic_code(),
