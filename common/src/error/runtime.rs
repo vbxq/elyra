@@ -135,10 +135,16 @@ impl RuntimeErrorKind {
                 )
             }
             Self::DivisionByZero => "division by zero".to_string(),
-            Self::UndefinedVariable(name) => format!(
-                "undefined variable '{}'",
-                crate::naming::unscoped_global_name(name)
-            ),
+            Self::UndefinedVariable(name) => match name.split_once("\n\nhint: ") {
+                Some((name, hint)) => format!(
+                    "undefined variable '{}'\n\nhint: {hint}",
+                    crate::naming::unscoped_global_name(name)
+                ),
+                None => format!(
+                    "undefined variable '{}'",
+                    crate::naming::unscoped_global_name(name)
+                ),
+            },
             Self::NotCallable(ty) => format!("'{}' is not callable", ty),
             Self::ArityMismatch { expected, got } => {
                 format!("expected {} arguments, got {}", expected, got)
