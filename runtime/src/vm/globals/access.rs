@@ -12,16 +12,55 @@ impl VM {
     }
 
     pub fn get_global(&self, name: &str) -> Option<Value> {
+        self.named_global(name)
+    }
+
+    pub(crate) fn named_global(&self, name: &str) -> Option<Value> {
+        if !self.global_stale.is_empty()
+            && let Some(&id) = self.global_name_ids.get(name)
+            && let Some(Some(value)) = self.global_latest.get(id as usize)
+        {
+            return Some(*value);
+        }
         self.globals.get(name).copied()
     }
 
+    pub(crate) fn flush_stale_globals(&mut self) {
+        if self.global_stale.is_empty() {
+            return;
+        }
+        let mut stale = std::mem::take(&mut self.global_stale);
+        for id in stale.drain(..) {
+            let id = id as usize;
+            let Some(value) = self.global_latest[id].take() else {
+                continue;
+            };
+            let name = &self.global_names_by_id[id];
+            match self.globals.get_mut(name) {
+                Some(existing) => *existing = value,
+                None => {
+                    self.globals.insert(name.clone(), value);
+                }
+            }
+        }
+        self.global_stale = stale;
+    }
+
+    pub(crate) fn stale_global_values(&self) -> impl Iterator<Item = Value> + '_ {
+        self.global_stale
+            .iter()
+            .filter_map(|&id| self.global_latest[id as usize])
+    }
+
     pub fn set_global(&mut self, name: String, value: Value) {
+        self.flush_stale_globals();
         self.bump_jit_global_epoch();
         self.globals.insert(name, value);
         self.invalidate_global_mapping();
     }
 
     pub fn remove_global(&mut self, name: &str) -> Option<Value> {
+        self.flush_stale_globals();
         self.bump_jit_global_epoch();
         let value = self.globals.remove(name);
         self.invalidate_global_mapping();
@@ -83,7 +122,43 @@ impl VM {
         self.globals.keys().cloned().collect()
     }
 
+    // the indexed write through the current prepared view; false when it has none or the slot lies outside it, before any effect
+    #[inline(always)]
+    pub(crate) fn store_global_in_view(&mut self, idx: usize, value: Value) -> bool {
+        let mapping = self.current_global_mapping_id;
+        let Some(Some(view)) = self.globals_by_index_cache.get_mut(mapping) else {
+            return false;
+        };
+        let Some(&name_id) = view.name_ids.get(idx) else {
+            return false;
+        };
+        let (Some(slot), Some(generation)) = (
+            self.globals_by_index.get_mut(idx),
+            self.global_generations.get_mut(idx),
+        ) else {
+            return false;
+        };
+        *slot = value;
+        *generation = generation.wrapping_add(1);
+        if name_id == UNNAMED_GLOBAL {
+            view.values[idx] = value;
+        } else {
+            self.write_named_global(name_id, value);
+        }
+        self.bump_jit_global_epoch();
+        true
+    }
+
     pub fn set_global_by_index(&mut self, idx: usize, value: Value) {
+        if self.store_global_in_view(idx, value) {
+            return;
+        }
+        if idx < self.globals_by_index.len() {
+            self.register_current_view();
+            if self.store_global_in_view(idx, value) {
+                return;
+            }
+        }
         if idx >= self.globals_by_index.len() {
             self.globals_by_index.resize(idx + 1, Value::null());
         }
@@ -161,11 +236,14 @@ impl VM {
                 *current_slot = value;
             }
         }
-        let name = &self.global_names_by_id[name_id];
-        match self.globals.get_mut(name) {
-            Some(existing) => *existing = value,
-            None => {
-                self.globals.insert(name.clone(), value);
+        if self.global_latest[name_id].replace(value).is_none() {
+            self.global_stale.push(name_id as u32);
+            let name = &self.global_names_by_id[name_id];
+            match self.globals.get_mut(name) {
+                Some(existing) => *existing = value,
+                None => {
+                    self.globals.insert(name.clone(), value);
+                }
             }
         }
     }

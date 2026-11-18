@@ -99,6 +99,7 @@ impl VM {
                     constants_ptr,
                     constants_len,
                 );
+                self.execution_stats.hot_exits = self.execution_stats.hot_exits.wrapping_add(1);
                 if changed {
                     let last = self.frames.len() - 1;
                     self.frames[last].ip = hot_ip;

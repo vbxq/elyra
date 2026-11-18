@@ -43,6 +43,9 @@ pub struct VM {
     pub(crate) global_name_ids: HashMap<String, u32>,
     pub(crate) global_names_by_id: Vec<String>,
     pub(crate) global_users: Vec<Vec<(usize, u32)>>,
+    /// by name id: the value an indexed write left while the name keyed entry still holds an older one
+    pub(crate) global_latest: Vec<Option<Value>>,
+    pub(crate) global_stale: Vec<u32>,
     pub(crate) globals_by_index: Vec<Value>,
     /// set when an indexed write has not reached the name keyed table yet, so a call between two readers costs nothing
     pub(crate) globals_by_index_dirty: bool,
@@ -64,6 +67,8 @@ pub struct VM {
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,
     pub(crate) resources: Vec<Option<Resource>>,
+    /// one immutable Ok(()) handed out by every native that succeeds with unit; it stays rooted
+    pub(crate) unit_ok: Option<GcRef>,
     pub(crate) native_modules: HashMap<String, NativeModule>,
     pub(crate) native_registry: HashMap<String, u32>,
     pub(crate) native_impls: Vec<NativeFunctionImpl>,

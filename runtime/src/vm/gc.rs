@@ -317,6 +317,10 @@ impl VM {
                 .filter_map(|value| value.as_ptr().map(GcRef::new)),
         );
         roots.extend(
+            self.stale_global_values()
+                .filter_map(|value| value.as_ptr().map(GcRef::new)),
+        );
+        roots.extend(
             self.globals_by_index
                 .iter()
                 .filter_map(|value| value.as_ptr().map(GcRef::new)),
@@ -332,6 +336,7 @@ impl VM {
         roots.extend(self.current_upvalues.iter().copied());
         roots.extend(self.host_roots.references());
         roots.extend(self.native_call_roots.iter().copied());
+        roots.extend(self.unit_ok);
         roots
     }
 

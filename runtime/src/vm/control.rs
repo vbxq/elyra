@@ -62,6 +62,7 @@ pub struct ExecutionStats {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub allocations: u64,
+    pub hot_exits: u64,
     pub last_function: Option<GcRef>,
     pub last_instruction_pointer: Option<usize>,
     pub(crate) allocation_start: u64,

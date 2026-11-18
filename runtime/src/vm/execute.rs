@@ -101,10 +101,9 @@ impl VM {
         };
 
         if !global_layout.names().is_empty() {
+            self.flush_stale_globals();
             let needed_len = global_layout.names().len();
-            if self.globals_by_index.len() < needed_len {
-                self.globals_by_index.resize(needed_len, Value::null());
-            }
+            self.globals_by_index.resize(needed_len, Value::null());
             for (idx, name) in global_layout.names().iter().enumerate() {
                 if !name.is_empty() {
                     self.globals_by_index[idx] =
@@ -142,6 +141,7 @@ impl VM {
         }
         frame.global_mapping_id = global_mapping_id;
         self.push_frame(frame)?;
+        self.register_current_view();
         self.run_fast()
     }
 

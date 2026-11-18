@@ -722,6 +722,7 @@ impl VM {
             return Value::null();
         }
         self.sync_current_function_globals();
+        self.flush_stale_globals();
         self.globals.get(name).copied().unwrap_or_else(Value::null)
     }
 

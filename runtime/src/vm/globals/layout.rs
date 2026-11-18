@@ -113,6 +113,7 @@ impl VM {
     }
 
     pub(crate) fn clear_prepared_globals(&mut self) {
+        self.flush_stale_globals();
         self.frame_jit.prepared_generation += 1;
         self.globals_by_index_cache.clear();
         for users in &mut self.global_users {
@@ -131,6 +132,7 @@ impl VM {
         self.global_name_ids.insert(name.to_string(), id);
         self.global_names_by_id.push(name.to_string());
         self.global_users.push(Vec::new());
+        self.global_latest.push(None);
         id
     }
 
@@ -144,6 +146,7 @@ impl VM {
             return mapping_id;
         }
 
+        self.flush_stale_globals();
         let names = layout.names();
 
         let needed_len = names.len();
@@ -184,6 +187,7 @@ impl VM {
         }
         if !matches!(self.globals_by_index_cache.get(mapping_id), Some(Some(_))) {
             self.sync_current_function_globals();
+            self.flush_stale_globals();
             let names = layout.names();
             let mut values = Vec::with_capacity(names.len());
             let mut name_ids = Vec::with_capacity(names.len());

@@ -8,7 +8,7 @@ impl VM {
         name: &str,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
-        let func_value = self.globals.get(name).copied().ok_or_else(|| {
+        let func_value = self.named_global(name).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::UndefinedVariable(format!(
                 "function '{}' not found",
                 name
@@ -20,6 +20,6 @@ impl VM {
 
     /// Get a function value by name for repeated calls.
     pub fn get_function_value(&self, name: &str) -> Option<Value> {
-        self.globals.get(name).copied()
+        self.named_global(name)
     }
 }

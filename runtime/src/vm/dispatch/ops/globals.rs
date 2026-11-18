@@ -83,9 +83,7 @@ fn get_named_global(
             "{operation} constant is not a string"
         )));
     };
-    vm.globals
-        .get(name.as_str())
-        .copied()
+    vm.named_global(name.as_str())
         .ok_or_else(|| RuntimeErrorKind::UndefinedVariable(name.as_str().to_owned()))
 }
 
@@ -96,6 +94,7 @@ fn set_named_global(
     value: crate::vm::Value,
     operation: &str,
 ) -> Result<(), RuntimeErrorKind> {
+    vm.flush_stale_globals();
     let (heap, globals) = (&vm.heap, &mut vm.globals);
     let Some(object) = heap.get(name) else {
         return Err(RuntimeErrorKind::InvalidBytecode(format!(
