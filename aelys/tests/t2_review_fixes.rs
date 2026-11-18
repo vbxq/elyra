@@ -125,3 +125,38 @@ fn else_if_let_chains_work_in_statement_position() {
         5 + 31 * 10 + 1502 * 1000 + 40 * 10_000_000 + 99 * 1_000_000_000 + 105 * 100_000_000_000,
     );
 }
+
+#[test]
+fn nested_destructuring_let_resolves_every_binding() {
+    int_at_every_level(
+        r#"
+        struct P { x: int, y: int }
+        let (t, P { x, .. }) = ((1, 2), P { x: 7, y: 8 })
+        let ((e, f), (g, h)) = ((4, 8), (7, 1))
+        let (a, (b, (c, d))) = (1, (2, (3, 4)))
+        let mut (m, (n, _)) = (10, (20, 30))
+        m += n
+        let pair = ((5, 6), (7, 9))
+        let ((_, six), (_, nine)) = pair
+        let z = pair.1
+        let w = z.1
+        t.0 + x + e + f + g + h + a + b + c + d + m + six + nine + w
+        "#,
+        1 + 7 + 4 + 8 + 7 + 1 + 1 + 2 + 3 + 4 + 30 + 6 + 9 + 9,
+    );
+    int_at_every_level(
+        r#"
+        struct Q { p: (int, int), s: string }
+        fn f(k: int) -> int {
+            let ((a, b), Q { p: (c, d), .. }) = ((k, k * 2), Q { p: (k + 1, k + 2), s: "q" })
+            a + b + c + d
+        }
+        let g = fn(k: int) -> int {
+            let ((a, b), (c, d)) = ((k, 1), (2, k))
+            a * b + c * d
+        }
+        f(1) * 100 + g(3)
+        "#,
+        (1 + 2 + 2 + 3) * 100 + 3 + 6,
+    );
+}
