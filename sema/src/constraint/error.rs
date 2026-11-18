@@ -283,6 +283,10 @@ pub enum TypeErrorKind {
     CollectionCollectRequiresPipeline,
     NonConstantInitializer {
         name: String,
+        cause: Option<String>,
+    },
+    DuplicateConstant {
+        name: String,
     },
     MutableCollectionAlias {
         place: String,
@@ -945,7 +949,18 @@ impl TypeError {
                 f,
                 "collect is a pipeline terminal; call iter, map, or filter first"
             ),
-            TypeErrorKind::NonConstantInitializer { name } => write!(
+            TypeErrorKind::NonConstantInitializer {
+                name,
+                cause: Some(cause),
+            } => write!(
+                f,
+                "the initializer of constant `{name}` cannot be evaluated at compile time: {cause}"
+            ),
+            TypeErrorKind::DuplicateConstant { name } => write!(
+                f,
+                "constant `{name}` is already declared in this scope\n   = help: give the second constant another name"
+            ),
+            TypeErrorKind::NonConstantInitializer { name, cause: None } => write!(
                 f,
                 "the initializer of constant `{name}` is not a compile-time constant\n   = help: use literals, arithmetic, comparisons, `as` casts and other constants, or declare `{name}` with `let`"
             ),
@@ -1721,6 +1736,7 @@ impl TypeErrorKind {
             Self::CollectionCollectRequiresPipeline => 322,
             Self::MutableCollectionAlias { .. } => 323,
             Self::NonConstantInitializer { .. } => 395,
+            Self::DuplicateConstant { .. } => 396,
             Self::NonExhaustiveStruct { .. } => 324,
             Self::GenericStructDeferred { .. } => 325,
             Self::DuplicateNominal { .. } => 326,

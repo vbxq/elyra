@@ -139,7 +139,11 @@ fn a_constant_initializer_must_be_a_compile_time_constant() {
     for source in cases {
         let message = rejected(source);
         assert!(message.contains("E0395"), "{source}\n{message}");
-        assert!(message.contains("compile-time constant"), "{message}");
+        assert!(
+            message.contains("compile-time constant")
+                || message.contains("cannot be evaluated at compile time"),
+            "{message}"
+        );
     }
 }
 

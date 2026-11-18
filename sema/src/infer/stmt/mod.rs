@@ -52,7 +52,7 @@ impl TypeInference {
                     *is_pub,
                 );
                 if *is_const
-                    && let Some(value) = self.declare_constant(name, initializer)
+                    && let Some(value) = self.declare_constant(name, initializer, stmt.span)
                     && let TypedStmtKind::Let { initializer, .. } = &mut kind
                 {
                     initializer.kind = value.literal();

@@ -18,6 +18,8 @@ impl TypeEnv {
         self.function_value_params
             .push(std::collections::HashMap::new());
         self.binding_origins.push(std::collections::HashMap::new());
+        self.declared_constants
+            .push(std::collections::HashSet::new());
     }
 
     pub fn pop_scope(&mut self) {
@@ -32,6 +34,7 @@ impl TypeEnv {
             self.constant_values.pop();
             self.function_value_params.pop();
             self.binding_origins.pop();
+            self.declared_constants.pop();
         }
     }
 
@@ -183,6 +186,12 @@ impl TypeEnv {
             return self.capture_function_value_params.get(name);
         }
         None
+    }
+
+    pub fn first_constant_declaration(&mut self, name: &str) -> bool {
+        self.declared_constants
+            .last_mut()
+            .is_none_or(|declared| declared.insert(name.to_string()))
     }
 
     pub fn define_binding_origin(&mut self, name: &str, root: String, root_mutable: bool) {

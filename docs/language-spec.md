@@ -272,7 +272,10 @@ integers; arithmetic on floats; comparisons; `and`/`or` on bools; string `+`;
 `as` between `int` and `float`; and other constants, including another module's
 `pub const` (`cfg::W`) and associated constants (`Cfg::N`). Anything else, a
 function call, a `let` binding, a collection, a division by zero or an integer
-outside the 48-bit range, is E0395.
+outside the 48-bit range, is E0395; for a division or remainder by zero, an
+overflow or a shift count out of range, the message names that cause
+(`cannot be evaluated at compile time: division by zero`). Declaring the same
+constant twice in one scope is E0396.
 
 A constant is folded when the program is compiled: every use is replaced by its
 value, so a constant can be read before its declaration line, from a function
@@ -2618,7 +2621,8 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
-| E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant |
+| E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
+| E0396 | DuplicateConstant | a `const` declared twice in the same scope |
 
 ### E04xx, modules, visibility, borrows, and associated items
 

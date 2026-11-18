@@ -65,6 +65,69 @@ pub(crate) fn fold_const(
     }
 }
 
+pub(crate) fn fold_failure(
+    expr: &Expr,
+    leaf: &dyn Fn(&Expr) -> Option<ConstValue>,
+) -> Option<String> {
+    let fold = |expr: &Expr| fold_const(expr, leaf);
+    let failure = |expr: &Expr| fold_failure(expr, leaf);
+    match &expr.kind {
+        ExprKind::Int(value) if int(Some(*value)).is_none() => {
+            Some(format!("{value} is outside the 48-bit int range"))
+        }
+        ExprKind::Grouping(inner) => failure(inner),
+        ExprKind::Unary { op, operand } => {
+            if let Some(cause) = failure(operand) {
+                return Some(cause);
+            }
+            match (op, fold(operand)?) {
+                (UnaryOp::Neg, ConstValue::Int(value)) if int(value.checked_neg()).is_none() => {
+                    Some(format!("-({value}) overflows the 48-bit int range"))
+                }
+                _ => None,
+            }
+        }
+        ExprKind::And { left, right } | ExprKind::Or { left, right } => {
+            failure(left).or_else(|| failure(right))
+        }
+        ExprKind::Binary { left, op, right } => {
+            if let Some(cause) = failure(left).or_else(|| failure(right)) {
+                return Some(cause);
+            }
+            let (left, right) = (fold(left)?, fold(right)?);
+            if fold_binary(left.clone(), *op, right.clone()).is_some() {
+                return None;
+            }
+            let (ConstValue::Int(left), ConstValue::Int(right)) = (left, right) else {
+                return None;
+            };
+            match op {
+                BinaryOp::Div if right == 0 => Some("division by zero".to_string()),
+                BinaryOp::Mod if right == 0 => Some("remainder by zero".to_string()),
+                BinaryOp::Shl if !(0..48).contains(&right) => {
+                    Some(format!("shift count {right} is outside 0..48"))
+                }
+                BinaryOp::Shr if right < 0 => Some(format!("shift count {right} is negative")),
+                _ => Some(format!(
+                    "{left} {op} {right} overflows the 48-bit int range"
+                )),
+            }
+        }
+        ExprKind::Cast { expr: inner, .. } => {
+            if let Some(cause) = failure(inner) {
+                return Some(cause);
+            }
+            match fold(inner)? {
+                ConstValue::Float(value) if fold(expr).is_none() => {
+                    Some(format!("{value} does not fit in an int"))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 fn fold_binary(left: ConstValue, op: BinaryOp, right: ConstValue) -> Option<ConstValue> {
     use ConstValue::{Bool, Float, Int, Str};
     match (left, right) {
@@ -168,7 +231,17 @@ impl TypeInference {
         &mut self,
         name: &str,
         initializer: &Expr,
+        span: aelys_syntax::Span,
     ) -> Option<ConstValue> {
+        if name != "_" && !self.env.first_constant_declaration(name) {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::DuplicateConstant {
+                    name: name.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("constant declaration".to_string()),
+            });
+        }
         match self.fold_constant(initializer) {
             Some(value) => {
                 if name != "_" {
@@ -177,9 +250,11 @@ impl TypeInference {
                 Some(value)
             }
             None => {
+                let cause = fold_failure(initializer, &|leaf| self.constant_leaf(leaf));
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::NonConstantInitializer {
                         name: name.to_string(),
+                        cause,
                     },
                     span: initializer.span,
                     reason: ConstraintReason::Other("constant initializer".to_string()),

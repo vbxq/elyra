@@ -519,3 +519,62 @@ fn match_and_for_bindings_from_an_immutable_root_name_that_root() {
         assert!(message.contains(root), "expected {root}:\n{message}");
     }
 }
+
+#[test]
+fn a_constant_that_cannot_be_evaluated_names_the_cause() {
+    let cases = [
+        ("const A = 1 / 0", "division by zero"),
+        ("const A = 5 % 0", "remainder by zero"),
+        (
+            "const A = 140737488355327 + 1",
+            "overflows the 48-bit int range",
+        ),
+        (
+            "const A = 100000000 * 100000000",
+            "overflows the 48-bit int range",
+        ),
+        ("const B = 1 << 47", "overflows the 48-bit int range"),
+        ("const B = 1 << 48", "shift count 48 is outside 0..48"),
+        ("const B = 1 >> -1", "shift count -1 is negative"),
+        (
+            "const A = -140737488355328\nconst B = -A",
+            "overflows the 48-bit int range",
+        ),
+        ("const D = 0\nconst A = (2 + 3) / D", "division by zero"),
+        ("fn f() -> int { const K = 4 % 0\nK }", "remainder by zero"),
+    ];
+    for (body, cause) in cases {
+        let message = assert_rejected(body, "E0395");
+        assert!(message.contains(cause), "expected {cause}:\n{message}");
+        assert!(
+            !message.contains("not a compile-time constant"),
+            "{message}"
+        );
+    }
+    let message = assert_rejected("fn f() -> int { 3 }\nconst A = f()", "E0395");
+    assert!(message.contains("not a compile-time constant"), "{message}");
+}
+
+#[test]
+fn a_constant_declared_twice_in_one_scope_is_rejected() {
+    for body in [
+        "const A = 1\nconst A = 2",
+        "const A = 1\nprintln(A)\nconst A = 2",
+        "fn f() -> int { const K = 1\nconst K = 2\nK }",
+    ] {
+        assert_rejected(body, "E0396");
+    }
+    assert_int_everywhere(
+        r#"
+const A = 1
+fn f() -> int { const A = 10
+A }
+fn g() -> int { const B = 2
+B }
+fn h() -> int { const B = 3
+B }
+A * 1000 + f() * 100 + g() * 10 + h()
+"#,
+        1000 + 1000 + 20 + 3,
+    );
+}
