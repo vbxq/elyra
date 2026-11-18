@@ -665,6 +665,57 @@ fn integer_registers(
     ints
 }
 
+// registers machine code may have changed since entry: the others still hold their value in the register stack
+fn dirty_registers(
+    region: &Region,
+    instructions: &[Inst],
+    by_ip: &HashMap<usize, usize>,
+    initial: Live,
+) -> HashMap<usize, Live> {
+    use OpCode::*;
+    let mut dirty: HashMap<usize, Live> = HashMap::new();
+    dirty.insert(region.entry, initial);
+    let mut work = vec![region.entry];
+    while let Some(ip) = work.pop() {
+        let Some(Some(effect)) = region.effects.get(&ip) else {
+            continue;
+        };
+        let Some(inst) = by_ip.get(&ip).map(|index| instructions[*index]) else {
+            continue;
+        };
+        let mut out = dirty[&ip];
+        if let Some(def) = effect.def {
+            out.insert(def);
+        }
+        if matches!(
+            inst.op,
+            VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong
+        ) {
+            out.insert(inst.a);
+            out.insert(inst.a + 1);
+        }
+        let successors: Vec<usize> = match effect.flow {
+            Flow::Next => vec![inst.next],
+            Flow::Jump(target) => vec![target],
+            Flow::Branch(target) => vec![target, inst.next],
+            Flow::Return => vec![],
+        };
+        for successor in successors {
+            if !region.effects.contains_key(&successor) {
+                continue;
+            }
+            let entry = dirty.entry(successor).or_default();
+            let mut merged = *entry;
+            merged.union(&out);
+            if merged != *entry {
+                *entry = merged;
+                work.push(successor);
+            }
+        }
+    }
+    dirty
+}
+
 #[derive(Clone, Debug)]
 struct LiveEffect {
     uses: Option<Vec<usize>>,
@@ -754,6 +805,7 @@ fn constant_index(inst: &Inst) -> Option<usize> {
 
 struct Region {
     entry: usize,
+    dirty: HashMap<usize, Live>,
     order: Vec<usize>,
     effects: HashMap<usize, Option<Effect>>,
     live_in: HashMap<usize, Live>,
@@ -809,6 +861,7 @@ fn region(
     let (live_in, live_out) = function_liveness(analysis, instructions, by_ip);
     Some(Region {
         entry,
+        dirty: HashMap::new(),
         order,
         effects,
         live_in,
@@ -956,7 +1009,8 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         }
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
-        self.pending_exits.push((block, ip, live));
+        let changed = self.changed(live, ip);
+        self.pending_exits.push((block, ip, changed));
         self.current = Some((ip, live, Some(block)));
         block
     }
@@ -968,6 +1022,17 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             self.flush(&live, None);
             self.leave(ip);
         }
+    }
+
+    fn changed(&self, live: Live, ip: usize) -> Live {
+        let Some(dirty) = self.region.dirty.get(&ip) else {
+            return live;
+        };
+        let mut masked = Live::default();
+        for (index, word) in masked.0.iter_mut().enumerate() {
+            *word = live.0[index] & dirty.0[index];
+        }
+        masked
     }
 
     fn flush(&mut self, live: &Live, skip: Option<usize>) {
@@ -1400,7 +1465,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             };
             let inst = self.instructions[index];
             let Some(effect) = effect else {
-                let live = self.region.live_in[&ip];
+                let live = self.changed(self.region.live_in[&ip], ip);
                 self.flush(&live, None);
                 self.leave(ip);
                 return Ok(());
@@ -2261,8 +2326,8 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         let window_start = call_window(inst);
         let count = inst.c;
         let destination = inst.a;
-        let live_in = self.region.live_in[&inst.ip];
-        let live_out = self.region.live_out[&inst.ip];
+        let live_in = self.changed(self.region.live_in[&inst.ip], inst.ip);
+        let live_out = self.changed(self.region.live_out[&inst.ip], inst.ip);
         let window_offset = i64::try_from(window_start * 8).map_err(|_| FrameRefusal::Decode)?;
         let window = self.builder.ins().iadd_imm_s(self.registers, window_offset);
         for argument in 0..count {
@@ -2884,6 +2949,14 @@ pub(crate) fn compile_frame(
         builder.def_var(*variable, value);
     }
     let ints = integer_registers(&analysis, &region, &instructions, &by_ip);
+    let mut initial = Live::default();
+    if osr_ip.is_none() {
+        for register in usize::from(function.arity)..registers {
+            initial.insert(register);
+        }
+    }
+    let mut region = region;
+    region.dirty = dirty_registers(&region, &instructions, &by_ip, initial);
     let progress = builder.declare_var(types::I64);
     let zero = builder.ins().iconst(types::I64, 0);
     builder.def_var(progress, zero);
