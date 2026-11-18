@@ -166,6 +166,9 @@ pub enum TypeErrorKind {
     IgnoredResult,
     IgnoredOption,
     NullIsNotInSurface,
+    RemovedConvertModule {
+        name: String,
+    },
     DynamicIsNotInSurface,
     UntypedNativeValue {
         name: String,
@@ -766,7 +769,7 @@ impl TypeError {
                     .join(" or ");
                 write!(
                     f,
-                    "symbol '{}' is exported by multiple modules: {}\n   = hint: qualify it as {}, or import it by name with a 'needs {} from ...' line",
+                    "symbol '{}' is exported by multiple modules: {}\n   = hint: qualify it as {}, or import it by name with a 'use module::{{{}}}' line",
                     name,
                     modules.join(", "),
                     qualified,
@@ -801,6 +804,12 @@ impl TypeError {
             TypeErrorKind::NullIsNotInSurface => write!(
                 f,
                 "null is not part of Aelys; use Option for absence or Result for failure"
+            ),
+            TypeErrorKind::RemovedConvertModule { name } => write!(
+                f,
+                "'{}' belonged to std::convert, which was removed\n   = help: {}",
+                name,
+                crate::native::removed_convert_replacement(name)
             ),
             TypeErrorKind::DynamicIsNotInSurface => write!(
                 f,
@@ -1805,8 +1814,8 @@ impl TypeError {
             TypeErrorKind::TypeNotImported { name, module } => write!(
                 f,
                 "'{}' is exported by module '{}' but this file does not import it\n   \
-                 = help: write `needs {} from {}`",
-                name, module, name, module
+                 = help: write `use {}::{{{}}}`",
+                name, module, module, name
             ),
             TypeErrorKind::PrivateNominalNotExported { name, module } => write!(
                 f,
@@ -1929,6 +1938,7 @@ impl TypeErrorKind {
             Self::IgnoredResult => 303,
             Self::IgnoredOption => 304,
             Self::NullIsNotInSurface => 106,
+            Self::RemovedConvertModule { .. } => 449,
             Self::DynamicIsNotInSurface => 347,
             Self::UntypedNativeValue { .. } => 348,
             Self::UntypedNativeBoundary { .. } => 379,

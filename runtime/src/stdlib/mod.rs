@@ -1,9 +1,9 @@
 pub mod bytes;
-pub mod convert;
 pub mod fs;
 pub mod io;
 pub mod math;
 pub mod net;
+pub mod scalar;
 pub mod string;
 pub mod sys;
 pub mod time;
@@ -65,7 +65,6 @@ pub const STD_MODULES: &[&str] = &[
     "std.net",
     "std.time",
     "std.string",
-    "std.convert",
     "std.sys",
     "std.bytes",
 ];
@@ -107,7 +106,6 @@ pub fn register_std_module(
         "net" => net::register(vm),
         "time" => time::register(vm),
         "string" => string::register(vm),
-        "convert" => convert::register(vm),
         "sys" => sys::register(vm),
         "bytes" => bytes::register(vm),
         _ => Err(

@@ -11,7 +11,10 @@ pub fn register_builtins(vm: &mut VM) -> Result<(), RuntimeError> {
     vm.set_global("assert".to_string(), Value::ptr(assert_fn.index()));
     let clone_fn = vm.alloc_native("__clone", 1, builtin_clone)?;
     vm.set_global("__clone".to_string(), Value::ptr(clone_fn.index()));
-    for &(name, arity, function) in super::collections::COLLECTION_NATIVES {
+    for &(name, arity, function) in super::collections::COLLECTION_NATIVES
+        .iter()
+        .chain(crate::stdlib::scalar::INT_FORMATTERS)
+    {
         let native = vm.alloc_native(name, arity, function)?;
         vm.set_global(name.to_string(), Value::ptr(native.index()));
     }

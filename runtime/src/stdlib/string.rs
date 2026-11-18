@@ -53,6 +53,9 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("is_alphanumeric", 1, native_is_alphanumeric);
     reg_fn!("lines", 1, crate::vm::collections::string_lines);
     reg_fn!("line_count", 1, native_line_count);
+    for &(name, arity, function) in crate::stdlib::scalar::STRING_PARSERS {
+        reg_fn!(name, arity, function);
+    }
 
     Ok(StdModuleExports {
         all_exports,

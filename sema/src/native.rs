@@ -1,9 +1,7 @@
 use crate::prelude::DISPLAY_TRAIT;
 use crate::types::InferType;
 
-const NATIVE_MODULES: [&str; 9] = [
-    "io", "convert", "sys", "time", "fs", "net", "math", "string", "bytes",
-];
+const NATIVE_MODULES: [&str; 8] = ["io", "sys", "time", "fs", "net", "math", "string", "bytes"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum NativeObligation {
@@ -17,13 +15,6 @@ fn function(arity: usize, ret: InferType) -> InferType {
 
 fn open_param(index: usize) -> InferType {
     InferType::Param(format!("T{index}"))
-}
-
-fn scalar_conversion_sources() -> Vec<InferType> {
-    let mut sources = InferType::all_numeric_types();
-    sources.push(InferType::Bool);
-    sources.push(InferType::String);
-    sources
 }
 
 fn function_with(params: Vec<InferType>, ret: InferType) -> InferType {
@@ -68,39 +59,6 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ("io", "move_cursor") => {
             function_with(vec![InferType::I64, InferType::I64], InferType::Unit)
         }
-
-        ("convert", "parse_int") => function_with(vec![InferType::String], option(InferType::I64)),
-        ("convert", "parse_int_radix") => function_with(
-            vec![InferType::String, InferType::I64],
-            option(InferType::I64),
-        ),
-        ("convert", "parse_float") => {
-            function_with(vec![InferType::String], option(InferType::F64))
-        }
-        ("convert", "parse_bool") => {
-            function_with(vec![InferType::String], option(InferType::Bool))
-        }
-        ("convert", "to_string" | "type_of") => function(1, InferType::String),
-        ("convert", "to_hex" | "to_binary" | "to_octal") => {
-            function_with(vec![InferType::I64], InferType::String)
-        }
-        ("convert", "to_radix") => {
-            function_with(vec![InferType::I64, InferType::I64], InferType::String)
-        }
-        ("convert", "chr") => function_with(vec![InferType::I64], InferType::String),
-        ("convert", "to_int" | "to_float" | "to_bool") => function(
-            1,
-            match name {
-                "to_int" => InferType::I64,
-                "to_float" => InferType::F64,
-                _ => InferType::Bool,
-            },
-        ),
-        ("convert", "ord") => function_with(vec![InferType::String], InferType::I64),
-        ("convert", "is_int" | "is_float" | "is_string" | "is_bool") => {
-            function(1, InferType::Bool)
-        }
-        ("convert", "is_function") => function(1, InferType::Bool),
 
         ("sys", "args" | "env_vars" | "platform" | "arch" | "os" | "hostname") => {
             function(0, InferType::String)
@@ -365,6 +323,13 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             vec![InferType::String],
             InferType::Vec(Box::new(InferType::I64)),
         ),
+        ("string", "to_int") => function_with(vec![InferType::String], option(InferType::I64)),
+        ("string", "to_int_radix") => function_with(
+            vec![InferType::String, InferType::I64],
+            option(InferType::I64),
+        ),
+        ("string", "to_float") => function_with(vec![InferType::String], option(InferType::F64)),
+        ("string", "to_bool") => function_with(vec![InferType::String], option(InferType::Bool)),
         ("string", "from_char") => function_with(vec![InferType::Char], InferType::String),
         ("string", "join" | "concat") => function_with(
             vec![InferType::String, InferType::String],
@@ -477,6 +442,57 @@ pub fn function_signature(path: &str) -> Option<InferType> {
     Some(signature)
 }
 
+pub fn is_removed_convert_name(name: &str) -> bool {
+    matches!(
+        name,
+        "parse_int"
+            | "parse_int_radix"
+            | "parse_float"
+            | "parse_bool"
+            | "to_string"
+            | "to_hex"
+            | "to_binary"
+            | "to_octal"
+            | "to_radix"
+            | "to_int"
+            | "to_float"
+            | "to_bool"
+            | "ord"
+            | "chr"
+            | "type_of"
+            | "is_int"
+            | "is_float"
+            | "is_string"
+            | "is_bool"
+            | "is_function"
+    )
+}
+
+pub fn removed_convert_replacement(name: &str) -> &'static str {
+    match name {
+        "parse_int" => "write `s.to_int()`, which returns Option<int>",
+        "parse_int_radix" => "write `s.to_int_radix(r)`, which returns Option<int>",
+        "parse_float" => "write `s.to_float()`, which returns Option<float>",
+        "parse_bool" => "write `s.to_bool()`, which returns Option<bool>",
+        "to_string" => "write `x.to_string()`",
+        "to_hex" => "write `n.to_hex()`",
+        "to_binary" => "write `n.to_binary()`",
+        "to_octal" => "write `n.to_octal()`",
+        "to_radix" => "write `n.to_radix(r)`",
+        "to_int" => "write `x as int` for a number or a char, `s.to_int()` for a string",
+        "to_float" => "write `x as float` for a number, `s.to_float()` for a string",
+        "to_bool" => "compare explicitly, e.g. `n != 0`, or write `s.to_bool()` to parse a string",
+        "ord" => "write `c as int` for a char",
+        "chr" => "write `n as char`",
+        "type_of" | "is_int" | "is_float" | "is_string" | "is_bool" | "is_function" => {
+            "every value has a static type; match on an enum when a value can take several shapes"
+        }
+        _ => {
+            "parse with `s.to_int()` or `s.to_float()`, format with `x.to_string()`, convert with `as`"
+        }
+    }
+}
+
 pub fn builtin_signature(name: &str) -> Option<InferType> {
     match name {
         "__tostring" => Some(function(1, InferType::String)),
@@ -506,15 +522,7 @@ pub fn parameter_obligations(path: &str) -> Vec<Option<NativeObligation>> {
     let bare = path.rsplit("::").next().unwrap_or(path);
     if !matches!(
         bare,
-        "print"
-            | "println"
-            | "eprint"
-            | "eprintln"
-            | "print_inline"
-            | "to_string"
-            | "__tostring"
-            | "to_int"
-            | "to_float"
+        "print" | "println" | "eprint" | "eprintln" | "print_inline" | "__tostring"
     ) {
         return Vec::new();
     }
@@ -523,11 +531,8 @@ pub fn parameter_obligations(path: &str) -> Vec<Option<NativeObligation>> {
     };
     match canonical.as_str() {
         "__tostring" | "io::print" | "io::println" | "io::eprint" | "io::eprintln"
-        | "io::print_inline" | "convert::to_string" => {
+        | "io::print_inline" => {
             vec![Some(NativeObligation::Bound(DISPLAY_TRAIT))]
-        }
-        "convert::to_int" | "convert::to_float" => {
-            vec![Some(NativeObligation::OneOf(scalar_conversion_sources()))]
         }
         _ => Vec::new(),
     }

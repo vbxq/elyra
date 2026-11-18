@@ -101,7 +101,6 @@ impl VM {
         let auto_modules: &[(&str, RegFn)] = &[
             ("io", crate::stdlib::io::register),
             ("math", crate::stdlib::math::register),
-            ("convert", crate::stdlib::convert::register),
             ("time", crate::stdlib::time::register),
         ];
         for &(module_name, register_fn) in auto_modules {
