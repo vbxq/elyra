@@ -2,6 +2,7 @@ mod control_flow;
 mod control_if;
 mod decl;
 mod expression;
+mod hoist;
 mod looping;
 mod typed;
 

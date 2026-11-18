@@ -130,6 +130,37 @@ mix(1, 2)
 }
 
 #[test]
+fn a_wide_literal_operand_is_loaded_once_before_its_loop() {
+    let source = r#"
+fn mask(n: int) -> int {
+    let mut acc = 0
+    let mut x = 12345
+    for i in 0..n {
+        x = (x * 1000 + i) & 268435455
+        acc = (acc + x) & 268435455
+    }
+    return acc
+}
+mask(5000)
+"#;
+    let body = body_of(&assembly_of(source), "mask");
+    assert_eq!(count(&body, "LoadK"), 1, "{body}");
+    assert_eq!(
+        count(&body, "LoadI"),
+        5,
+        "1000 joins the loop set-up outside the loop:\n{body}"
+    );
+    assert_aelys_int(source, {
+        let (mut acc, mut x) = (0i64, 12345i64);
+        for i in 0..5000 {
+            x = (x * 1000 + i) & 268435455;
+            acc = (acc + x) & 268435455;
+        }
+        acc
+    });
+}
+
+#[test]
 fn retargeted_assignments_compute_the_same_values() {
     assert_aelys_int(
         r#"

@@ -11,6 +11,9 @@ impl Compiler {
         {
             return Some(reg);
         }
+        if let aelys_sema::TypedExprKind::Int(literal) = &expr.kind {
+            return self.hoisted_literal(*literal);
+        }
         None
     }
 
