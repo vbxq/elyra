@@ -58,6 +58,24 @@ impl TypeInference {
             );
         }
 
+        if crate::native::is_removed_convert_name(name)
+            && !self.known_native_signatures.contains_key(name)
+            && !self.known_native_globals.contains(name)
+            && !self.globals_without_signature.contains(name)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::RemovedConvertModule {
+                    name: name.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("variable lookup".to_string()),
+            });
+            return (
+                TypedExprKind::Identifier(name.to_string()),
+                InferType::Poison,
+            );
+        }
+
         if let Some(ty) = crate::native::builtin_signature(name) {
             return (TypedExprKind::Identifier(name.to_string()), ty);
         }

@@ -619,7 +619,7 @@ mod definition_module_tests {
 
     #[test]
     fn a_statement_of_another_module_reports_against_that_module_file() {
-        let importer = Source::new("importer.aelys", "needs L, TL from mid\n");
+        let importer = Source::new("importer.aelys", "use mid::{L, TL}\n");
         let defining = Source::new(
             "mid.aelys",
             "impl TL for L {\n    fn tl(self) -> int {\n        return nowhere\n    }\n}\n",

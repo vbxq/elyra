@@ -1,7 +1,6 @@
-needs std::io
-needs std::convert
-needs std::math
-needs std::time
+use std::io
+use std::math
+use std::time
 
 // Variables with type annotations
 let x: int = 42
@@ -10,17 +9,17 @@ let name: string = "Aelys"
 let flag: bool = true
 
 io::print("Variables with Types ===")
-io::print("x: int = " + convert::to_string(x))
-io::print("pi: float = " + convert::to_string(pi))
+io::print("x: int = " + x.to_string())
+io::print("pi: float = " + pi.to_string())
 io::print("name: string = " + name)
-io::print("flag: bool = " + convert::to_string(flag))
+io::print("flag: bool = " + flag.to_string())
 
 // Mutable variables with types
 let mut counter: int = 0
 counter = counter + 10
 io::print("")
 io::print("Mutable Variable ===")
-io::print("counter (after +10) = " + convert::to_string(counter))
+io::print("counter (after +10) = " + counter.to_string())
 
 // Function with typed parameters
 fn add(a: int, b: int) -> int {
@@ -29,7 +28,7 @@ fn add(a: int, b: int) -> int {
 
 io::print("")
 io::print("Typed Function (add) ===")
-io::print("add(100, 200) = " + convert::to_string(add(100, 200)))
+io::print("add(100, 200) = " + add(100, 200).to_string())
 
 // Function with typed parameters and return type
 fn multiply(x: int, y: int) -> int {
@@ -38,7 +37,7 @@ fn multiply(x: int, y: int) -> int {
 
 io::print("")
 io::print("Typed Function with Return Type (multiply) ===")
-io::print("multiply(6, 7) = " + convert::to_string(multiply(6, 7)))
+io::print("multiply(6, 7) = " + multiply(6, 7).to_string())
 
 // Lambda with type annotations
 let square = fn(n: int) -> int {
@@ -47,7 +46,7 @@ let square = fn(n: int) -> int {
 
 io::print("")
 io::print("Typed Lambda (square) ===")
-io::print("square(9) = " + convert::to_string(square(9)))
+io::print("square(9) = " + square(9).to_string())
 
 // Function with float types
 fn average(a: float, b: float) -> float {
@@ -56,7 +55,7 @@ fn average(a: float, b: float) -> float {
 
 io::print("")
 io::print("Float Function (average) ===")
-io::print("average(10.0, 20.0) = " + convert::to_string(average(10.0, 20.0)))
+io::print("average(10.0, 20.0) = " + average(10.0, 20.0).to_string())
 
 // Type inference (no annotations needed)
 let inferred_int = 123
@@ -65,9 +64,9 @@ let inferred_sum = inferred_int + 77
 
 io::print("")
 io::print("Type Inference ===")
-io::print("inferred_int = " + convert::to_string(inferred_int))
-io::print("inferred_float = " + convert::to_string(inferred_float))
-io::print("inferred_sum = " + convert::to_string(inferred_sum))
+io::print("inferred_int = " + inferred_int.to_string())
+io::print("inferred_float = " + inferred_float.to_string())
+io::print("inferred_sum = " + inferred_sum.to_string())
 
 // Loop with typed counter (using for loop)
 fn sum_to_n(n: int) -> int {
@@ -80,7 +79,7 @@ fn sum_to_n(n: int) -> int {
 
 io::print("")
 io::print("Sum 1 to 10 ===")
-io::print("sum_to_n(10) = " + convert::to_string(sum_to_n(10)))
+io::print("sum_to_n(10) = " + sum_to_n(10).to_string())
 
 // Recursive function with types
 fn fibonacci(n: int) -> int {
@@ -92,7 +91,7 @@ fn fibonacci(n: int) -> int {
 
 io::print("")
 io::print("Fibonacci(15) ===")
-io::print("fibonacci(15) = " + convert::to_string(fibonacci(15)))
+io::print("fibonacci(15) = " + fibonacci(15).to_string())
 
 // Higher-order function with closure
 fn make_multiplier(factor: int) {
@@ -106,15 +105,15 @@ let triple = make_multiplier(3)
 
 io::print("")
 io::print("Higher-Order Functions ===")
-io::print("double(10) = " + convert::to_string(double(10)))
-io::print("triple(10) = " + convert::to_string(triple(10)))
+io::print("double(10) = " + double(10).to_string())
+io::print("triple(10) = " + triple(10).to_string())
 
 // Using stdlib with types
 io::print("")
 io::print("Using Standard Library ===")
-io::print("math::sqrt(16) = " + convert::to_string(math::sqrt(16)))
-io::print("math::pow(2, 8) = " + convert::to_string(math::pow(2, 8)))
-io::print("math::PI = " + convert::to_string(math::PI))
+io::print("math::sqrt(16) = " + math::sqrt(16).to_string())
+io::print("math::pow(2, 8) = " + math::pow(2, 8).to_string())
+io::print("math::PI = " + math::PI.to_string())
 
 // Performance comparison: typed vs untyped
 io::print("")
@@ -138,8 +137,8 @@ let t2 = time::timer()
 let r2 = fib_untyped(30)
 let e2 = time::elapsed_ms(t2)
 
-io::print("fib_typed(30) = " + convert::to_string(r1) + " in " + convert::to_string(e1) + " ms")
-io::print("fib_untyped(30) = " + convert::to_string(r2) + " in " + convert::to_string(e2) + " ms")
+io::print("fib_typed(30) = " + r1.to_string() + " in " + e1.to_string() + " ms")
+io::print("fib_untyped(30) = " + r2.to_string() + " in " + e2.to_string() + " ms")
 
 io::print("")
 io::print("Done! ===")

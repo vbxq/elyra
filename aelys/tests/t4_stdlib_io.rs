@@ -48,7 +48,7 @@ fn elapsed_us_is_an_int_that_mixes_with_float_arithmetic() {
         ),
         "let t = time::timer()\nlet us: int = time::elapsed_us(t)\nlet ms: int = time::elapsed_ms(t)\nif us >= ms * 1000 { 1 } else { 0 }\n".to_string(),
         "fn us_of(t: int) -> int { return time::elapsed_us(t) }\nlet t = time::timer()\nif us_of(t) + 1 > 0 { 1 } else { 0 }\n".to_string(),
-        "needs elapsed_us, timer from std::time\nlet t = timer()\nlet x = elapsed_us(t) + 0.5\nif x > 0.0 && x < 60000000.0 { 1 } else { 0 }\n".to_string(),
+        "use std::time::{elapsed_us, timer}\nlet t = timer()\nlet x = elapsed_us(t) + 0.5\nif x > 0.0 && x < 60000000.0 { 1 } else { 0 }\n".to_string(),
     ];
     for form in forms {
         assert_eq!(run_int(dir.path(), &form), 1, "{form}");
@@ -62,8 +62,8 @@ fn read_bytes_after_read_line_continues_from_the_line_reader() {
     fs::write(&data, "line1\nABCDEF").unwrap();
     let path = quoted(&data);
     let body = format!(
-        "needs std::fs\n\
-         needs std::bytes as bytes\n\
+        "use std::fs\n\
+         use std::bytes as bytes\n\
          let f = match fs::open(\"{path}\", \"r\") {{ Ok(h) => h, Err(e) => -1 }}\n\
          let l = match fs::read_line(f) {{ Ok(Some(s)) => s, Ok(None) => \"<eof>\", Err(e) => e }}\n\
          let b = match fs::read_bytes(f, 3) {{ Ok(h) => h, Err(e) => -1 }}\n\
@@ -84,7 +84,7 @@ fn read_after_read_line_returns_the_rest_of_the_file() {
     fs::write(&data, "head\nbody one\nbody two\n").unwrap();
     let path = quoted(&data);
     let body = format!(
-        "needs std::fs\n\
+        "use std::fs\n\
          let f = match fs::open(\"{path}\", \"r\") {{ Ok(h) => h, Err(e) => -1 }}\n\
          let l = match fs::read_line(f) {{ Ok(Some(s)) => s, Ok(None) => \"\", Err(e) => e }}\n\
          let r = match fs::read(f) {{ Ok(s) => s, Err(e) => e }}\n\
@@ -121,8 +121,8 @@ fn read_bytes_retries_short_reads_until_the_count_or_end_of_file() {
     });
     let path = quoted(&fifo);
     let body = format!(
-        "needs std::fs\n\
-         needs std::bytes as bytes\n\
+        "use std::fs\n\
+         use std::bytes as bytes\n\
          let f = match fs::open(\"{path}\", \"r\") {{ Ok(h) => h, Err(e) => -1 }}\n\
          let b = match fs::read_bytes(f, 6) {{ Ok(h) => h, Err(e) => -1 }}\n\
          let tail = match fs::read_bytes(f, 10) {{ Ok(h) => h, Err(e) => -1 }}\n\
@@ -149,8 +149,8 @@ fn read_file_bytes_reads_a_whole_file_past_the_read_bytes_cap() {
         expected = expected * 251 + i64::from(content[offset]);
     }
     let body = format!(
-        "needs std::fs\n\
-         needs std::bytes as bytes\n\
+        "use std::fs\n\
+         use std::bytes as bytes\n\
          let b = match fs::read_file_bytes(\"{path}\") {{ Ok(h) => h, Err(e) => -1 }}\n\
          let mut acc = 0\n\
          for o in [{}] {{ acc = acc * 251 + bytes::read_u8(b, o) }}\n\
@@ -168,9 +168,9 @@ fn read_file_bytes_reports_a_missing_file_and_reads_an_empty_one() {
     let missing = quoted(&dir.path().join("missing.bin"));
     let empty = quoted(&empty);
     let body = format!(
-        "needs std::fs\n\
-         needs std::bytes as bytes\n\
-         needs std::string as string\n\
+        "use std::fs\n\
+         use std::bytes as bytes\n\
+         use std::string as string\n\
          let a = match fs::read_file_bytes(\"{missing}\") {{\n\
              Ok(h) => 1000,\n\
              Err(e) => if string::contains(e, \"missing.bin\") {{ 1 }} else {{ 3000 }},\n\
@@ -202,9 +202,9 @@ fn two_whole_standard_modules_sharing_a_name_resolve_qualified_uses() {
     );
     let expected = 4 * 1000 + 5 * 100 + 5 * 10 + 9;
     for header in [
-        "needs std::fs\nneeds std::bytes\n",
-        "needs std::bytes\nneeds std::fs\n",
-        "needs std::fs\nneeds std::bytes\nneeds std::string\n",
+        "use std::fs\nuse std::bytes\n",
+        "use std::bytes\nuse std::fs\n",
+        "use std::fs\nuse std::bytes\nuse std::string\n",
     ] {
         let top = format!("{header}{core}r\n");
         assert_eq!(run_int(dir.path(), &top), expected, "{top}");
@@ -220,22 +220,22 @@ fn a_bare_use_of_a_name_two_whole_modules_export_is_e0445() {
     let dir = tempfile::tempdir().unwrap();
     for (body, name) in [
         (
-            "needs std::fs\nneeds std::bytes\nlet b = bytes::alloc(4)\nsize(b)\n",
+            "use std::fs\nuse std::bytes\nlet b = bytes::alloc(4)\nsize(b)\n",
             "size",
         ),
         (
-            "needs std::bytes\nneeds std::fs\nlet b = bytes::alloc(4)\nsize(b)\n",
+            "use std::bytes\nuse std::fs\nlet b = bytes::alloc(4)\nsize(b)\n",
             "size",
         ),
         (
-            "needs std::fs\nneeds std::bytes\nfn f(b: int) -> int {\n    copy(b, 0, b, 0, 1)\n    return 1\n}\nf(1)\n",
+            "use std::fs\nuse std::bytes\nfn f(b: int) -> int {\n    copy(b, 0, b, 0, 1)\n    return 1\n}\nf(1)\n",
             "copy",
         ),
         (
-            "needs std::fs\nneeds std::bytes\nlet g = fn(b: int) -> int { return size(b) }\ng(1)\n",
+            "use std::fs\nuse std::bytes\nlet g = fn(b: int) -> int { return size(b) }\ng(1)\n",
             "size",
         ),
-        ("needs std::fs\nneeds std::bytes\nlet s = size\n0\n", "size"),
+        ("use std::fs\nuse std::bytes\nlet s = size\n0\n", "size"),
     ] {
         let message = run_error(dir.path(), body);
         assert!(message.contains("E0445"), "{body}\n{message}");
@@ -253,7 +253,7 @@ fn a_bare_use_of_a_name_two_whole_modules_export_is_e0445() {
 #[test]
 fn a_local_declaration_shadows_a_name_two_whole_modules_export() {
     let dir = tempfile::tempdir().unwrap();
-    let body = "needs std::fs\nneeds std::bytes\nfn size(x: int) -> int { return x * 2 }\nsize(21) + bytes::size(bytes::alloc(5))\n";
+    let body = "use std::fs\nuse std::bytes\nfn size(x: int) -> int { return x * 2 }\nsize(21) + bytes::size(bytes::alloc(5))\n";
     assert_eq!(run_int(dir.path(), body), 47);
 }
 
@@ -273,11 +273,11 @@ fn two_whole_user_modules_sharing_a_function_name_resolve_qualified_uses() {
     assert_eq!(
         run_int(
             dir.path(),
-            "needs alpha\nneeds beta\nalpha::get() * 1000 + beta::get() + only_alpha()\n"
+            "use alpha\nuse beta\nalpha::get() * 1000 + beta::get() + only_alpha()\n"
         ),
         100_501
     );
-    let message = run_error(dir.path(), "needs alpha\nneeds beta\nget()\n");
+    let message = run_error(dir.path(), "use alpha\nuse beta\nget()\n");
     assert!(message.contains("E0445"), "{message}");
     assert!(message.contains("'alpha::get' or 'beta::get'"), "{message}");
 }

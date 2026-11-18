@@ -381,7 +381,7 @@ if r == 0.0 { 1 } else { 0 }
 fn log_one() {
     let code = r#"
 let r = log(1.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -390,7 +390,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn pow_zero_exponent() {
     let code = r#"
 let r = pow(123.456, 0.0)
-if r > 0.99 and r < 1.01 { 1 } else { 0 }
+if r > 0.99 && r < 1.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -399,7 +399,7 @@ if r > 0.99 and r < 1.01 { 1 } else { 0 }
 fn trig_large_angles() {
     let code = r#"
 let r = sin(1000000.0)
-if r >= -1.0 and r <= 1.0 { 1 } else { 0 }
+if r >= -1.0 && r <= 1.0 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }

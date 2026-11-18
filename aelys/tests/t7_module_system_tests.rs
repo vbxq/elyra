@@ -59,7 +59,7 @@ pub fn dir_code(d: Dir) -> int {
 }
 ";
 
-const WAD: &str = "needs Vec2, Seg, Dir, Shape, Measure, v from geom
+const WAD: &str = "use geom::{Vec2, Seg, Dir, Shape, Measure, v}
 pub struct Lump { pub name: string, pub pts: Vec<Vec2>, pub seg: Seg, pub shape: Shape, pub opt: Option<Vec2> }
 impl Measure for Lump {
     fn measure(self) -> int { self.pts.len() * 1000 + self.seg.a.measure() }
@@ -72,9 +72,9 @@ pub fn load(n: int) -> Lump {
 }
 ";
 
-const RENDER: &str = "needs geom
-needs Lump, load from wad
-needs other
+const RENDER: &str = "use geom
+use wad::{Lump, load}
+use other
 pub fn shape_sum(s: Shape) -> int {
     match s {
         Shape::Line(seg) => seg.a.x + seg.b.y + dir_code(seg.dir),
@@ -120,22 +120,22 @@ fn nested_struct_and_enum_schemas_agree_across_modules_under_every_needs_order()
     ]);
     let orders = [
         [
-            "needs other",
-            "needs render",
-            "needs Lump, load from wad",
-            "needs geom",
+            "use other",
+            "use render",
+            "use wad::{Lump, load}",
+            "use geom",
         ],
         [
-            "needs geom",
-            "needs Lump, load from wad",
-            "needs render",
-            "needs other",
+            "use geom",
+            "use wad::{Lump, load}",
+            "use render",
+            "use other",
         ],
         [
-            "needs Lump, load from wad",
-            "needs other",
-            "needs geom",
-            "needs render",
+            "use wad::{Lump, load}",
+            "use other",
+            "use geom",
+            "use render",
         ],
     ];
     for (index, order) in orders.iter().enumerate() {
@@ -172,8 +172,8 @@ pub fn maker() -> fn(int) -> Node {
         ),
         (
             "c.aelys",
-            "needs Node, leaf, Tri from a
-needs Pad from b
+            "use a::{Node, leaf, Tri}
+use b::{Pad}
 pub enum Wrap { N(Node), P(Pad), T(Tri) }
 pub fn wsum(w: Wrap) -> int { match w { Wrap::N(n) => n.v, Wrap::P(p) => p.q, Wrap::T(t) => t.pts[2] } }
 ",
@@ -182,9 +182,9 @@ pub fn wsum(w: Wrap) -> int { match w { Wrap::N(n) => n.v, Wrap::P(p) => p.q, Wr
     let value = run_int(
         &dir,
         "main.aelys",
-        "needs b
-needs c
-needs a
+        "use b
+use c
+use a
 struct Local { n: Node }
 let mut ks: Vec<Node> = vec![]
 ks.push(leaf(2))
@@ -225,8 +225,8 @@ pub fn area(s: Shape) -> int { match s { Shape::Circle(r) => r * 3, Shape::Squar
     let value = run_int(
         &dir,
         "main.aelys",
-        "needs b
-needs a
+        "use b
+use a
 let s = a::make(5)
 let r = match s { Shape::Circle(r) => r, Shape::Square(w) => 100 + w }
 let y = match b::aaa() { Aaa::X => 1, Aaa::Y => 2 }
@@ -245,16 +245,16 @@ fn a_runtime_error_inside_a_module_names_the_module_file_and_line() {
     let error = run_err(
         &dir,
         "main.aelys",
-        "needs rt\nlet v = vec![1]\nlet pad = 0\nrt::boom(v)\n",
+        "use rt\nlet v = vec![1]\nlet pad = 0\nrt::boom(v)\n",
     );
     assert!(error.contains("rt.aelys:3:"), "{error}");
     assert!(error.contains("v[5] + x"), "{error}");
     assert!(error.contains("main.aelys:4)"), "{error}");
 }
 
-const SCOPED_LIB: &str = "needs std::bytes as by
-needs util as u
-needs thrice from util
+const SCOPED_LIB: &str = "use std::bytes as by
+use util as u
+use util::{thrice}
 pub struct Key { pub lo: int, pub hi: int }
 pub enum Kind { A(int), B }
 struct Hidden { v: int }
@@ -271,7 +271,7 @@ impl Table {
         let extra = match kind { Kind::A(x) => x, Kind::B => 0 }
         let b = by::from_string(\"AB\")
         let first = by::read_u8(b, 0)
-        Table { total: k.lo + k.hi + h.v + extra + thrice(1) + SCALE + first + math::abs(0 - 1) + convert::parse_int(\"5\").unwrap_or(0) }
+        Table { total: k.lo + k.hi + h.v + extra + thrice(1) + SCALE + first + math::abs(0 - 1) + \"5\".to_int().unwrap_or(0) }
     }
     fn get(self) -> int { self.total }
 }
@@ -288,7 +288,7 @@ fn a_carried_impl_body_resolves_every_name_in_its_own_module() {
         run_int(
             &dir,
             "by_name.aelys",
-            "needs Table from lib\nTable::make(5).get()\n"
+            "use lib::{Table}\nTable::make(5).get()\n"
         ),
         expected,
         "the importer never named Key, Kind, by, u, thrice, helper or SCALE"
@@ -297,7 +297,7 @@ fn a_carried_impl_body_resolves_every_name_in_its_own_module() {
         run_int(
             &dir,
             "rebound.aelys",
-            "needs lib\nneeds std::fs as by\nneeds util as u\nlet thrice = 1000\nfn helper(n: int) -> int { n * 1000 }\nTable::make(5).get()\n"
+            "use lib\nuse std::fs as by\nuse util as u\nlet thrice = 1000\nfn helper(n: int) -> int { n * 1000 }\nTable::make(5).get()\n"
         ),
         expected,
         "the importer's own by, u, thrice and helper must not leak into the body"
@@ -305,10 +305,10 @@ fn a_carried_impl_body_resolves_every_name_in_its_own_module() {
     write(
         dir.path(),
         "mid.aelys",
-        "needs Table from lib\npub fn run() -> int { Table::make(5).get() }\n",
+        "use lib::{Table}\npub fn run() -> int { Table::make(5).get() }\n",
     );
     assert_eq!(
-        run_int(&dir, "through_mid.aelys", "needs mid\nmid::run()\n"),
+        run_int(&dir, "through_mid.aelys", "use mid\nmid::run()\n"),
         expected,
         "a module importer has no prelude of its own to lend the body"
     );
@@ -329,14 +329,14 @@ pub fn spawn(hp: int) -> Mobj { Mobj { hp: hp, x: 3 } }
         run_int(
             &dir,
             "use.aelys",
-            "needs spawn from mob\nlet m = spawn(5)\nm.double() * 100 + m.x\n"
+            "use mob::{spawn}\nlet m = spawn(5)\nm.double() * 100 + m.x\n"
         ),
         1003
     );
     let error = run_err(
         &dir,
         "name.aelys",
-        "needs spawn from mob\nlet m = Mobj { hp: 1, x: 2 }\n",
+        "use mob::{spawn}\nlet m = Mobj { hp: 1, x: 2 }\n",
     );
     assert!(
         error.contains("E0378"),
@@ -348,7 +348,7 @@ pub fn spawn(hp: int) -> Mobj { Mobj { hp: hp, x: 3 } }
 fn builtin_modules_are_visible_inside_an_imported_module() {
     let dir = tree(&[(
         "helper.aelys",
-        "pub fn letter(n: int) -> string { convert::chr(n) }
+        "pub fn letter(n: int) -> string { (n as char).to_string() }
 pub fn root(x: float) -> int { math::floor(math::sqrt(x)) }
 pub fn clock_ok() -> bool { time::now_ms() > 0 }
 pub fn shout() -> int {
@@ -360,7 +360,7 @@ pub fn shout() -> int {
     let value = run_int(
         &dir,
         "main.aelys",
-        "needs helper
+        "use helper
 let l = helper::letter(65)
 let c = if helper::clock_ok() { 1 } else { 0 }
 let a = if l == \"A\" { 1 } else { 0 }
@@ -397,14 +397,14 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
         run_int(
             &dir,
             "qualified.aelys",
-            "needs std::fs\nneeds std::bytes\nlet b = bytes::alloc(4)\nbytes::size(b)\n"
+            "use std::fs\nuse std::bytes\nlet b = bytes::alloc(4)\nbytes::size(b)\n"
         ),
         4
     );
     let bare = run_err(
         &dir,
         "bare.aelys",
-        "needs std::fs\nneeds std::bytes\nlet b = bytes::alloc(4)\nsize(b)\n",
+        "use std::fs\nuse std::bytes\nlet b = bytes::alloc(4)\nsize(b)\n",
     );
     assert!(bare.contains("E0445"), "{bare}");
     assert!(bare.contains("'size'"), "{bare}");
@@ -416,7 +416,7 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
         run_int(
             &dir,
             "named.aelys",
-            "needs std::fs\nneeds size from std::bytes\nneeds std::bytes\nsize(bytes::alloc(3))\n"
+            "use std::fs\nuse std::bytes::{size}\nuse std::bytes\nsize(bytes::alloc(3))\n"
         ),
         3,
         "a name imported by name wins over the whole-module ones"
@@ -424,7 +424,7 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
     let twice = run_err(
         &dir,
         "twice.aelys",
-        "needs size from std::fs\nneeds size from std::bytes\n",
+        "use std::fs::{size}\nuse std::bytes::{size}\n",
     );
     assert!(twice.contains("E0410"), "{twice}");
     assert!(twice.contains("twice.aelys:2:1"), "{twice}");
@@ -437,20 +437,20 @@ fn user_modules_sharing_a_name_clash_only_on_a_bare_use() {
         ("gfx.aelys", "pub fn init() -> int { 20 }\n"),
         (
             "both.aelys",
-            "needs wad\nneeds gfx\npub fn go() -> int { wad::init() + gfx::init() }\npub fn bad() -> int { init() }\n",
+            "use wad\nuse gfx\npub fn go() -> int { wad::init() + gfx::init() }\npub fn bad() -> int { init() }\n",
         ),
     ]);
     assert_eq!(
         run_int(
             &dir,
             "main.aelys",
-            "needs wad\nneeds gfx\nwad::init() * 100 + gfx::init()\n"
+            "use wad\nuse gfx\nwad::init() * 100 + gfx::init()\n"
         ),
         120
     );
-    let error = run_err(&dir, "bare.aelys", "needs wad\nneeds gfx\ninit()\n");
+    let error = run_err(&dir, "bare.aelys", "use wad\nuse gfx\ninit()\n");
     assert!(error.contains("E0445"), "{error}");
-    let nested = run_err(&dir, "nested.aelys", "needs both\nboth::go()\n");
+    let nested = run_err(&dir, "nested.aelys", "use both\nboth::go()\n");
     assert!(
         nested.contains("E0445") && nested.contains("both.aelys:4:"),
         "{nested}"
@@ -463,13 +463,12 @@ fn needs_order_never_decides_which_file_a_dotted_path_names() {
         ("lib/util.aelys", "pub fn twice(x: int) -> int { x * 2 }\n"),
         (
             "game/mobj.aelys",
-            "needs lib::util\npub struct Mobj { pub hp: int, pub x: int }\npub fn spawn(hp: int) -> Mobj { Mobj { hp: hp, x: util::twice(hp) } }\n",
+            "use lib::util\npub struct Mobj { pub hp: int, pub x: int }\npub fn spawn(hp: int) -> Mobj { Mobj { hp: hp, x: util::twice(hp) } }\n",
         ),
     ]);
-    let first =
-        "needs lib::util\nneeds Mobj, spawn from game::mobj\nspawn(5).x * 100 + util::twice(1)\n";
+    let first = "use lib::util\nuse game::mobj::{Mobj, spawn}\nspawn(5).x * 100 + util::twice(1)\n";
     let second =
-        "needs Mobj, spawn from game::mobj\nneeds lib::util\nspawn(5).x * 100 + util::twice(1)\n";
+        "use game::mobj::{Mobj, spawn}\nuse lib::util\nspawn(5).x * 100 + util::twice(1)\n";
     assert_eq!(
         run_int(&dir, "b.aelys", first),
         1002,
@@ -503,14 +502,14 @@ fn one_file_reached_by_two_dotted_paths_is_one_module_instance() {
         ),
         (
             "game/mobj.aelys",
-            "needs lib::counter\nlet first = counter::bump()\npub fn first_hit() -> int { first }\npub fn hit() -> int { counter::bump() }\n",
+            "use lib::counter\nlet first = counter::bump()\npub fn first_hit() -> int { first }\npub fn hit() -> int { counter::bump() }\n",
         ),
     ]);
     assert_eq!(
         run_int(
             &dir,
             "main.aelys",
-            "needs game::mobj\nneeds game::lib::counter\nlet a = counter::bump()\nlet b = mobj::hit()\nlet c = counter::bump()\nmobj::first_hit() * 1000 + a * 100 + b * 10 + c\n"
+            "use game::mobj\nuse game::lib::counter\nlet a = counter::bump()\nlet b = mobj::hit()\nlet c = counter::bump()\nmobj::first_hit() * 1000 + a * 100 + b * 10 + c\n"
         ),
         1234,
         "one instance counts 1 at mobj's load, then 2, 3, 4"
@@ -522,30 +521,24 @@ fn an_alias_or_a_bare_import_never_rebinds_another_module_reference() {
     let dir = tree(&[
         ("ua.aelys", "pub fn f() -> int { 1 }\n"),
         ("ub.aelys", "pub fn f() -> int { 20 }\n"),
-        (
-            "ma.aelys",
-            "needs ua as u\npub fn run() -> int { u::f() }\n",
-        ),
-        (
-            "mb.aelys",
-            "needs ub as u\npub fn run() -> int { u::f() }\n",
-        ),
-        ("na.aelys", "needs f from ua\npub fn run() -> int { f() }\n"),
-        ("nb.aelys", "needs f from ub\npub fn run() -> int { f() }\n"),
+        ("ma.aelys", "use ua as u\npub fn run() -> int { u::f() }\n"),
+        ("mb.aelys", "use ub as u\npub fn run() -> int { u::f() }\n"),
+        ("na.aelys", "use ua::{f}\npub fn run() -> int { f() }\n"),
+        ("nb.aelys", "use ub::{f}\npub fn run() -> int { f() }\n"),
         (
             "sa.aelys",
-            "needs std::fs as io2\npub fn run() -> bool { io2::exists(\"/\") }\n",
+            "use std::fs as io2\npub fn run() -> bool { io2::exists(\"/\") }\n",
         ),
         (
             "sb.aelys",
-            "needs std::bytes as io2\npub fn run() -> int { io2::size(io2::alloc(7)) }\n",
+            "use std::bytes as io2\npub fn run() -> int { io2::size(io2::alloc(7)) }\n",
         ),
     ]);
     assert_eq!(
         run_int(
             &dir,
             "main.aelys",
-            "needs ma\nneeds mb\nneeds na\nneeds nb\nneeds sa\nneeds sb\nlet s = if sa::run() { 1 } else { 0 }\nma::run() * 1000 + mb::run() * 100 + na::run() * 10 + nb::run() + s * 100000 + sb::run() * 1000000\n"
+            "use ma\nuse mb\nuse na\nuse nb\nuse sa\nuse sb\nlet s = if sa::run() { 1 } else { 0 }\nma::run() * 1000 + mb::run() * 100 + na::run() * 10 + nb::run() + s * 100000 + sb::run() * 1000000\n"
         ),
         7_103_030,
         "each module keeps its own u, f and io2"
@@ -573,7 +566,7 @@ impl Area for Sq {
         run_int(
             &dir,
             "main.aelys",
-            "needs Sq, Area from shape\nlet s = Sq::new(3)\ns.area() * 100 + s.twice()\n"
+            "use shape::{Sq, Area}\nlet s = Sq::new(3)\ns.area() * 100 + s.twice()\n"
         ),
         906
     );
@@ -589,7 +582,7 @@ fn a_generic_pub_function_is_specialized_by_its_importer() {
         run_int(
             &dir,
             "main.aelys",
-            "needs gen\nlet s = gen::first(vec![\"ab\", \"c\"])\ngen::plain(1) + first(vec![40, 2]) + s.len()\n"
+            "use gen\nlet s = gen::first(vec![\"ab\", \"c\"])\ngen::plain(1) + first(vec![40, 2]) + s.len()\n"
         ),
         43
     );
@@ -599,15 +592,11 @@ fn a_generic_pub_function_is_specialized_by_its_importer() {
         "fn first<T>(v: Vec<T>) -> T { v[0] }\npub fn head(v: Vec<int>) -> int { first(v) }\n",
     );
     assert_eq!(
-        run_int(
-            &dir,
-            "ok.aelys",
-            "needs private\nprivate::head(vec![4, 5])\n"
-        ),
+        run_int(&dir, "ok.aelys", "use private\nprivate::head(vec![4, 5])\n"),
         4,
         "a private generic helper stays usable inside its module"
     );
-    let hidden = run_err(&dir, "hidden.aelys", "needs first from private\n1\n");
+    let hidden = run_err(&dir, "hidden.aelys", "use private::{first}\n1\n");
     assert!(
         hidden.contains("E0405"),
         "a private generic is not importable: {hidden}"
@@ -627,18 +616,18 @@ fn an_imported_variable_is_the_declaring_module_slot_for_reads_and_writes() {
         run_int(
             &dir,
             "write.aelys",
-            "needs v, get from alpha\nfn bump() { v = v + 1 }\nbump()\nbump()\nv * 1000 + get()\n"
+            "use alpha::{v, get}\nfn bump() { v = v + 1 }\nbump()\nbump()\nv * 1000 + get()\n"
         ),
         102_102,
         "both bumps land in alpha's own v"
     );
-    let fixed = run_err(&dir, "fixed.aelys", "needs cst\nSCALE = 3\nSCALE\n");
+    let fixed = run_err(&dir, "fixed.aelys", "use cst\nSCALE = 3\nSCALE\n");
     assert!(fixed.contains("E0446"), "{fixed}");
     assert_eq!(
         run_int(
             &dir,
             "shadow.aelys",
-            "needs cst\nlet mut SCALE = 1\nSCALE = 3\nSCALE * 100 + cst::SCALE\n"
+            "use cst\nlet mut SCALE = 1\nSCALE = 3\nSCALE * 100 + cst::SCALE\n"
         ),
         310,
         "a file's own declaration shadows the import and leaves the module alone"

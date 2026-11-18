@@ -160,8 +160,8 @@ fn the_gradient_example_presents_frames_headless() {
     );
 }
 
-const SIZE_CHECKS: &str = r#"needs std::bytes
-needs sdl
+const SIZE_CHECKS: &str = r#"use std::bytes
+use sdl
 match sdl::open("sizes", 16, 48, 1) { Ok(_) => (), Err(e) => println("open failed {e}") }
 let px = bytes::alloc(768)
 let mut i = 0

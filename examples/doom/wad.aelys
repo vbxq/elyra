@@ -1,7 +1,6 @@
-needs std::fs as fs
-needs std::bytes
-needs std::convert as convert
-needs println from std::io
+use std::fs as fs
+use std::bytes
+use std::io::{println}
 
 pub struct Lump { pub name: string, pub filepos: int, pub size: int, pub key_lo: int, pub key_hi: int }
 
@@ -105,7 +104,7 @@ pub fn i32(buf: int, off: int) -> int { bytes::read_i32(buf, off) }
 pub fn u32(buf: int, off: int) -> int { bytes::read_u32(buf, off) }
 
 fn upper_byte(b: int) -> int {
-    if b >= 97 and b <= 122 { b - 32 } else { b }
+    if b >= 97 && b <= 122 { b - 32 } else { b }
 }
 
 pub fn name8(buf: int, off: int) -> string {
@@ -113,7 +112,7 @@ pub fn name8(buf: int, off: int) -> string {
     if end < 0 { end = off + 8 }
     let mut s = ""
     for i in off..end {
-        s += convert::chr(upper_byte(bytes::read_u8(buf, i)))
+        s += (upper_byte(bytes::read_u8(buf, i)) as char).to_string()
     }
     s
 }
@@ -197,7 +196,7 @@ pub fn open_wad(path: string) -> Wad {
             let cur = table[s]
             if cur == 0 { table[s] = i + 1; break }
             let other = lumps[cur - 1]
-            if other.key_lo == k.lo and other.key_hi == k.hi { table[s] = i + 1; break }
+            if other.key_lo == k.lo && other.key_hi == k.hi { table[s] = i + 1; break }
             s = (s + 1) % 8192
         }
     }
@@ -216,7 +215,7 @@ impl Wad {
             let cur = self.table[s]
             if cur == 0 { return -1 }
             let l = self.lumps[cur - 1]
-            if l.key_lo == k.lo and l.key_hi == k.hi { return cur - 1 }
+            if l.key_lo == k.lo && l.key_hi == k.hi { return cur - 1 }
             s = (s + 1) % 8192
         }
         -1
@@ -235,7 +234,7 @@ impl Wad {
         let k = key_of(name)
         for i in start..self.lumps.len() {
             let l = self.lumps[i]
-            if l.key_lo == k.lo and l.key_hi == k.hi { return i }
+            if l.key_lo == k.lo && l.key_hi == k.hi { return i }
         }
         -1
     }

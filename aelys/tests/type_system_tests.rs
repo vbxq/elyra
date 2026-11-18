@@ -267,7 +267,7 @@ fn test_infer_bool_literal() {
         r#"
         let x = true
         let y = false
-        x and not y
+        x && !y
     "#,
     );
     assert_eq!(result.as_bool(), Some(true));
@@ -2075,7 +2075,7 @@ fn a_condition_reports_the_required_boolean_as_expected() {
     let negation = run_err(
         r#"
         fn probe() -> int {
-            let b = not 5
+            let b = !5
             return 0
         }
         probe()

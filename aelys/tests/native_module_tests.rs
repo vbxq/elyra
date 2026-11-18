@@ -69,7 +69,7 @@ fn script_imports_native_module() {
         &dir,
         "main.aelys",
         r#"
-needs native_test
+use native_test
 native_test::add(5, 5) + native_test::b::c(5, 5)
 "#,
     );

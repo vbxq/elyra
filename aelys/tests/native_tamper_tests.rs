@@ -69,7 +69,7 @@ fn invalid_exports_hash_is_rejected() {
     let dest = dir.path().join(format!("tamper.{}", module_ext()));
     fs::copy(&lib, &dest).expect("copy native module");
 
-    let main_path = write_file(&dir, "main.aelys", "needs tamper\n");
+    let main_path = write_file(&dir, "main.aelys", "use tamper\n");
 
     let err = run_file(&main_path).expect_err("should fail");
     assert!(
@@ -87,7 +87,7 @@ fn zero_exports_hash_is_rejected() {
     let dest = dir.path().join(format!("zero_hash.{}", module_ext()));
     fs::copy(&lib, &dest).expect("copy native module");
 
-    let main_path = write_file(&dir, "main.aelys", "needs zero_hash\n");
+    let main_path = write_file(&dir, "main.aelys", "use zero_hash\n");
 
     let err = run_file(&main_path).expect_err("should fail");
     assert!(

@@ -67,8 +67,11 @@ impl VM {
             };
 
             return Some(format!(
-                "'{}' is available in {}, try: needs {} from {}",
-                var_name, display_module, var_name, display_module
+                "'{}' is available in {}, try: use {}::{{{}}}",
+                var_name,
+                display_module,
+                display_module.replace('.', "::"),
+                var_name
             ));
         }
 

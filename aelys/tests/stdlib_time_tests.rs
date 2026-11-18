@@ -5,7 +5,7 @@ use common::*;
 fn time_now_returns_reasonable_value() {
     let code = r#"
 let t = now()
-if t > 1600000000.0 and t < 2000000000.0 { 1 } else { 0 }
+if t > 1600000000.0 && t < 2000000000.0 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -119,7 +119,7 @@ sleep_us(1000)
 fn year_is_current() {
     let code = r#"
 let y = year()
-if y >= 2024 and y <= 2030 { 1 } else { 0 }
+if y >= 2024 && y <= 2030 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -128,7 +128,7 @@ if y >= 2024 and y <= 2030 { 1 } else { 0 }
 fn month_in_range() {
     let code = r#"
 let m = month()
-if m >= 1 and m <= 12 { 1 } else { 0 }
+if m >= 1 && m <= 12 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -137,7 +137,7 @@ if m >= 1 and m <= 12 { 1 } else { 0 }
 fn day_in_range() {
     let code = r#"
 let d = day()
-if d >= 1 and d <= 31 { 1 } else { 0 }
+if d >= 1 && d <= 31 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -146,7 +146,7 @@ if d >= 1 and d <= 31 { 1 } else { 0 }
 fn hour_in_range() {
     let code = r#"
 let h = hour()
-if h >= 0 and h < 24 { 1 } else { 0 }
+if h >= 0 && h < 24 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -155,7 +155,7 @@ if h >= 0 and h < 24 { 1 } else { 0 }
 fn minute_in_range() {
     let code = r#"
 let m = minute()
-if m >= 0 and m < 60 { 1 } else { 0 }
+if m >= 0 && m < 60 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -164,7 +164,7 @@ if m >= 0 and m < 60 { 1 } else { 0 }
 fn second_in_range() {
     let code = r#"
 let s = second()
-if s >= 0 and s < 60 { 1 } else { 0 }
+if s >= 0 && s < 60 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -173,7 +173,7 @@ if s >= 0 and s < 60 { 1 } else { 0 }
 fn weekday_in_range() {
     let code = r#"
 let w = weekday()
-if w >= 0 and w < 7 { 1 } else { 0 }
+if w >= 0 && w < 7 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -182,7 +182,7 @@ if w >= 0 and w < 7 { 1 } else { 0 }
 fn yearday_in_range() {
     let code = r#"
 let yd = yearday()
-if yd >= 1 and yd <= 366 { 1 } else { 0 }
+if yd >= 1 && yd <= 366 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -255,7 +255,7 @@ fn sleep_precise() {
 let t = timer()
 sleep(50)
 let e = elapsed_ms(t)
-if e >= 45 and e < 200 { 1 } else { 0 }
+if e >= 45 && e < 200 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }

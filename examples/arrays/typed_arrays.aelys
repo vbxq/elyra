@@ -1,17 +1,16 @@
-needs std::io
-needs std::convert
+use std::io
 
 let mut ints = [10, 20, 30, 40, 50]
-io::print("[int; 5]: len = " + convert::to_string(ints.len()))
-io::print("ints[2] = " + convert::to_string(ints[2]))
+io::print("[int; 5]: len = " + ints.len().to_string())
+io::print("ints[2] = " + ints[2].to_string())
 
 let floats = [1.5, 2.5, 3.5, 4.5]
-io::print("[float; 4]: len = " + convert::to_string(floats.len()))
-io::print("floats[1] = " + convert::to_string(floats[1]))
+io::print("[float; 4]: len = " + floats.len().to_string())
+io::print("floats[1] = " + floats[1].to_string())
 
 let bools = [true, false, true, false]
-io::print("[bool; 4]: len = " + convert::to_string(bools.len()))
-io::print("bools[0] = " + convert::to_string(bools[0]))
+io::print("[bool; 4]: len = " + bools.len().to_string())
+io::print("bools[0] = " + bools[0].to_string())
 
 ints[0] = 999
-io::print("After ints[0] = 999: " + convert::to_string(ints[0]))
+io::print("After ints[0] = 999: " + ints[0].to_string())

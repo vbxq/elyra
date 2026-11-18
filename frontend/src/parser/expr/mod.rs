@@ -277,7 +277,11 @@ impl Parser {
     fn or_expr(&mut self) -> Result<Expr> {
         let mut left = self.and_expr()?;
 
-        while self.match_token(&TokenKind::Or) {
+        loop {
+            self.reject_word_operator("or", "||")?;
+            if !self.match_token(&TokenKind::Or) {
+                break;
+            }
             let right = self.and_expr()?;
             let span = left.span.merge(right.span);
             left = Expr::new(
@@ -295,7 +299,11 @@ impl Parser {
     fn and_expr(&mut self) -> Result<Expr> {
         let mut left = self.bit_or()?;
 
-        while self.match_token(&TokenKind::And) {
+        loop {
+            self.reject_word_operator("and", "&&")?;
+            if !self.match_token(&TokenKind::And) {
+                break;
+            }
             let right = self.bit_or()?;
             let span = left.span.merge(right.span);
             left = Expr::new(
@@ -308,6 +316,45 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    fn reject_word_operator(&self, word: &str, operator: &str) -> Result<()> {
+        if matches!(&self.peek().kind, TokenKind::Identifier(name) if name == word) {
+            return Err(self.error(CompileErrorKind::RemovedLogicalKeyword {
+                word: word.to_string(),
+                replacement: format!("a {operator} b"),
+            }));
+        }
+        Ok(())
+    }
+
+    // `not(x)` stays a call to a function named `not`; only `not` followed by a separate operand is the old operator
+    fn reject_word_not(&self) -> Result<()> {
+        if !matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "not") {
+            return Ok(());
+        }
+        let next = self.peek_at(1);
+        let separated = next.span.start > self.peek().span.end;
+        let operand = match &next.kind {
+            TokenKind::LParen => separated,
+            TokenKind::Identifier(_)
+            | TokenKind::Int(_)
+            | TokenKind::Float(_)
+            | TokenKind::Char(_)
+            | TokenKind::String(_)
+            | TokenKind::FmtString(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Bang => true,
+            _ => false,
+        };
+        if operand {
+            return Err(self.error(CompileErrorKind::RemovedLogicalKeyword {
+                word: "not".to_string(),
+                replacement: "!x".to_string(),
+            }));
+        }
+        Ok(())
     }
 
     pub fn match_binary_op(&mut self, kinds: &[TokenKind]) -> Option<BinaryOp> {

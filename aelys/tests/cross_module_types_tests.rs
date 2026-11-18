@@ -52,7 +52,7 @@ fn test_imported_enum_is_constructed_and_matched() {
         &dir,
         "main.aelys",
         r#"
-needs shapes
+use shapes
 let c = Shape::Circle(5)
 match c {
     Shape::Circle(r) => r * 2,
@@ -74,7 +74,7 @@ fn test_imported_enum_match_must_stay_exhaustive() {
         &dir,
         "main.aelys",
         r#"
-needs shapes
+use shapes
 let c = Shape::Circle(5)
 match c {
     Shape::Circle(r) => r * 2
@@ -105,7 +105,7 @@ fn test_imported_trait_method_on_imported_struct() {
         &dir,
         "main.aelys",
         r#"
-needs geometry
+use geometry
 let p = Point { x: 3, y: 4 }
 p.norm()
 "#,
@@ -124,7 +124,7 @@ fn test_imported_trait_method_through_generic_bound() {
         &dir,
         "main.aelys",
         r#"
-needs geometry
+use geometry
 fn measure<T>(value: T) -> int where T: Norm {
     value.norm()
 }
@@ -159,7 +159,7 @@ pub fn visible() -> int {
         &dir,
         "main.aelys",
         r#"
-needs Secret from hidden
+use hidden::{Secret}
 1
 "#,
     );
@@ -190,7 +190,7 @@ pub enum Holder<T> {
         &dir,
         "main.aelys",
         r#"
-needs holder
+use holder
 let a = Holder::One(5)
 let b = Holder::One("abc")
 let x = match a { Holder::One(v) => v }
@@ -215,7 +215,7 @@ pub trait Norm {
 "#;
 
 const CANDIDATE_EXT_MODULE: &str = r#"
-needs base
+use base
 
 impl Norm for Vector {
     fn norm(self) -> int {
@@ -234,8 +234,8 @@ fn test_impl_from_an_imported_module_is_a_candidate() {
         &dir,
         "main.aelys",
         r#"
-needs base
-needs ext
+use base
+use ext
 fn measure<T>(value: T) -> int where T: Norm {
     value.norm()
 }
@@ -258,7 +258,7 @@ fn test_impl_from_an_unimported_module_is_not_a_candidate() {
         &dir,
         "main.aelys",
         r#"
-needs base
+use base
 fn measure<T>(value: T) -> int where T: Norm {
     value.norm()
 }
@@ -314,8 +314,8 @@ impl Point {
         &dir,
         "main.aelys",
         r#"
-needs left
-needs right
+use left
+use right
 1
 "#,
     );
@@ -351,7 +351,7 @@ pub struct Point {
         &dir,
         "main.aelys",
         r#"
-needs left
+use left
 struct Point {
     y: int,
 }
@@ -406,7 +406,7 @@ fn public_nominal_return_is_allowed() {
         &dir,
         "main.aelys",
         r#"
-needs shapes
+use shapes
 let point = shapes::make()
 point.x
 "#,
@@ -423,7 +423,7 @@ fn private_field_read_is_e0412() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs shapes\nlet point = shapes::make()\npoint.y\n",
+        "use shapes\nlet point = shapes::make()\npoint.y\n",
     );
 
     let error = run_file(&main_path).expect_err("a private field read must be rejected");
@@ -437,7 +437,7 @@ fn private_field_write_is_e0412() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs shapes\nlet mut point = shapes::make()\npoint.y = 7\npoint.x\n",
+        "use shapes\nlet mut point = shapes::make()\npoint.y = 7\npoint.x\n",
     );
 
     let error = run_file(&main_path).expect_err("a private field write must be rejected");
@@ -451,7 +451,7 @@ fn private_field_literal_is_e0413() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Point from shapes\nPoint { x: 1, y: 2 }\n",
+        "use shapes::{Point}\nPoint { x: 1, y: 2 }\n",
     );
 
     let error = run_file(&main_path).expect_err("a private field literal must be rejected");
@@ -465,7 +465,7 @@ fn private_field_pattern_is_e0413() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs shapes\nlet point = shapes::make()\nmatch point { Point { y, .. } => y }\n",
+        "use shapes\nlet point = shapes::make()\nmatch point { Point { y, .. } => y }\n",
     );
 
     let error = run_file(&main_path).expect_err("a private field pattern must be rejected");
@@ -493,7 +493,7 @@ pub fn leak() -> Hidden {
         &dir,
         "main.aelys",
         r#"
-needs hidden
+use hidden
 1
 "#,
     );
@@ -526,7 +526,7 @@ fn an_imported_impl_body_reads_the_global_of_the_module_that_defined_it() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Gauge from gauge\nfn main() -> int {\n    let g = Gauge { base: 1 }\n    return g.tick()\n}\nmain()\n",
+        "use gauge::{Gauge}\nfn main() -> int {\n    let g = Gauge { base: 1 }\n    return g.tick()\n}\nmain()\n",
     );
     let value = run_file(&main_path).expect("the imported impl body must resolve its own global");
     assert_eq!(
@@ -543,12 +543,12 @@ fn an_imported_impl_body_reads_a_global_its_own_module_only_imported() {
     write_file(
         &dir,
         "mid.aelys",
-        "needs stride from base\npub struct Meter { pub v: int }\nimpl Meter {\n    fn walk(self) -> int {\n        return self.v + stride\n    }\n}\n",
+        "use base::{stride}\npub struct Meter { pub v: int }\nimpl Meter {\n    fn walk(self) -> int {\n        return self.v + stride\n    }\n}\n",
     );
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Meter from mid\nfn main() -> int {\n    let m = Meter { v: 2 }\n    return m.walk()\n}\nmain()\n",
+        "use mid::{Meter}\nfn main() -> int {\n    let m = Meter { v: 2 }\n    return m.walk()\n}\nmain()\n",
     );
     let value = run_file(&main_path).expect("the impl body must read what its own module read");
     assert_eq!(value.as_int(), Some(6));
@@ -565,7 +565,7 @@ fn a_module_private_global_stays_invisible_to_the_importer() {
     let running = write_file(
         &dir,
         "reader.aelys",
-        "needs Gauge from gauge\nfn main() -> int {\n    let g = Gauge { base: 1 }\n    return g.tick()\n}\nmain()\n",
+        "use gauge::{Gauge}\nfn main() -> int {\n    let g = Gauge { base: 1 }\n    return g.tick()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&running)
@@ -577,7 +577,7 @@ fn a_module_private_global_stays_invisible_to_the_importer() {
     let leaking = write_file(
         &dir,
         "leaker.aelys",
-        "needs Gauge from gauge\nfn main() -> int {\n    return ticks\n}\nmain()\n",
+        "use gauge::{Gauge}\nfn main() -> int {\n    return ticks\n}\nmain()\n",
     );
     let error = run_file(&leaking).expect_err("the importer must not see the module's global");
     let message = error.to_string();
@@ -598,7 +598,7 @@ fn a_diagnostic_from_an_imported_impl_body_points_at_the_defining_file() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Dial, Gauge from dials\ntrait Aaa {\n    type Unit\n    fn a(self) -> int\n}\nimpl Aaa for Dial {\n    type Unit = string\n    fn a(self) -> int {\n        return 2\n    }\n}\nfn main() -> int {\n    let d = Dial { base: 1 }\n    return d.read()\n}\nmain()\n",
+        "use dials::{Dial, Gauge}\ntrait Aaa {\n    type Unit\n    fn a(self) -> int\n}\nimpl Aaa for Dial {\n    type Unit = string\n    fn a(self) -> int {\n        return 2\n    }\n}\nfn main() -> int {\n    let d = Dial { base: 1 }\n    return d.read()\n}\nmain()\n",
     );
     let error = run_file(&main_path).expect_err("the ambiguity the importer creates is rejected");
     let message = error.to_string();
@@ -631,7 +631,7 @@ fn an_imported_impl_body_writes_the_mutable_global_of_its_own_module() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Tally from tally\nfn main() -> int {\n    let t = Tally { by: 3 }\n    return t.bump() + t.bump()\n}\nmain()\n",
+        "use tally::{Tally}\nfn main() -> int {\n    let t = Tally { by: 3 }\n    return t.bump() + t.bump()\n}\nmain()\n",
     );
     let value = run_file(&main_path).expect("the body must write its own module's global");
     assert_eq!(
@@ -652,7 +652,7 @@ fn a_generic_target_type_crosses_a_module_boundary_with_its_impls() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Wrap, Source from wraps\nimpl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\nfn main() -> int {\n    let w = Wrap { v: 7 }\n    let b = Wrap { v: true }\n    return w.next() * 10 + b.next()\n}\nmain()\n",
+        "use wraps::{Wrap, Source}\nimpl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\nfn main() -> int {\n    let w = Wrap { v: 7 }\n    let b = Wrap { v: true }\n    return w.next() * 10 + b.next()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&main_path)
@@ -672,7 +672,7 @@ fn a_generic_target_type_crosses_a_module_boundary_with_its_impls() {
     let concrete_main = write_file(
         &concrete,
         "main.aelys",
-        "needs Wrap, Source from wraps\nfn main() -> int {\n    let w = Wrap { v: true }\n    return Source::next(w)\n}\nmain()\n",
+        "use wraps::{Wrap, Source}\nfn main() -> int {\n    let w = Wrap { v: true }\n    return Source::next(w)\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&concrete_main)
@@ -694,12 +694,12 @@ fn one_imported_impl_reaching_two_importers_is_registered_once() {
     write_file(
         &dir,
         "beta.aelys",
-        "needs Point, Norm from alpha\npub fn beta_norm(v: int) -> int {\n    let p = Point { x: v }\n    return p.norm()\n}\n",
+        "use alpha::{Point, Norm}\npub fn beta_norm(v: int) -> int {\n    let p = Point { x: v }\n    return p.norm()\n}\n",
     );
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Point, Norm from alpha\nneeds beta_norm from beta\nfn main() -> int {\n    let p = Point { x: 2 }\n    return p.norm() * 100 + beta_norm(1)\n}\nmain()\n",
+        "use alpha::{Point, Norm}\nuse beta::{beta_norm}\nfn main() -> int {\n    let p = Point { x: 2 }\n    return p.norm() * 100 + beta_norm(1)\n}\nmain()\n",
     );
     let value = run_file(&main_path).expect("one impl inlined twice must not collide with itself");
     assert_eq!(
@@ -747,7 +747,7 @@ fn every_private_declaration_of_a_module_travels_with_the_body_that_reads_it() {
         let main_path = write_file(
             &dir,
             "main.aelys",
-            "needs Dial from dials\nfn main() -> int {\n    let d = Dial { base: 0 }\n    return d.read()\n}\nmain()\n",
+            "use dials::{Dial}\nfn main() -> int {\n    let d = Dial { base: 0 }\n    return d.read()\n}\nmain()\n",
         );
         let value = run_file(&main_path)
             .unwrap_or_else(|error| panic!("'{declaration}' must travel: {error}"));
@@ -773,7 +773,7 @@ fn a_private_declaration_of_a_module_is_never_answered_by_the_importer_s_own() {
             &dir,
             "main.aelys",
             &format!(
-                "needs Dial from dials\n{rival}fn main() -> int {{\n    let d = Dial {{ base: 0 }}\n    return d.read()\n}}\nmain()\n"
+                "use dials::{{Dial}}\n{rival}fn main() -> int {{\n    let d = Dial {{ base: 0 }}\n    return d.read()\n}}\nmain()\n"
             ),
         );
         match run_file(&main_path) {
@@ -804,7 +804,7 @@ fn a_projection_onto_a_carried_private_type_is_not_the_importer_s_type() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Dial, Source from dials\nstruct Held { pub h: int }\nfn main() -> int {\n    let a: Dial::Item = Held { h: 3 }\n    return a.h\n}\nmain()\n",
+        "use dials::{Dial, Source}\nstruct Held { pub h: int }\nfn main() -> int {\n    let a: Dial::Item = Held { h: 3 }\n    return a.h\n}\nmain()\n",
     );
     let message = run_file(&main_path)
         .expect_err("'Dial::Item' names the module's type, which this file did not declare")

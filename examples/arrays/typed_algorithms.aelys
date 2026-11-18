@@ -1,5 +1,4 @@
-needs std::io
-needs std::convert
+use std::io
 
 fn sum(arr) -> int {
     let mut s = 0
@@ -34,8 +33,8 @@ fn reverse(mut v) {
 
 let arr = [5, 2, 8, 1, 9, 3]
 io::print("[int; 6]: [5, 2, 8, 1, 9, 3]")
-io::print("Sum: " + convert::to_string(sum(arr)))
-io::print("Max: " + convert::to_string(max(arr)))
+io::print("Sum: " + sum(arr).to_string())
+io::print("Max: " + max(arr).to_string())
 
 let mut v = vec![1, 2, 3, 4, 5]
 io::print("Vec<Int> before reverse: [1, 2, 3, 4, 5]")
@@ -45,7 +44,7 @@ let mut s = "After reverse: ["
 let mut i = 0
 while i < v.len() {
     if i > 0 { s = s + ", " }
-    s = s + convert::to_string(v[i])
+    s = s + v[i].to_string()
     i = i + 1
 }
 io::print(s + "]")

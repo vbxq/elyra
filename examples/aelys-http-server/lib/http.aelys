@@ -1,6 +1,5 @@
-needs std::net as net
-needs std::convert as convert
-needs utils
+use std::net as net
+use utils
 
 pub fn parse_method(request_line: string) -> string {
     let trimmed = request_line.trim()
@@ -78,14 +77,14 @@ pub fn parse_headers(client: int) {
     }
 }
 
-pub fn read_body(client: int, headers) -> string {
+pub fn read_body(client: int, headers: fn(string) -> string) -> string {
     let content_length_str = headers("Content-Length")
 
     if content_length_str.len() == 0 {
         return ""
     }
 
-    match convert::parse_int(content_length_str) {
+    match content_length_str.to_int() {
         Some(content_length) => {
             if content_length <= 0 {
                 return ""
@@ -97,10 +96,10 @@ pub fn read_body(client: int, headers) -> string {
 }
 
 pub fn send_response(client: int, status: int, content_type: string, body: string) {
-    let mut response = "HTTP/1.1 " + convert::to_string(status) + " " + utils::status_text(status) + "\r\n"
+    let mut response = "HTTP/1.1 " + status.to_string() + " " + utils::status_text(status) + "\r\n"
 
     response = response + "Content-Type: " + content_type + "\r\n"
-    response = response + "Content-Length: " + convert::to_string(body.len()) + "\r\n"
+    response = response + "Content-Length: " + body.len().to_string() + "\r\n"
     response = response + "Connection: close\r\n"
     response = response + "Server: Aelys-HTTP/0.1.0\r\n"
 
@@ -126,10 +125,10 @@ pub fn send_html(client: int, status: int, html_body: string) {
 pub fn send_error(client: int, status: int, message: string) {
     let mut html = "<!DOCTYPE html>\n"
     html = html + "<html>\n<head>\n"
-    html = html + "<title>" + convert::to_string(status) + " " + utils::status_text(status) + "</title>\n"
+    html = html + "<title>" + status.to_string() + " " + utils::status_text(status) + "</title>\n"
     html = html + "<style>body{{font-family:sans-serif;max-width:600px;margin:100px auto;text-align:center}}</style>\n"
     html = html + "</head>\n<body>\n"
-    html = html + "<h1>" + convert::to_string(status) + " " + utils::status_text(status) + "</h1>\n"
+    html = html + "<h1>" + status.to_string() + " " + utils::status_text(status) + "</h1>\n"
     html = html + "<p>" + message + "</p>\n"
     html = html + "<hr><small>Aelys HTTP Server</small>\n"
     html = html + "</body>\n</html>"

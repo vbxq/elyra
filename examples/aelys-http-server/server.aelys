@@ -1,14 +1,13 @@
-needs std::net as net
-needs std::io
-needs print from std::io
-needs std::time
-needs std::convert as convert
+use std::net as net
+use std::io
+use std::io::{print}
+use std::time
 
-needs config
+use config
 
-needs lib::http as http
-needs lib::utils as utils
-needs lib::router as router
+use lib::http as http
+use lib::utils as utils
+use lib::router as router
 
 fn handle_client(client: int) -> int {
     let start_time = time::timer()
@@ -30,11 +29,11 @@ fn handle_client(client: int) -> int {
 
     let headers = http::parse_headers(client)
 
-    let status = convert::to_int(router::route_request(client, method, path, headers))
+    let status = router::route_request(client, method, path, headers) as int
 
     let _ = net::close(client)
 
-    if convert::to_bool(config::LOG_REQUESTS) {
+    if config::LOG_REQUESTS {
         let duration = time::elapsed_ms(start_time)
         utils::log_request(method, path, status, duration)
     }
@@ -43,15 +42,15 @@ fn handle_client(client: int) -> int {
 }
 
 fn start_server() {
-    let host = convert::to_string(config::HOST)
-    let port = convert::to_int(config::PORT)
+    let host = config::HOST.to_string()
+    let port = config::PORT as int
 
     router::init_router()
 
     let listener = net::listen(host, port).expect("could not start server")
 
     print("aelys http server")
-    print("listening on http://" + host + ":" + convert::to_string(port))
+    print("listening on http://" + host + ":" + port.to_string())
     print("")
 
     while true {

@@ -319,7 +319,7 @@ fn a_default_method_of_an_imported_trait_is_reachable_through_a_whole_module_imp
             ("lib.aelys", VALUED_LIB),
             (
                 "main.aelys",
-                "needs lib\nlet it = Item { n: 4 }\n\"{it.value()} {it.label()}\"\n",
+                "use lib\nlet it = Item { n: 4 }\n\"{it.value()} {it.label()}\"\n",
             ),
         ],
         "4 worth 4",
@@ -333,7 +333,7 @@ fn a_default_method_of_an_imported_trait_is_reachable_through_a_selective_import
             ("lib.aelys", VALUED_LIB),
             (
                 "main.aelys",
-                "needs Item, Valued from lib\nlet it = Item { n: 4 }\nit.label()\n",
+                "use lib::{Item, Valued}\nlet it = Item { n: 4 }\nit.label()\n",
             ),
         ],
         "worth 4",
@@ -348,7 +348,7 @@ fn an_importer_implementing_an_imported_trait_adopts_its_default_method() {
             (
                 "main.aelys",
                 r#"
-needs Valued from lib
+use lib::{Valued}
 struct Mine { k: int }
 impl Valued for Mine { fn value(self) -> int { self.k * 2 } }
 let m = Mine { k: 5 }
@@ -368,7 +368,7 @@ fn an_imported_default_method_is_reachable_through_a_bound_and_a_closure() {
             (
                 "main.aelys",
                 r#"
-needs lib
+use lib
 fn show<T: Valued>(t: T) -> string { t.label() }
 let f = fn(i: Item) -> string { i.label() }
 "{show(Item { n: 3 })}|{f(Item { n: 6 })}"
@@ -396,7 +396,7 @@ pub trait Shape {
             (
                 "kinds.aelys",
                 r#"
-needs Shape from shapes
+use shapes::{Shape}
 pub struct Sq { pub s: int }
 impl Shape for Sq { fn area(self) -> int { self.s * self.s } }
 pub struct Odd { pub v: int }
@@ -409,8 +409,8 @@ impl Shape for Odd {
             (
                 "main.aelys",
                 r#"
-needs shapes
-needs kinds
+use shapes
+use kinds
 fn total<T: Shape>(xs: Vec<T>) -> int {
     let mut t = 0
     for x in xs { t += x.double() }

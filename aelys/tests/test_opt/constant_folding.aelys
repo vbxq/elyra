@@ -1,5 +1,5 @@
-needs std.io
-needs std.convert
+use std.io
+use std.convert
 
 // Arithmétique entière simple
 let a = 2 + 3           // devrait devenir 5
@@ -18,10 +18,10 @@ let pi_approx = 22.0 / 7.0
 let area = 3.14159 * 10.0 * 10.0  // devrait être précalculé
 
 // Opérations logiques
-let l1 = true and true      // devrait devenir true
-let l2 = true and false     // devrait devenir false
-let l3 = false or true      // devrait devenir true
-let l4 = not false          // devrait devenir true
+let l1 = true && true      // devrait devenir true
+let l2 = true && false     // devrait devenir false
+let l3 = false || true      // devrait devenir true
+let l4 = !false          // devrait devenir true
 
 // Comparaisons constantes
 let cmp1 = 5 > 3            // devrait devenir true

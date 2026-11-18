@@ -686,9 +686,8 @@ fn register_standard_modules(vm: &mut VM) -> Result<(), AelysError> {
     Ok(())
 }
 
-const STANDARD_MODULE_ALIASES: [&str; 9] = [
-    "string", "io", "math", "convert", "time", "sys", "fs", "net", "bytes",
-];
+const STANDARD_MODULE_ALIASES: [&str; 8] =
+    ["string", "io", "math", "time", "sys", "fs", "net", "bytes"];
 
 fn is_standard_module_alias(alias: &str) -> bool {
     STANDARD_MODULE_ALIASES.contains(&alias)

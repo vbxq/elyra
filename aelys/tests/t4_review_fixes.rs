@@ -368,9 +368,9 @@ fn a_third_and_fourth_whole_user_module_keep_their_qualified_names() {
     }
     let three = "ma::val() * 100 + mb::val() * 10 + mc::val()";
     for header in [
-        "needs ma\nneeds mb\nneeds mc\n",
-        "needs mc\nneeds ma\nneeds mb\n",
-        "needs mb\nneeds mc\nneeds ma\n",
+        "use ma\nuse mb\nuse mc\n",
+        "use mc\nuse ma\nuse mb\n",
+        "use mb\nuse mc\nuse ma\n",
     ] {
         assert_eq!(
             run_file_int(dir.path(), &format!("{header}{three}\n")),
@@ -397,11 +397,11 @@ fn a_third_and_fourth_whole_user_module_keep_their_qualified_names() {
     assert_eq!(
         run_file_int(
             dir.path(),
-            "needs ma\nneeds mb\nneeds mc\nneeds md\nma::val() * 1000 + mb::val() * 100 + mc::val() * 10 + md::val()\n"
+            "use ma\nuse mb\nuse mc\nuse md\nma::val() * 1000 + mb::val() * 100 + mc::val() * 10 + md::val()\n"
         ),
         1234
     );
-    let message = run_file_error(dir.path(), "needs ma\nneeds mb\nneeds mc\nval()\n");
+    let message = run_file_error(dir.path(), "use ma\nuse mb\nuse mc\nval()\n");
     assert!(message.contains("E0445"), "{message}");
     assert!(
         message.contains("'ma::val' or 'mb::val' or 'mc::val'"),
@@ -467,10 +467,10 @@ fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names()
     );
     let expected = 1004 * 1000 + 4 * 10 + 5 + 7 * 100_000_000;
     for header in [
-        "needs std::fs\nneeds std::bytes\nneeds sizer\n",
-        "needs std::bytes\nneeds std::fs\nneeds sizer\n",
-        "needs sizer\nneeds std::fs\nneeds std::bytes\n",
-        "needs std::fs\nneeds sizer\nneeds std::bytes\n",
+        "use std::fs\nuse std::bytes\nuse sizer\n",
+        "use std::bytes\nuse std::fs\nuse sizer\n",
+        "use sizer\nuse std::fs\nuse std::bytes\n",
+        "use std::fs\nuse sizer\nuse std::bytes\n",
     ] {
         assert_eq!(
             run_file_int(dir.path(), &format!("{header}{body}r\n")),
@@ -488,7 +488,7 @@ fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names()
     }
     let message = run_file_error(
         dir.path(),
-        "needs std::fs\nneeds std::bytes\nneeds sizer\nsize(bytes::alloc(1))\n",
+        "use std::fs\nuse std::bytes\nuse sizer\nsize(bytes::alloc(1))\n",
     );
     assert!(message.contains("E0445"), "{message}");
     assert!(message.contains("'sizer::size'"), "{message}");
@@ -498,6 +498,6 @@ fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names()
 #[test]
 fn read_file_bytes_stops_an_endless_file_at_the_byte_buffer_limit() {
     let dir = tempfile::tempdir().unwrap();
-    let body = "needs std::fs\nneeds std::bytes\nneeds std::string\nmatch fs::read_file_bytes(\"/dev/zero\") {\n    Ok(h) => -bytes::size(h),\n    Err(e) => if string::contains(e, \"/dev/zero\") && string::contains(e, \"268435456\") { 1 } else { 2 },\n}\n";
+    let body = "use std::fs\nuse std::bytes\nuse std::string\nmatch fs::read_file_bytes(\"/dev/zero\") {\n    Ok(h) => -bytes::size(h),\n    Err(e) => if string::contains(e, \"/dev/zero\") && string::contains(e, \"268435456\") { 1 } else { 2 },\n}\n";
     assert_eq!(run_file_int(dir.path(), body), 1);
 }

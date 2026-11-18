@@ -1,6 +1,5 @@
-needs std::io
-needs std::convert
-needs std::string
+use std::io
+use std::string
 
 fn count_frequency(data, num_bins: int) {
     let mm = min_max(data)
@@ -14,9 +13,9 @@ fn count_frequency(data, num_bins: int) {
     }
 
     for i in 0..data.len() {
-        let normalized = convert::to_float(data[i] - min_val) / convert::to_float(range)
-        let bin_idx = convert::to_int(normalized * convert::to_float(num_bins - 1))
-        if bin_idx >= 0 and bin_idx < num_bins {
+        let normalized = (data[i] - min_val) as float / (range as float)
+        let bin_idx = (normalized * ((num_bins - 1) as float)) as int
+        if bin_idx >= 0 && bin_idx < num_bins {
             bins[bin_idx] = bins[bin_idx] + 1
         }
     }
@@ -59,12 +58,12 @@ for i in 0..bins.len() {
     let label = labels[i]
 
     let bar_width = 40
-    let ratio = convert::to_float(count) / convert::to_float(max_count)
-    let num_stars = convert::to_int(ratio * convert::to_float(bar_width))
+    let ratio = count as float / (max_count as float)
+    let num_stars = (ratio * (bar_width as float)) as int
 
     let bar = string::repeat("█", num_stars)
     let padded_label = string::pad_right(label, 8, " ")
-    let count_str = string::pad_left(convert::to_string(count), 3, " ")
+    let count_str = string::pad_left(count.to_string(), 3, " ")
 
     io::print(padded_label + " " + count_str + " " + bar)
 }

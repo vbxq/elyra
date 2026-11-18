@@ -189,7 +189,7 @@ fn a_module_initialiser_calling_a_function_that_reads_a_later_module_global_is_a
         "lib.aelys",
         "pub let tab = make()\npub let mut scale = 3\nfn make() -> Vec<int> {\n    vec![scale * 2, scale * 3]\n}\n",
     );
-    let main = write(&dir, "main.aelys", "needs lib\nlib::tab[0] + lib::tab[1]\n");
+    let main = write(&dir, "main.aelys", "use lib\nlib::tab[0] + lib::tab[1]\n");
     let error = run_file(&main).expect_err("the module reads `scale` before it is bound");
     let text = error.to_string();
     assert!(text.contains(&format!("global `scale` {UNINIT}")), "{text}");
@@ -202,7 +202,7 @@ fn a_module_initialiser_calling_a_function_that_reads_a_later_module_global_is_a
     let main = write(
         &dir,
         "main2.aelys",
-        "needs lib2\nlib2::tab[0] + lib2::tab[1]\n",
+        "use lib2\nlib2::tab[0] + lib2::tab[1]\n",
     );
     let value = run_file(&main).expect("bound in order");
     assert_eq!(value.as_int(), Some(15));
@@ -394,7 +394,7 @@ fn the_binary_write_snippet_of_the_stdlib_doc_runs_from_a_file() {
         &dir,
         "main.aelys",
         &format!(
-            "needs std::fs\nneeds std::bytes as bytes\nlet buffer = bytes::alloc(2)\nbytes::write_u8(buffer, 0, 0xC8)\nbytes::write_u8(buffer, 1, 0xFF)\nlet _ = fs::write_file_bytes(\"{}\", buffer)\n7\n",
+            "use std::fs\nuse std::bytes as bytes\nlet buffer = bytes::alloc(2)\nbytes::write_u8(buffer, 0, 0xC8)\nbytes::write_u8(buffer, 1, 0xFF)\nlet _ = fs::write_file_bytes(\"{}\", buffer)\n7\n",
             out.display().to_string().replace('\\', "/")
         ),
     );

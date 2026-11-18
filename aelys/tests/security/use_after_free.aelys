@@ -1,7 +1,7 @@
 // pointer already freed check
 // crashes if everything is good
 
-needs std.convert 
+use std.convert 
 
 @no_gc
 fn use_after_free() {

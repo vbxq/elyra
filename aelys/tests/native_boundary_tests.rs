@@ -18,7 +18,7 @@ fn compile_message(source: &str) -> String {
 fn println_accepts_the_display_scalars() {
     let value = run_ok(
         r#"
-needs std::io
+use std::io
 fn probe() -> int {
     println(1)
     println("hello")
@@ -36,12 +36,11 @@ probe()
 fn convert_to_string_and_tostring_accept_display_scalars() {
     let value = run_ok(
         r#"
-needs std::convert
-needs std::string
+use std::string
 fn probe() -> int {
-    let a: string = convert::to_string(123)
+    let a: string = 123.to_string()
     let b: string = __tostring(true)
-    let c: string = convert::to_string("already")
+    let c: string = "already".to_string()
     string::len(a) + string::len(b) + string::len(c)
 }
 probe()
@@ -54,11 +53,10 @@ probe()
 fn convert_scalar_conversions_still_run() {
     let value = run_ok(
         r#"
-needs std::convert
 fn probe() -> int {
-    let a: int = convert::to_int("41")
-    let b: float = convert::to_float(1)
-    a + convert::to_int(b)
+    let a: int = "41".to_int().unwrap_or(0)
+    let b: float = 1 as float
+    a + b as int
 }
 probe()
 "#,
@@ -67,29 +65,22 @@ probe()
 }
 
 #[test]
-fn reflective_natives_stay_unbounded() {
-    let value = run_ok(
-        r#"
-needs std::convert
-needs std::string
-struct Marker { v: int }
-fn probe() -> int {
-    let named: string = convert::type_of(Marker { v: 1 })
-    let flag: bool = convert::is_int(1)
-    let truthy: bool = convert::to_bool(Marker { v: 1 })
-    if flag && truthy && string::len(named) > 0 { 7 } else { 0 }
-}
-probe()
-"#,
-    );
-    assert_eq!(value.as_int(), Some(7));
+fn reflective_natives_are_gone() {
+    for call in [
+        "convert::type_of(Marker { v: 1 })",
+        "convert::is_int(1)",
+        "convert::to_bool(Marker { v: 1 })",
+    ] {
+        let message = compile_message(&format!("struct Marker {{ v: int }}\nlet x = {call}\n"));
+        assert!(message.contains("error[E0449]"), "{call}: {message}");
+    }
 }
 
 #[test]
 fn println_rejects_a_type_with_no_display_provision() {
     let message = compile_message(
         r#"
-needs std::io
+use std::io
 struct Silent { v: int }
 fn probe() -> int {
     println(Silent { v: 1 })
@@ -109,7 +100,7 @@ probe()
 fn tostring_rejects_a_type_with_no_display_provision() {
     let message = compile_message(
         r#"
-needs std::string
+use std::string
 struct Silent { v: int }
 fn probe() -> int {
     let text: string = __tostring(Silent { v: 1 })
@@ -129,7 +120,7 @@ fn a_display_impl_satisfies_the_println_bound() {
     let message = Runtime::new()
         .compile(
             r#"
-needs std::io
+use std::io
 struct Loud { v: int }
 impl Display for Loud {
     fn to_display(self) -> string { "loud" }
@@ -151,10 +142,9 @@ probe()
 fn convert_to_int_rejects_a_non_scalar_source() {
     let message = compile_message(
         r#"
-needs std::convert
 struct Silent { v: int }
 fn probe() -> int {
-    convert::to_int(Silent { v: 1 })
+    (Silent { v: 1 }) as int
 }
 probe()
 "#,
@@ -169,9 +159,8 @@ probe()
 fn a_generic_display_bound_is_proved_for_a_scalar_instance() {
     let value = run_ok(
         r#"
-needs std::convert
-needs std::string
-fn render<T>(value: T) -> string where T: Display { convert::to_string(value) }
+use std::string
+fn render<T>(value: T) -> string where T: Display { value.to_string() }
 fn probe() -> int {
     string::len(render(123))
 }

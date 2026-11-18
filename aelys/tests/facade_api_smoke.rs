@@ -13,8 +13,8 @@ fn facade_smoke_compiles_and_runs() {
 
 #[test]
 fn string_facade_rejects_needs_without_a_module_loader() {
-    let error = aelys::api::run("needs missing_module\n1", "<facade>")
-        .expect_err("a string facade must not discard an unresolved needs");
+    let error = aelys::api::run("use missing_module\n1", "<facade>")
+        .expect_err("a string facade must not discard an unresolved use");
     let message = error.to_string();
     assert!(message.contains("module not found"), "{message}");
     assert!(message.contains("missing_module"), "{message}");

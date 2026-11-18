@@ -19,25 +19,25 @@ fn compile_reports_e0445_for_a_bare_name_two_whole_modules_export() {
     for (case, main, name, owners) in [
         (
             "top",
-            "needs std::fs\nneeds std::bytes\nlet b = bytes::alloc(7)\nprintln(\"{size(b)}\")\n",
+            "use std::fs\nuse std::bytes\nlet b = bytes::alloc(7)\nprintln(\"{size(b)}\")\n",
             "size",
             ["fs", "bytes"],
         ),
         (
             "rev",
-            "needs std::bytes\nneeds std::fs\nlet b = bytes::alloc(7)\nlet n = size(b)\n",
+            "use std::bytes\nuse std::fs\nlet b = bytes::alloc(7)\nlet n = size(b)\n",
             "size",
             ["bytes", "fs"],
         ),
         (
             "fn",
-            "needs std::fs\nneeds std::bytes\nfn f(b: int) -> int {\n    copy(b, 0, b, 0, 1)\n    return 1\n}\nf(1)\n",
+            "use std::fs\nuse std::bytes\nfn f(b: int) -> int {\n    copy(b, 0, b, 0, 1)\n    return 1\n}\nf(1)\n",
             "copy",
             ["fs", "bytes"],
         ),
         (
             "value",
-            "needs std::fs\nneeds std::bytes\nlet s = size\n",
+            "use std::fs\nuse std::bytes\nlet s = size\n",
             "size",
             ["fs", "bytes"],
         ),
@@ -64,11 +64,7 @@ fn compile_reports_e0445_for_a_bare_name_three_user_modules_export() {
         ("mb.aelys", "pub fn val() -> int { return 2 }\n"),
         ("mc.aelys", "pub fn val() -> int { return 3 }\n"),
     ];
-    let error = compile_error(
-        "user3",
-        &modules,
-        "needs ma\nneeds mb\nneeds mc\nlet v = val()\n",
-    );
+    let error = compile_error("user3", &modules, "use ma\nuse mb\nuse mc\nlet v = val()\n");
     assert!(error.contains("E0445"), "{error}");
     assert!(
         error.contains("'ma::val' or 'mb::val' or 'mc::val'"),

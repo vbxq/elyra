@@ -1,12 +1,11 @@
-needs std::io
-needs std::bytes
-needs std::time
-needs std::sys
-needs std::convert
+use std::io
+use std::bytes
+use std::time
+use std::sys
 
 let W = 80
 let H = 25
-let ESC = convert::chr(27)
+let ESC = (27 as char).to_string()
 
 @no_gc
 fn run() {
@@ -71,7 +70,7 @@ fn run() {
                 let r = bytes::read_u8(pal_r, v)
                 let g = bytes::read_u8(pal_g, v)
                 let b = bytes::read_u8(pal_b, v)
-                io::print_inline(ESC + "[48;2;" + convert::to_string(r) + ";" + convert::to_string(g) + ";" + convert::to_string(b) + "m ")
+                io::print_inline(ESC + "[48;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string() + "m ")
             }
             io::print_inline(ESC + "[0m")
             io::print("")

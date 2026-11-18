@@ -1,6 +1,5 @@
-needs std::io
-needs std::convert
-needs std::string
+use std::io
+use std::string
 
 // Recursive factorial with type annotations
 fn factorial(n: int) -> int {
@@ -27,8 +26,8 @@ io::print(string::repeat("-", 40))
 for i in 1..=15 {
     let rec = factorial(i)
     let iter = factorial_iter(i)
-    let n_str = string::pad_right(convert::to_string(i), 5, " ")
-    let rec_str = string::pad_right(convert::to_string(rec), 20, " ")
-    let iter_str = convert::to_string(iter)
+    let n_str = string::pad_right(i.to_string(), 5, " ")
+    let rec_str = string::pad_right(rec.to_string(), 20, " ")
+    let iter_str = iter.to_string()
     io::print(n_str + rec_str + iter_str)
 }

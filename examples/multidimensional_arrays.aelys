@@ -1,6 +1,6 @@
 // Multidimensional Arrays Example
 
-needs std::io
+use std::io
 
 io::println("2D Array Example")
 

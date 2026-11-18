@@ -239,7 +239,7 @@ pub let mut scale = 3
         let outcome = run_project(
             &[
                 ("early.aelys", module),
-                ("main.aelys", "needs early\nprintln(early::early)\n"),
+                ("main.aelys", "use early\nprintln(early::early)\n"),
             ],
             "main.aelys",
             &[level],
@@ -319,8 +319,8 @@ fn programs_inside_the_nesting_limits_compile_in_process_on_a_two_mib_thread() {
         ")".repeat(200)
     );
     compile_on_a_default_thread(calls).expect("200 nested calls compile");
-    let chain = format!("let t = true\n{}\n", vec!["t"; 1000].join(" and "));
-    compile_on_a_default_thread(chain).expect("a 1000-term and chain compiles");
+    let chain = format!("let t = true\n{}\n", vec!["t"; 1000].join(" && "));
+    compile_on_a_default_thread(chain).expect("a 1000-term && chain compiles");
     let blocks = format!(
         "let mut x = 0\n{}x = 7\n{}x\n",
         "if x == 0 {\n".repeat(250),

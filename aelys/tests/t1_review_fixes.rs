@@ -412,7 +412,7 @@ fn a_reserved_double_underscore_name_cannot_be_declared() {
         "trait __T { fn m(self) -> int }",
         "fn id<__T>(x: __T) -> __T { x }",
         "struct S { x: int }\nimpl S { fn __clone(self) -> S { self } }",
-        "needs std::math as __m",
+        "use std::math as __m",
     ];
     for body in cases {
         let message = assert_rejected(body, "E0114");

@@ -1,7 +1,6 @@
-needs std::math
-needs std::io
-needs std::convert
-needs std::time
+use std::math
+use std::io
+use std::time
 
 let WIDTH: int = 80
 let HEIGHT: int = 24
@@ -34,13 +33,13 @@ fn render_frame() {
     let y_min: float = -1.0
     let y_max: float = 1.0
 
-    let x_step: float = (x_max - x_min) / convert::to_float(WIDTH)
-    let y_step: float = (y_max - y_min) / convert::to_float(HEIGHT)
+    let x_step: float = (x_max - x_min) / (WIDTH as float)
+    let y_step: float = (y_max - y_min) / (HEIGHT as float)
 
     for y in 0..HEIGHT {
-        let ci: float = y_max - convert::to_float(y) * y_step
+        let ci: float = y_max - (y as float) * y_step
         for x in 0..WIDTH {
-            let cr: float = x_min + convert::to_float(x) * x_step
+            let cr: float = x_min + x as float * x_step
             let iter = mandelbrot(cr, ci)
         }
     }
@@ -53,5 +52,5 @@ for frame in 0..10 {
 let elapsed = time::elapsed_ms(t)
 
 io::print("10 frames rendered")
-io::print("time: " + convert::to_string(elapsed) + "ms")
-io::print("fps: " + convert::to_string(10000 / elapsed))
+io::print("time: " + elapsed.to_string() + "ms")
+io::print("fps: " + (10000 / elapsed).to_string())

@@ -384,7 +384,7 @@ fn a_module_top_level_let_calls_a_function_declared_further_down_the_module() {
     let main = write(
         &dir,
         "main.aelys",
-        "needs lib\nlib::bump()\nlib::tab[1] * 10\n",
+        "use lib\nlib::bump()\nlib::tab[1] * 10\n",
     );
     let value = run_file(&main).expect("the module initialises before main runs");
     assert_eq!(value.as_int(), Some(20));
@@ -409,8 +409,8 @@ fn write_file_bytes_writes_every_byte_of_a_buffer_unchanged() {
     let path = dir.path().join("out.bin");
     let source = format!(
         r#"
-needs std::fs
-needs std::bytes as bytes
+use std::fs
+use std::bytes as bytes
 let b = bytes::alloc(4)
 bytes::write_u8(b, 0, 200)
 bytes::write_u8(b, 1, 0)
@@ -434,8 +434,8 @@ fn write_buffer_writes_the_raw_bytes_to_an_open_handle() {
     let path = dir.path().join("out.bin");
     let source = format!(
         r#"
-needs std::fs
-needs std::bytes as bytes
+use std::fs
+use std::bytes as bytes
 let b = bytes::alloc(3)
 bytes::write_u8(b, 0, 0xC8)
 bytes::write_u8(b, 1, 0x80)
@@ -461,8 +461,8 @@ fn binary_writes_report_a_bad_buffer_or_path_as_an_error_value() {
     let missing = dir.path().join("no_such_dir").join("out.bin");
     let source = format!(
         r#"
-needs std::fs
-needs std::bytes as bytes
+use std::fs
+use std::bytes as bytes
 let b = bytes::alloc(1)
 let bad_buffer = fs::write_file_bytes("{ok}", 987654).is_err()
 let bad_path = fs::write_file_bytes("{missing}", b).is_err()
@@ -484,15 +484,15 @@ n
 #[test]
 fn binary_writes_are_typed_by_the_native_signature_table() {
     assert_rejected_with(
-        "needs std::fs\nlet r = fs::write_file_bytes(\"x.bin\", \"text\")\n0",
+        "use std::fs\nlet r = fs::write_file_bytes(\"x.bin\", \"text\")\n0",
         "E0301",
     );
     assert_rejected_with(
-        "needs std::fs\nlet r: Result<int, string> = fs::write_file_bytes(\"x.bin\", 1)\n0",
+        "use std::fs\nlet r: Result<int, string> = fs::write_file_bytes(\"x.bin\", 1)\n0",
         "E0301",
     );
     assert_rejected_with(
-        "needs std::fs\nlet r = fs::write_buffer(1, \"text\")\n0",
+        "use std::fs\nlet r = fs::write_buffer(1, \"text\")\n0",
         "E0301",
     );
 }

@@ -1,5 +1,5 @@
-needs std::bytes
-needs wad
+use std::bytes
+use wad
 
 fn none_or(v: int) -> int {
     if v == 0xFFFF { -1 } else { v }

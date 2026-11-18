@@ -65,7 +65,7 @@ fn an_unqualified_module_function_survives_its_own_bytecode() {
             ("holder.aelys", "pub fn from_module() -> int { return 5 }\n"),
             (
                 "main.aelys",
-                "needs holder\nfn probe() -> int { return from_module() + 1 }\nprintln(probe())\n",
+                "use holder\nfn probe() -> int { return from_module() + 1 }\nprintln(probe())\n",
             ),
         ],
         "6",
@@ -80,7 +80,7 @@ fn an_unqualified_module_global_survives_its_own_bytecode() {
             ("holder.aelys", "pub let SEED: int = 7\n"),
             (
                 "main.aelys",
-                "needs holder\nfn probe() -> int { return SEED + 1 }\nprintln(probe())\n",
+                "use holder\nfn probe() -> int { return SEED + 1 }\nprintln(probe())\n",
             ),
         ],
         "8",
@@ -95,7 +95,7 @@ fn an_aliased_module_survives_its_own_bytecode() {
             ("holder.aelys", "pub fn from_module() -> int { return 5 }\n"),
             (
                 "main.aelys",
-                "needs holder as h\nprintln(h::from_module() + 1)\n",
+                "use holder as h\nprintln(h::from_module() + 1)\n",
             ),
         ],
         "6",
@@ -108,7 +108,7 @@ fn a_nested_module_path_survives_its_own_bytecode() {
         "nested_path",
         &[
             ("lib/helper.aelys", "pub fn help() -> int { return 9 }\n"),
-            ("main.aelys", "needs lib::helper\nprintln(help())\n"),
+            ("main.aelys", "use lib::helper\nprintln(help())\n"),
         ],
         "9",
     );
@@ -122,7 +122,7 @@ fn a_selective_import_survives_its_own_bytecode() {
             ("holder.aelys", "pub fn from_module() -> int { return 5 }\n"),
             (
                 "main.aelys",
-                "needs from_module from holder\nprintln(from_module() + 1)\n",
+                "use holder::{from_module}\nprintln(from_module() + 1)\n",
             ),
         ],
         "6",
@@ -137,9 +137,9 @@ fn a_transitive_module_survives_its_own_bytecode() {
             ("deep.aelys", "pub fn deep_val() -> int { return 3 }\n"),
             (
                 "mid.aelys",
-                "needs deep\npub fn mid_val() -> int { return deep_val() + 1 }\n",
+                "use deep\npub fn mid_val() -> int { return deep_val() + 1 }\n",
             ),
-            ("main.aelys", "needs mid\nprintln(mid_val())\n"),
+            ("main.aelys", "use mid\nprintln(mid_val())\n"),
         ],
         "4",
     );
@@ -149,7 +149,7 @@ fn a_transitive_module_survives_its_own_bytecode() {
 fn an_aliased_stdlib_module_survives_its_own_bytecode() {
     assert_agrees(
         "aliased_std",
-        &[("main.aelys", "needs std::math as m\nprintln(m::abs(-4))\n")],
+        &[("main.aelys", "use std::math as m\nprintln(m::abs(-4))\n")],
         "4",
     );
 }
@@ -165,7 +165,7 @@ fn an_artifact_records_the_imports_the_entry_declares() {
     let src_path = dir.join("main.aelys");
     std::fs::write(
         &src_path,
-        "needs holder as h\nneeds std::math\nprintln(h::v())\n",
+        "use holder as h\nuse std::math\nprintln(h::v())\n",
     )
     .unwrap();
 
@@ -217,7 +217,7 @@ fn an_assembled_artifact_whose_module_resolves_nowhere_is_refused() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("holder.aelys"), "pub fn v() -> int { return 1 }\n").unwrap();
     let src_path = dir.join("main.aelys");
-    std::fs::write(&src_path, "needs holder\nprintln(holder::v())\n").unwrap();
+    std::fs::write(&src_path, "use holder\nprintln(holder::v())\n").unwrap();
 
     let bytecode_path =
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::None)

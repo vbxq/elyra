@@ -36,7 +36,7 @@ fn run_bytecode_registers_stdlib_globals() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let src_path = dir.join("hello.aelys");
-    std::fs::write(&src_path, "needs std::io\nio::print(\"hi\")\n").unwrap();
+    std::fs::write(&src_path, "use std::io\nio::print(\"hi\")\n").unwrap();
 
     let bytecode_path =
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::None)
@@ -81,8 +81,8 @@ fn compile_and_run_capturing_stdout(name: &str, source: &str) -> (String, String
 fn compiled_bytecode_calls_a_string_stdlib_helper_twice() {
     let (stdout, stderr, code) = compile_and_run_capturing_stdout(
         "string_helper_twice",
-        "needs std::io\nneeds std::convert\nfn f(t: string) -> int { t.len() }\n\
-         io::println(convert::to_string(f(\"abcd\")))\nio::println(convert::to_string(f(\"ab\")))\n",
+        "use std::io\nfn f(t: string) -> int { t.len() }\n\
+         io::println(f(\"abcd\").to_string())\nio::println(f(\"ab\").to_string())\n",
     );
 
     assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
@@ -107,8 +107,8 @@ fn compiled_bytecode_calls_a_string_stdlib_helper_twice() {
 fn compiled_bytecode_calls_a_math_stdlib_helper_twice() {
     let (stdout, stderr, code) = compile_and_run_capturing_stdout(
         "math_helper_twice",
-        "needs std::io\nneeds std::convert\nneeds std::math\nfn g(n: int) -> int { math::abs(n) }\n\
-         io::println(convert::to_string(g(-4)))\nio::println(convert::to_string(g(-2)))\n",
+        "use std::io\nuse std::math\nfn g(n: int) -> int { math::abs(n) }\n\
+         io::println(g(-4).to_string())\nio::println(g(-2).to_string())\n",
     );
 
     assert_eq!(code, Some(0), "stdout:\n{stdout}\nstderr:\n{stderr}");
@@ -202,11 +202,7 @@ fn a_module_named_like_the_mangling_prefix_still_loads_from_bytecode() {
     )
     .unwrap();
     let src_path = dir.join("prefix_module.aelys");
-    std::fs::write(
-        &src_path,
-        "needs __aelys_struct\n__aelys_struct::helper()\n",
-    )
-    .unwrap();
+    std::fs::write(&src_path, "use __aelys_struct\n__aelys_struct::helper()\n").unwrap();
 
     let bytecode_path =
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::Standard)

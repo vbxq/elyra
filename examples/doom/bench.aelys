@@ -1,13 +1,13 @@
-needs std::sys
-needs std::bytes
-needs wad
-needs map
-needs gfx
-needs fixed
-needs render
+use std::sys
+use std::bytes
+use wad
+use map
+use gfx
+use fixed
+use render
 
 let frames = match sys::arg(0) {
-    Some(s) => match convert::parse_int(s) {
+    Some(s) => match s.to_int() {
         Some(n) => n,
         None => 30,
     },
@@ -36,7 +36,7 @@ for i in 0..frames {
     render::render_frame(sx, sy, sz, (va[v] * 4294967296 / 360) & 0xFFFFFFFF)
     if sys::arg(1) != Some("nopal") { render::to_rgb(pal, rgb) }
 }
-let n = convert::to_float(frames)
+let n = frames as float
 if frames > 0 {
     println("frames {frames} avg {time::elapsed(t0) * 1000.0 / n} ms bsp+walls {render::time_bsp_ms() / n} planes {render::time_planes_ms() / n} masked {render::time_masked_ms() / n}")
 }

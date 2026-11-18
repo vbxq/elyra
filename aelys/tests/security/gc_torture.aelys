@@ -1,13 +1,13 @@
-  needs std.io
-  needs std.string as string
-  needs to_string from std.convert
-  needs len from std.string
+  use std.io
+  use std.string as string
+  use std.convert::{to_string}
+  use std.string::{len}
 
   fn gc_collect_ok() {
       let mut i = 0
       let mut tmp = "seed"
       while i < 2000000000 {
-          tmp = string.repeat("x", 2048 + (i % 64)) + to_string(i)
+          tmp = string.repeat("x", 2048 + (i % 64)) + i.to_string()
           if i % 5000 == 0 { io.print(len(tmp)) }
           i = i + 1
       }

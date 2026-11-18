@@ -1,4 +1,4 @@
-needs opengl
+use opengl
 
 let result = opengl::init()
 

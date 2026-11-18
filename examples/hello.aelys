@@ -1,5 +1,5 @@
-needs std::sys
-needs std::io
+use std::sys
+use std::io
 
 io::println("Hello, World!")
 io::println("Welcome to Aelys v0.22.0!")

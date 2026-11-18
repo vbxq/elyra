@@ -1,4 +1,4 @@
-needs sqrt from std.math
+use std.math::{sqrt}
 
 fn compute(x: int) -> int {
     return x * 2 + 1

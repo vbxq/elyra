@@ -1,16 +1,15 @@
-needs std::io
-needs std::bytes
-needs std::time
-needs std::sys
-needs std::convert
-needs std::math
+use std::io
+use std::bytes
+use std::time
+use std::sys
+use std::math
 
 let W = 160
 let H = 90
 let ROWS = H / 2
 let NUM_STARS = 400
-let ESC = convert::chr(27)
-let HALF = convert::chr(9600)
+let ESC = (27 as char).to_string()
+let HALF = (9600 as char).to_string()
 
 @no_gc
 fn run() {
@@ -59,7 +58,7 @@ fn run() {
             let sx = cx + (x * 200) / z
             let sy = cy + (y * 200) / z
 
-            if sx >= 0 and sx < W and sy >= 0 and sy < H {
+            if sx >= 0 && sx < W && sy >= 0 && sy < H {
                 let bright = 255 - (z * 255) / 1000
                 let mut b = 0
                 if bright > 0 { b = bright }
@@ -73,7 +72,7 @@ fn run() {
                     bytes::write_u8(fb_b, idx, b)
                 }
 
-                if z < 300 and sx > 0 and sx < W - 1 {
+                if z < 300 && sx > 0 && sx < W - 1 {
                     let trail = b / 3
                     let idx1 = sy * W + sx - 1
                     let idx2 = sy * W + sx + 1
@@ -104,7 +103,7 @@ fn run() {
                 let r2 = bytes::read_u8(fb_r, idx2)
                 let g2 = bytes::read_u8(fb_g, idx2)
                 let b2 = bytes::read_u8(fb_b, idx2)
-                io::print_inline(ESC + "[38;2;" + convert::to_string(r1) + ";" + convert::to_string(g1) + ";" + convert::to_string(b1) + ";48;2;" + convert::to_string(r2) + ";" + convert::to_string(g2) + ";" + convert::to_string(b2) + "m" + HALF)
+                io::print_inline(ESC + "[38;2;" + r1.to_string() + ";" + g1.to_string() + ";" + b1.to_string() + ";48;2;" + r2.to_string() + ";" + g2.to_string() + ";" + b2.to_string() + "m" + HALF)
             }
             io::print_inline(ESC + "[0m")
             io::print("")

@@ -72,7 +72,7 @@ println(exported())
 }
 
 #[test]
-fn from_is_an_ordinary_identifier_outside_needs() {
+fn from_is_an_ordinary_identifier() {
     let source = "struct Span { from: int, to: int }
 struct Wrap { v: int }
 impl From<int> for Wrap {
@@ -113,7 +113,7 @@ println(match lift(4) { Ok(_) => 0, Err(w) => w.v })
 }
 
 #[test]
-fn needs_from_still_imports_symbols() {
+fn selective_use_imports_symbols() {
     let files = [
         (
             "util.aelys",
@@ -122,7 +122,7 @@ fn needs_from_still_imports_symbols() {
         ("other.aelys", "pub fn half(x: int) -> int { x / 2 }\n"),
         (
             "main.aelys",
-            "needs half from other\nneeds thrice, twice from util\nlet from = 1\nprintln(twice(4) + thrice(from) + half(10))\n",
+            "use other::{half}\nuse util::{thrice, twice}\nlet from = 1\nprintln(twice(4) + thrice(from) + half(10))\n",
         ),
     ];
     let outcome = run_project(&files, "main.aelys", &[]);

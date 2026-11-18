@@ -232,12 +232,12 @@ fn e0326_across_modules_names_the_two_modules() {
     write_module(
         &dir,
         "gamma.aelys",
-        "needs Shared from beta\npub struct Shared { a: int }\npub fn gamma_use() -> int { 1 }\n",
+        "use beta::{Shared}\npub struct Shared { a: int }\npub fn gamma_use() -> int { 1 }\n",
     );
     let entry = write_module(
         &dir,
         "main.aelys",
-        "needs gamma_use from gamma\nfn main() -> int { gamma_use() }\nmain()\n",
+        "use gamma::{gamma_use}\nfn main() -> int { gamma_use() }\nmain()\n",
     );
     let rendered = aelys_driver::run_file(&entry)
         .expect_err("two modules declaring 'Shared' must be refused")
@@ -276,7 +276,7 @@ fn e0407_underlines_the_binding_that_exposes_the_private_generic() {
     let entry = write_module(
         &dir,
         "main.aelys",
-        "needs Holder, Carry, make from lib\nfn main() -> int {\n    let h = make()\n    \
+        "use lib::{Holder, Carry, make}\nfn main() -> int {\n    let h = make()\n    \
          return h.carry()\n}\nmain()\n",
     );
     let rendered = aelys_driver::run_file(&entry)

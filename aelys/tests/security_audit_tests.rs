@@ -223,7 +223,7 @@ fn module_loader_rejects_symlink_escape() {
     fs::create_dir_all(&outside).unwrap();
 
     let entry = base.join("main.aelys");
-    fs::write(&entry, "needs evil.secret").unwrap();
+    fs::write(&entry, "use evil.secret").unwrap();
 
     let secret = outside.join("secret.aelys");
     fs::write(&secret, "pub let X = 1").unwrap();
@@ -325,7 +325,7 @@ fn lexer_rejects_deep_comment_nesting() {
 #[test]
 fn fs_join_rejects_absolute_path() {
     let src = r#"
-needs std::fs
+use std::fs
 match fs::join("/app", "/etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 "#;
     let dir = tempfile::tempdir().unwrap();
@@ -341,7 +341,7 @@ match fs::join("/app", "/etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 #[test]
 fn fs_join_rejects_parent_escape() {
     let src = r#"
-needs std::fs
+use std::fs
 match fs::join("/app/data", "../../../etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 "#;
     let dir = tempfile::tempdir().unwrap();
@@ -362,7 +362,7 @@ fn fs_read_bytes_rejects_huge_buffer() {
 
     let src = format!(
         r#"
-needs std::fs
+use std::fs
 let f = fs::open("{}", "r").unwrap()
 let result = match fs::read_bytes(f, 999999999999) {{ Ok(_) => 0, Err(_) => 1 }}
 let _ = fs::close(f)
@@ -488,7 +488,7 @@ fn module_import_non_existent_symbol_fails() {
     let mod_path = dir.path().join("mymod.aelys");
     std::fs::write(&mod_path, "pub let x = 1").unwrap();
     let main_path = dir.path().join("main.aelys");
-    std::fs::write(&main_path, "needs nonexistent from mymod\nnonexistent").unwrap();
+    std::fs::write(&main_path, "use mymod::{nonexistent}\nnonexistent").unwrap();
     let err = run_file(&main_path).unwrap_err();
     match err {
         AelysError::Compile(e) => {
@@ -665,7 +665,7 @@ let c = 5 <= 5
 let d = 5 >= 5
 let e = 5 == 5
 let f = 5 != 6
-let result = if a and b and c and d and e and f { 1 } else { 0 }
+let result = if a && b && c && d && e && f { 1 } else { 0 }
 result
 "#;
     let dir = tempfile::tempdir().unwrap();
@@ -683,7 +683,7 @@ fn side_effect() {
     called = true
     return true
 }
-let result = false and side_effect()
+let result = false && side_effect()
 let out = if called { 1 } else { 0 }
 out
 "#;
@@ -702,7 +702,7 @@ fn side_effect() {
     called = true
     return true
 }
-let result = true or side_effect()
+let result = true || side_effect()
 let out = if called { 1 } else { 0 }
 out
 "#;
@@ -782,7 +782,7 @@ fn is_odd(n) {
     }
     return is_even(n - 1)
 }
-let result = if is_even(50) and is_odd(51) { 1 } else { 0 }
+let result = if is_even(50) && is_odd(51) { 1 } else { 0 }
 result
 "#;
     let dir = tempfile::tempdir().unwrap();
@@ -838,7 +838,7 @@ pub fn get_shared() -> Option<int> {
     std::fs::write(
         &main,
         r#"
-needs shared, set_to_none, get_shared from helper
+use helper::{shared, set_to_none, get_shared}
 
 let before: Option<int> = get_shared()
 let _ = set_to_none()

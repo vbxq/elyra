@@ -1,5 +1,4 @@
-needs std::io
-needs std::convert
+use std::io
 
 // Nested @no_gc functions to test depth tracking
 @no_gc
@@ -13,7 +12,7 @@ fn outer() {
 fn inner() {
     io::print("  Entering inner @no_gc context...")
     let x: int = 42
-    io::print("  Created variable x = " + convert::to_string(x))
+    io::print("  Created variable x = " + x.to_string())
     io::print("  Exiting inner @no_gc context")
 }
 
@@ -36,7 +35,7 @@ fn manual_memory_demo() {
     io::print("Reading back:")
     for i in 0..5 {
         let val = buf[i]
-        io::print("  buf[" + convert::to_string(i) + "] = " + convert::to_string(val))
+        io::print("  buf[" + i.to_string() + "] = " + val.to_string())
     }
 
     io::print("Released buffer")

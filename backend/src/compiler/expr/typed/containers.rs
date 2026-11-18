@@ -117,6 +117,16 @@ impl Compiler {
                 self.call_native(&format!("__char_{member}"), &operands, dest, span)?;
                 Ok(true)
             }
+            receiver
+                if receiver.is_integer()
+                    && matches!(
+                        (member, args.len()),
+                        ("to_hex" | "to_binary" | "to_octal", 0) | ("to_radix", 1)
+                    ) =>
+            {
+                self.call_native(&format!("__int_{member}"), &operands, dest, span)?;
+                Ok(true)
+            }
             InferType::String if member == "push" && args.len() == 1 => {
                 self.call_native("__string_push", &operands, dest, span)?;
                 Ok(true)

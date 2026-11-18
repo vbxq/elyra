@@ -170,7 +170,7 @@ const SECRET: int = 7
         &dir,
         "lib/grid.aelys",
         r#"
-needs cfg
+use cfg
 pub const CELLS: int = cfg::W * 2
 pub fn cells() -> int {
     let a = [0; cfg::H]
@@ -182,8 +182,8 @@ pub fn cells() -> int {
         &dir,
         "main.aelys",
         r#"
-needs cfg
-needs lib::grid
+use cfg
+use lib::grid
 const LOCAL: int = cfg::H + 1
 struct S { xs: [int; cfg::H] }
 let a = [0; cfg::W]
@@ -203,11 +203,11 @@ a.len() + b.len() * 1000 + s.xs.len() * 1000000 + grid::cells() + grid::CELLS * 
     let selective = write(
         &dir,
         "selective.aelys",
-        "needs cfg::H\nlet a = [0; H]\na.len()\n",
+        "use cfg::H\nlet a = [0; H]\na.len()\n",
     );
     assert_eq!(run_file(&selective).expect("run").as_int(), Some(160));
 
-    let private = write(&dir, "private.aelys", "needs cfg\ncfg::SECRET\n");
+    let private = write(&dir, "private.aelys", "use cfg\ncfg::SECRET\n");
     let error = run_file(&private).expect_err("a private constant is not exported");
     assert!(error.to_string().contains("E0313"), "{error}");
 }
@@ -233,7 +233,7 @@ pub fn through_module() -> int { local_use() }
         &dir,
         "main.aelys",
         r#"
-needs geo
+use geo
 fn second(a: int, b: int, c: int) -> int { b }
 second(0, geo::sqrt(4), 1) + vec![geo::sqrt(4)][0] * 10 + geo::through_module() * 100 + second(0, geo::min(1), 2) * 1000
 "#,

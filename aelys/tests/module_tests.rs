@@ -36,8 +36,8 @@ pub let FACTOR = 10
         &dir,
         "main.aelys",
         r#"
-needs utils
-needs print from std::io
+use utils
+use std::io::{print}
 print(utils::double(5))
 utils::FACTOR
 "#,
@@ -64,7 +64,7 @@ pub let VALUE = 42
         &dir,
         "main.aelys",
         r#"
-needs utilities as u
+use utilities as u
 u::triple(7) + u::VALUE
 "#,
     );
@@ -81,7 +81,7 @@ fn test_std_module_import_with_alias() {
         &dir,
         "main.aelys",
         r#"
-needs std::math as m
+use std::math as m
 m::sin(0)
 "#,
     );
@@ -98,7 +98,7 @@ fn test_std_symbol_import_from() {
         &dir,
         "main.aelys",
         r#"
-needs cos from std::math
+use std::math::{cos}
 cos(0)
 "#,
     );
@@ -124,7 +124,7 @@ pub let PI = 3
         &dir,
         "main.aelys",
         r#"
-needs math::*
+use math::*
 square(5) + PI
 "#,
     );
@@ -150,7 +150,7 @@ pub fn sub(a: int, b: int) -> int { a - b }
         &dir,
         "main.aelys",
         r#"
-needs funcs::add
+use funcs::add
 add(10, 5)
 "#,
     );
@@ -175,7 +175,7 @@ pub fn cube(x: int) -> int { x * x * x }
         &dir,
         "main.aelys",
         r#"
-needs helpers::math
+use helpers::math
 math::cube(3)
 "#,
     );
@@ -200,7 +200,7 @@ pub fn cube(x: int) -> int { x * x * x }
         &dir,
         "main.aelys",
         r#"
-needs helpers::math
+use helpers::math
 math::cube(3)
 "#,
     );
@@ -216,7 +216,7 @@ fn test_dot_module_member_reports_the_path_fix() {
         &dir,
         "main.aelys",
         r#"
-needs std::sys
+use std::sys
 sys.arch()
 "#,
     );
@@ -246,7 +246,7 @@ pub fn helper() { 100 }
         &dir,
         "main.aelys",
         r#"
-needs utils
+use utils
 utils::helper()
 "#,
     );
@@ -272,7 +272,7 @@ pub fn public() { secret() }
         &dir,
         "main.aelys",
         r#"
-needs private_mod
+use private_mod
 private_mod::public()
 "#,
     );
@@ -298,7 +298,7 @@ pub fn public() { 1 }
         &dir,
         "main.aelys",
         r#"
-needs private_mod
+use private_mod
 private_mod::secret
 "#,
     );
@@ -328,7 +328,7 @@ pub let public = 200
         &dir,
         "main.aelys",
         r#"
-needs private_mod
+use private_mod
 private_mod::public
 "#,
     );
@@ -345,7 +345,7 @@ fn test_circular_dependency_detected() {
         &dir,
         "a.aelys",
         r#"
-needs b
+use b
 pub fn a_func() { 1 }
 "#,
     );
@@ -354,7 +354,7 @@ pub fn a_func() { 1 }
         &dir,
         "b.aelys",
         r#"
-needs a
+use a
 pub fn b_func() { 2 }
 "#,
     );
@@ -363,7 +363,7 @@ pub fn b_func() { 2 }
         &dir,
         "main.aelys",
         r#"
-needs a
+use a
 a::a_func()
 "#,
     );
@@ -386,7 +386,7 @@ fn test_self_import_detected() {
         &dir,
         "self_import.aelys",
         r#"
-needs self_import
+use self_import
 pub fn foo() { 1 }
 "#,
     );
@@ -395,7 +395,7 @@ pub fn foo() { 1 }
         &dir,
         "main.aelys",
         r#"
-needs self_import
+use self_import
 self_import::foo()
 "#,
     );
@@ -418,7 +418,7 @@ fn test_module_not_found() {
         &dir,
         "main.aelys",
         r#"
-needs nonexistent
+use nonexistent
 nonexistent::foo()
 "#,
     );
@@ -449,7 +449,7 @@ pub fn existing() { 1 }
         &dir,
         "main.aelys",
         r#"
-needs utils::nonexistent
+use utils::nonexistent
 nonexistent()
 "#,
     );
@@ -488,8 +488,8 @@ pub fn b() { 20 }
         &dir,
         "main.aelys",
         r#"
-needs mod_a
-needs mod_b
+use mod_a
+use mod_b
 mod_a::a() + mod_b::b()
 "#,
     );
@@ -514,7 +514,7 @@ pub fn base_func() { 5 }
         &dir,
         "derived.aelys",
         r#"
-needs base
+use base
 pub fn derived_func() { base::base_func() * 2 }
 "#,
     );
@@ -523,7 +523,7 @@ pub fn derived_func() { base::base_func() * 2 }
         &dir,
         "main.aelys",
         r#"
-needs derived
+use derived
 derived::derived_func()
 "#,
     );
@@ -547,7 +547,7 @@ fn test_empty_module() {
         &dir,
         "main.aelys",
         r#"
-needs empty
+use empty
 42
 "#,
     );
@@ -572,7 +572,7 @@ pub let COUNTER = 1
         &dir,
         "mod_a.aelys",
         r#"
-needs utils
+use utils
 pub fn get_counter() { utils::COUNTER }
 "#,
     );
@@ -581,7 +581,7 @@ pub fn get_counter() { utils::COUNTER }
         &dir,
         "mod_b.aelys",
         r#"
-needs utils
+use utils
 pub fn get_counter_too() { utils::COUNTER }
 "#,
     );
@@ -590,8 +590,8 @@ pub fn get_counter_too() { utils::COUNTER }
         &dir,
         "main.aelys",
         r#"
-needs mod_a
-needs mod_b
+use mod_a
+use mod_b
 mod_a::get_counter() + mod_b::get_counter_too()
 "#,
     );
@@ -608,7 +608,7 @@ fn test_std_direct_import() {
         &dir,
         "main.aelys",
         r#"
-needs std::math
+use std::math
 sin(0) + cos(0)
 "#,
     );
@@ -625,7 +625,7 @@ fn test_std_direct_and_qualified() {
         &dir,
         "main.aelys",
         r#"
-needs std::math
+use std::math
 sin(0) + math::cos(0)
 "#,
     );
@@ -643,7 +643,7 @@ fn test_alias_with_auto_registered_globals() {
         &dir,
         "main.aelys",
         r#"
-needs std::math as m
+use std::math as m
 sin(0)
 "#,
     );
@@ -663,7 +663,7 @@ fn test_alias_qualified_works() {
         &dir,
         "main.aelys",
         r#"
-needs std::math as m
+use std::math as m
 m::sin(0) + m::cos(0)
 "#,
     );
@@ -689,7 +689,7 @@ pub fn triple(x) { x * 3 }
         &dir,
         "main.aelys",
         r#"
-needs mymath
+use mymath
 double(5) + triple(2)
 "#,
     );
@@ -714,7 +714,7 @@ pub fn double(x) { x * 2 }
         &dir,
         "main.aelys",
         r#"
-needs mymath as mm
+use mymath as mm
 mm::double(5)
 "#,
     );
@@ -739,7 +739,7 @@ pub fn double(x) { x * 2 }
         &dir,
         "main.aelys",
         r#"
-needs mymath as mm
+use mymath as mm
 double(5)
 "#,
     );
@@ -772,8 +772,8 @@ pub fn shared() { 2 }
         &dir,
         "main.aelys",
         r#"
-needs mod_a
-needs mod_b
+use mod_a
+use mod_b
 shared()
 "#,
     );
@@ -812,8 +812,8 @@ pub fn shared() { 2 }
         &dir,
         "main.aelys",
         r#"
-needs mod_a as a
-needs mod_b as b
+use mod_a as a
+use mod_b as b
 a::shared() + b::shared()
 "#,
     );
@@ -839,7 +839,7 @@ pub fn other() -> int { 99 }
         &dir,
         "main.aelys",
         r#"
-needs a::b::wanted
+use a::b::wanted
 other()
 "#,
     );
@@ -868,8 +868,8 @@ pub fn wanted() -> int { 1 }
         &dir,
         "main.aelys",
         r#"
-needs a::b
-needs a::b::typo
+use a::b
+use a::b::typo
 1
 "#,
     );

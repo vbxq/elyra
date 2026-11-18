@@ -1,24 +1,23 @@
-needs std::io
-needs std::convert
+use std::io
 
 let mut v = vec![1, 2, 3]
 io::print("Initial Vec: [1, 2, 3]")
-io::print("Length: " + convert::to_string(v.len()))
+io::print("Length: " + v.len().to_string())
 
 v.push(4)
 v.push(5)
-io::print("After push(4), push(5): len = " + convert::to_string(v.len()))
+io::print("After push(4), push(5): len = " + v.len().to_string())
 
 let popped = v.pop().unwrap_or(0)
-io::print("Popped: " + convert::to_string(popped))
-io::print("Length after pop: " + convert::to_string(v.len()))
+io::print("Popped: " + popped.to_string())
+io::print("Length after pop: " + v.len().to_string())
 
 v.reserve(100)
-io::print("Capacity after reserve(100): " + convert::to_string(v.capacity()))
+io::print("Capacity after reserve(100): " + v.capacity().to_string())
 
 io::print("Elements:")
 let mut i = 0
 while i < v.len() {
-    io::print("  v[" + convert::to_string(i) + "] = " + convert::to_string(v[i]))
+    io::print("  v[" + i.to_string() + "] = " + v[i].to_string())
     i = i + 1
 }

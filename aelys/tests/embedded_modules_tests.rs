@@ -66,7 +66,7 @@ fn an_imported_trait_method_is_callable_through_the_embedding_api() {
         &dir,
         "main.aelys",
         r#"
-needs geometry
+use geometry
 
 fn stage2_probe(x: int, y: int) -> int {
     let p = Point { x: x, y: y }
@@ -104,7 +104,7 @@ fn an_in_memory_entry_can_import_from_a_module_root() {
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     let module = isolate
         .compile_with_root(
-            "needs geometry\nfn measure() -> int {\n    let p = Point { x: 6, y: 8 }\n    p.norm()\n}\n0\n",
+            "use geometry\nfn measure() -> int {\n    let p = Point { x: 6, y: 8 }\n    p.norm()\n}\n0\n",
             dir.path(),
             CompileOptions::default(),
         )
@@ -130,8 +130,8 @@ fn a_host_native_module_is_reachable_from_a_multi_module_program() {
         &dir,
         "main.aelys",
         r#"
-needs helper
-needs probe
+use helper
+use probe
 
 fn combined() -> int {
     double(probe::answer())
@@ -162,10 +162,10 @@ fn combined() -> int {
 fn an_unresolvable_needs_is_rejected_by_the_string_compile_path() {
     let runtime = Runtime::new();
     let Err(error) = runtime.compile(
-        "needs there_is_no_such_module_xyz\nfn stage2_probe() -> int { 42 }\nfn main(frame: int) { }\n",
+        "use there_is_no_such_module_xyz\nfn stage2_probe() -> int { 42 }\nfn main(frame: int) { }\n",
         CompileOptions::default(),
     ) else {
-        panic!("an unresolvable needs must not be silently accepted");
+        panic!("an unresolvable use must not be silently accepted");
     };
     let (module_path, searched_paths) = module_not_found(error);
     assert_eq!(module_path, "there_is_no_such_module_xyz");
@@ -181,13 +181,13 @@ fn an_unresolvable_needs_is_rejected_by_the_file_compile_path() {
     let entry = write_file(
         &dir,
         "main.aelys",
-        "needs there_is_no_such_module_xyz\nfn stage2_probe() -> int { 42 }\n0\n",
+        "use there_is_no_such_module_xyz\nfn stage2_probe() -> int { 42 }\n0\n",
     );
 
     let runtime = Runtime::new();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     let Err(error) = isolate.compile_file(&entry, CompileOptions::default()) else {
-        panic!("an unresolvable needs must not be silently accepted");
+        panic!("an unresolvable use must not be silently accepted");
     };
     let (module_path, searched_paths) = module_not_found(error);
     assert_eq!(module_path, "there_is_no_such_module_xyz");
@@ -204,7 +204,7 @@ fn a_builtin_module_needs_still_compiles() {
     let runtime = Runtime::new();
     let module = runtime
         .compile(
-            "needs std::math\nfn root(n: float) -> float { math::sqrt(n) }\n0\n",
+            "use std::math\nfn root(n: float) -> float { math::sqrt(n) }\n0\n",
             CompileOptions::default(),
         )
         .expect("a built-in module the runtime provides directly must stay accepted");
@@ -222,7 +222,7 @@ fn a_builtin_module_needs_still_compiles() {
     let entry = write_file(
         &dir,
         "main.aelys",
-        "needs std::math\nfn root(n: float) -> float { math::sqrt(n) }\n0\n",
+        "use std::math\nfn root(n: float) -> float { math::sqrt(n) }\n0\n",
     );
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     isolate
@@ -257,7 +257,7 @@ fn a_module_compiled_for_one_isolate_is_refused_by_another() {
     let entry = write_file(
         &dir,
         "main.aelys",
-        "needs geometry\nlet p = Point { x: 3, y: 4 }\np.norm()\n",
+        "use geometry\nlet p = Point { x: 3, y: 4 }\np.norm()\n",
     );
 
     let runtime = Runtime::new();

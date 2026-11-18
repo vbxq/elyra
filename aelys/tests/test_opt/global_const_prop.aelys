@@ -1,5 +1,5 @@
-needs std.io
-needs std.convert
+use std.io
+use std.convert
 
 // Constantes globales
 let WIDTH = 800

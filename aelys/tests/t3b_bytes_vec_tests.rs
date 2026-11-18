@@ -1,7 +1,7 @@
 mod common;
 use common::*;
 
-const PRELUDE: &str = "needs std::bytes\nneeds std::time as time\n";
+const PRELUDE: &str = "use std::bytes\nuse std::time as time\n";
 
 fn program(body: &str) -> String {
     format!("{PRELUDE}{body}")
@@ -49,7 +49,7 @@ let fits = bytes::copy_from_vec(buf, 5, vec![1, 2, 3])
 let empty = bytes::copy_from_vec(buf, 8, vec![])
 let e1 = match high { Ok(_) => "ok", Err(m) => m }
 let e2 = match low { Ok(_) => "ok", Err(m) => m }
-"{e1}|{e2}|{bad(past)} {bad(neg)} {bad(read_past)} {not bad(fits)} {not bad(empty)}|{bytes::read_u8(buf, 0)}{bytes::read_u8(buf, 2)}{bytes::read_u8(buf, 7)}|{out[0]}{out[2]}"
+"{e1}|{e2}|{bad(past)} {bad(neg)} {bad(read_past)} {!bad(fits)} {!bad(empty)}|{bytes::read_u8(buf, 0)}{bytes::read_u8(buf, 2)}{bytes::read_u8(buf, 7)}|{out[0]}{out[2]}"
 "#,
         ),
         "copy_from_vec: element 2 is 300, not a byte in 0..=255|copy_from_vec: element 1 is -1, not a byte in 0..=255|true true true true true|993|77",

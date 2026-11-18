@@ -42,7 +42,8 @@ impl Parser {
             ));
         }
 
-        if self.match_token(&TokenKind::Not) {
+        self.reject_word_not()?;
+        if self.match_token(&TokenKind::Bang) {
             let start = self.previous().span;
             let operand = self.nested(Self::unary)?;
             let span = start.merge(operand.span);

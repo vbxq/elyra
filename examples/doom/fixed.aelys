@@ -1,5 +1,4 @@
-needs std::math as math
-needs std::convert as convert
+use std::math as math
 
 fn int_abs(a: int) -> int {
     if a < 0 { -a } else { a }
@@ -21,8 +20,8 @@ pub fn fine_index(a: int) -> int { (a & 0xFFFFFFFF) >> 19 }
 fn make_finesine() -> Vec<int> {
     let mut t: Vec<int> = vec![0; 10240]
     for i in 0..10240 {
-        let a = (convert::to_float(i) + 0.5) * 2.0 * math::PI / 8192.0
-        t[i] = convert::to_int(math::sin(a) * 65536.0)
+        let a = (i as float + 0.5) * 2.0 * math::PI / 8192.0
+        t[i] = (math::sin(a) * 65536.0) as int
     }
     t
 }
@@ -30,8 +29,8 @@ fn make_finesine() -> Vec<int> {
 fn make_finetangent() -> Vec<int> {
     let mut t: Vec<int> = vec![0; 4096]
     for i in 0..4096 {
-        let a = (convert::to_float(i - 2048) + 0.5) * math::PI / 4096.0
-        t[i] = convert::to_int(math::tan(a) * 65536.0)
+        let a = ((i - 2048) as float + 0.5) * math::PI / 4096.0
+        t[i] = (math::tan(a) * 65536.0) as int
     }
     t
 }
@@ -39,8 +38,8 @@ fn make_finetangent() -> Vec<int> {
 fn make_tantoangle() -> Vec<int> {
     let mut t: Vec<int> = vec![0; 2049]
     for i in 0..2049 {
-        let a = math::atan(convert::to_float(i) / 2048.0)
-        t[i] = convert::to_int(a / (2.0 * math::PI) * 4294967296.0)
+        let a = math::atan(i as float / 2048.0)
+        t[i] = (a / (2.0 * math::PI) * 4294967296.0) as int
     }
     t
 }

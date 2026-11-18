@@ -53,6 +53,10 @@ fn container_method_name(member: &str) -> bool {
             | "to_upper"
             | "to_lower"
             | "push"
+            | "to_hex"
+            | "to_binary"
+            | "to_octal"
+            | "to_radix"
     )
 }
 
@@ -216,6 +220,7 @@ impl TypeInference {
             }
             InferType::Map(key, value) => Some(map_shape(key, value, member, args.len())?),
             InferType::Char => char_shape(member, args.len()),
+            receiver if receiver.is_integer() => int_shape(member, args.len()),
             InferType::String if member == "push" && args.len() == 1 => {
                 return Some(self.infer_string_push(typed_object, object, &args[0], callee.span));
             }
@@ -624,6 +629,20 @@ fn char_shape(member: &str, arity: usize) -> Option<MethodShape> {
     }
 }
 
+fn int_shape(member: &str, arity: usize) -> Option<MethodShape> {
+    match (member, arity) {
+        ("to_hex" | "to_binary" | "to_octal", 0) => {
+            Some(MethodShape::new(Vec::new(), InferType::String, false))
+        }
+        ("to_radix", 1) => Some(MethodShape::new(
+            vec![InferType::I64],
+            InferType::String,
+            false,
+        )),
+        _ => None,
+    }
+}
+
 fn vec_only_method(member: &str) -> bool {
     matches!(
         member,
@@ -635,6 +654,7 @@ fn receiver_family(receiver: &InferType) -> &'static str {
     match receiver {
         InferType::Map(_, _) => "Map",
         InferType::Char => "char",
+        receiver if receiver.is_integer() => "int",
         InferType::Vec(_) => "Vec",
         _ => "array",
     }

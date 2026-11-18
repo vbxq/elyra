@@ -400,7 +400,7 @@ fn step_is_a_keyword_only_in_a_for_header() {
     );
     let dir = tempfile::tempdir().expect("tempdir");
     write(&dir, "lib.aelys", "pub fn step() -> int { 7 }\n");
-    let main = write(&dir, "main.aelys", "needs lib\nlib::step() * 6\n");
+    let main = write(&dir, "main.aelys", "use lib\nlib::step() * 6\n");
     let value = aelys_driver::run_file(&main).expect("lib::step() is callable");
     assert_eq!(value.as_int(), Some(42));
 }
@@ -501,7 +501,7 @@ fn run_with_geo(main: &str) -> Result<aelys::Value, String> {
 fn tuples_cross_module_boundaries_in_fields_and_payloads() {
     let value = run_with_geo(
         r#"
-needs geo
+use geo
 let s = geo::seg()
 let v = geo::segs()
 let a = match geo::mk(0) { Shape::Pt((x, y)) => x * 10 + y, _ => 0 }
@@ -516,20 +516,20 @@ s.a.0 + s.a.1 + s.b.0.0 + a + b + c + d + v[1].a.0 + p + q
     assert_eq!(value.as_int(), Some(3 + 3 + 45 + 21 + 4 + 3 + 9 + 2 + 3));
 
     let untouched =
-        run_with_geo("needs geo\ngeo::one() + 41\n").expect("a module with tuple fields loads");
+        run_with_geo("use geo\ngeo::one() + 41\n").expect("a module with tuple fields loads");
     assert_eq!(untouched.as_int(), Some(42));
 
     for (main, expected) in [
         (
-            "needs geo\nlet s = geo::seg()\ns.a.5\n",
+            "use geo\nlet s = geo::seg()\ns.a.5\n",
             "tuple (int, int) has no field 5",
         ),
         (
-            "needs geo\nlet s = geo::seg()\nlet y: int = s.b\ny\n",
+            "use geo\nlet s = geo::seg()\nlet y: int = s.b\ny\n",
             "found ((int, string), bool)",
         ),
         (
-            "needs geo\nmatch geo::mk(0) { Shape::Pt((a, b, c)) => 1, _ => 0 }\n",
+            "use geo\nmatch geo::mk(0) { Shape::Pt((a, b, c)) => 1, _ => 0 }\n",
             "tuple pattern has 3 elements",
         ),
     ] {

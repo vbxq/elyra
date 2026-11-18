@@ -4,7 +4,7 @@ use common::*;
 #[test]
 fn net_invalid_port_negative() {
     let code = r#"
-needs std::net
+use std::net
 let _ = net::connect("localhost", -1)
 "#;
     let err = run_aelys_err(code);
@@ -14,7 +14,7 @@ let _ = net::connect("localhost", -1)
 #[test]
 fn invalid_port_too_large() {
     let code = r#"
-needs std::net
+use std::net
 let _ = net::connect("localhost", 99999)
 "#;
     let err = run_aelys_err(code);
@@ -24,7 +24,7 @@ let _ = net::connect("localhost", 99999)
 #[test]
 fn close_invalid_handle() {
     let code = r#"
-needs std::net
+use std::net
 match net::close(456) { Ok(_) => 0, Err(_) => 1 }
 "#;
     assert_aelys_int(code, 1);
@@ -33,7 +33,7 @@ match net::close(456) { Ok(_) => 0, Err(_) => 1 }
 #[test]
 fn recv_on_invalid_handle() {
     let code = r#"
-needs std::net
+use std::net
 let data: Option<string> = net::recv(123)
 match data { None => 1, Some(_) => 0 }
 "#;
@@ -43,7 +43,7 @@ match data { None => 1, Some(_) => 0 }
 #[test]
 fn set_timeout_invalid_handle() {
     let code = r#"
-needs std::net
+use std::net
 match net::set_timeout(777, 1000) { Ok(_) => 0, Err(_) => 1 }
 "#;
     assert_aelys_int(code, 1);
@@ -53,7 +53,7 @@ match net::set_timeout(777, 1000) { Ok(_) => 0, Err(_) => 1 }
 #[ignore]
 fn shutdown_invalid_mode() {
     let code = r#"
-needs std::net
+use std::net
 let s = net::udp_bind("127.0.0.1", 0).unwrap()
 match net::shutdown(s, "invalid") { Ok(_) => 0, Err(_) => 1 }
 "#;
@@ -63,7 +63,7 @@ match net::shutdown(s, "invalid") { Ok(_) => 0, Err(_) => 1 }
 #[test]
 fn listen_invalid_port() {
     let code = r#"
-needs std::net
+use std::net
 let _ = net::listen("0.0.0.0", -5)
 "#;
     let err = run_aelys_err(code);
@@ -73,7 +73,7 @@ let _ = net::listen("0.0.0.0", -5)
 #[test]
 fn recv_line_invalid_handle() {
     let code = r#"
-needs std::net
+use std::net
 let line: Option<string> = net::recv_line(999)
 match line { None => 1, Some(_) => 0 }
 "#;
@@ -83,7 +83,7 @@ match line { None => 1, Some(_) => 0 }
 #[test]
 fn peer_addr_invalid() {
     let code = r#"
-needs std::net
+use std::net
 let address: Option<string> = net::peer_addr(12345)
 match address { None => 1, Some(_) => 0 }
 "#;
@@ -94,7 +94,7 @@ match address { None => 1, Some(_) => 0 }
 #[ignore]
 fn udp_bind_and_close() {
     let code = r#"
-needs std::net
+use std::net
 let sock = net::udp_bind("127.0.0.1", 0).unwrap()
 net::close(sock).unwrap()
 42
@@ -105,7 +105,7 @@ net::close(sock).unwrap()
 #[test]
 fn udp_bind_invalid_port() {
     let code = r#"
-needs std::net
+use std::net
 let _ = net::udp_bind("127.0.0.1", -1)
 "#;
     let err = run_aelys_err(code);
@@ -115,7 +115,7 @@ let _ = net::udp_bind("127.0.0.1", -1)
 #[test]
 fn udp_bind_port_too_large() {
     let code = r#"
-needs std::net
+use std::net
 let _ = net::udp_bind("127.0.0.1", 99999)
 "#;
     let err = run_aelys_err(code);
@@ -126,7 +126,7 @@ let _ = net::udp_bind("127.0.0.1", 99999)
 #[ignore]
 fn udp_local_addr() {
     let code = r#"
-needs std::net
+use std::net
 let sock = net::udp_bind("127.0.0.1", 0).unwrap()
 let addr = net::local_addr(sock).unwrap()
 net::close(sock).unwrap()
@@ -139,7 +139,7 @@ net::close(sock).unwrap()
 #[ignore]
 fn udp_set_timeout() {
     let code = r#"
-needs std::net
+use std::net
 let sock = net::udp_bind("127.0.0.1", 0).unwrap()
 net::set_timeout(sock, 1000).unwrap()
 net::close(sock).unwrap()
@@ -152,7 +152,7 @@ net::close(sock).unwrap()
 #[ignore]
 fn udp_set_broadcast() {
     let code = r#"
-needs std::net
+use std::net
 let sock = net::udp_bind("0.0.0.0", 0).unwrap()
 net::udp_set_broadcast(sock, true).unwrap()
 net::close(sock).unwrap()
@@ -165,7 +165,7 @@ net::close(sock).unwrap()
 #[ignore]
 fn udp_recv_negative_max() {
     let code = r#"
-needs std::net
+use std::net
 let sock = net::udp_bind("127.0.0.1", 0).unwrap()
 let _ = net::udp_recv(sock, -1)
 "#;
@@ -177,7 +177,7 @@ let _ = net::udp_recv(sock, -1)
 #[ignore]
 fn udp_connect_invalid_port() {
     let code = r#"
-needs std::net
+use std::net
 let sock = net::udp_bind("127.0.0.1", 0).unwrap()
 match net::udp_connect(sock, "127.0.0.1", -1) { Ok(_) => 0, Err(_) => 1 }
 "#;
@@ -187,7 +187,7 @@ match net::udp_connect(sock, "127.0.0.1", -1) { Ok(_) => 0, Err(_) => 1 }
 #[test]
 fn udp_send_to_and_recv_from() {
     let code = r#"
-needs std::net
+use std::net
 let s1 = net::udp_bind("127.0.0.1", 0).unwrap()
 let s2 = net::udp_bind("127.0.0.1", 0).unwrap()
 let addr2 = net::local_addr(s2).unwrap()

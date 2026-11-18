@@ -1,21 +1,20 @@
-needs std::io
-needs std::bytes
-needs std::time
-needs std::math
-needs std::convert
+use std::io
+use std::bytes
+use std::time
+use std::math
 
 let W = 60
 let H = 25
-let ESC = convert::chr(27)
+let ESC = (27 as char).to_string()
 
 @no_gc
 fn run() {
     let sintab = bytes::alloc(256)
 
     for i in 0..256 {
-        let rad = (convert::to_float(i) * 2.0 * math::PI) / 256.0
+        let rad = (i as float * 2.0 * math::PI) / 256.0
         let s = math::sin(rad)
-        let v = convert::to_int((s + 1.0) * 127.5)
+        let v = ((s + 1.0) * 127.5) as int
         bytes::write_u8(sintab, i, v)
     }
 
@@ -51,7 +50,7 @@ fn run() {
                 if hi == 4 { r = tt; g = 0; b = 255 }
                 if hi == 5 { r = 255; g = 0; b = q }
 
-                io::print_inline(ESC + "[48;2;" + convert::to_string(r) + ";" + convert::to_string(g) + ";" + convert::to_string(b) + "m ")
+                io::print_inline(ESC + "[48;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string() + "m ")
             }
             io::print_inline(ESC + "[0m")
             io::print("")

@@ -46,7 +46,7 @@ fn an_imported_mut_function_runs_through_function_values_on_a_mutable_root() {
         run_int(
             &dir,
             "main.aelys",
-            "needs lib\nlet mut a = S { n: 1 }\nlet h = touch\nlet q = lib::touch\nlet fs = vec![touch]\nh(a) * 10000 + q(a) * 1000 + fs[0](a) * 100 + apply(touch, a) * 10 + lib::apply(lib::touch, a) - look(a)\n",
+            "use lib\nlet mut a = S { n: 1 }\nlet h = touch\nlet q = lib::touch\nlet fs = vec![touch]\nh(a) * 10000 + q(a) * 1000 + fs[0](a) * 100 + apply(touch, a) * 10 + lib::apply(lib::touch, a) - look(a)\n",
         ),
         2 * 10000 + 3 * 1000 + 4 * 100 + 5 * 10 + 6 - 6
     );
@@ -68,7 +68,7 @@ fn an_imported_mut_function_value_rejects_an_immutable_root() {
         let error = run_err(
             &dir,
             "bad.aelys",
-            &format!("needs lib\nlet a = S {{ n: 1 }}\n{body}\n0\n"),
+            &format!("use lib\nlet a = S {{ n: 1 }}\n{body}\n0\n"),
         );
         assert!(error.contains("E0323"), "{body}: {error}");
     }
@@ -78,14 +78,14 @@ fn an_imported_mut_function_value_rejects_an_immutable_root() {
 fn an_imported_function_type_keeps_mut_apart_from_plain() {
     let dir = tree(&[("lib.aelys", LIB)]);
     for body in ["let f: fn(S) -> int = touch", "peek(touch, S { n: 1 })"] {
-        let error = run_err(&dir, "bad.aelys", &format!("needs lib\n{body}\n0\n"));
+        let error = run_err(&dir, "bad.aelys", &format!("use lib\n{body}\n0\n"));
         assert!(error.contains("E0301"), "{body}: {error}");
     }
     assert_eq!(
         run_int(
             &dir,
             "plain.aelys",
-            "needs lib\nlet a = S { n: 7 }\nlet h = look\nh(a) + peek(look, a)\n"
+            "use lib\nlet a = S { n: 7 }\nlet h = look\nh(a) + peek(look, a)\n"
         ),
         14
     );
@@ -107,10 +107,10 @@ fn a_carried_impl_body_calls_its_module_functions_through_the_typed_rule() {
         run_int(
             &dir,
             "main.aelys",
-            "needs m\nlet s = S { n: 10 }\nviag(s) * 100 + s.g()\n"
+            "use m\nlet s = S { n: 10 }\nviag(s) * 100 + s.g()\n"
         ),
         2121
     );
-    let error = run_err(&dir, "main2.aelys", "needs m2\nS { n: 1 }.g()\n");
+    let error = run_err(&dir, "main2.aelys", "use m2\nS { n: 1 }.g()\n");
     assert!(error.contains("E0323"), "{error}");
 }

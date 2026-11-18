@@ -5,8 +5,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 const TYPES: &str = r#"
-needs std::io
-needs std::convert
+use std::io
 
 struct Loud { v: int }
 impl Display for Loud {
@@ -114,7 +113,7 @@ fn convert_to_string_dispatches_to_the_user_display_impl() {
     let text = run_string(&format!(
         r#"{TYPES}
 fn probe() -> string {{
-    convert::to_string(Loud {{ v: 1 }})
+    (Loud {{ v: 1 }}).to_string()
 }}
 probe()
 "#
@@ -141,9 +140,8 @@ probe()
 fn display_scalars_keep_the_compiler_rule_rendering() {
     let text = run_string(
         r#"
-needs std::convert
 fn probe() -> string {
-    __tostring(42) + "|" + __tostring(true) + "|" + convert::to_string("plain")
+    __tostring(42) + "|" + __tostring(true) + "|" + "plain".to_string()
 }
 probe()
 "#,
@@ -155,7 +153,7 @@ probe()
 fn println_of_a_scalar_is_unchanged() {
     let stdout = run_stdout(
         r#"
-needs std::io
+use std::io
 fn main() -> int {
     println(42)
     0
@@ -242,7 +240,7 @@ fn an_imported_display_impl_still_dispatches() {
     let main = directory.path().join("main.aelys");
     std::fs::write(
         &main,
-        "needs std::io\nneeds shout\n\nfn main() -> int {\n    println(Loud { v: 1 })\n    0\n}\nmain()\n",
+        "use std::io\nuse shout\n\nfn main() -> int {\n    println(Loud { v: 1 })\n    0\n}\nmain()\n",
     )
     .expect("write main");
     let stdout = run_cli(&main);

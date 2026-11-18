@@ -1,9 +1,8 @@
-needs std::io
-needs std::convert
-needs std::time
+use std::io
+use std::time
 
 let n = 1000000
-io::print("Vec push/pop benchmark (n=" + convert::to_string(n) + ")")
+io::print("Vec push/pop benchmark (n=" + n.to_string() + ")")
 
 let mut v = vec![]
 
@@ -14,13 +13,13 @@ while i < n {
     i = i + 1
 }
 let push_time = time::elapsed_ms(t1)
-io::print("Push time: " + convert::to_string(push_time) + "ms")
-io::print("Final len: " + convert::to_string(v.len()))
+io::print("Push time: " + push_time.to_string() + "ms")
+io::print("Final len: " + v.len().to_string())
 
 let t2 = time::timer()
 while v.len() > 0 {
     let _ = v.pop()
 }
 let pop_time = time::elapsed_ms(t2)
-io::print("Pop time: " + convert::to_string(pop_time) + "ms")
-io::print("Final len: " + convert::to_string(v.len()))
+io::print("Pop time: " + pop_time.to_string() + "ms")
+io::print("Final len: " + v.len().to_string())

@@ -149,10 +149,7 @@ fn push_needs_a_mutable_string_variable() {
 
 #[test]
 fn display_and_type_of_char() {
-    assert_aelys_str(
-        "let c = 'k'\nto_string(c) + \" \" + type_of(c) + \" {c}\"",
-        "k char k",
-    );
+    assert_aelys_str("let c = 'k'\nc.to_string() + \" {c}\"", "k k");
 }
 
 #[test]

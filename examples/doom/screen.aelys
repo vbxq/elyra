@@ -1,6 +1,6 @@
-needs std::bytes as bytes
-needs sdl
-needs render
+use std::bytes as bytes
+use sdl
+use render
 
 let pixels = bytes::alloc(64000)
 let palette = bytes::alloc(768)
@@ -23,7 +23,7 @@ pub fn present() -> bool {
         if ev == 1 { quit = true }
         ev = sdl::poll()
     }
-    uploaded.is_ok() and not quit
+    uploaded.is_ok() && !quit
 }
 
 pub fn close() { sdl::close() }

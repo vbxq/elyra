@@ -1,6 +1,5 @@
-needs print from std::io
-needs to_string from std::convert
-needs std::time
+use std::io::{print}
+use std::time
 
 pub fn mime_type(extension: string) -> string {
     let mut ext: string = extension.to_lower()
@@ -55,7 +54,7 @@ pub fn status_text(code: int) -> string {
 }
 
 pub fn log_request(method: string, path: string, status: int, duration_ms: int) {
-    let log_line = method + " " + path + " " + to_string(status) + " " + to_string(duration_ms) + "ms"
+    let log_line = method + " " + path + " " + status.to_string() + " " + duration_ms.to_string() + "ms"
     print(log_line)
 }
 
@@ -87,7 +86,7 @@ pub fn is_safe_path(path: string) -> bool {
 pub fn normalize_path(path: string) -> string {
     let mut normalized = path
 
-    if normalized.len() > 1 and normalized.ends_with("/") {
+    if normalized.len() > 1 && normalized.ends_with("/") {
         normalized = normalized.substr(0, normalized.len() - 1)
     }
 

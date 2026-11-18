@@ -15,8 +15,11 @@ mod types;
 
 impl Parser {
     pub fn declaration(&mut self) -> Result<Stmt> {
-        if self.check(&TokenKind::Needs) {
-            return self.needs_declaration();
+        if self.check(&TokenKind::Use) {
+            return self.use_declaration();
+        }
+        if self.starts_removed_needs() {
+            return self.removed_needs();
         }
 
         let decorators = self.decorators()?;

@@ -72,7 +72,7 @@ fn bytecode_negative_jump() {
 #[test]
 fn path_traversal_url_encoded() {
     let code = r#"
-needs std::fs
+use std::fs
 match fs::join("/app", "..%2F..%2Fetc%2Fpasswd") { Ok(_) => 0, Err(_) => 1 }
 "#;
     let result = run_aelys(code);

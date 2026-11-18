@@ -171,15 +171,13 @@ fn diagnostic_code(text: &str) -> Option<String> {
 }
 
 const PLAIN_STRUCT: &str = r#"
-needs std::io
-needs std::convert
+use std::io
 
 struct Plain { n: int }
 "#;
 
 const DISPLAY_STRUCT: &str = r#"
-needs std::io
-needs std::convert
+use std::io
 
 struct Shown { n: int }
 impl Display for Shown {
@@ -189,7 +187,7 @@ impl Display for Shown {
 
 #[test]
 fn d2_a_struct_without_display_is_rejected_by_the_direct_call_paths() {
-    for body in ["println(p)", "convert::to_string(p)", "__tostring(p)"] {
+    for body in ["println(p)", "p.to_string()", "__tostring(p)"] {
         let message = rejection(&format!(
             "{PLAIN_STRUCT}
 fn probe() -> int {{
@@ -246,12 +244,7 @@ probe()
 
 #[test]
 fn d2_a_struct_with_display_still_dispatches_through_the_string_paths() {
-    for body in [
-        "convert::to_string(s)",
-        "__tostring(s)",
-        "\"{s}\"",
-        "\"a{s}b{s}\"",
-    ] {
+    for body in ["s.to_string()", "__tostring(s)", "\"{s}\"", "\"a{s}b{s}\""] {
         let text = run_string(&format!(
             "{DISPLAY_STRUCT}
 fn probe() -> string {{
@@ -365,7 +358,7 @@ fn named_code() -> int {{
 }
 
 #[test]
-fn d3_needs_from_still_parses() {
+fn d3_selective_use_parses() {
     let directory = tempfile::tempdir().expect("temporary directory");
     write_program(
         directory.path(),
@@ -375,15 +368,15 @@ fn d3_needs_from_still_parses() {
     write_program(
         directory.path(),
         "main.aelys",
-        "needs doubled from helper\n\nfn main() -> int {\n    doubled(21)\n}\nmain()\n",
+        "use helper::{doubled}\n\nfn main() -> int {\n    doubled(21)\n}\nmain()\n",
     );
 
     let ran = cli(&["run", "main.aelys"], directory.path());
-    assert_eq!(ran.code, Some(0), "{}", ran.report("needs from"));
+    assert_eq!(ran.code, Some(0), "{}", ran.report("use ::{}"));
     assert_eq!(
         ran.stdout.lines().next(),
         Some("42"),
         "{}",
-        ran.report("needs from")
+        ran.report("use ::{}")
     );
 }

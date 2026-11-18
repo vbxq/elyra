@@ -33,7 +33,7 @@ fn beta_module(shared: i64) -> String {
     )
 }
 
-const TWO_MODULE_MAIN: &str = "needs A1, TA from alpha\nneeds B1, TB from beta\nfn main() -> int {\n    let a = A1 { v: 0 }\n    let b = B1 { v: 0 }\n    return a.ta() * 1000 + b.tb()\n}\nmain()\n";
+const TWO_MODULE_MAIN: &str = "use alpha::{A1, TA}\nuse beta::{B1, TB}\nfn main() -> int {\n    let a = A1 { v: 0 }\n    let b = B1 { v: 0 }\n    return a.ta() * 1000 + b.tb()\n}\nmain()\n";
 
 #[test]
 fn two_modules_with_the_same_private_global_each_read_their_own() {
@@ -81,7 +81,7 @@ fn a_public_and_a_private_global_of_the_same_name_stay_apart() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs P1, TP from pubmod\nneeds Q1, TQ from privmod\nfn main() -> int {\n    let p = P1 { v: 0 }\n    let q = Q1 { v: 0 }\n    return p.tp() * 1000 + q.tq()\n}\nmain()\n",
+        "use pubmod::{P1, TP}\nuse privmod::{Q1, TQ}\nfn main() -> int {\n    let p = P1 { v: 0 }\n    let q = Q1 { v: 0 }\n    return p.tp() * 1000 + q.tq()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an exported and a private name must not share a slot");
@@ -104,7 +104,7 @@ fn a_nested_module_path_keeps_its_own_private_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs D1, TD from pkg::sub::deep\nneeds F1, TF from flat\nfn main() -> int {\n    let d = D1 { v: 0 }\n    let f = F1 { v: 0 }\n    return d.td() * 1000 + f.tf()\n}\nmain()\n",
+        "use pkg::sub::deep::{D1, TD}\nuse flat::{F1, TF}\nfn main() -> int {\n    let d = D1 { v: 0 }\n    let f = F1 { v: 0 }\n    return d.td() * 1000 + f.tf()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("a nested path must carry its own module identity");
@@ -127,7 +127,7 @@ fn an_aliased_module_import_keeps_its_own_private_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs aliased as al\nneeds other as ot\nfn main() -> int {\n    let a = AA { v: 0 }\n    let b = BB { v: 0 }\n    return a.taa() * 1000 + b.tbb()\n}\nmain()\n",
+        "use aliased as al\nuse other as ot\nfn main() -> int {\n    let a = AA { v: 0 }\n    let b = BB { v: 0 }\n    return a.taa() * 1000 + b.tbb()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an alias must not merge two private globals");
@@ -141,7 +141,7 @@ fn a_module_that_imports_a_third_reads_its_own_and_the_third_global() {
     write_file(
         &dir,
         "middle.aelys",
-        "needs base from third\nlet delta = 20\npub struct MM { pub v: int }\npub trait TMM {\n    fn tmm(self) -> int\n}\nimpl TMM for MM {\n    fn tmm(self) -> int {\n        self.v + delta + base\n    }\n}\n",
+        "use third::{base}\nlet delta = 20\npub struct MM { pub v: int }\npub trait TMM {\n    fn tmm(self) -> int\n}\nimpl TMM for MM {\n    fn tmm(self) -> int {\n        self.v + delta + base\n    }\n}\n",
     );
     write_file(
         &dir,
@@ -151,7 +151,7 @@ fn a_module_that_imports_a_third_reads_its_own_and_the_third_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs MM, TMM from middle\nneeds RR, TRR from rival\nfn main() -> int {\n    let m = MM { v: 0 }\n    let r = RR { v: 0 }\n    return m.tmm() * 1000 + r.trr()\n}\nmain()\n",
+        "use middle::{MM, TMM}\nuse rival::{RR, TRR}\nfn main() -> int {\n    let m = MM { v: 0 }\n    let r = RR { v: 0 }\n    return m.tmm() * 1000 + r.trr()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("a re-exported body must read both of its own names");
@@ -173,12 +173,12 @@ fn a_module_that_imports_a_third_calls_it_module_qualified_from_an_imported_body
     write_file(
         &dir,
         "middle.aelys",
-        "needs third\nlet delta = 20\npub struct MM { pub v: int }\npub trait TMM {\n    fn tmm(self) -> int\n}\nimpl TMM for MM {\n    fn tmm(self) -> int {\n        return self.v + delta + third::deepfn()\n    }\n}\n",
+        "use third\nlet delta = 20\npub struct MM { pub v: int }\npub trait TMM {\n    fn tmm(self) -> int\n}\nimpl TMM for MM {\n    fn tmm(self) -> int {\n        return self.v + delta + third::deepfn()\n    }\n}\n",
     );
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs MM, TMM from middle\nfn main() -> int {\n    let m = MM { v: 100 }\n    return m.tmm()\n}\nmain()\n",
+        "use middle::{MM, TMM}\nfn main() -> int {\n    let m = MM { v: 100 }\n    return m.tmm()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an imported body must reach its module's imports");
@@ -191,10 +191,10 @@ fn a_module_that_imports_a_third_calls_it_module_qualified_from_an_imported_body
     let leak_path = write_file(
         &dir,
         "leak.aelys",
-        "needs MM, TMM from middle\nfn main() -> int {\n    return third::deepfn()\n}\nmain()\n",
+        "use middle::{MM, TMM}\nfn main() -> int {\n    return third::deepfn()\n}\nmain()\n",
     );
     let leaked = run_file(&leak_path)
-        .expect_err("the importer never wrote 'needs third'")
+        .expect_err("the importer never wrote 'use third'")
         .to_string();
     assert!(
         leaked.contains("third::deepfn"),
@@ -213,12 +213,12 @@ fn a_module_that_imports_a_type_reads_it_from_an_imported_body() {
     write_file(
         &dir,
         "left.aelys",
-        "needs K, TK from core\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\npub fn viafree(v: int) -> int {\n    let k = K { v: v }\n    return k.tk()\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        let k = K { v: self.v }\n        return k.tk()\n    }\n}\n",
+        "use core::{K, TK}\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\npub fn viafree(v: int) -> int {\n    let k = K { v: v }\n    return k.tk()\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        let k = K { v: self.v }\n        return k.tk()\n    }\n}\n",
     );
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs L, TL, viafree from left\nfn main() -> int {\n    let a = viafree(7)\n    let b = L { v: 20 }\n    return a * 1000 + b.tl()\n}\nmain()\n",
+        "use left::{L, TL, viafree}\nfn main() -> int {\n    let a = viafree(7)\n    let b = L { v: 20 }\n    return a * 1000 + b.tl()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an imported body must reach its module's own types");
@@ -231,10 +231,10 @@ fn a_module_that_imports_a_type_reads_it_from_an_imported_body() {
     let named_path = write_file(
         &dir,
         "named.aelys",
-        "needs L, TL, viafree from left\nfn main() -> int {\n    let k = K { v: 1 }\n    return k.tk()\n}\nmain()\n",
+        "use left::{L, TL, viafree}\nfn main() -> int {\n    let k = K { v: 1 }\n    return k.tk()\n}\nmain()\n",
     );
     let named = run_file(&named_path)
-        .expect_err("the importer never wrote 'needs K from core'")
+        .expect_err("the importer never wrote 'use core::{K}'")
         .to_string();
     assert!(
         named.contains("'K' is exported by module 'core' but this file does not import it"),
@@ -244,10 +244,10 @@ fn a_module_that_imports_a_type_reads_it_from_an_imported_body() {
     let bound_path = write_file(
         &dir,
         "bound.aelys",
-        "needs L, TL, viafree from left\nfn pull<T: TK>(x: T) -> int {\n    return x.tk()\n}\nfn main() -> int {\n    return pull(L { v: 1 })\n}\nmain()\n",
+        "use left::{L, TL, viafree}\nfn pull<T: TK>(x: T) -> int {\n    return x.tk()\n}\nfn main() -> int {\n    return pull(L { v: 1 })\n}\nmain()\n",
     );
     let bound = run_file(&bound_path)
-        .expect_err("the importer never wrote 'needs TK from core'")
+        .expect_err("the importer never wrote 'use core::{TK}'")
         .to_string();
     assert!(
         bound.contains("'TK' is exported by module 'core' but this file does not import it"),
@@ -257,7 +257,7 @@ fn a_module_that_imports_a_type_reads_it_from_an_imported_body() {
     let clash_path = write_file(
         &dir,
         "clash.aelys",
-        "needs L, TL, viafree from left\nstruct K { v: int }\nfn main() -> int {\n    return K { v: 1 }.v\n}\nmain()\n",
+        "use left::{L, TL, viafree}\nstruct K { v: int }\nfn main() -> int {\n    return K { v: 1 }.v\n}\nmain()\n",
     );
     let clash = run_file(&clash_path)
         .expect_err("the importer's own name collides with the one the body needs")
@@ -279,7 +279,7 @@ fn the_importer_declaring_the_same_name_never_reaches_the_imported_body() {
     let main_path = write_file(
         &dir,
         "main4.aelys",
-        "needs Counter, Source from support2\nlet secret = \"boom\"\nfn main() -> int {\n    let c = Counter { value: 89 }\n    return c.next()\n}\nmain()\n",
+        "use support2::{Counter, Source}\nlet secret = \"boom\"\nfn main() -> int {\n    let c = Counter { value: 89 }\n    return c.next()\n}\nmain()\n",
     );
 
     for level in [
@@ -306,7 +306,7 @@ fn a_lone_module_still_reaches_its_own_private_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs A1, TA from alpha\nfn main() -> int {\n    let a = A1 { v: 0 }\n    return a.ta()\n}\nmain()\n",
+        "use alpha::{A1, TA}\nfn main() -> int {\n    let a = A1 { v: 0 }\n    return a.ta()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("one module alone must keep working");
@@ -324,7 +324,7 @@ fn a_local_binding_shadows_the_module_private_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs SS, TSS from shadow\nfn main() -> int {\n    let s = SS { v: 1 }\n    return s.tss()\n}\nmain()\n",
+        "use shadow::{SS, TSS}\nfn main() -> int {\n    let s = SS { v: 1 }\n    return s.tss()\n}\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("a local must win over the module global");
@@ -334,7 +334,7 @@ fn a_local_binding_shadows_the_module_private_global() {
 const STORE_TOP_LEVEL: &str =
     "let mut v: int = 100\n\nv = v + 5\n\npub fn read_v() -> int {\n    return v\n}\n";
 
-const MAIN_HOLDING_V: &str = "needs read_v from store\n\nlet mut v: int = 9\n\nfn main() -> int {\n    return read_v() * 1000 + v\n}\n\nmain()\n";
+const MAIN_HOLDING_V: &str = "use store::{read_v}\n\nlet mut v: int = 9\n\nfn main() -> int {\n    return read_v() * 1000 + v\n}\n\nmain()\n";
 
 #[test]
 fn the_module_top_level_and_a_free_function_write_and_read_one_slot() {
@@ -361,7 +361,7 @@ fn a_free_function_writes_the_slot_a_second_free_function_reads() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs bump_v, read_v from store\n\nlet mut v: int = 9\n\nfn main() -> int {\n    let a = bump_v()\n    let b = read_v()\n    return a * 100000 + b * 100 + v\n}\n\nmain()\n",
+        "use store::{bump_v, read_v}\n\nlet mut v: int = 9\n\nfn main() -> int {\n    let a = bump_v()\n    let b = read_v()\n    return a * 100000 + b * 100 + v\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("both free functions must reach one slot");
@@ -383,7 +383,7 @@ fn the_module_own_impl_body_writes_the_slot_its_free_function_reads() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs read_v, read_seeded from store\n\nlet mut v: int = 9\n\nfn main() -> int {\n    return read_seeded() * 100000 + read_v() * 100 + v\n}\n\nmain()\n",
+        "use store::{read_v, read_seeded}\n\nlet mut v: int = 9\n\nfn main() -> int {\n    return read_seeded() * 100000 + read_v() * 100 + v\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("the module's own impl body must reach one slot");
@@ -405,7 +405,7 @@ fn an_imported_impl_body_writes_the_slot_the_module_free_function_reads() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Cell, Step, read_v from store\n\nlet mut v: int = 9\n\nfn main() -> int {\n    let c = Cell { k: 0 }\n    let a = c.tick()\n    let b = read_v()\n    return a * 100000 + b * 100 + v\n}\n\nmain()\n",
+        "use store::{Cell, Step, read_v}\n\nlet mut v: int = 9\n\nfn main() -> int {\n    let c = Cell { k: 0 }\n    let a = c.tick()\n    let b = read_v()\n    return a * 100000 + b * 100 + v\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an imported body and a free function share one slot");
@@ -427,7 +427,7 @@ fn a_public_module_global_is_read_by_its_own_function_not_by_the_importer_bindin
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs alpha\n\nlet mut v: int = 9\n\nfn main() -> int {\n    return get_alpha() * 1000 + v\n}\n\nmain()\n",
+        "use alpha\n\nlet mut v: int = 9\n\nfn main() -> int {\n    return get_alpha() * 1000 + v\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("the module function must read its own global");
@@ -454,7 +454,7 @@ fn two_aliased_modules_with_the_same_public_global_each_read_their_own() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs alpha as a\nneeds beta as b\n\nfn main() -> int {\n    return a::get_alpha() * 1000 + b::get_beta()\n}\n\nmain()\n",
+        "use alpha as a\nuse beta as b\n\nfn main() -> int {\n    return a::get_alpha() * 1000 + b::get_beta()\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("each aliased module keeps its own global");
@@ -476,7 +476,7 @@ fn a_module_free_function_reads_its_own_immutable_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs read_k from store\n\nlet k: int = 500\n\nfn main() -> int {\n    return read_k() * 1000 + k\n}\n\nmain()\n",
+        "use store::{read_k}\n\nlet k: int = 500\n\nfn main() -> int {\n    return read_k() * 1000 + k\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an immutable module global stays the module's own");
@@ -494,7 +494,7 @@ fn an_imported_impl_body_reads_its_module_immutable_global() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Cell, Step from store\n\nlet k: int = 500\n\nfn main() -> int {\n    let c = Cell { n: 0 }\n    return c.tick() * 1000 + k\n}\n\nmain()\n",
+        "use store::{Cell, Step}\n\nlet k: int = 500\n\nfn main() -> int {\n    let c = Cell { n: 0 }\n    return c.tick() * 1000 + k\n}\n\nmain()\n",
     );
 
     let value = run_file(&main_path).expect("an imported body reads its own module's constant");
@@ -509,9 +509,9 @@ const CARRIED_CORED: &str = "pub struct K { pub v: int }\npub trait TKD {\n    f
 
 const CARRIED_COREC: &str = "pub struct K { pub v: int }\npub trait TKC {\n    fn shared(self) -> int\n}\nimpl TKC for K {\n    fn shared(self) -> int {\n        return self.v + 1000\n    }\n}\n";
 
-const CARRIED_MID3: &str = "needs K, TKD from cored\npub struct L3 { pub v: int }\npub trait TL3 {\n    fn tl3(self) -> int\n}\nimpl TL3 for L3 {\n    fn tl3(self) -> int {\n        let k = K { v: self.v }\n        return k.shared()\n    }\n}\n";
+const CARRIED_MID3: &str = "use cored::{K, TKD}\npub struct L3 { pub v: int }\npub trait TL3 {\n    fn tl3(self) -> int\n}\nimpl TL3 for L3 {\n    fn tl3(self) -> int {\n        let k = K { v: self.v }\n        return k.shared()\n    }\n}\n";
 
-const CARRIED_MID4: &str = "needs K, TKC from corec\npub struct L4 { pub v: int }\npub trait TL4 {\n    fn tl4(self) -> int\n}\nimpl TL4 for L4 {\n    fn tl4(self) -> int {\n        let k = K { v: self.v }\n        return k.shared()\n    }\n}\n";
+const CARRIED_MID4: &str = "use corec::{K, TKC}\npub struct L4 { pub v: int }\npub trait TL4 {\n    fn tl4(self) -> int\n}\nimpl TL4 for L4 {\n    fn tl4(self) -> int {\n        let k = K { v: self.v }\n        return k.shared()\n    }\n}\n";
 
 #[test]
 fn two_carried_declarations_of_one_name_are_settled_at_the_importer() {
@@ -524,7 +524,7 @@ fn two_carried_declarations_of_one_name_are_settled_at_the_importer() {
     let only3 = write_file(
         &dir,
         "only3.aelys",
-        "needs L3, TL3 from mid3\nfn main() -> int {\n    let a = L3 { v: 5 }\n    return a.tl3()\n}\nmain()\n",
+        "use mid3::{L3, TL3}\nfn main() -> int {\n    let a = L3 { v: 5 }\n    return a.tl3()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&only3)
@@ -537,7 +537,7 @@ fn two_carried_declarations_of_one_name_are_settled_at_the_importer() {
     let only4 = write_file(
         &dir,
         "only4.aelys",
-        "needs L4, TL4 from mid4\nfn main() -> int {\n    let b = L4 { v: 5 }\n    return b.tl4()\n}\nmain()\n",
+        "use mid4::{L4, TL4}\nfn main() -> int {\n    let b = L4 { v: 5 }\n    return b.tl4()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&only4)
@@ -550,7 +550,7 @@ fn two_carried_declarations_of_one_name_are_settled_at_the_importer() {
     let both = write_file(
         &dir,
         "both.aelys",
-        "needs L3, TL3 from mid3\nneeds L4, TL4 from mid4\nfn main() -> int {\n    let a = L3 { v: 5 }\n    let b = L4 { v: 5 }\n    return a.tl3() + b.tl4()\n}\nmain()\n",
+        "use mid3::{L3, TL3}\nuse mid4::{L4, TL4}\nfn main() -> int {\n    let a = L3 { v: 5 }\n    let b = L4 { v: 5 }\n    return a.tl3() + b.tl4()\n}\nmain()\n",
     );
     let clash = run_file(&both)
         .expect_err("two modules carry a different 'K' into one table")
@@ -572,7 +572,7 @@ fn two_carried_declarations_of_one_name_are_settled_at_the_importer() {
     let swapped = write_file(
         &dir,
         "swapped.aelys",
-        "needs L4, TL4 from mid4\nneeds L3, TL3 from mid3\nfn main() -> int {\n    let a = L3 { v: 5 }\n    let b = L4 { v: 5 }\n    return a.tl3() + b.tl4()\n}\nmain()\n",
+        "use mid4::{L4, TL4}\nuse mid3::{L3, TL3}\nfn main() -> int {\n    let a = L3 { v: 5 }\n    let b = L4 { v: 5 }\n    return a.tl3() + b.tl4()\n}\nmain()\n",
     );
     let swapped_clash = run_file(&swapped)
         .expect_err("the order of the two lines cannot decide the answer")
@@ -580,7 +580,7 @@ fn two_carried_declarations_of_one_name_are_settled_at_the_importer() {
     assert_eq!(
         diagnostic_head(&clash),
         diagnostic_head(&swapped_clash),
-        "the report must not depend on the order of the two `needs` lines"
+        "the report must not depend on the order of the two `use` lines"
     );
 
     let twice = run_file(&both)
@@ -605,18 +605,18 @@ fn a_carried_declaration_against_an_explicit_one_reads_the_same_under_either_ord
     write_file(
         &dir,
         "midk.aelys",
-        "needs K, TKA from corea\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        let k = K { v: self.v }\n        return k.ka()\n    }\n}\n",
+        "use corea::{K, TKA}\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        let k = K { v: self.v }\n        return k.ka()\n    }\n}\n",
     );
 
     let first = write_file(
         &dir,
         "first.aelys",
-        "needs L, TL from midk\nneeds K, TKB from coreb\nfn main() -> int {\n    let k = K { a: \"x\", b: \"y\", v: 3 }\n    return k.kb()\n}\nmain()\n",
+        "use midk::{L, TL}\nuse coreb::{K, TKB}\nfn main() -> int {\n    let k = K { a: \"x\", b: \"y\", v: 3 }\n    return k.kb()\n}\nmain()\n",
     );
     let second = write_file(
         &dir,
         "second.aelys",
-        "needs K, TKB from coreb\nneeds L, TL from midk\nfn main() -> int {\n    let k = K { a: \"x\", b: \"y\", v: 3 }\n    return k.kb()\n}\nmain()\n",
+        "use coreb::{K, TKB}\nuse midk::{L, TL}\nfn main() -> int {\n    let k = K { a: \"x\", b: \"y\", v: 3 }\n    return k.kb()\n}\nmain()\n",
     );
 
     let first_error = run_file(&first)
@@ -636,7 +636,7 @@ fn a_carried_declaration_against_an_explicit_one_reads_the_same_under_either_ord
     assert_eq!(
         diagnostic_head(&first_error),
         diagnostic_head(&second_error),
-        "the order of the two `needs` lines cannot decide the answer"
+        "the order of the two `use` lines cannot decide the answer"
     );
 }
 
@@ -658,12 +658,12 @@ fn a_qualified_call_travels_whether_or_not_the_defining_module_has_an_impl() {
         write_file(
             &dir,
             "mid5.aelys",
-            "needs core3\npub struct L4 { pub v: int }\npub trait TL4 {\n    fn tl4(self) -> int\n}\nimpl TL4 for L4 {\n    fn tl4(self) -> int {\n        return core3::helper() * 10\n    }\n}\n",
+            "use core3\npub struct L4 { pub v: int }\npub trait TL4 {\n    fn tl4(self) -> int\n}\nimpl TL4 for L4 {\n    fn tl4(self) -> int {\n        return core3::helper() * 10\n    }\n}\n",
         );
         let main_path = write_file(
             &dir,
             "main5.aelys",
-            "needs L4, TL4 from mid5\nfn main() -> int {\n    let l = L4 { v: 5 }\n    return l.tl4()\n}\nmain()\n",
+            "use mid5::{L4, TL4}\nfn main() -> int {\n    let l = L4 { v: 5 }\n    return l.tl4()\n}\nmain()\n",
         );
         let value = run_file(&main_path)
             .unwrap_or_else(|error| panic!("with_impl={with_impl}: {error}"))
@@ -689,12 +689,12 @@ fn an_aliased_call_travels_whether_or_not_the_defining_module_has_an_impl() {
         write_file(
             &dir,
             "mid6.aelys",
-            "needs core3 as c3\npub struct L6 { pub v: int }\npub trait TL6 {\n    fn tl6(self) -> int\n}\nimpl TL6 for L6 {\n    fn tl6(self) -> int {\n        return c3::helper() * 10\n    }\n}\n",
+            "use core3 as c3\npub struct L6 { pub v: int }\npub trait TL6 {\n    fn tl6(self) -> int\n}\nimpl TL6 for L6 {\n    fn tl6(self) -> int {\n        return c3::helper() * 10\n    }\n}\n",
         );
         let aliased = write_file(
             &dir,
             "main6.aelys",
-            "needs L6, TL6 from mid6\nfn main() -> int {\n    let l = L6 { v: 5 }\n    return l.tl6()\n}\nmain()\n",
+            "use mid6::{L6, TL6}\nfn main() -> int {\n    let l = L6 { v: 5 }\n    return l.tl6()\n}\nmain()\n",
         );
         let value = run_file(&aliased)
             .unwrap_or_else(|error| panic!("with_impl={with_impl}: {error}"))
@@ -718,12 +718,12 @@ fn a_selectively_imported_function_and_global_travel_with_the_inlined_body() {
     write_file(
         &dir,
         "mid7.aelys",
-        "needs K3, TK3, helper, gvar from core3\npub struct L7 { pub v: int }\npub trait TL7 {\n    fn tl7(self) -> int\n}\nimpl TL7 for L7 {\n    fn tl7(self) -> int {\n        let k = K3 { v: self.v }\n        return k.tk3() + helper() * 10 + gvar * 100\n    }\n}\n",
+        "use core3::{K3, TK3, helper, gvar}\npub struct L7 { pub v: int }\npub trait TL7 {\n    fn tl7(self) -> int\n}\nimpl TL7 for L7 {\n    fn tl7(self) -> int {\n        let k = K3 { v: self.v }\n        return k.tk3() + helper() * 10 + gvar * 100\n    }\n}\n",
     );
     let selective = write_file(
         &dir,
         "main7.aelys",
-        "needs L7, TL7 from mid7\nfn main() -> int {\n    let l = L7 { v: 5 }\n    return l.tl7()\n}\nmain()\n",
+        "use mid7::{L7, TL7}\nfn main() -> int {\n    let l = L7 { v: 5 }\n    return l.tl7()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&selective)
@@ -741,17 +741,17 @@ fn a_module_private_function_travels_with_the_body_the_importer_inlines() {
     write_file(
         &dir,
         "c2.aelys",
-        "needs f1 from c1\npub fn f2() -> int {\n    return f1() * 3\n}\n",
+        "use c1::{f1}\npub fn f2() -> int {\n    return f1() * 3\n}\n",
     );
     write_file(
         &dir,
         "c3.aelys",
-        "needs f2 from c2\nfn secret() -> int {\n    return 4\n}\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        return f2() * 100 + secret() * 10 + self.v\n    }\n}\n",
+        "use c2::{f2}\nfn secret() -> int {\n    return 4\n}\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        return f2() * 100 + secret() * 10 + self.v\n    }\n}\n",
     );
     let main_path = write_file(
         &dir,
         "main8.aelys",
-        "needs L, TL from c3\nfn main() -> int {\n    let l = L { v: 7 }\n    return l.tl()\n}\nmain()\n",
+        "use c3::{L, TL}\nfn main() -> int {\n    let l = L { v: 7 }\n    return l.tl()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&main_path)
@@ -773,18 +773,18 @@ fn a_carried_name_the_importer_declares_names_a_repair_that_exists() {
     write_file(
         &dir,
         "midp.aelys",
-        "needs K, TK from corep\npub struct M { pub v: int }\npub trait TM {\n    fn tm(self) -> int\n}\nimpl TM for M {\n    fn tm(self) -> int {\n        let k = K { v: self.v }\n        return k.tk()\n    }\n}\n",
+        "use corep::{K, TK}\npub struct M { pub v: int }\npub trait TM {\n    fn tm(self) -> int\n}\nimpl TM for M {\n    fn tm(self) -> int {\n        let k = K { v: self.v }\n        return k.tk()\n    }\n}\n",
     );
     write_file(
         &dir,
         "topp.aelys",
-        "needs M, TM from midp\npub struct P { pub v: int }\npub trait TP {\n    fn tp(self) -> int\n}\nimpl TP for P {\n    fn tp(self) -> int {\n        let m = M { v: self.v }\n        return m.tm() + 100\n    }\n}\n",
+        "use midp::{M, TM}\npub struct P { pub v: int }\npub trait TP {\n    fn tp(self) -> int\n}\nimpl TP for P {\n    fn tp(self) -> int {\n        let m = M { v: self.v }\n        return m.tm() + 100\n    }\n}\n",
     );
 
     let declaring = write_file(
         &dir,
         "declaring.aelys",
-        "needs P, TP from topp\nstruct K { v: int }\nfn main() -> int {\n    let p = P { v: 5 }\n    let own = K { v: 1 }\n    return p.tp() + own.v\n}\nmain()\n",
+        "use topp::{P, TP}\nstruct K { v: int }\nfn main() -> int {\n    let p = P { v: 5 }\n    let own = K { v: 1 }\n    return p.tp() + own.v\n}\nmain()\n",
     );
     let clash = run_file(&declaring)
         .expect_err("the file's own 'K' would rebind the one a carried body reads")
@@ -809,7 +809,7 @@ fn a_carried_name_the_importer_declares_names_a_repair_that_exists() {
     let importing = write_file(
         &dir,
         "importing.aelys",
-        "needs P, TP from topp\nneeds K from corep\nfn main() -> int {\n    let p = P { v: 5 }\n    let k = K { v: 1 }\n    return p.tp() + k.v\n}\nmain()\n",
+        "use topp::{P, TP}\nuse corep::{K}\nfn main() -> int {\n    let p = P { v: 5 }\n    let k = K { v: 1 }\n    return p.tp() + k.v\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&importing)
@@ -831,12 +831,12 @@ fn no_module_diagnostic_shows_the_module_global_prefix() {
     write_file(
         &dir,
         "mid9.aelys",
-        "needs core3 as c9\npub struct L9 { pub v: int }\npub trait TL9 {\n    fn tl9(self) -> int\n}\nimpl TL9 for L9 {\n    fn tl9(self) -> int {\n        return helper() * 10\n    }\n}\n",
+        "use core3 as c9\npub struct L9 { pub v: int }\npub trait TL9 {\n    fn tl9(self) -> int\n}\nimpl TL9 for L9 {\n    fn tl9(self) -> int {\n        return helper() * 10\n    }\n}\n",
     );
     let aliased = write_file(
         &dir,
         "main9.aelys",
-        "needs L9, TL9 from mid9\nfn main() -> int {\n    let l = L9 { v: 5 }\n    return l.tl9()\n}\nmain()\n",
+        "use mid9::{L9, TL9}\nfn main() -> int {\n    let l = L9 { v: 5 }\n    return l.tl9()\n}\nmain()\n",
     );
     let error = run_file(&aliased)
         .expect_err("an alias hides the bare name")
@@ -866,18 +866,18 @@ fn a_body_two_levels_down_reports_in_the_file_that_owns_it() {
     write_file(
         &dir,
         "deepx.aelys",
-        "needs K, TA from corex\npub struct D { pub v: int }\npub trait TD {\n    fn td(self) -> int\n}\nimpl TD for D {\n    fn td(self) -> int {\n        let k = K { v: self.v }\n        return k.shared()\n    }\n}\n",
+        "use corex::{K, TA}\npub struct D { pub v: int }\npub trait TD {\n    fn td(self) -> int\n}\nimpl TD for D {\n    fn td(self) -> int {\n        let k = K { v: self.v }\n        return k.shared()\n    }\n}\n",
     );
     write_file(
         &dir,
         "midx.aelys",
-        "needs D, TD from deepx\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        let d = D { v: self.v }\n        return d.td() * 10\n    }\n}\n",
+        "use deepx::{D, TD}\npub struct L { pub v: int }\npub trait TL {\n    fn tl(self) -> int\n}\nimpl TL for L {\n    fn tl(self) -> int {\n        let d = D { v: self.v }\n        return d.td() * 10\n    }\n}\n",
     );
 
     let plain = write_file(
         &dir,
         "plain.aelys",
-        "needs L, TL from midx\nfn main() -> int {\n    let l = L { v: 5 }\n    return l.tl()\n}\nmain()\n",
+        "use midx::{L, TL}\nfn main() -> int {\n    let l = L { v: 5 }\n    return l.tl()\n}\nmain()\n",
     );
     assert_eq!(
         run_file(&plain)
@@ -890,7 +890,7 @@ fn a_body_two_levels_down_reports_in_the_file_that_owns_it() {
     let widened = write_file(
         &dir,
         "widened.aelys",
-        "needs L, TL from midx\nneeds K, TA, TB from corex\nfn main() -> int {\n    let l = L { v: 5 }\n    return l.tl()\n}\nmain()\n",
+        "use midx::{L, TL}\nuse corex::{K, TA, TB}\nfn main() -> int {\n    let l = L { v: 5 }\n    return l.tl()\n}\nmain()\n",
     );
     let error = run_file(&widened)
         .expect_err("the second trait makes the carried body's call ambiguous")

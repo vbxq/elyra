@@ -138,7 +138,7 @@ aelys-cli repl -ae.max-heap=1G
 
 Bytecode files are portable across machines with the same Aelys version. They skip parsing and compilation.
 
-A `.avbc` records the `needs` lines its entry file declared, so running it imports the same modules the
+A `.avbc` records the `use` lines its entry file declared, so running it imports the same modules the
 source did, under the same names, whether or not the program qualifies them. The modules themselves are
 not embedded: they are resolved beside the entry file, so a `.avbc` moved away from them will not run.
 
@@ -160,9 +160,9 @@ my_project/
 Modules are imported relative to the file that imports them. From `main.aelys`:
 
 ```rust
-needs config
-needs lib::utils
-needs lib::http
+use config
+use lib::utils
+use lib::http
 ```
 
 There's no package manager or dependency system for now, just files and directories.

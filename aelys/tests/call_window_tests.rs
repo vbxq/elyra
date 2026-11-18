@@ -133,7 +133,7 @@ fn field_write_from_zero_arg_module_call_keeps_the_target() {
         &dir,
         "main.aelys",
         r#"
-needs callwin
+use callwin
 
 struct Box { n: int, m: int }
 

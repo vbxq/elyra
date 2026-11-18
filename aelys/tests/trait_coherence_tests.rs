@@ -433,8 +433,7 @@ pub trait Norm {
             ("geo.aelys", LIBRARY),
             (
                 "main.aelys",
-                "\
-needs geo
+                "use geo
 impl Norm for Point {
     fn norm(self) -> int { self.x }
 }
@@ -454,8 +453,7 @@ probe()
         ("geo.aelys", LIBRARY),
         (
             "main.aelys",
-            "\
-needs geo
+            "use geo
 impl !Norm for Point {}
 fn probe() -> int { 1 }
 probe()
@@ -1799,8 +1797,7 @@ pub struct Plain { pub n: int }
             ),
             (
                 "main.aelys",
-                "\
-needs lib
+                "use lib
 struct Local<T> { held: T }
 impl<T> Rank for Local<T> {
     default fn rank(self) -> int { 1 }

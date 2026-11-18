@@ -170,7 +170,7 @@ fn module_variables_read_too_early_are_the_uninitialised_error_and_live_reads_wo
         "early.aelys",
         "pub fn get<T>(x: T) -> int { scale }\npub let first = get(1)\npub let mut scale = 3\n",
     );
-    let main = write(&dir, "main.aelys", "needs early\nearly::first\n");
+    let main = write(&dir, "main.aelys", "use early\nearly::first\n");
     let text = run_file(&main)
         .expect_err("the module reads `scale` before it is bound")
         .to_string();
@@ -184,7 +184,7 @@ fn module_variables_read_too_early_are_the_uninitialised_error_and_live_reads_wo
     let main = write(
         &dir,
         "main2.aelys",
-        "needs live\nneeds scale, letter, bump from live\nfn early() -> int { scale * 100 + live::scale }\nlet a = early()\nbump()\nlet b = early()\nlet c = if letter == '\\0' { 1 } else { 0 }\na * 1000000 + b * 100 + live::get(1) * 10 + c\n",
+        "use live\nuse live::{scale, letter, bump}\nfn early() -> int { scale * 100 + live::scale }\nlet a = early()\nbump()\nlet b = early()\nlet c = if letter == '\\0' { 1 } else { 0 }\na * 1000000 + b * 100 + live::get(1) * 10 + c\n",
     );
     let value = run_file(&main).expect("module bound before main runs");
     assert_eq!(value.as_int(), Some(303 * 1000000 + 404 * 100 + 4 * 10 + 1));
@@ -194,7 +194,7 @@ fn module_variables_read_too_early_are_the_uninitialised_error_and_live_reads_wo
 fn a_function_with_a_native_import_calls_the_callers_latest_functions_under_the_jit() {
     assert_int_everywhere(
         r#"
-needs std::math
+use std::math
 let mut sink = 0
 fn helper(x: int) -> int {
     sink = x

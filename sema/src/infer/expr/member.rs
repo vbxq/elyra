@@ -771,6 +771,13 @@ impl TypeInference {
                         },
                         self.occurrence_reason("a value expression"),
                     )
+                } else if path == "convert" {
+                    (
+                        TypeErrorKind::RemovedConvertModule {
+                            name: member.to_string(),
+                        },
+                        lookup_reason,
+                    )
                 } else {
                     (
                         TypeErrorKind::UndefinedFunction {

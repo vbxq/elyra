@@ -1,5 +1,5 @@
-needs std::fs as fs
-needs std::sys as sys
+use std::fs as fs
+use std::sys as sys
 
 fn get_public_dir() -> string {
     let script_dir = sys::script_dir()

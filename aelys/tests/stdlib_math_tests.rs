@@ -4,7 +4,7 @@ use common::*;
 #[test]
 fn math_constants_defined() {
     let code = r#"
-if PI > 3.14 and PI < 3.15 { 1 } else { 0 }
+if PI > 3.14 && PI < 3.15 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -12,7 +12,7 @@ if PI > 3.14 and PI < 3.15 { 1 } else { 0 }
 #[test]
 fn math_e_constant() {
     let code = r#"
-if E > 2.71 and E < 2.72 { 1 } else { 0 }
+if E > 2.71 && E < 2.72 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -20,7 +20,7 @@ if E > 2.71 and E < 2.72 { 1 } else { 0 }
 #[test]
 fn math_tau_is_two_pi() {
     let code = r#"
-if TAU > 6.28 and TAU < 6.29 { 1 } else { 0 }
+if TAU > 6.28 && TAU < 6.29 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -29,7 +29,7 @@ if TAU > 6.28 and TAU < 6.29 { 1 } else { 0 }
 fn sqrt_basic() {
     let code = r#"
 let r = sqrt(16.0)
-if r > 3.9 and r < 4.1 { 1 } else { 0 }
+if r > 3.9 && r < 4.1 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -47,7 +47,7 @@ if is_nan(r) { 1 } else { 0 }
 fn cbrt_basic() {
     let code = r#"
 let r = cbrt(27.0)
-if r > 2.9 and r < 3.1 { 1 } else { 0 }
+if r > 2.9 && r < 3.1 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -64,7 +64,7 @@ abs(-42)
 fn abs_float() {
     let code = r#"
 let r = abs(-3.14)
-if r > 3.13 and r < 3.15 { 1 } else { 0 }
+if r > 3.13 && r < 3.15 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -103,7 +103,7 @@ fn sign_float_preserves_type() {
 fn sin_zero() {
     let code = r#"
 let r = sin(0.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -112,7 +112,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn cos_zero() {
     let code = r#"
 let r = cos(0.0)
-if r > 0.99 and r < 1.01 { 1 } else { 0 }
+if r > 0.99 && r < 1.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -121,7 +121,7 @@ if r > 0.99 and r < 1.01 { 1 } else { 0 }
 fn tan_zero() {
     let code = r#"
 let r = tan(0.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -130,7 +130,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn asin_zero() {
     let code = r#"
 let r = asin(0.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -139,7 +139,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn acos_one() {
     let code = r#"
 let r = acos(1.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -148,7 +148,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn atan_zero() {
     let code = r#"
 let r = atan(0.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -157,7 +157,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn atan2_basic() {
     let code = r#"
 let r = atan2(0.0, 1.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -166,7 +166,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn sinh_zero() {
     let code = r#"
 let r = sinh(0.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -175,7 +175,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn cosh_zero() {
     let code = r#"
 let r = cosh(0.0)
-if r > 0.99 and r < 1.01 { 1 } else { 0 }
+if r > 0.99 && r < 1.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -184,7 +184,7 @@ if r > 0.99 and r < 1.01 { 1 } else { 0 }
 fn tanh_zero() {
     let code = r#"
 let r = tanh(0.0)
-if r > -0.01 and r < 0.01 { 1 } else { 0 }
+if r > -0.01 && r < 0.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -193,7 +193,7 @@ if r > -0.01 and r < 0.01 { 1 } else { 0 }
 fn exp_zero() {
     let code = r#"
 let r = exp(0.0)
-if r > 0.99 and r < 1.01 { 1 } else { 0 }
+if r > 0.99 && r < 1.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -202,7 +202,7 @@ if r > 0.99 and r < 1.01 { 1 } else { 0 }
 fn log_e() {
     let code = r#"
 let r = log(E)
-if r > 0.99 and r < 1.01 { 1 } else { 0 }
+if r > 0.99 && r < 1.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -211,7 +211,7 @@ if r > 0.99 and r < 1.01 { 1 } else { 0 }
 fn log10_hundred() {
     let code = r#"
 let r = log10(100.0)
-if r > 1.99 and r < 2.01 { 1 } else { 0 }
+if r > 1.99 && r < 2.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -220,7 +220,7 @@ if r > 1.99 and r < 2.01 { 1 } else { 0 }
 fn log2_eight() {
     let code = r#"
 let r = log2(8.0)
-if r > 2.99 and r < 3.01 { 1 } else { 0 }
+if r > 2.99 && r < 3.01 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -229,7 +229,7 @@ if r > 2.99 and r < 3.01 { 1 } else { 0 }
 fn pow_int_small_exp() {
     let code = r#"
 let r = pow(2, 10)
-if r > 1023.9 and r < 1024.1 { 1 } else { 0 }
+if r > 1023.9 && r < 1024.1 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -238,7 +238,7 @@ if r > 1023.9 and r < 1024.1 { 1 } else { 0 }
 fn pow_float() {
     let code = r#"
 let r = pow(2.0, 3.0)
-if r > 7.9 and r < 8.1 { 1 } else { 0 }
+if r > 7.9 && r < 8.1 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -319,7 +319,7 @@ min(5, 3)
 fn min_floats() {
     let code = r#"
 let r = min(5.5, 3.3)
-if r > 3.2 and r < 3.4 { 1 } else { 0 }
+if r > 3.2 && r < 3.4 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -336,7 +336,7 @@ max(5, 3)
 fn max_floats() {
     let code = r#"
 let r = max(5.5, 3.3)
-if r > 5.4 and r < 5.6 { 1 } else { 0 }
+if r > 5.4 && r < 5.6 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -369,7 +369,7 @@ clamp(7, 5, 10)
 fn deg_to_rad() {
     let code = r#"
 let r = deg_to_rad(180.0)
-if r > 3.14 and r < 3.15 { 1 } else { 0 }
+if r > 3.14 && r < 3.15 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -378,7 +378,7 @@ if r > 3.14 and r < 3.15 { 1 } else { 0 }
 fn rad_to_deg() {
     let code = r#"
 let r = rad_to_deg(PI)
-if r > 179.9 and r < 180.1 { 1 } else { 0 }
+if r > 179.9 && r < 180.1 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -387,7 +387,7 @@ if r > 179.9 and r < 180.1 { 1 } else { 0 }
 fn hypot_3_4_5() {
     let code = r#"
 let r = hypot(3.0, 4.0)
-if r > 4.9 and r < 5.1 { 1 } else { 0 }
+if r > 4.9 && r < 5.1 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -396,7 +396,7 @@ if r > 4.9 and r < 5.1 { 1 } else { 0 }
 fn fmod_basic() {
     let code = r#"
 let r = fmod(7.5, 2.0)
-if r > 1.4 and r < 1.6 { 1 } else { 0 }
+if r > 1.4 && r < 1.6 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -489,7 +489,7 @@ if r > 0.0 { 1 } else { 0 }
 fn randint_in_range() {
     let code = r#"
 let val = randint(1, 10)
-if val >= 1 and val <= 10 { 1 } else { 0 }
+if val >= 1 && val <= 10 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -506,7 +506,7 @@ randint(42, 42)
 fn randint_negative_range() {
     let code = r#"
 let val = randint(-10, -5)
-if val >= -10 and val <= -5 { 1 } else { 0 }
+if val >= -10 && val <= -5 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
@@ -515,7 +515,7 @@ if val >= -10 and val <= -5 { 1 } else { 0 }
 fn randint_large_range() {
     let code = r#"
 let val = randint(0, 1000)
-if val >= 0 and val <= 1000 { 1 } else { 0 }
+if val >= 0 && val <= 1000 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }

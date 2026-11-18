@@ -90,22 +90,22 @@ fn test_comparisons() {
 
 #[test]
 fn test_logical_operators() {
-    let result = run_ok("true and true;");
+    let result = run_ok("true && true;");
     assert_eq!(result.as_bool(), Some(true));
 
-    let result = run_ok("true and false;");
+    let result = run_ok("true && false;");
     assert_eq!(result.as_bool(), Some(false));
 
-    let result = run_ok("false or true;");
+    let result = run_ok("false || true;");
     assert_eq!(result.as_bool(), Some(true));
 
-    let result = run_ok("false or false;");
+    let result = run_ok("false || false;");
     assert_eq!(result.as_bool(), Some(false));
 
-    let result = run_ok("not true;");
+    let result = run_ok("!true;");
     assert_eq!(result.as_bool(), Some(false));
 
-    let result = run_ok("not false;");
+    let result = run_ok("!false;");
     assert_eq!(result.as_bool(), Some(true));
 }
 

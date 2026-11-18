@@ -1,7 +1,7 @@
 // check if we handle OOM (out of memory) error correctly
 // crashes if everything is good
 
-needs std.io
+use std.io
 
 @no_gc
 fn alloc_bomb() {

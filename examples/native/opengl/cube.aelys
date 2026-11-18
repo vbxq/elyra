@@ -1,9 +1,9 @@
 // rotating 3D Cube inspired by vkcube code
 // important, parts of this was written by AI, i really just to get something working and not waste time on writing myself a cube in aelys
 
-needs opengl
-needs std::math
-needs std::time
+use opengl
+use std::math
+use std::time
 
 let WIDTH: float = 500.0
 let HEIGHT: float = 500.0
