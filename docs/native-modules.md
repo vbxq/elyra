@@ -59,7 +59,7 @@ mod exports {
 
 `#[aelys_module]` generates the C wrappers, the export table, the signatures
 and the module descriptor; no descriptor is written by hand. The `name` is the
-name Elyra code uses (`needs pixels`, `pixels::checksum(buf)`), and it must also
+name Elyra code uses (`needs pixels`, `pixels::checksum(&frame)`), and it must also
 be the file name the library is copied to (`pixels.so`).
 
 ### Types that cross the boundary
@@ -70,8 +70,8 @@ be the file name the library is copied to (`pixels.so`).
 | `f64` | `float` | |
 | `bool` | `bool` | |
 | `String` | `string` | copied into the native |
-| `&[u8]` | byte buffer handle (`int`) | read-only view of the whole buffer |
-| `&mut [u8]` | byte buffer handle (`int`) | writable view; writes are visible to Elyra after the call |
+| `&[u8]` | `&v` with `v: Vec<u8>` | read-only view of the whole Vec |
+| `&mut [u8]` | `&mut v` with `v: Vec<u8>` | writable view; writes are visible to Elyra after the call |
 | `&mut CallContext<'_>` | nothing | not an Elyra argument; at most one per function |
 
 | Rust result | Elyra type |
@@ -80,10 +80,34 @@ be the file name the library is copied to (`pixels.so`).
 | `Option<T>` (T one of the above) | `Option<T>` |
 | `Result<T, String>` | `Result<T, string>` |
 
-A byte buffer is the handle returned by `bytes::alloc`, `bytes::from_string`,
-`fs::read_bytes` or `fs::read_file_bytes`. Structs, arrays, `Vec`, maps,
-closures and raw pointers do not cross. Returning an `i64` outside the 48-bit
-range is error code 2.
+A byte parameter borrows a `Vec<u8>` for the duration of the call, with Rust's
+spelling and rules, checked by the compiler before the call runs:
+
+- `&[u8]` takes `&v`; `&mut [u8]` takes `&mut v`, and `v` must be a mutable
+  place (`let mut v`, a `mut` parameter, or a field or element of one). Passing
+  `v` without `&` is E0417, `&` of a temporary such as `&s.to_bytes()` is
+  E0419, and a `Vec<int>` or a string is E0301.
+- One call may take the same Vec through several `&` arguments
+  (`sdl::present_indexed(&px, &px)`), but `&mut v` next to any other borrow of
+  `v` in the same call (`pixels::copy_into(&mut v, &v)`) is refused at compile
+  time.
+
+```elyra
+needs pixels
+let mut frame: Vec<u8> = vec![0; 64000]
+pixels::clear(&mut frame, 7)
+let sum = pixels::checksum(&frame)
+```
+
+Structs, arrays, other `Vec` types, maps, closures and raw pointers do not
+cross. Returning an `i64` outside the 48-bit range is error code 2.
+
+In the current VM a `Vec<u8>` keeps each element in an 8-byte slot, so a byte
+parameter is copied into a contiguous byte scratch buffer that the VM keeps
+between calls (no allocation once it is large enough), and a `&mut [u8]`
+parameter is copied back into the Vec when the native returns, whatever its
+status. The copy is linear in the length of the Vec: a 64000-byte frame costs
+tens of microseconds.
 
 ### The call context
 
@@ -94,9 +118,10 @@ range is error code 2.
   the call allocates after it (the raw `alloc_string_from_context` behaves the
   same way);
 - `read_string(AelysValue) -> Option<String>` copies an Elyra string out;
-- `borrow_bytes(handle) -> Result<&'call mut [u8], i32>` and
-  `borrow_bytes_ref(handle) -> Result<&'call [u8], i32>` borrow a byte buffer
-  from its raw handle value.
+- `borrow_bytes(value) -> Result<&'call mut [u8], i32>` and
+  `borrow_bytes_ref(value) -> Result<&'call [u8], i32>` borrow the `Vec<u8>`
+  passed as one of the call's arguments, from its raw argument value; the
+  mutable form needs an argument declared `&mut [u8]` (`BytesMut`).
 
 The lifetime `'call` is chosen by the generated wrapper for each call and is
 higher-ranked: a function that tries to store a borrowed slice or the context
@@ -116,10 +141,10 @@ pub unsafe extern "C" fn peek(
     arg_count: usize,
     out: *mut AelysValue,
 ) -> i32 {
-    let (index, handle) = unsafe { (*args, *args.add(1)) };
+    let (index, frame) = unsafe { (*args, *args.add(1)) };
     let found = unsafe {
         with_call_context(context, |call| {
-            let bytes = call.borrow_bytes_ref(handle)?;
+            let bytes = call.borrow_bytes_ref(frame)?;
             let byte = *bytes.get(value_as_int(index) as usize).ok_or(1)?;
             value_int(i64::from(byte)).ok_or(1)
         })
@@ -135,7 +160,7 @@ pub unsafe extern "C" fn peek(
 ```
 
 `params` lists the parameter types (`Int`, `Float`, `Bool`, `String`, `Unit`,
-`Bytes`) and `result` the result type (`Int`, ..., `OptionInt`, ...,
+`Bytes` for `&[u8]`, `BytesMut` for `&mut [u8]`) and `result` the result type (`Int`, ..., `OptionInt`, ...,
 `ResultUnitString`; `Unit` when omitted). The wrapper checks the argument
 count before calling the function. `#[aelys_export(arity = N)]` alone declares
 an untyped export: the VM can call it, but typed Elyra code cannot (E0379),
@@ -146,11 +171,11 @@ The return status of a raw function is `0` on success, with the result in
 
 | status | constant | meaning |
 |---|---|---|
-| 1 | `AELYS_NATIVE_INVALID_ARGUMENT` | bad argument or handle |
+| 1 | `AELYS_NATIVE_INVALID_ARGUMENT` | bad argument, or a byte borrow of a value that is not a byte argument of the call |
 | 2 | `AELYS_NATIVE_INTEGER_OVERFLOW` | an int result outside 48 bits |
 | 3 | `AELYS_NATIVE_RESULT_ERROR` | `Err`: `*out` holds the message string |
 | 4 | `AELYS_NATIVE_OPTION_NONE` | `None` |
-| 5 | `AELYS_NATIVE_BORROW_CONFLICT` | a byte buffer borrowed mutably while another borrow of it is live in the call |
+| 5 | `AELYS_NATIVE_BORROW_CONFLICT` | a `Vec<u8>` borrowed mutably while another borrow of it is live in the call |
 | 6 | `AELYS_NATIVE_PANIC` | the function panicked |
 
 ## Borrow rules
@@ -160,22 +185,25 @@ The return status of a raw function is `0` on success, with the result in
   a static, a struct that outlives the call, or a thread that outlives the
   call. Scoped threads that finish before the function returns may work on a
   borrowed slice.
-- Read-only borrows of one buffer coexist: a `&[u8]` parameter and
-  `CallContext::borrow_bytes_ref` can view the same handle any number of times
-  in one call (`sdl::present_indexed(px, px)` is accepted).
-- A mutable borrow is exclusive: a `&mut [u8]` parameter or
-  `CallContext::borrow_bytes` on a handle that already has any borrow in the
-  call, or any borrow of a handle already borrowed mutably, is refused with
-  status 5. Passing the same buffer as `&mut [u8]` and `&[u8]`
-  (`pixels::copy_into(a, a)`) stops the Elyra program with `native error: code
-  5 (byte buffer borrowed mutably while another borrow of it is live in the
-  same native call)`.
-- Any number of distinct buffers can be borrowed in one call; up to 8 are
+- Read-only borrows of one Vec coexist: a `&[u8]` parameter and
+  `CallContext::borrow_bytes_ref` can view the same argument any number of
+  times in one call (`sdl::present_indexed(&px, &px)` is accepted).
+- A mutable borrow is exclusive. The compiler refuses `&mut v` next to another
+  borrow of `v` in one call; the VM checks again, because a native called
+  through a function value (`let f = pixels::copy_into` then `f(a, a)`) skips
+  the compile-time check: a `&mut [u8]` parameter or `CallContext::borrow_bytes`
+  on a Vec that already has any borrow in the call, or any borrow of a Vec
+  already borrowed mutably, is refused with status 5, and the Elyra program
+  stops with `native error: code 5 (byte buffer borrowed mutably while another
+  borrow of it is live in the same native call)`.
+- `CallContext::borrow_bytes` (mutable) only accepts an argument declared
+  `&mut [u8]` (`BytesMut`), and both borrow functions only accept an argument
+  declared `&[u8]` or `&mut [u8]`; anything else is status 1. A raw export
+  declared with `arity` only may borrow any `Vec<u8>` it is handed.
+- Any number of distinct Vecs can be borrowed in one call; up to 8 are
   tracked without allocating.
-- A buffer cannot be resized or freed while it is borrowed: no Elyra code runs
-  during a native call and the ABI offers no way to free a buffer.
-- A handle that is not a live byte buffer (a timer, a closed handle, any other
-  int) is status 1.
+- A Vec cannot be resized while it is borrowed: no Elyra code runs during a
+  native call.
 
 ## No re-entry into the VM
 
@@ -225,7 +253,10 @@ checksum = "<the checksum E0408 reports for the file>"
 
 The loader checks the ABI version (`AELYS_ABI_VERSION`, currently 5), the
 descriptor size and the hash of the export table, and rejects a signature with
-an unknown type code, a sum type as a parameter or a byte buffer as a result.
+an unknown type code, a sum type as a parameter or a byte slice as a result.
+Type code 17 (`Bytes`) is `&[u8]` and 18 (`BytesMut`) is `&mut [u8]`; a module
+built before code 18 existed declared `&mut [u8]` as code 17 and must be rebuilt,
+or its mutable borrows are refused with status 1.
 An embedding host registers a module statically with
 `Runtime::register_native_module(descriptor)`.
 
@@ -256,8 +287,8 @@ Without network access, copy the workspace `Cargo.lock` to
 | function | meaning |
 |---|---|
 | `open(title, width, height, scale) -> Result<(), string>` | window of `width*scale` x `height*scale` with a `width` x `height` ARGB streaming texture, nearest-neighbour scaling |
-| `present_argb(frame)` -> `Result<(), string>` | upload exactly `width*height*4` bytes, one little-endian `0xAARRGGBB` per pixel, and show them; any other size is an `Err` |
-| `present_indexed(pixels, palette)` -> `Result<(), string>` | exactly `width*height` palette indices and a 768-byte RGB palette (any other size is an `Err`); the conversion to ARGB happens in the module, then the frame is shown |
+| `present_argb(&frame)` -> `Result<(), string>` | upload exactly `width*height*4` bytes, one little-endian `0xAARRGGBB` per pixel, and show them; any other size is an `Err` |
+| `present_indexed(&pixels, &palette)` -> `Result<(), string>` | exactly `width*height` palette indices and a 768-byte RGB palette (any other size is an `Err`); the conversion to ARGB happens in the module, then the frame is shown |
 | `poll() -> int` | next event: 0 none left, 1 quit, 2 key down, 3 key up, 4 anything else (key repeats included) |
 | `event_key() -> int` | SDL scancode of the last key event `poll` returned |
 | `key_down(scancode) -> bool` | current keyboard state of a scancode |

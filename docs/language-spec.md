@@ -1269,12 +1269,12 @@ After `needs sqrt from std::math`, you call `sqrt()` directly without the module
 
 A whole-module import without an alias also binds the module's exports by their
 bare names. Two such imports may export the same name: `needs std::fs` next to
-`needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
+`needs std::net` is accepted, and `fs::close(...)` or `net::close(...)` are
 both fine. Only an unqualified use of the shared name is refused, at the use, with
-E0445 `symbol 'size' is exported by multiple modules: bytes, fs`; assigning to
+E0445 `symbol 'close' is exported by multiple modules: fs, net`; assigning to
 the bare name is the same E0445. A name imported
-by name with `needs size from std::bytes` wins over the whole-module imports, and
-two `needs size from ...` lines naming different modules are E0410 at the second
+by name with `needs close from std::net` wins over the whole-module imports, and
+two `needs close from ...` lines naming different modules are E0410 at the second
 line, whose hint is to import the name from one module only.
 
 Aliases and bare names belong to the file that writes them. `needs util as u` in
@@ -1307,7 +1307,7 @@ The safe standard library modules are **auto-registered**, their functions are a
 
 See [Standard Library](standard-library.md) for full documentation.
 
-Native modules (shared libraries written against the aelys-native ABI, such as the SDL2 module in `modules/sdl`) are imported with `needs` like any module; how to write, build and load one, and the rules for byte buffers they borrow, are in [Native modules](native-modules.md).
+Native modules (shared libraries written against the aelys-native ABI, such as the SDL2 module in `modules/sdl`) are imported with `needs` like any module; how to write, build and load one, and the rules for the `Vec<u8>` arguments they borrow, are in [Native modules](native-modules.md).
 
 ### Custom Modules
 
@@ -1475,8 +1475,8 @@ Importing a type that is not `pub` is E0403 `'Point' is not public in module
 An impl body the importer inlines is still checked and compiled in its defining
 module's terms. Everything that body reads travels with it: the types, traits and
 free functions the defining module imported, the names it reaches through a module
-path or through a module alias (a standard library alias such as `needs std::bytes
-as by` included), the auto-registered modules, the module's own globals, public or
+path or through a module alias (a standard library alias such as `needs std::math
+as m` included), the auto-registered modules, the module's own globals, public or
 not, and the types its free functions return, and the
 module's **own private `struct`, `enum` and `trait` declarations together with the
 impls over them**, on the same gate as its private globals. The
@@ -1842,6 +1842,12 @@ A fixed array `[T; N]` has the methods that keep its length: `swap`, `reverse`,
 `contains`, `index_of`, `sort`, `sort_by`, `first`, `last`, `set` and `fill`.
 `insert`, `remove`, `swap_remove`, `clear`, `extend`, `append`, `truncate` and
 `resize` on an array are E0311.
+
+A `Vec<u8>` also has the binary methods `read_u8` ... `read_f64_be`, `write_u8`
+... `write_f64_be`, `to_utf8` and `copy_within`, which read and write wider
+values at a byte offset; they are listed in the standard library reference under
+Binary data. A native function's `&[u8]` or `&mut [u8]` parameter takes `&v` or
+`&mut v` with `v: Vec<u8>` (see [Native modules](native-modules.md)).
 
 `sort` orders integers and floats numerically (NaN after every number), strings
 lexicographically by scalar value, chars by scalar value, and `false` before
@@ -3710,3 +3716,5 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0462 | FixedPointShiftOutOfRange | a literal shift count of `mul_shr` or `shl_div` lies outside 0..=63 |
 | E0470 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
 | E0471 | UnorderedSortElement | `sort` on elements with no built-in order |
+| E0480 | RemovedStdModule | `needs std::bytes`: the module was removed, binary data is a `Vec<u8>` |
+| E0481 | RemovedBytesFunction | a `bytes::name` call; the message names the `Vec<u8>` replacement |
