@@ -777,6 +777,12 @@ All `_be` variants for network byte order:
 | `reverse(buf, offset, len)` | Reverse bytes in range. |
 | `swap(buf, i, j)` | Swap bytes at indices i and j. |
 | `find(buf, start, end, byte)` | Find first occurrence of byte. Returns -1 if not found. Use -1 for end to search to buffer end. |
+| `copy_from_vec(buf, offset, v)` | Write every element of `v: Vec<int>` as one byte at `offset`, `offset + 1`, ... in one call. Returns `Result<unit, string>`: `Err` names the first element outside 0..=255, or the range past the buffer end, and then nothing is written. |
+| `copy_to_vec(buf, offset, v)` | Overwrite every element of `v: Vec<int>` with the byte at `offset`, `offset + 1`, ...; `v` keeps its length. Returns `Result<unit, string>`: `Err` when the range passes the buffer end, and then `v` is unchanged. |
+
+`copy_from_vec` and `copy_to_vec` take a `Vec<int>`, not a fixed array. They
+move a whole frame in one native call: copying 64000 elements costs well under a
+millisecond, against one native call per byte for `write_u8`.
 
 ### String Operations
 

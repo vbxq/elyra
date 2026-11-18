@@ -426,6 +426,14 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             ],
             InferType::Unit,
         ),
+        ("bytes", "copy_from_vec" | "copy_to_vec") => function_with(
+            vec![
+                InferType::I64,
+                InferType::I64,
+                InferType::Vec(Box::new(InferType::I64)),
+            ],
+            result(InferType::Unit, InferType::String),
+        ),
         ("bytes", "fill") => function_with(
             vec![
                 InferType::I64,

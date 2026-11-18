@@ -1,6 +1,6 @@
-use crate::stdlib::helpers::{get_handle, get_int, get_string, make_string};
+use crate::stdlib::helpers::{get_handle, get_int, get_string, make_string, result_err, result_ok};
 use crate::stdlib::{ByteBuffer, Resource, StdModuleExports, register_native};
-use crate::vm::{VM, Value};
+use crate::vm::{GcRef, ObjectKind, VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 const MAX_ALLOC: usize = 256 * 1024 * 1024;
@@ -176,6 +176,8 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg!("write_f64_be", 3, native_write_f64_be);
 
     reg!("copy", 5, native_copy);
+    reg!("copy_from_vec", 3, native_copy_from_vec);
+    reg!("copy_to_vec", 3, native_copy_to_vec);
     reg!("fill", 4, native_fill);
 
     reg!("from_string", 1, native_from_string);
@@ -844,4 +846,127 @@ fn native_swap(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     } else {
         Err(err(vm, "swap", "invalid handle".into()))
     }
+}
+
+fn int_sequence(vm: &VM, value: Value, op: &'static str) -> Result<GcRef, RuntimeError> {
+    let reference = value.as_ptr().map(GcRef::new);
+    match reference.and_then(|r| vm.heap().get(r).map(|object| (r, &object.kind))) {
+        Some((r, ObjectKind::Vec(_) | ObjectKind::Array(_))) => Ok(r),
+        _ => Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+            operation: op,
+            expected: "Vec<int>",
+            got: vm.value_type_name(value).to_string(),
+        })),
+    }
+}
+
+fn sequence_bytes(vm: &VM, sequence: GcRef) -> Result<Vec<u8>, String> {
+    let values: Vec<Value> = match vm.heap().get(sequence).map(|object| &object.kind) {
+        Some(ObjectKind::Vec(vector)) => match vector.data.as_ints() {
+            Some(ints) => return ints_to_bytes(ints.iter().copied()),
+            None => (0..vector.len()).filter_map(|i| vector.get(i)).collect(),
+        },
+        Some(ObjectKind::Array(array)) => match array.data.as_ints() {
+            Some(ints) => return ints_to_bytes(ints.iter().copied()),
+            None => (0..array.len()).filter_map(|i| array.get(i)).collect(),
+        },
+        _ => Vec::new(),
+    };
+    let mut ints = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        ints.push(
+            value
+                .as_int()
+                .ok_or_else(|| format!("element {index} is not an int"))?,
+        );
+    }
+    ints_to_bytes(ints.into_iter())
+}
+
+fn ints_to_bytes(ints: impl Iterator<Item = i64>) -> Result<Vec<u8>, String> {
+    ints.enumerate()
+        .map(|(index, value)| {
+            u8::try_from(value)
+                .map_err(|_| format!("element {index} is {value}, not a byte in 0..=255"))
+        })
+        .collect()
+}
+
+fn byte_window(
+    vm: &VM,
+    handle: usize,
+    offset: i64,
+    length: usize,
+    op: &'static str,
+) -> Result<Result<usize, String>, RuntimeError> {
+    let buf_len = get_buf_len(vm, handle, op)?;
+    Ok(check_offset(offset, op).and_then(|start| match bounds_err(length, start, buf_len) {
+        Some(message) => Err(format!("{op}: {message}")),
+        None => Ok(start),
+    }))
+}
+
+fn native_copy_from_vec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let handle = get_handle(vm, args[0], "copy_from_vec")?;
+    let offset = get_int(vm, args[1], "copy_from_vec")?;
+    let sequence = int_sequence(vm, args[2], "copy_from_vec")?;
+    let bytes = match sequence_bytes(vm, sequence) {
+        Ok(bytes) => bytes,
+        Err(message) => return result_err(vm, &format!("copy_from_vec: {message}")),
+    };
+    let start = match byte_window(vm, handle, offset, bytes.len(), "copy_from_vec")? {
+        Ok(start) => start,
+        Err(message) => return result_err(vm, &message),
+    };
+    if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(handle) {
+        buf.data[start..start + bytes.len()].copy_from_slice(&bytes);
+    }
+    result_ok(vm, Value::unit())
+}
+
+fn native_copy_to_vec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let handle = get_handle(vm, args[0], "copy_to_vec")?;
+    let offset = get_int(vm, args[1], "copy_to_vec")?;
+    let sequence = int_sequence(vm, args[2], "copy_to_vec")?;
+    let length = match vm.heap().get(sequence).map(|object| &object.kind) {
+        Some(ObjectKind::Vec(vector)) => vector.len(),
+        Some(ObjectKind::Array(array)) => array.len(),
+        _ => 0,
+    };
+    let start = match byte_window(vm, handle, offset, length, "copy_to_vec")? {
+        Ok(start) => start,
+        Err(message) => return result_err(vm, &message),
+    };
+    let bytes = match vm.get_resource(handle) {
+        Some(Resource::ByteBuffer(buf)) => buf.data[start..start + length].to_vec(),
+        _ => return Err(err(vm, "copy_to_vec", "invalid handle".into())),
+    };
+    match vm.heap_mut().get_mut(sequence).map(|object| &mut object.kind) {
+        Some(ObjectKind::Vec(vector)) => match vector.data.as_ints_mut() {
+            Some(ints) => {
+                for (slot, byte) in ints.iter_mut().zip(&bytes) {
+                    *slot = i64::from(*byte);
+                }
+            }
+            None => {
+                for (index, byte) in bytes.iter().enumerate() {
+                    vector.set(index, Value::int(i64::from(*byte)));
+                }
+            }
+        },
+        Some(ObjectKind::Array(array)) => match array.data.as_ints_mut() {
+            Some(ints) => {
+                for (slot, byte) in ints.iter_mut().zip(&bytes) {
+                    *slot = i64::from(*byte);
+                }
+            }
+            None => {
+                for (index, byte) in bytes.iter().enumerate() {
+                    array.set(index, Value::int(i64::from(*byte)));
+                }
+            }
+        },
+        _ => {}
+    }
+    result_ok(vm, Value::unit())
 }
