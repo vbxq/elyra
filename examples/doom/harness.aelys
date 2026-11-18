@@ -143,9 +143,12 @@ fn report(variant: string, realtime: bool, wall_us: int) {
         if f_total[i] > 16667 { over++ }
     }
     let mode = if realtime { "realtime" } else { "maxspeed" }
-    println("gate variant {variant} mode {mode}")
-    println("gate frames {n} tics {engine::tic_count()} wall_ms {ms(wall_us)} fps {convert::to_float(n) * 1000000.0 / convert::to_float(wall_us)}")
+    println("gate run variant {variant} mode {mode} frames {n} tics {engine::tic_count()} wall_ms {ms(wall_us)} fps {convert::to_float(n) * 1000000.0 / convert::to_float(wall_us)}")
     println("gate frame_ms p50 {ms(pct(s, 50))} p99 {ms(pct(s, 99))} max {ms(s[n - 1])} over_16.7 {over}")
+    let mut cpu: Vec<int> = vec![]
+    for i in 0..n { cpu.push(f_total[i] - f_wait[i]) }
+    let cs = sorted(cpu)
+    println("gate cpu_frame_ms p50 {ms(pct(cs, 50))} p99 {ms(pct(cs, 99))} max {ms(cs[n - 1])}")
     println("gate render_ms p50 {ms(pct(sorted(f_render), 50))} p99 {ms(pct(sorted(f_render), 99))}")
     println("gate logic_ms p50 {ms(pct(sorted(f_logic), 50))} max {ms(pct(sorted(f_logic), 100))}")
     println("gate scene p50 drawsegs {ds50} sprites {vs50} planes {pl50} max drawsegs {pct(sorted(f_ds), 100)} sprites {pct(sorted(f_vs), 100)} planes {pct(sorted(f_pl), 100)}")
