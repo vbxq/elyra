@@ -1193,6 +1193,24 @@ impl<'a> DisasmContext<'a> {
                 let (_, a, b, c) = decode_a(instr);
                 format!("Cast      r{}, r{}, {}", a, b, c)
             }
+            crate::sized_binary_opcodes!() => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("{opcode:?} r{a}, r{b}, r{c}")
+            }
+            OpCode::NegW | OpCode::NotW => {
+                let (_, a, b, c) = decode_a(instr);
+                format!("{opcode:?} r{a}, r{b}, {c}")
+            }
+            OpCode::MulShr | OpCode::ShlDiv => {
+                let (_, kind, mode, immediate) = decode_a(instr);
+                let first = extension.unwrap_or(0);
+                let second = second_extension.unwrap_or(0);
+                let a = first >> 16;
+                let b = first & 0xffff;
+                let c = second >> 16;
+                let n = second & 0xffff;
+                format!("{opcode:?} {kind}, {mode}, {immediate}, r{a}, r{b}, r{c}, r{n}")
+            }
             OpCode::StringForLoop => {
                 let (_, a, imm) = decode_b(instr);
                 format!("StringForLoop r{}, {}", a, imm)
@@ -1226,6 +1244,7 @@ impl<'a> DisasmContext<'a> {
                 }
             }
             Constant::String(value) => format!("string \"{}\"", escape_string(value)),
+            Constant::Char(scalar) => format!("char {scalar}"),
             Constant::NestedFunction(index) => {
                 let index = *index as usize;
                 let name = nested_functions

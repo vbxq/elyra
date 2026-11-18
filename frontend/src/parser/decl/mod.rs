@@ -77,9 +77,15 @@ impl Parser {
             return self.let_declaration(is_pub);
         }
 
+        if matches!(&self.peek().kind, TokenKind::Identifier(word) if word == "const")
+            && matches!(self.peek_at(1).kind, TokenKind::Identifier(_))
+        {
+            return self.const_declaration(is_pub);
+        }
+
         if is_pub {
             return Err(self.error(CompileErrorKind::UnexpectedToken {
-                expected: "fn, let, struct, enum, or trait after pub".to_string(),
+                expected: "fn, let, const, struct, enum, or trait after pub".to_string(),
                 found: self.peek().kind.to_string(),
             }));
         }

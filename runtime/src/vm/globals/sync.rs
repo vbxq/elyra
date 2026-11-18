@@ -1,19 +1,16 @@
-use super::super::VM;
+use super::super::{ObjectKind, VM};
+use std::sync::Arc;
 
 impl VM {
     /// synchronize indexed globals back to the hash map.
     pub fn sync_globals_to_hashmap(&mut self, global_names: &[String]) {
-        self.sync_current_function_globals();
+        self.globals_by_index_dirty = false;
         for (idx, name) in global_names.iter().enumerate() {
-            if !name.is_empty()
-                && idx < self.globals_by_index.len()
-                && self
-                    .global_view
-                    .names
-                    .get(idx)
-                    .is_none_or(|merged| merged.is_empty() || merged == name)
-            {
+            if !name.is_empty() && idx < self.globals_by_index.len() {
                 let value = self.globals_by_index[idx];
+                if value.is_uninit() {
+                    continue;
+                }
                 match self.globals.get_mut(name) {
                     Some(slot) => *slot = value,
                     None => {
@@ -30,27 +27,56 @@ impl VM {
             return;
         }
         self.globals_by_index_dirty = false;
-        let view = &mut self.global_view;
-        for &index in &view.written {
-            let index = index as usize;
-            if let Some(flag) = view.written_flags.get_mut(index) {
-                *flag = false;
-            }
-            let (Some(name), Some(value)) =
-                (view.names.get(index), self.globals_by_index.get(index))
-            else {
-                continue;
+        if let Some(frame) = self.frames.last() {
+            let func_ref = frame.function;
+            let global_layout: Option<Arc<super::super::GlobalLayout>> = {
+                if let Some(obj) = self.heap.get(func_ref) {
+                    match &obj.kind {
+                        ObjectKind::Function(f) => {
+                            if !f.function.global_layout.names().is_empty() {
+                                Some(Arc::clone(&f.function.global_layout))
+                            } else {
+                                None
+                            }
+                        }
+                        ObjectKind::Closure(c) => {
+                            if let Some(inner_obj) = self.heap.get(c.function) {
+                                if let ObjectKind::Function(f) = &inner_obj.kind {
+                                    if !f.function.global_layout.names().is_empty() {
+                                        Some(Arc::clone(&f.function.global_layout))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
             };
-            if name.is_empty() {
-                continue;
-            }
-            match self.globals.get_mut(name) {
-                Some(slot) => *slot = *value,
-                None => {
-                    self.globals.insert(name.clone(), *value);
+
+            if let Some(layout) = global_layout {
+                for (idx, name) in layout.names().iter().enumerate() {
+                    if !name.is_empty() && idx < self.globals_by_index.len() {
+                        let value = self.globals_by_index[idx];
+                        if value.is_uninit() {
+                            continue;
+                        }
+                        match self.globals.get_mut(name) {
+                            Some(slot) => *slot = value,
+                            None => {
+                                self.globals.insert(name.clone(), value);
+                            }
+                        }
+                    }
                 }
             }
         }
-        view.written.clear();
     }
 }

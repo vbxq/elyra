@@ -160,6 +160,7 @@ impl VM {
                     function_name,
                     line,
                     column: 1,
+                    source: func.function.source.clone(),
                 });
             }
         }

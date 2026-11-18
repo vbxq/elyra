@@ -1,5 +1,7 @@
+use super::super::core::PreparedGlobals;
 use super::super::{GcRef, ObjectKind, VM, Value};
-use aelys_bytecode::GlobalLayout;
+
+pub(crate) const UNNAMED_GLOBAL: u32 = u32::MAX;
 use std::sync::Arc;
 
 impl VM {
@@ -37,6 +39,9 @@ impl VM {
         if mapping_id == self.current_global_mapping_id {
             return mapping_id;
         }
+        if self.install_prepared_mapping(mapping_id) {
+            return mapping_id;
+        }
         let layout = if let Some(obj) = self.heap.get(func_ref) {
             match &obj.kind {
                 ObjectKind::Function(function) => {
@@ -55,111 +60,167 @@ impl VM {
             None
         };
         match layout {
-            Some(layout) => self.prepare_globals_for_layout(&layout),
-            None => {
-                self.current_global_mapping_id = 0;
-                0
-            }
+            Some(layout) if !layout.names().is_empty() => self.prepare_globals_for_layout(&layout),
+            Some(layout) => self.prepare_empty_global_mapping(layout.id()),
+            None => self.prepare_empty_global_mapping(0),
         }
     }
 
     /// mapping ids come from a process wide counter, so an unusual number of layouts stops being cached
     const MAX_PREPARED_MAPPING: usize = 1 << 20;
 
-    fn install_prepared_mapping(&mut self, layout: &GlobalLayout) -> bool {
-        let mapping_id = layout.id();
-        let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id).cloned() else {
+    #[inline]
+    pub(crate) fn switch_globals(&mut self, mapping_id: usize, function: GcRef) {
+        if mapping_id != self.current_global_mapping_id
+            && !self.install_prepared_mapping(mapping_id)
+        {
+            self.prepare_globals_for_function(function);
+        }
+    }
+
+    #[inline]
+    fn install_prepared_mapping(&mut self, mapping_id: usize) -> bool {
+        let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id) else {
             return false;
         };
         self.globals_by_index.clear();
-        self.globals_by_index.extend_from_slice(&prepared);
-        if self.global_generations.len() != prepared.len() {
-            self.sync_global_generation_len(prepared.len());
+        self.globals_by_index.extend_from_slice(&prepared.values);
+        let len = prepared.values.len();
+        if self.global_generations.len() != len {
+            self.sync_global_generation_len(len);
         }
-        self.global_view.reset(layout.names(), Some(mapping_id));
         self.current_global_mapping_id = mapping_id;
         true
     }
 
-    fn store_prepared_mapping(&mut self, mapping_id: usize, prepared: Arc<Vec<Value>>) {
+    fn store_prepared_mapping(&mut self, mapping_id: usize, prepared: PreparedGlobals) {
         if mapping_id > Self::MAX_PREPARED_MAPPING {
             return;
         }
         if self.globals_by_index_cache.len() <= mapping_id {
-            self.globals_by_index_cache.resize(mapping_id + 1, None);
+            self.globals_by_index_cache
+                .resize_with(mapping_id + 1, || None);
+        }
+        if self.globals_by_index_cache[mapping_id].is_some() {
+            self.frame_jit.prepared_generation += 1;
+        }
+        for (slot, &name_id) in prepared.name_ids.iter().enumerate() {
+            if name_id != UNNAMED_GLOBAL {
+                self.global_users[name_id as usize].push((mapping_id, slot as u32));
+            }
         }
         self.globals_by_index_cache[mapping_id] = Some(prepared);
     }
 
-    pub fn prepare_globals_for_layout(&mut self, layout: &GlobalLayout) -> usize {
+    pub(crate) fn clear_prepared_globals(&mut self) {
+        self.frame_jit.prepared_generation += 1;
+        self.globals_by_index_cache.clear();
+        for users in &mut self.global_users {
+            users.clear();
+        }
+    }
+
+    fn global_name_id(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.global_name_ids.get(name) {
+            return id;
+        }
+        let id = u32::try_from(self.global_names_by_id.len()).unwrap_or(UNNAMED_GLOBAL);
+        if id == UNNAMED_GLOBAL {
+            return id;
+        }
+        self.global_name_ids.insert(name.to_string(), id);
+        self.global_names_by_id.push(name.to_string());
+        self.global_users.push(Vec::new());
+        id
+    }
+
+    pub fn prepare_globals_for_layout(&mut self, layout: &super::super::GlobalLayout) -> usize {
         let mapping_id = layout.id();
         if mapping_id == self.current_global_mapping_id {
             return mapping_id;
         }
+
+        if self.install_prepared_mapping(mapping_id) {
+            return mapping_id;
+        }
+
         let names = layout.names();
-        if names.is_empty() || self.global_view.is_ready(mapping_id) {
-            self.current_global_mapping_id = mapping_id;
-            return mapping_id;
-        }
-        if self.merge_global_layout(layout) {
-            return mapping_id;
-        }
-        self.sync_current_function_globals();
-        if self.install_prepared_mapping(layout) {
-            return mapping_id;
-        }
 
         let needed_len = names.len();
         if self.globals_by_index.len() < needed_len {
             self.globals_by_index.resize(needed_len, Value::null());
         }
+        let mut name_ids = Vec::with_capacity(needed_len);
         for (idx, name) in names.iter().enumerate() {
             if !name.is_empty() {
                 self.globals_by_index[idx] =
-                    self.globals.get(name).copied().unwrap_or(Value::null());
+                    self.globals.get(name).copied().unwrap_or(Value::uninit());
+                name_ids.push(self.global_name_id(name));
             } else {
                 self.globals_by_index[idx] = Value::null();
+                name_ids.push(UNNAMED_GLOBAL);
             }
         }
         self.globals_by_index.truncate(needed_len);
         self.sync_global_generation_len(needed_len);
-        self.global_view.reset(names, Some(mapping_id));
 
         self.current_global_mapping_id = mapping_id;
-        let snapshot = Arc::new(self.globals_by_index.clone());
-        self.store_prepared_mapping(mapping_id, snapshot);
+        let prepared = PreparedGlobals {
+            values: self.globals_by_index.clone(),
+            name_ids: name_ids.into_boxed_slice(),
+        };
+        self.store_prepared_mapping(mapping_id, prepared);
         mapping_id
     }
 
-    fn merge_global_layout(&mut self, layout: &GlobalLayout) -> bool {
-        let names = layout.names();
-        let merged = &self.global_view.names;
-        if merged.len() != self.globals_by_index.len() {
-            return false;
+    // machine code reads its own prepared view, which every indexed write keeps current, so it never switches the interpreter's view
+    pub(crate) fn frame_prepared_view(
+        &mut self,
+        layout: &super::super::GlobalLayout,
+    ) -> Option<(*const Value, usize)> {
+        let mapping_id = layout.id();
+        if mapping_id > Self::MAX_PREPARED_MAPPING {
+            return None;
         }
-        let conflict = names.iter().enumerate().any(|(index, name)| {
-            !name.is_empty()
-                && merged
-                    .get(index)
-                    .is_some_and(|existing| !existing.is_empty() && existing != name)
-        });
-        if conflict {
-            return false;
-        }
-        if self.globals_by_index.len() < names.len() {
-            self.globals_by_index.resize(names.len(), Value::null());
-            self.global_view.names.resize(names.len(), String::new());
-            self.sync_global_generation_len(names.len());
-        }
-        for (index, name) in names.iter().enumerate() {
-            if name.is_empty() || !self.global_view.names[index].is_empty() {
-                continue;
+        if !matches!(self.globals_by_index_cache.get(mapping_id), Some(Some(_))) {
+            self.sync_current_function_globals();
+            let names = layout.names();
+            let mut values = Vec::with_capacity(names.len());
+            let mut name_ids = Vec::with_capacity(names.len());
+            for name in names {
+                if name.is_empty() {
+                    values.push(Value::null());
+                    name_ids.push(UNNAMED_GLOBAL);
+                } else {
+                    values.push(self.globals.get(name).copied().unwrap_or(Value::uninit()));
+                    name_ids.push(self.global_name_id(name));
+                }
             }
-            self.globals_by_index[index] = self.globals.get(name).copied().unwrap_or(Value::null());
-            self.global_view.names[index] = name.clone();
+            self.store_prepared_mapping(
+                mapping_id,
+                PreparedGlobals {
+                    values,
+                    name_ids: name_ids.into_boxed_slice(),
+                },
+            );
         }
-        self.global_view.mark_ready(layout.id());
-        self.current_global_mapping_id = layout.id();
-        true
+        let view = self.globals_by_index_cache.get(mapping_id)?.as_ref()?;
+        Some((view.values.as_ptr(), view.values.len()))
+    }
+
+    fn prepare_empty_global_mapping(&mut self, mapping_id: usize) -> usize {
+        if mapping_id == self.current_global_mapping_id {
+            return mapping_id;
+        }
+        self.globals_by_index.clear();
+        self.current_global_mapping_id = mapping_id;
+        self.store_prepared_mapping(
+            mapping_id,
+            PreparedGlobals {
+                values: Vec::new(),
+                name_ids: Box::new([]),
+            },
+        );
+        mapping_id
     }
 }

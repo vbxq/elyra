@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{Constraint, ConstraintReason};
+use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind, TypedMatchArmBody, TypedStmt, TypedStmtKind};
 use crate::types::InferType;
 use aelys_syntax::{BinaryOp, Span, UnaryOp};
@@ -12,6 +12,33 @@ impl TypeInference {
         right: &TypedExpr,
         span: Span,
     ) -> InferType {
+        let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
+        if !shift && left.ty.is_integer() && right.ty.is_integer() && left.ty != right.ty {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MixedIntegerOperands {
+                    op: op.to_string(),
+                    left: left.ty.clone(),
+                    right: right.ty.clone(),
+                    operand: match &right.kind {
+                        TypedExprKind::Identifier(name) => name.clone(),
+                        _ => "(right operand)".to_string(),
+                    },
+                },
+                span,
+                reason: ConstraintReason::BinaryOp { op: op.to_string() },
+            });
+            return match op {
+                BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::Eq
+                | BinaryOp::Ne => InferType::Bool,
+                _ => left.ty.clone(),
+            };
+        }
+        let settled = (left.ty == right.ty && (left.ty.is_integer() || left.ty.is_float()))
+            .then(|| left.ty.clone());
         match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                 let left_invalid = self.reject_dynamic_arithmetic(left, span, op);
@@ -57,7 +84,7 @@ impl TypeInference {
                     ));
                 }
 
-                result_type
+                settled.unwrap_or(result_type)
             }
 
             BinaryOp::Mod => {
@@ -93,7 +120,7 @@ impl TypeInference {
                     ConstraintReason::BinaryOp { op: op.to_string() },
                 ));
 
-                result_type
+                settled.unwrap_or(result_type)
             }
 
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
@@ -131,9 +158,11 @@ impl TypeInference {
                     ));
                 }
 
+                let mut ordered = InferType::all_numeric_types();
+                ordered.extend([InferType::String, InferType::Char]);
                 self.constraints.push(Constraint::one_of(
                     left.ty.clone(),
-                    InferType::all_numeric_types(),
+                    ordered,
                     span,
                     ConstraintReason::Comparison,
                 ));
@@ -171,11 +200,55 @@ impl TypeInference {
                 InferType::Bool
             }
 
-            BinaryOp::Shl
-            | BinaryOp::Shr
-            | BinaryOp::BitAnd
-            | BinaryOp::BitOr
-            | BinaryOp::BitXor => {
+            BinaryOp::Shl | BinaryOp::Shr => {
+                let left_invalid = self.reject_dynamic(
+                    &left.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                ) || self.reject_untyped_native(
+                    &left.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                );
+                let right_invalid = self.reject_dynamic(
+                    &right.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                ) || self.reject_untyped_native(
+                    &right.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                );
+                if left_invalid || right_invalid {
+                    return InferType::Poison;
+                }
+                for operand in [left, right] {
+                    self.constraints.push(Constraint::one_of(
+                        operand.ty.clone(),
+                        InferType::all_integer_types(),
+                        span,
+                        ConstraintReason::BitwiseOp { op: op.to_string() },
+                    ));
+                }
+                if left.ty.is_integer() {
+                    left.ty.clone()
+                } else {
+                    let result_type = self.type_gen.fresh();
+                    self.constraints.push(Constraint::equal(
+                        left.ty.clone(),
+                        result_type.clone(),
+                        span,
+                        ConstraintReason::BitwiseOp { op: op.to_string() },
+                    ));
+                    result_type
+                }
+            }
+
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor => {
                 let left_invalid = self.reject_dynamic(
                     &left.ty,
                     &InferType::I64,
@@ -223,7 +296,7 @@ impl TypeInference {
                     ConstraintReason::BitwiseOp { op: op.to_string() },
                 ));
 
-                result_type
+                settled.filter(InferType::is_integer).unwrap_or(result_type)
             }
         }
     }
@@ -337,10 +410,15 @@ impl TypeInference {
                             }
                     })
             }
+            TypedExprKind::Block(stmts) => self.is_explicit_dynamic_stmt_tail(stmts),
+            TypedExprKind::Loop { body, .. } => {
+                body.iter().any(|stmt| self.is_explicit_dynamic_stmt(stmt))
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::FmtString(_)
             | TypedExprKind::Unit
             | TypedExprKind::AssociatedConst { .. }
@@ -354,7 +432,7 @@ impl TypeInference {
             | InferType::FixedArray(inner, _)
             | InferType::Vec(inner)
             | InferType::Option(inner) => Self::explicit_dynamic_value(inner),
-            InferType::Result(ok, err) => {
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
                 Self::explicit_dynamic_value(ok) || Self::explicit_dynamic_value(err)
             }
             InferType::Tuple(elements) => elements.iter().any(Self::explicit_dynamic_value),
@@ -387,9 +465,9 @@ impl TypeInference {
                         .as_deref()
                         .is_some_and(|branch| self.is_explicit_dynamic_stmt(branch))
             }
-            TypedStmtKind::While { condition, body } => {
-                self.is_explicit_dynamic_expr(condition) || self.is_explicit_dynamic_stmt(body)
-            }
+            TypedStmtKind::While {
+                condition, body, ..
+            } => self.is_explicit_dynamic_expr(condition) || self.is_explicit_dynamic_stmt(body),
             TypedStmtKind::For {
                 start,
                 end,
@@ -422,8 +500,10 @@ impl TypeInference {
                     .last()
                     .is_some_and(|stmt| self.is_explicit_dynamic_stmt(stmt))
             }),
-            TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            TypedStmtKind::Break { value, .. } => value
+                .as_ref()
+                .is_some_and(|value| self.is_explicit_dynamic_expr(value)),
+            TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }

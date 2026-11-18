@@ -49,7 +49,7 @@ i = 0
 while i < n { let r = gc_work(); i = i + 1 }
 io::print("GC (s + s):      " + convert::to_string(time::elapsed_ms(t1)) + "ms")
 
-let arr: Vec<int> = vec![0; 100]
+let mut arr: Vec<int> = vec![0; 100]
 let t2 = time::timer()
 i = 0
 while i < n { let r = manual_work(arr); i = i + 1 }

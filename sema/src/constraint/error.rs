@@ -114,6 +114,14 @@ pub enum ProjectionFailure {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AliasSite {
+    Binding,
+    Parameter(String),
+    Assignment(String),
+    FunctionValue { position: usize, ty: String },
+}
+
 #[derive(Debug, Clone)]
 pub enum TypeErrorKind {
     Mismatch {
@@ -143,6 +151,14 @@ pub enum TypeErrorKind {
     UndefinedFunction {
         name: String,
     },
+    AmbiguousImport {
+        name: String,
+        modules: Vec<String>,
+    },
+    AssignToImmutableImport {
+        name: String,
+        function: bool,
+    },
     RecursionLimit,
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -160,7 +176,9 @@ pub enum TypeErrorKind {
     UnmaterializedAppliedType {
         name: String,
     },
-    QuestionMarkOutsideResult,
+    QuestionMarkOutsideResult {
+        top_level: bool,
+    },
     QuestionMarkTypeMismatch {
         source: InferType,
         target: InferType,
@@ -204,6 +222,27 @@ pub enum TypeErrorKind {
         expected: InferType,
     },
     MatchArmValueRequired,
+    UndefinedLabel {
+        label: String,
+    },
+    BreakValueOutsideLoop {
+        label: Option<String>,
+    },
+    CapitalizedBindingPattern {
+        name: String,
+        suggestion: Option<String>,
+    },
+    TupleFieldOutOfRange {
+        tuple: InferType,
+        field: String,
+    },
+    TuplePatternArity {
+        expected: usize,
+        found: usize,
+    },
+    TupleFieldAssignment {
+        field: String,
+    },
     GenericArityMismatch {
         name: String,
         expected: usize,
@@ -230,6 +269,12 @@ pub enum TypeErrorKind {
     },
     NotIterable {
         receiver: InferType,
+    },
+    InvalidMapKey {
+        key: InferType,
+    },
+    UnorderedSortElement {
+        element: InferType,
     },
     UnknownField {
         structure: String,
@@ -264,7 +309,8 @@ pub enum TypeErrorKind {
     },
     MutableCollectionRequired {
         method: String,
-        receiver: InferType,
+        place: String,
+        root: Option<String>,
     },
     ReadOnlyCollectionRequired {
         method: String,
@@ -272,7 +318,18 @@ pub enum TypeErrorKind {
     },
     UnconsumedCollectionIterator,
     CollectionCollectRequiresPipeline,
-    MutableCollectionAlias,
+    NonConstantInitializer {
+        name: String,
+        cause: Option<String>,
+    },
+    DuplicateConstant {
+        name: String,
+    },
+    MutableCollectionAlias {
+        place: String,
+        root: String,
+        site: AliasSite,
+    },
     GenericStructDeferred {
         name: String,
     },
@@ -517,6 +574,19 @@ pub enum TypeErrorKind {
     IntegerLiteralOutOfRange {
         value: i64,
     },
+    MixedIntegerOperands {
+        op: String,
+        left: InferType,
+        right: InferType,
+        operand: String,
+    },
+    WideIntegerUnavailable {
+        name: String,
+    },
+    FixedPointShiftOutOfRange {
+        method: String,
+        count: i64,
+    },
     EnumLayoutTooLarge {
         enum_name: String,
         item: String,
@@ -601,6 +671,15 @@ impl TypeError {
                         alike_side(found, &found_text)
                     )?;
                 }
+                if let Some(help) = sum_wrapping_help(expected, found, &self.reason) {
+                    write!(f, "\n   = help: {help}")?;
+                }
+                if differs_only_by_mut(expected, found) {
+                    write!(
+                        f,
+                        "\n   = help: a `mut` parameter is part of a function's type: declare the parameter `mut` on both sides or on neither"
+                    )?;
+                }
                 Ok(())
             }
             TypeErrorKind::InfiniteType { var, ty } => {
@@ -662,6 +741,31 @@ impl TypeError {
                     crate::unscoped_global_name(name)
                 )
             }
+            TypeErrorKind::AssignToImmutableImport { name, function } => write!(
+                f,
+                "cannot assign to '{}': it is {} of the module that declares it",
+                name,
+                if *function {
+                    "a function"
+                } else {
+                    "an immutable variable"
+                }
+            ),
+            TypeErrorKind::AmbiguousImport { name, modules } => {
+                let qualified = modules
+                    .iter()
+                    .map(|module| format!("'{module}::{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                write!(
+                    f,
+                    "symbol '{}' is exported by multiple modules: {}\n   = hint: qualify it as {}, or import it by name with a 'needs {} from ...' line",
+                    name,
+                    modules.join(", "),
+                    qualified,
+                    name
+                )
+            }
             TypeErrorKind::UndefinedFunction { name } => {
                 write!(
                     f,
@@ -679,8 +783,14 @@ impl TypeError {
                     missing.join(", ")
                 )
             }
-            TypeErrorKind::IgnoredResult => write!(f, "unused Result value"),
-            TypeErrorKind::IgnoredOption => write!(f, "unused Option value"),
+            TypeErrorKind::IgnoredResult => write!(
+                f,
+                "unused Result value\n   = help: use the value, propagate it with '?', handle it with match, or discard it explicitly with 'let _ = ...'"
+            ),
+            TypeErrorKind::IgnoredOption => write!(
+                f,
+                "unused Option value\n   = help: use the value, propagate it with '?', handle it with match, or discard it explicitly with 'let _ = ...'"
+            ),
             TypeErrorKind::NullIsNotInSurface => write!(
                 f,
                 "null is not part of Aelys; use Option for absence or Result for failure"
@@ -704,13 +814,22 @@ impl TypeError {
                 "generic type '{}' was not materialized before code generation",
                 name
             ),
-            TypeErrorKind::QuestionMarkOutsideResult => {
-                write!(
-                    f,
-                    "cannot use '?' here; the enclosing function must return Option or Result"
-                )
-            }
+            TypeErrorKind::QuestionMarkOutsideResult { top_level: true } => write!(
+                f,
+                "cannot use '?' at the top level of a script: there is no enclosing function to return the failure from\n   = help: move this code into a function returning Option or Result, or handle the value with match, unwrap_or, or expect"
+            ),
+            TypeErrorKind::QuestionMarkOutsideResult { top_level: false } => write!(
+                f,
+                "cannot use '?' here; the enclosing function must return Option or Result\n   = help: declare the function as returning Option or Result, or handle the value with match, unwrap_or, or expect"
+            ),
             TypeErrorKind::QuestionMarkTypeMismatch { source, target } => {
+                if !matches!(source, InferType::Option(_) | InferType::Result(_, _)) {
+                    return write!(
+                        f,
+                        "the operand of '?' must be an Option or a Result, found {}",
+                        source.source_spelling()
+                    );
+                }
                 write!(
                     f,
                     "cannot propagate {} with '?' from a function returning {}",
@@ -742,7 +861,10 @@ impl TypeError {
                 write!(
                     f,
                     "cannot propagate {} with '?' from a function returning {}: no unique From<{}> for {} conversion",
-                    source, target, source_error, target_error
+                    source.source_spelling(),
+                    target.source_spelling(),
+                    source_error.source_spelling(),
+                    target_error.source_spelling()
                 )?;
                 if !candidates.is_empty() {
                     write!(f, "; candidate impls: {}", candidates.join(", "))?;
@@ -820,8 +942,19 @@ impl TypeError {
                 )
             }
             TypeErrorKind::InvalidCollectionMethod { method, receiver } => {
+                if let InferType::Map(_, _) = receiver {
+                    return write!(
+                        f,
+                        "{} has no method '{}'",
+                        receiver.source_spelling(),
+                        method
+                    );
+                }
                 let required = match method.as_str() {
-                    "push" | "pop" | "capacity" | "reserve" => "a vector",
+                    "push" | "pop" | "capacity" | "reserve" | "insert" | "remove"
+                    | "swap_remove" | "clear" | "extend" | "append" | "truncate" | "resize" => {
+                        "a vector"
+                    }
                     "len" | "is_empty" | "get" => "a string, array, or vector",
                     _ => "an array or vector",
                 };
@@ -849,8 +982,22 @@ impl TypeError {
                     f,
                     "cannot iterate over a value of type {}",
                     receiver.source_spelling()
-                )
+                )?;
+                if matches!(receiver, InferType::Map(_, _)) {
+                    write!(f, "; iterate over its keys() or values() instead")?;
+                }
+                Ok(())
             }
+            TypeErrorKind::InvalidMapKey { key } => write!(
+                f,
+                "{} cannot be a Map key; a key must be int, a sized integer, string, char or bool",
+                key.source_spelling()
+            ),
+            TypeErrorKind::UnorderedSortElement { element } => write!(
+                f,
+                "sort needs elements with a built-in order (an integer, float, string, char or bool), found {}; use sort_by with a comparator",
+                element.source_spelling()
+            ),
             TypeErrorKind::UnknownField { structure, field } => {
                 write!(f, "unknown field '{}' on struct {}", field, structure)
             }
@@ -899,14 +1046,20 @@ impl TypeError {
                 },
                 length
             ),
-            TypeErrorKind::MutableCollectionRequired { method, receiver } => {
-                write!(
+            TypeErrorKind::MutableCollectionRequired {
+                method,
+                place,
+                root,
+            } => match root {
+                Some(root) => write!(
                     f,
-                    "collection operation '{}' requires a mutable collection receiver, found {}",
-                    method,
-                    receiver.source_spelling()
-                )
-            }
+                    "collection operation '{method}' requires a mutable collection receiver: `{place}` is reached from the immutable binding `{root}`\n   = help: declare `{root}` with `let mut`, or receive it as `mut self` or a `mut` parameter"
+                ),
+                None => write!(
+                    f,
+                    "collection operation '{method}' requires a mutable collection receiver: `{place}` is a temporary value\n   = help: bind it with `let mut` before mutating it"
+                ),
+            },
             TypeErrorKind::ReadOnlyCollectionRequired { method, receiver } => {
                 write!(
                     f,
@@ -923,10 +1076,39 @@ impl TypeError {
                 f,
                 "collect is a pipeline terminal; call iter, map, or filter first"
             ),
-            TypeErrorKind::MutableCollectionAlias => write!(
+            TypeErrorKind::NonConstantInitializer {
+                name,
+                cause: Some(cause),
+            } => write!(
                 f,
-                "mutable aliases of collections are not supported; mutate the original binding"
+                "the initializer of constant `{name}` cannot be evaluated at compile time: {cause}"
             ),
+            TypeErrorKind::DuplicateConstant { name } => write!(
+                f,
+                "constant `{name}` is already declared in this scope\n   = help: give the second constant another name"
+            ),
+            TypeErrorKind::NonConstantInitializer { name, cause: None } => write!(
+                f,
+                "the initializer of constant `{name}` is not a compile-time constant\n   = help: use literals, arithmetic, comparisons, `as` casts and other constants, or declare `{name}` with `let`"
+            ),
+            TypeErrorKind::MutableCollectionAlias { place, root, site } => {
+                let site = match site {
+                    AliasSite::Parameter(parameter) => {
+                        format!("pass `{place}` to the `mut` parameter `{parameter}`")
+                    }
+                    AliasSite::Binding => format!("bind `{place}` mutably"),
+                    AliasSite::Assignment(target) => {
+                        format!("assign `{place}` to the mutable binding `{target}`")
+                    }
+                    AliasSite::FunctionValue { position, ty } => format!(
+                        "pass `{place}` to the `mut` parameter {position} of a function value of type `{ty}`"
+                    ),
+                };
+                write!(
+                    f,
+                    "cannot {site}: it is reachable from the immutable binding `{root}`, and aggregates are shared by reference\n   = help: write `{place}.clone()` to copy it, or declare `{root}` with `let mut` to share it"
+                )
+            }
             TypeErrorKind::GenericStructDeferred { .. } => {
                 write!(f, "generic struct support is reserved for Stage 2")
             }
@@ -1464,6 +1646,28 @@ impl TypeError {
             TypeErrorKind::MangledSymbolCollision { name } => {
                 write!(f, "two instances of '{}' mangle to one symbol", name)
             }
+            TypeErrorKind::MixedIntegerOperands {
+                op,
+                left,
+                right,
+                operand,
+            } => write!(
+                f,
+                "mismatched integer types in '{}': {} and {}\n   = help: convert with `as`, e.g. `{} as {}`",
+                op,
+                left.source_spelling(),
+                right.source_spelling(),
+                operand,
+                left.source_spelling()
+            ),
+            TypeErrorKind::FixedPointShiftOutOfRange { method, count } => {
+                write!(f, "shift count {} of '{}' is outside 0..=63", count, method)
+            }
+            TypeErrorKind::WideIntegerUnavailable { name } => write!(
+                f,
+                "{} is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping arithmetic",
+                name
+            ),
             TypeErrorKind::IntegerLiteralOutOfRange { value } => write!(
                 f,
                 "integer literal '{}' exceeds 48-bit signed range ({} to {})",
@@ -1485,6 +1689,47 @@ impl TypeError {
                 f,
                 "non-exhaustive struct match for {}; add '_' or an irrefutable field pattern",
                 structure
+            ),
+            TypeErrorKind::UndefinedLabel { label } => write!(
+                f,
+                "use of undeclared label '{}\n   = help: a label names an enclosing `for`, `while`, or `loop`, written `'{}: loop {{ .. }}`",
+                label, label
+            ),
+            TypeErrorKind::BreakValueOutsideLoop { label } => write!(
+                f,
+                "`break` with a value targets {}, which is not a `loop`\n   = help: only `loop` produces a value; `while` and `for` always produce unit",
+                label
+                    .as_ref()
+                    .map(|label| format!("'{label}"))
+                    .unwrap_or_else(|| "the innermost loop".to_string())
+            ),
+            TypeErrorKind::CapitalizedBindingPattern { name, suggestion } => match suggestion {
+                Some(suggestion) => write!(
+                    f,
+                    "pattern `{}` is not a variant: a bare name binds a new variable that matches every value\n   = help: did you mean {}?",
+                    name, suggestion
+                ),
+                None => write!(
+                    f,
+                    "pattern `{}` is not a variant: a bare name binds a new variable that matches every value\n   = help: write the variant with its enum path, or a lowercase name to bind the value",
+                    name
+                ),
+            },
+            TypeErrorKind::TupleFieldOutOfRange { tuple, field } => write!(
+                f,
+                "tuple {} has no field {}",
+                tuple.source_spelling(),
+                field
+            ),
+            TypeErrorKind::TuplePatternArity { expected, found } => write!(
+                f,
+                "tuple pattern has {} elements, but the value is a tuple of {} elements",
+                found, expected
+            ),
+            TypeErrorKind::TupleFieldAssignment { field } => write!(
+                f,
+                "cannot assign to field .{} of a tuple: tuples are immutable\n   = help: build a new tuple, or use a struct for a record with mutable fields",
+                field
             ),
             TypeErrorKind::UnreachablePattern { pattern } => write!(
                 f,
@@ -1658,7 +1903,7 @@ impl TypeErrorKind {
             Self::UntypedNativeValue { .. } => 348,
             Self::UntypedNativeBoundary { .. } => 379,
             Self::UnmaterializedAppliedType { .. } => 349,
-            Self::QuestionMarkOutsideResult => 305,
+            Self::QuestionMarkOutsideResult { .. } => 305,
             Self::QuestionMarkTypeMismatch { .. } => 306,
             Self::UnresolvedSumType { .. } => 307,
             Self::UntypedSumValue { .. } => 308,
@@ -1679,7 +1924,9 @@ impl TypeErrorKind {
             Self::UnconsumedCollectionIterator => 320,
             Self::ConstantIndexOutOfBounds { .. } => 321,
             Self::CollectionCollectRequiresPipeline => 322,
-            Self::MutableCollectionAlias => 323,
+            Self::MutableCollectionAlias { .. } => 323,
+            Self::NonConstantInitializer { .. } => 395,
+            Self::DuplicateConstant { .. } => 396,
             Self::NonExhaustiveStruct { .. } => 324,
             Self::GenericStructDeferred { .. } => 325,
             Self::DuplicateNominal { .. } => 326,
@@ -1738,6 +1985,9 @@ impl TypeErrorKind {
             Self::MonomorphizationLimit { .. } => 345,
             Self::MangledSymbolCollision { .. } => 355,
             Self::IntegerLiteralOutOfRange { .. } => 209,
+            Self::MixedIntegerOperands { .. } => 460,
+            Self::WideIntegerUnavailable { .. } => 461,
+            Self::FixedPointShiftOutOfRange { .. } => 462,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,
             Self::GenericArityMismatch { .. } => 357,
@@ -1746,9 +1996,13 @@ impl TypeErrorKind {
             Self::NotCallable { .. } => 360,
             Self::InfiniteType { .. } => 361,
             Self::UndefinedFunction { .. } => 362,
+            Self::AmbiguousImport { .. } => 445,
+            Self::AssignToImmutableImport { .. } => 446,
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,
+            Self::InvalidMapKey { .. } => 470,
+            Self::UnorderedSortElement { .. } => 471,
             Self::InvalidIndex { .. } => 366,
             Self::UntypedNativeTypeMismatch { .. } => 367,
             Self::RecursionLimit => 368,
@@ -1764,11 +2018,78 @@ impl TypeErrorKind {
             Self::ReservedIdentityConversion { .. } => 375,
             Self::UnknownVariant { .. } => 109,
             Self::MatchArmValueRequired => 110,
+            Self::UndefinedLabel { .. } => 390,
+            Self::BreakValueOutsideLoop { .. } => 391,
+            Self::CapitalizedBindingPattern { .. } => 392,
+            Self::TupleFieldAssignment { .. } => 393,
+            Self::TupleFieldOutOfRange { .. } => 363,
+            Self::TuplePatternArity { .. } => 301,
             Self::MissingReturnValue { .. } => 215,
             // an undefined name keeps 301 because the surface pins that code for it
             Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,
         }
     }
+}
+
+fn sum_wrapping_help(
+    expected: &InferType,
+    found: &InferType,
+    reason: &ConstraintReason,
+) -> Option<String> {
+    let carried = |ty: &InferType| match ty {
+        InferType::Option(value) => Some(("Option", "Some", value.source_spelling())),
+        InferType::Result(value, _) => Some(("Result", "Ok", value.source_spelling())),
+        _ => None,
+    };
+    let mut reason = reason;
+    while let ConstraintReason::DefinedIn { inner, .. } = reason {
+        reason = inner;
+    }
+    let operator = matches!(
+        reason,
+        ConstraintReason::BinaryOp { .. }
+            | ConstraintReason::BitwiseOp { .. }
+            | ConstraintReason::Comparison
+    );
+    let extract = |sum: &InferType, value: &str| {
+        format!(
+            "the value has type {}; get the {value} inside with '?', match, or unwrap",
+            sum.source_spelling()
+        )
+    };
+    if matches!(expected, InferType::Bool)
+        && matches!(
+            reason,
+            ConstraintReason::IfCondition | ConstraintReason::WhileCondition
+        )
+    {
+        match found {
+            InferType::Result(_, _) => {
+                return Some("test a Result with is_ok() or is_err()".to_string());
+            }
+            InferType::Option(_) => {
+                return Some("test an Option with is_some() or is_none()".to_string());
+            }
+            _ => {}
+        }
+    }
+    if let Some((_, _, value)) = carried(found)
+        && value == expected.source_spelling()
+    {
+        return Some(extract(found, &value));
+    }
+    if let Some((_, constructor, value)) = carried(expected)
+        && value == found.source_spelling()
+    {
+        if operator {
+            return Some(extract(expected, &value));
+        }
+        return Some(format!(
+            "wrap the value as {constructor}(...) to produce a {}",
+            expected.source_spelling()
+        ));
+    }
+    None
 }
 
 fn alike_side(ty: &InferType, text: &str) -> String {
@@ -1778,5 +2099,31 @@ fn alike_side(ty: &InferType, text: &str) -> String {
         }
         InferType::Param(_) => format!("'{text}' of its impl or type is another parameter"),
         _ => format!("'{text}' is the type of that name"),
+    }
+}
+
+fn differs_only_by_mut(expected: &InferType, found: &InferType) -> bool {
+    match (expected, found) {
+        (
+            InferType::Function {
+                params: expected_params,
+                modes: expected_modes,
+                ret: expected_ret,
+            },
+            InferType::Function {
+                params: found_params,
+                modes: found_modes,
+                ret: found_ret,
+            },
+        ) => {
+            expected_modes != found_modes
+                && expected_params.len() == found_params.len()
+                && expected_params
+                    .iter()
+                    .zip(found_params)
+                    .all(|(expected, found)| expected.source_spelling() == found.source_spelling())
+                && expected_ret.source_spelling() == found_ret.source_spelling()
+        }
+        _ => false,
     }
 }

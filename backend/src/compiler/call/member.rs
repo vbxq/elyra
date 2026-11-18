@@ -18,7 +18,9 @@ impl Compiler {
             && let Some(module_name) = Self::path_name(object)
             && self.has_module_alias(&module_name)
         {
-            let qualified_name = format!("{}::{}", module_name, member);
+            let qualified_name = self
+                .resolve_global_name(&format!("{}::{}", module_name, member))
+                .to_string();
 
             let idx = if let Some(&idx) = self.global_indices.get(&qualified_name) {
                 idx

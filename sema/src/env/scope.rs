@@ -14,6 +14,10 @@ impl TypeEnv {
             .push(std::collections::HashMap::new());
         self.explicit_dynamic_locals
             .push(std::collections::HashSet::new());
+        self.constant_values.push(std::collections::HashMap::new());
+        self.binding_origins.push(std::collections::HashMap::new());
+        self.declared_constants
+            .push(std::collections::HashSet::new());
     }
 
     pub fn pop_scope(&mut self) {
@@ -25,6 +29,9 @@ impl TypeEnv {
             self.read_only_bindings.pop();
             self.known_collection_lengths.pop();
             self.explicit_dynamic_locals.pop();
+            self.constant_values.pop();
+            self.binding_origins.pop();
+            self.declared_constants.pop();
         }
     }
 
@@ -88,7 +95,18 @@ impl TypeEnv {
                 return mutability.get(name).copied().unwrap_or(false);
             }
         }
-        self.capture_mutability.get(name).copied().unwrap_or(false)
+        if let Some(mutable) = self.capture_mutability.get(name) {
+            return *mutable;
+        }
+        self.mutable_imports.contains(name) && self.functions.contains_key(name)
+    }
+
+    pub fn set_mutable_imports(&mut self, names: impl IntoIterator<Item = String>) {
+        self.mutable_imports = names.into_iter().collect();
+    }
+
+    pub fn forget_mutable_import(&mut self, name: &str) {
+        self.mutable_imports.remove(name);
     }
 
     pub fn define_borrow_binding(&mut self, name: String, kind: ReferenceKind) {
@@ -132,6 +150,58 @@ impl TypeEnv {
         }
     }
 
+    pub fn define_constant(&mut self, name: &str, value: crate::infer::constants::ConstValue) {
+        if let Some(constants) = self.constant_values.last_mut() {
+            constants.insert(name.to_string(), value);
+        }
+    }
+
+    pub fn lookup_constant(&self, name: &str) -> Option<crate::infer::constants::ConstValue> {
+        for (scope, constants) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.constant_values.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return constants.get(name).cloned();
+            }
+        }
+        if self.captures.contains_key(name) {
+            return self.capture_constants.get(name).cloned();
+        }
+        None
+    }
+
+    pub fn first_constant_declaration(&mut self, name: &str) -> bool {
+        self.declared_constants
+            .last_mut()
+            .is_none_or(|declared| declared.insert(name.to_string()))
+    }
+
+    pub fn define_binding_origin(&mut self, name: &str, root: String, root_mutable: bool) {
+        if let Some(origins) = self.binding_origins.last_mut() {
+            origins.insert(name.to_string(), (root, root_mutable));
+        }
+    }
+
+    pub fn binding_origin(&self, name: &str) -> Option<&(String, bool)> {
+        for (scope, origins) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.binding_origins.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return origins.get(name);
+            }
+        }
+        if self.captures.contains_key(name) {
+            return self.capture_binding_origins.get(name);
+        }
+        None
+    }
+
     pub fn mark_read_only(&mut self, name: &str) {
         if let Some(scope) = self.read_only_bindings.last_mut() {
             scope.insert(name.to_string());
@@ -162,6 +232,12 @@ impl TypeEnv {
             }
             if let Some(lengths) = self.known_collection_lengths.last_mut() {
                 lengths.remove(&name);
+            }
+            if let Some(constants) = self.constant_values.last_mut() {
+                constants.remove(&name);
+            }
+            if let Some(origins) = self.binding_origins.last_mut() {
+                origins.remove(&name);
             }
             if let Some(origins) = self.explicit_dynamic_locals.last_mut() {
                 if explicit_dynamic {
@@ -203,6 +279,16 @@ impl TypeEnv {
         }
 
         None
+    }
+
+    pub fn binds_value(&self, name: &str) -> bool {
+        self.locals.iter().any(|scope| scope.contains_key(name)) || self.captures.contains_key(name)
+    }
+
+    pub fn is_imported_binding(&self, name: &str) -> bool {
+        !self.locals.iter().any(|scope| scope.contains_key(name))
+            && !self.captures.contains_key(name)
+            && self.functions.contains_key(name)
     }
 
     pub fn contains(&self, name: &str) -> bool {

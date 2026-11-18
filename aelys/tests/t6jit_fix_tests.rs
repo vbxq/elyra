@@ -127,7 +127,7 @@ fn work(n: int, mut v: Vec<int>) -> int {
     }
     return acc
 }
-let v: Vec<int> = vec![0; 1024]
+let mut v: Vec<int> = vec![0; 1024]
 "#;
 
 fn rare_exit_reference(n: i64, every: i64) -> i64 {
@@ -180,8 +180,8 @@ let mut scale = 0.0
 let mut current: Vec<int> = vec![0]
 let mut holder = P { a: 0 }
 let mut label = "start"
-let left: Vec<int> = vec![1, 2, 3]
-let right: Vec<int> = vec![10, 20, 30]
+let mut left: Vec<int> = vec![1, 2, 3]
+let mut right: Vec<int> = vec![10, 20, 30]
 
 impl P {
     fn touch(self) -> int {

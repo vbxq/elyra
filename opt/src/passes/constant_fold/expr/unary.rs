@@ -13,6 +13,21 @@ impl ConstantFolder {
         let operand_val = operand_folded.as_ref().unwrap_or(operand);
 
         match (&operand_val.kind, op) {
+            (TypedExprKind::Int(n), UnaryOp::Neg | UnaryOp::BitNot)
+                if original.ty.is_sized_integer() =>
+            {
+                let result = if op == UnaryOp::Neg {
+                    n.wrapping_neg()
+                } else {
+                    !*n
+                };
+                self.stats.constants_folded += 1;
+                Some(TypedExpr::new(
+                    TypedExprKind::Int(original.ty.wrap_int(result)),
+                    original.ty.clone(),
+                    original.span,
+                ))
+            }
             (TypedExprKind::Int(n), UnaryOp::Neg) => {
                 if !super::super::is_in_vm_range(*n) {
                     return None;

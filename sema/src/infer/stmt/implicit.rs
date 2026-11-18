@@ -2,17 +2,46 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason};
 use crate::typed_ast::{TypedStmt, TypedStmtKind};
 use crate::types::InferType;
-use aelys_syntax::Stmt;
+use aelys_syntax::{ExprKind, Stmt, StmtKind};
+
+fn is_assignment_statement(stmt: &Stmt) -> bool {
+    matches!(&stmt.kind, StmtKind::Expression(expr) if super::super::functions::is_assignment(expr))
+}
 
 impl TypeInference {
+    pub(crate) fn infer_body_tail(
+        &mut self,
+        last_stmt: &Stmt,
+        return_type: &InferType,
+        annotated: bool,
+    ) -> Vec<TypedStmt> {
+        if annotated || !is_assignment_statement(last_stmt) {
+            return vec![self.infer_stmt_with_implicit_return(last_stmt, return_type)];
+        }
+        let assignment = self.infer_stmt(last_stmt);
+        let unit = Stmt::new(
+            StmtKind::Expression(aelys_syntax::Expr::new(ExprKind::Unit, last_stmt.span)),
+            last_stmt.span,
+        );
+        let unit = self.infer_stmt_with_implicit_return(&unit, return_type);
+        vec![assignment, unit]
+    }
+
     pub(crate) fn infer_stmt_with_implicit_return(
         &mut self,
         stmt: &Stmt,
         return_type: &InferType,
     ) -> TypedStmt {
         match &stmt.kind {
+            aelys_syntax::StmtKind::Expression(expr)
+                if matches!(return_type, InferType::Var(_))
+                    && super::super::functions::is_assignment(expr) =>
+            {
+                self.infer_stmt(stmt)
+            }
             aelys_syntax::StmtKind::Expression(expr) => {
-                let mut typed_expr = self.infer_expr(expr);
+                let mut typed_expr = self.infer_expr_expecting(expr, return_type);
+                self.fit_int_literal(&mut typed_expr, return_type);
 
                 if let crate::typed_ast::TypedExprKind::Float(value) = &typed_expr.kind
                     && *return_type == InferType::F32

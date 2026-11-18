@@ -94,6 +94,7 @@ pub(crate) struct FrameJitState {
     root_ceiling: usize,
     native_depth: u32,
     native_error: Option<RuntimeError>,
+    pub(crate) prepared_generation: u64,
 }
 
 impl Default for FrameJitState {
@@ -125,6 +126,7 @@ impl Default for FrameJitState {
             root_ceiling: 0,
             native_depth: 0,
             native_error: None,
+            prepared_generation: 1,
         }
     }
 }
@@ -144,6 +146,30 @@ enum EntryKind {
 impl VM {
     pub(crate) fn bump_jit_global_epoch(&mut self) {
         self.frame_jit.global_epoch = self.frame_jit.global_epoch.wrapping_add(1).max(1);
+    }
+
+    pub(crate) fn frame_jit_active(&self) -> bool {
+        self.frame_jit_usable()
+    }
+
+    // true once neither the frame compiler nor the older pipeline will take a call to this function
+    pub(crate) fn frame_jit_interprets(&self, function: GcRef) -> bool {
+        let Some(ObjectKind::Function(object)) = self.heap.get(function).map(|object| &object.kind)
+        else {
+            return false;
+        };
+        let slot = object.jit_slot();
+        slot != 0
+            && self
+                .frame_jit
+                .slots
+                .get(slot as usize - 1)
+                .is_some_and(|entry| {
+                    entry.live
+                        && entry.function == function
+                        && matches!(entry.call, EntryState::Refused)
+                        && entry.legacy_refused
+                })
     }
 
     fn frame_jit_usable(&self) -> bool {
@@ -247,7 +273,9 @@ impl VM {
         block[1] = function.index() as u64;
         block[2] = std::ptr::from_ref::<crate::FrameCodeInfo>(info) as u64;
         block[3] = schema_words as u64;
-        block[FrameData::VIEW_GENERATION as usize / 8] = u64::MAX;
+        block[FrameData::VIEW_GENERATION as usize / 8] = 0;
+        block[FrameData::MAPPING as usize / 8] =
+            bytecode_function.function.global_layout.id() as u64;
         let materialized = schemas.runtime_ids.len() == schemas.structs.len();
         for (index, schema) in schemas.structs.iter().enumerate() {
             let valid =
@@ -355,7 +383,7 @@ impl VM {
             self.globals_by_index.as_ptr() as u64,
             self.globals_by_index.len() as u64,
         );
-        let view_generation = self.global_view.generation;
+        let view_generation = self.frame_jit.prepared_generation;
         let context = &mut self.frame_jit.context;
         context.vm = vm;
         context.status = FRAME_STATUS_OK;
@@ -647,6 +675,7 @@ impl VM {
     pub(crate) fn reset_frame_jit(&mut self) {
         let disabled = self.frame_jit.disabled;
         let epoch = self.frame_jit.global_epoch;
+        let prepared = self.frame_jit.prepared_generation;
         for slot in &self.frame_jit.slots {
             if let Some(object) = self.heap.get(slot.function)
                 && let ObjectKind::Function(function) = &object.kind
@@ -657,6 +686,7 @@ impl VM {
         self.frame_jit = FrameJitState::default();
         self.frame_jit.disabled = disabled;
         self.frame_jit.global_epoch = epoch.wrapping_add(1).max(1);
+        self.frame_jit.prepared_generation = prepared + 1;
     }
 
     fn global_by_name(&mut self, name: &str) -> Value {
@@ -671,17 +701,8 @@ impl VM {
         let context = &mut self.frame_jit.context;
         context.globals = self.globals_by_index.as_ptr() as u64;
         context.globals_len = self.globals_by_index.len() as u64;
-        context.view_generation = self.global_view.generation;
+        context.view_generation = self.frame_jit.prepared_generation;
         context.global_epoch = self.frame_jit.global_epoch;
-    }
-
-    // the store the interpreter's SetGlobalIdx performs; globals are roots, so no barrier is involved
-    fn frame_store_global(&mut self, index: usize, value: Value) -> bool {
-        if index >= self.globals_by_index.len() {
-            return false;
-        }
-        self.set_global_by_index(index, value);
-        true
     }
 
     fn frame_native_call(
@@ -729,9 +750,16 @@ fn context_vm<'a>(context: *mut FrameJitContext) -> (&'a mut FrameJitContext, &'
 pub unsafe extern "C" fn aelys_frame_view(context: *mut FrameJitContext, data: *mut u64) -> u64 {
     let (_, vm) = context_vm(context);
     let function = GcRef::new(unsafe { *data.add(1) } as usize);
-    vm.prepare_globals_for_function(function);
+    let layout = match vm.heap.get(function).map(|object| &object.kind) {
+        Some(ObjectKind::Function(function)) => Arc::clone(&function.function.global_layout),
+        _ => return 0,
+    };
+    let view = vm.frame_prepared_view(&layout);
+    let (values, length) = view.unwrap_or((std::ptr::null(), 0));
     unsafe {
-        *data.add(FrameData::VIEW_GENERATION as usize / 8) = vm.global_view.generation;
+        *data.add(FrameData::VIEW_VALUES as usize / 8) = values as u64;
+        *data.add(FrameData::VIEW_LEN as usize / 8) = length as u64;
+        *data.add(FrameData::VIEW_GENERATION as usize / 8) = vm.frame_jit.prepared_generation;
     }
     vm.refresh_frame_context();
     1
@@ -739,14 +767,18 @@ pub unsafe extern "C" fn aelys_frame_view(context: *mut FrameJitContext, data: *
 
 pub unsafe extern "C" fn aelys_frame_set_global(
     context: *mut FrameJitContext,
+    data: *mut u64,
     index: u64,
     value: u64,
 ) -> u64 {
     let (_, vm) = context_vm(context);
-    let Ok(index) = usize::try_from(index) else {
+    let (Ok(index), Ok(mapping)) = (
+        usize::try_from(index),
+        usize::try_from(unsafe { *data.add(FrameData::MAPPING as usize / 8) }),
+    ) else {
         return 0;
     };
-    let stored = vm.frame_store_global(index, Value::from_raw(value));
+    let stored = vm.frame_store_global(mapping, index, Value::from_raw(value));
     vm.refresh_frame_context();
     u64::from(stored)
 }
@@ -1047,9 +1079,7 @@ pub unsafe extern "C" fn aelys_frame_element(
 impl VM {
     // the only write barrier machine code reaches: element stores and pushes into an existing Vec or Array slot
     fn frame_element_barrier(&mut self, owner: GcRef, index: usize, value: Value) {
-        let _ = index;
-        self.heap.write_barrier_value(owner, value);
-        let _ = self.heap.get_mut(owner);
+        self.heap.write_barrier_element(owner, index, value);
     }
 
     fn frame_vec_push(&mut self, reference: GcRef, value: Value) -> bool {
@@ -1072,7 +1102,12 @@ impl VM {
         let Some(previous) = vector.try_size_bytes() else {
             return false;
         };
-        let Some(needed) = index.checked_add(1).and_then(|len| {
+        let additional = if index < vector.capacity() {
+            0
+        } else {
+            index.max(1)
+        };
+        let Some(needed) = index.checked_add(additional).and_then(|len| {
             aelys_bytecode::object::AelysVec::size_bytes_for(vector.type_tag(), len)
         }) else {
             return false;
@@ -1083,7 +1118,8 @@ impl VM {
         }
         let current = match self.heap.get_mut(reference).map(|object| &mut object.kind) {
             Some(ObjectKind::Vec(vector)) => {
-                if !vector.try_reserve_exact(1) || !vector.push(value) {
+                if (additional > 0 && !vector.try_reserve_exact(additional)) || !vector.push(value)
+                {
                     return false;
                 }
                 vector.try_size_bytes()
@@ -1131,6 +1167,25 @@ pub unsafe extern "C" fn aelys_frame_vec_push(
         return 0;
     };
     u64::from(vm.frame_vec_push(GcRef::new(pointer), Value::from_raw(value)))
+}
+
+// (left << shift) / right exactly, 0 where the interpreter traps on a zero divisor or a result outside the 48-bit range
+pub unsafe extern "C" fn aelys_frame_shl_div(
+    context: *mut FrameJitContext,
+    left: i64,
+    right: i64,
+    shift: i64,
+) -> u64 {
+    let (context, _) = context_vm(context);
+    if right == 0 {
+        return 0;
+    }
+    let exact = (i128::from(left) << (shift & 63)) / i128::from(right);
+    if exact < i128::from(Value::INT_MIN) || exact > i128::from(Value::INT_MAX) {
+        return 0;
+    }
+    context.scratch0 = exact as u64;
+    1
 }
 
 pub extern "C" fn aelys_frame_fmod(left: f64, right: f64) -> f64 {

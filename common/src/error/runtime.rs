@@ -21,6 +21,7 @@ pub enum RuntimeErrorKind {
     },
     DivisionByZero,
     UndefinedVariable(String),
+    UninitializedGlobal(String),
     NotCallable(String),
     ArityMismatch {
         expected: u16,
@@ -67,13 +68,22 @@ pub enum RuntimeErrorKind {
         code: i32,
     },
     NativeReturnedNull,
-    NativePanic,
+    NativePanic {
+        name: String,
+    },
     SumUnwrapFailed {
         family: &'static str,
         message: Option<String>,
     },
     IntegerOverflow,
+    NonFiniteCast {
+        value: &'static str,
+        target: &'static str,
+    },
     RuntimePanic {
+        message: String,
+    },
+    Panic {
         message: String,
     },
     InstructionBudgetExceeded {
@@ -86,7 +96,16 @@ pub enum RuntimeErrorKind {
         index: i64,
         length: i64,
     },
+    MapKeyNotFound {
+        key: String,
+    },
+    InvalidCharScalar {
+        value: i64,
+    },
+    VecChangedDuringSort,
 }
+
+pub const PANIC_EXIT_CODE: i32 = 101;
 
 impl RuntimeError {
     pub fn new(kind: RuntimeErrorKind, stack_trace: Vec<StackFrame>, source: Arc<Source>) -> Self {
@@ -130,8 +149,9 @@ impl RuntimeErrorKind {
                 )
             }
             Self::DivisionByZero => "division by zero".to_string(),
-            Self::UndefinedVariable(name) => format!(
-                "undefined variable '{}'",
+            Self::UndefinedVariable(name) => crate::naming::undefined_variable_message(name),
+            Self::UninitializedGlobal(name) => format!(
+                "global `{}` read before its initialiser ran",
                 crate::naming::unscoped_global_name(name)
             ),
             Self::NotCallable(ty) => format!("'{}' is not callable", ty),
@@ -178,18 +198,27 @@ impl RuntimeErrorKind {
                 "invalid enum field: expected schema {} variant {} at offset {}, got schema {} variant {}",
                 expected_schema, expected_variant, field_offset, actual_schema, actual_variant
             ),
-            Self::NativeError { code } => format!("native error: code {}", code),
+            Self::NativeError { code } => match code {
+                1 => "native error: code 1 (invalid argument)".to_string(),
+                2 => "native error: code 2 (integer outside the 48-bit int range)".to_string(),
+                5 => "native error: code 5 (byte buffer borrowed mutably while another borrow of it is live in the same native call)"
+                    .to_string(),
+                _ => format!("native error: code {}", code),
+            },
             Self::NativeReturnedNull => {
                 "native function returned the forbidden null sentinel".to_string()
             }
-            Self::NativePanic => "native function panicked".to_string(),
+            Self::NativePanic { name } if name.is_empty() => "native function panicked".to_string(),
+            Self::NativePanic { name } => format!("native function '{name}' panicked"),
             Self::SumUnwrapFailed { family, message } => message.clone().unwrap_or_else(|| {
                 format!("{family}::unwrap failed: value was not the success variant")
             }),
             Self::IntegerOverflow => {
                 "integer overflow outside the supported 48-bit range".to_string()
             }
+            Self::NonFiniteCast { value, target } => format!("cannot convert {value} to {target}"),
             Self::RuntimePanic { message } => format!("runtime panic recovered: {message}"),
+            Self::Panic { message } => format!("panic: {message}"),
             Self::InstructionBudgetExceeded { limit } => {
                 format!("instruction budget exhausted after {} instructions", limit)
             }
@@ -202,22 +231,30 @@ impl RuntimeErrorKind {
                     index, length
                 )
             }
+            Self::MapKeyNotFound { key } => format!("map key not found: {key}"),
+            Self::InvalidCharScalar { value } => {
+                format!("invalid char: {value} is not a Unicode scalar value")
+            }
+            Self::VecChangedDuringSort => {
+                "vector changed length while sort_by was running its comparator".to_string()
+            }
         }
     }
 }
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "error: {}", self.kind.message())?;
+        if matches!(self.kind, RuntimeErrorKind::Panic { .. }) {
+            writeln!(f, "{}", self.kind.message())?;
+        } else {
+            writeln!(f, "error: {}", self.kind.message())?;
+        }
 
         if let Some(frame) = self.stack_trace.first() {
-            writeln!(
-                f,
-                "  --> {}:{}:{}",
-                self.source.name, frame.line, frame.column
-            )?;
+            let source = frame.source.as_ref().unwrap_or(&self.source);
+            writeln!(f, "  --> {}:{}:{}", source.name, frame.line, frame.column)?;
 
-            let line_content = self.source.get_line(frame.line);
+            let line_content = source.get_line(frame.line);
             let line_num_width = frame.line.to_string().len().max(2);
 
             writeln!(f, "{:width$} |", "", width = line_num_width)?;
@@ -237,7 +274,8 @@ impl fmt::Display for RuntimeError {
             let display_count = self.stack_trace.len().min(MAX_FRAMES);
             for frame in &self.stack_trace[..display_count] {
                 let name = frame.function_name.as_deref().unwrap_or("<script>");
-                writeln!(f, "  {} ({}:{})", name, self.source.name, frame.line)?;
+                let source = frame.source.as_ref().unwrap_or(&self.source);
+                writeln!(f, "  {} ({}:{})", name, source.name, frame.line)?;
             }
             if self.stack_trace.len() > MAX_FRAMES {
                 writeln!(

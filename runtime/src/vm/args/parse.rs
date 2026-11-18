@@ -63,6 +63,30 @@ fn apply_vm_arg(
             config.max_heap_bytes = bytes;
             Ok(())
         }
+        "gc-stats" => {
+            config.gc_stats = parse_switch(raw_value, raw_arg)?;
+            Ok(())
+        }
+        "gc-stress" => {
+            config.gc_stress = parse_switch(raw_value, raw_arg)?;
+            Ok(())
+        }
+        "gc-verify" => {
+            config.gc_verify = parse_switch(raw_value, raw_arg)?;
+            Ok(())
+        }
+        "gc-nursery" => {
+            let bytes = parse_size_value(raw_value, raw_arg)?;
+            if bytes < VmConfig::MIN_GC_NURSERY_BYTES {
+                return Err(VmArgsError::InvalidValue {
+                    arg: raw_arg.to_string(),
+                    value: raw_value.to_string(),
+                    reason: format!("must be >= {} bytes", VmConfig::MIN_GC_NURSERY_BYTES),
+                });
+            }
+            config.gc_nursery_bytes = bytes;
+            Ok(())
+        }
         "max-instructions" => {
             *max_instructions = Some(parse_u64(raw_value, raw_arg)?);
             Ok(())
@@ -72,20 +96,22 @@ fn apply_vm_arg(
             Ok(())
         }
         "jit" => {
-            *jit = match raw_value {
-                "on" | "true" | "1" => true,
-                "off" | "false" | "0" => false,
-                _ => {
-                    return Err(VmArgsError::InvalidValue {
-                        arg: raw_arg.to_string(),
-                        value: raw_value.to_string(),
-                        reason: "expected on or off".to_string(),
-                    });
-                }
-            };
+            *jit = parse_switch(raw_value, raw_arg)?;
             Ok(())
         }
         _ => Err(VmArgsError::UnknownArgument(raw_arg.to_string())),
+    }
+}
+
+fn parse_switch(value: &str, arg: &str) -> Result<bool, VmArgsError> {
+    match value {
+        "on" | "true" | "1" => Ok(true),
+        "off" | "false" | "0" => Ok(false),
+        _ => Err(VmArgsError::InvalidValue {
+            arg: arg.to_string(),
+            value: value.to_string(),
+            reason: "expected on or off".to_string(),
+        }),
     }
 }
 
@@ -98,6 +124,18 @@ fn parse_u64(value: &str, arg: &str) -> Result<u64, VmArgsError> {
 }
 
 fn parse_size_bytes(value: &str, arg: &str) -> Result<u64, VmArgsError> {
+    let bytes = parse_size_value(value, arg)?;
+    if bytes < VmConfig::MIN_HEAP_BYTES {
+        return Err(VmArgsError::InvalidValue {
+            arg: arg.to_string(),
+            value: value.to_string(),
+            reason: format!("must be >= {} bytes", VmConfig::MIN_HEAP_BYTES),
+        });
+    }
+    Ok(bytes)
+}
+
+fn parse_size_value(value: &str, arg: &str) -> Result<u64, VmArgsError> {
     if value.is_empty() {
         return Err(VmArgsError::InvalidValue {
             arg: arg.to_string(),
@@ -154,14 +192,6 @@ fn parse_size_bytes(value: &str, arg: &str) -> Result<u64, VmArgsError> {
             value: value.to_string(),
             reason: "size overflows u64".to_string(),
         })?;
-
-    if bytes < VmConfig::MIN_HEAP_BYTES {
-        return Err(VmArgsError::InvalidValue {
-            arg: arg.to_string(),
-            value: value.to_string(),
-            reason: format!("must be >= {} bytes", VmConfig::MIN_HEAP_BYTES),
-        });
-    }
 
     Ok(bytes)
 }

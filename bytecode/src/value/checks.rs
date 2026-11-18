@@ -1,5 +1,6 @@
 use super::{
-    QNAN, TAG_BOOL, TAG_INT, TAG_MASK, TAG_NESTED_FN, TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
+    CHAR_FLAG, QNAN, TAG_BOOL, TAG_INT, TAG_MASK, TAG_NESTED_FN, TAG_NONE, TAG_NULL, TAG_PTR,
+    TAG_UNIT, Value,
 };
 
 impl Value {
@@ -26,7 +27,14 @@ impl Value {
         (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_BOOL)
     }
     pub fn is_null(&self) -> bool {
-        (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_NULL)
+        (self.0 & (QNAN | TAG_MASK | CHAR_FLAG)) == (QNAN | TAG_NULL)
+    }
+    pub fn is_char(&self) -> bool {
+        (self.0 & (QNAN | TAG_MASK | CHAR_FLAG)) == (QNAN | TAG_NULL | CHAR_FLAG)
+    }
+    #[inline(always)]
+    pub fn is_uninit(&self) -> bool {
+        self.0 == (QNAN | TAG_NULL | 1)
     }
     pub fn is_ptr(&self) -> bool {
         (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_PTR)

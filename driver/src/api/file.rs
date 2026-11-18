@@ -110,16 +110,7 @@ pub fn run_file_full_with_control_and_jit(
 
     let imports = load_modules_for_program(&stmts, file_path, src.clone(), &mut vm)?;
 
-    let main_stmts: Vec<_> = imports
-        .imported_impl_stmts
-        .iter()
-        .cloned()
-        .chain(
-            stmts
-                .into_iter()
-                .filter(|s| !matches!(s.kind, aelys_syntax::StmtKind::Needs(_))),
-        )
-        .collect();
+    let main_stmts = imports.program_stmts(stmts);
 
     let resolved = crate::modules::resolve_globals(Some(&imports), &vm);
     let all_native_signatures = imports.native_signatures.clone();
@@ -186,7 +177,8 @@ pub fn run_file_full_with_control_and_jit(
         resolved.known_native_globals,
         resolved.symbol_origins,
     )
-    .with_module_sources(imports.module_sources.clone());
+    .with_module_sources(imports.module_sources.clone())
+    .with_module_scopes(imports.imported_types.module_scopes.clone());
     let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
     let func_ref = if jit_enabled {

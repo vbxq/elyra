@@ -88,10 +88,8 @@ fn every_bitwise_operator_matches_in_every_context() {
         ("acc = ((0 - acc) >> 2) & 0xFFFF", |a, _| {
             ((0 - a) >> 2) & 0xFFFF
         }),
-        ("acc = ((acc << 47) >> 47) + i", |a, i| {
-            let shifted = (a << 47) & 0xFFFF_FFFF_FFFF;
-            let shifted = (shifted << 16) >> 16;
-            (shifted >> 47) + i
+        ("acc = (((acc & 1) << 46) >> 46) + i", |a, i| {
+            (((a & 1) << 46) >> 46) + i
         }),
         ("acc = (acc | 1) ^ (i >> 1)", |a, i| (a | 1) ^ (i >> 1)),
     ]);

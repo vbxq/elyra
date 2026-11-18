@@ -96,8 +96,7 @@ fn set_named_global(
     value: crate::vm::Value,
     operation: &str,
 ) -> Result<(), RuntimeErrorKind> {
-    let (heap, globals, globals_by_index_cache) =
-        (&vm.heap, &mut vm.globals, &mut vm.globals_by_index_cache);
+    let (heap, globals) = (&vm.heap, &mut vm.globals);
     let Some(object) = heap.get(name) else {
         return Err(RuntimeErrorKind::InvalidBytecode(format!(
             "{operation} constant points to invalid heap object"
@@ -113,7 +112,7 @@ fn set_named_global(
     } else {
         globals.insert(name.as_str().to_owned(), value);
     }
-    globals_by_index_cache.clear();
+    vm.clear_prepared_globals();
     vm.bump_jit_global_epoch();
     Ok(())
 }

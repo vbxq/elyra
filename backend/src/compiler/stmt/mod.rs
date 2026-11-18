@@ -2,8 +2,10 @@ mod control_flow;
 mod control_if;
 mod decl;
 mod expression;
+mod hoist;
 mod looping;
 mod typed;
+mod value;
 
 use super::Compiler;
 use aelys_common::Result;
@@ -20,6 +22,7 @@ impl Compiler {
                 type_annotation,
                 initializer,
                 is_pub,
+                ..
             } => self.compile_let(
                 name,
                 *mutable,
@@ -33,7 +36,11 @@ impl Compiler {
                 then_branch,
                 else_branch,
             } => self.compile_if(condition, then_branch, else_branch.as_deref()),
-            StmtKind::While { condition, body } => self.compile_while(condition, body),
+            StmtKind::While {
+                condition,
+                body,
+                label: None,
+            } => self.compile_while(condition, body),
             StmtKind::For {
                 iterator,
                 start,
@@ -41,6 +48,7 @@ impl Compiler {
                 inclusive,
                 step,
                 body,
+                label: None,
             } => self.compile_for(
                 iterator,
                 start,
@@ -50,9 +58,22 @@ impl Compiler {
                 body,
                 stmt.span,
             ),
+            StmtKind::While { .. } | StmtKind::For { .. } => Err(untyped_unsupported(
+                "a labeled loop",
+                stmt.span,
+                &self.source,
+            )),
             StmtKind::ForEach { .. } => Ok(()),
-            StmtKind::Break => self.compile_break(stmt.span),
-            StmtKind::Continue => self.compile_continue(stmt.span),
+            StmtKind::Break {
+                label: None,
+                value: None,
+            } => self.compile_break(stmt.span),
+            StmtKind::Continue { label: None } => self.compile_continue(stmt.span),
+            StmtKind::Break { .. } | StmtKind::Continue { .. } => Err(untyped_unsupported(
+                "a labeled or valued `break`/`continue`",
+                stmt.span,
+                &self.source,
+            )),
             StmtKind::Return(expr) => self.compile_return(expr.as_ref(), stmt.span),
             StmtKind::Function(func) => self.compile_function(func),
             StmtKind::ImplDecl { .. } => Ok(()),
@@ -75,4 +96,19 @@ impl Compiler {
     pub fn compile_needs(&mut self, _: &aelys_syntax::ast::NeedsStmt, _: Span) -> Result<()> {
         Ok(())
     }
+}
+
+pub(crate) fn untyped_unsupported(
+    what: &str,
+    span: Span,
+    source: &std::sync::Arc<aelys_syntax::Source>,
+) -> aelys_common::AelysError {
+    aelys_common::error::CompileError::new(
+        aelys_common::error::CompileErrorKind::TypeInferenceError(format!(
+            "{what} needs the typed pipeline"
+        )),
+        span,
+        source.clone(),
+    )
+    .into()
 }

@@ -20,6 +20,7 @@ fn test_infer_type_has_vars() {
     assert!(InferType::Var(TypeVarId(0)).has_vars());
 
     let fn_with_var = InferType::Function {
+        modes: aelys_sema::types::ParamModes::plain(),
         params: vec![InferType::I64],
         ret: Box::new(InferType::Var(TypeVarId(0))),
     };

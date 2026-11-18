@@ -43,6 +43,7 @@ impl TypeInference {
             TypedExprKind::Float(f) => TypedExprKind::Float(*f),
             TypedExprKind::Bool(b) => TypedExprKind::Bool(*b),
             TypedExprKind::String(s) => TypedExprKind::String(s.clone()),
+            TypedExprKind::Char(s) => TypedExprKind::Char(*s),
             TypedExprKind::FmtString(parts) => self.substitute_fmt_string(parts, subst),
             TypedExprKind::Null => TypedExprKind::Null,
             TypedExprKind::Unit => TypedExprKind::Unit,
@@ -156,6 +157,13 @@ impl TypeInference {
                 param: param.clone(),
                 trait_name: trait_name.clone(),
                 item: item.clone(),
+            },
+            TypedExprKind::Block(stmts) => {
+                TypedExprKind::Block(self.apply_substitution_stmts(stmts, subst))
+            }
+            TypedExprKind::Loop { body, label } => TypedExprKind::Loop {
+                body: self.apply_substitution_stmts(body, subst),
+                label: label.clone(),
             },
         }
     }
@@ -679,6 +687,7 @@ impl TypeInference {
             TypedPatternKind::Binding(name) => TypedPatternKind::Binding(name.clone()),
             TypedPatternKind::Int(value) => TypedPatternKind::Int(*value),
             TypedPatternKind::String(value) => TypedPatternKind::String(value.clone()),
+            TypedPatternKind::Char(value) => TypedPatternKind::Char(*value),
             TypedPatternKind::Bool(value) => TypedPatternKind::Bool(*value),
             TypedPatternKind::Variant {
                 path,
@@ -722,6 +731,10 @@ impl TypeInference {
                     .map(|alternative| self.apply_substitution_pattern(alternative, subst))
                     .collect(),
             ),
+            TypedPatternKind::Range { start, end } => TypedPatternKind::Range {
+                start: *start,
+                end: *end,
+            },
         };
         TypedPattern {
             kind,

@@ -8,7 +8,7 @@ use std::sync::Arc;
 impl Compiler {
     pub fn new(name: Option<String>, source: Arc<Source>) -> Self {
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -18,10 +18,12 @@ impl Compiler {
             all_enclosing_locals: Vec::new(),
             loop_stack: Vec::new(),
             loop_variables: Vec::new(),
+            hoisted_literals: Vec::new(),
             scope_depth: 0,
             next_register: 0,
             register_pool: vec![false; 65_536].into_boxed_slice(),
             register_search_start: 0,
+            call_window_fault: None,
             globals: HashMap::new(),
             global_indices: HashMap::new(),
             next_global_index: 0,
@@ -35,6 +37,8 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -57,7 +61,7 @@ impl Compiler {
         all_enclosing_locals.extend(parent_all_enclosing_locals);
 
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -67,10 +71,12 @@ impl Compiler {
             all_enclosing_locals,
             loop_stack: Vec::new(),
             loop_variables: Vec::new(),
+            hoisted_literals: Vec::new(),
             scope_depth: 0,
             next_register: 0,
             register_pool: vec![false; 65_536].into_boxed_slice(),
             register_search_start: 0,
+            call_window_fault: None,
             globals,
             global_indices,
             next_global_index,
@@ -84,6 +90,8 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -96,7 +104,7 @@ impl Compiler {
         symbol_origins: HashMap<String, String>,
     ) -> Self {
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -106,10 +114,12 @@ impl Compiler {
             all_enclosing_locals: Vec::new(),
             loop_stack: Vec::new(),
             loop_variables: Vec::new(),
+            hoisted_literals: Vec::new(),
             scope_depth: 0,
             next_register: 0,
             register_pool: vec![false; 65_536].into_boxed_slice(),
             register_search_start: 0,
+            call_window_fault: None,
             globals: HashMap::new(),
             global_indices: HashMap::new(),
             next_global_index: 0,
@@ -123,6 +133,8 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -136,7 +148,7 @@ impl Compiler {
         globals: HashMap<String, bool>,
     ) -> Self {
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -146,10 +158,12 @@ impl Compiler {
             all_enclosing_locals: Vec::new(),
             loop_stack: Vec::new(),
             loop_variables: Vec::new(),
+            hoisted_literals: Vec::new(),
             scope_depth: 0,
             next_register: 0,
             register_pool: vec![false; 65_536].into_boxed_slice(),
             register_search_start: 0,
+            call_window_fault: None,
             globals,
             global_indices: HashMap::new(),
             next_global_index: 0,
@@ -163,11 +177,32 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
+    }
+
+    pub fn with_own_slots(mut self, slots: HashMap<String, String>) -> Self {
+        self.own_slots = Rc::new(slots);
+        self
     }
 
     pub fn with_module_sources(mut self, sources: HashMap<String, Arc<Source>>) -> Self {
         self.module_sources = Rc::new(sources);
         self
     }
+
+    pub fn with_module_scopes(
+        mut self,
+        scopes: std::collections::BTreeMap<String, aelys_sema::infer::imports::ModuleScope>,
+    ) -> Self {
+        self.module_scopes = Rc::new(scopes);
+        self
+    }
+}
+
+fn sourced_function(name: Option<String>, source: &Arc<Source>) -> Function {
+    let mut function = Function::new(name, 0);
+    function.source = Some(Arc::clone(source));
+    function
 }

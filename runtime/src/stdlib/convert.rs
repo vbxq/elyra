@@ -1,6 +1,6 @@
 //! std.convert - Type conversion functions
 
-use crate::stdlib::helpers::{get_int, get_string, make_int_checked, make_string, option_some};
+use crate::stdlib::helpers::{float_to_int_checked, get_int, get_string, make_string, option_some};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
@@ -52,50 +52,37 @@ fn convert_error(vm: &VM, op: &'static str, msg: String) -> RuntimeError {
     })
 }
 
-// Parse string to int. Handles 0x, 0o, 0b prefixes. Returns null on failure.
+fn parse_int_text(text: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    let (negative, unsigned) = match trimmed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    let (radix, digits) = match unsigned.get(..2) {
+        Some("0x" | "0X") => (16, &unsigned[2..]),
+        Some("0o" | "0O") => (8, &unsigned[2..]),
+        Some("0b" | "0B") => (2, &unsigned[2..]),
+        _ => (10, unsigned),
+    };
+    parse_digits(digits, radix, negative)
+}
+
+fn parse_digits(digits: &str, radix: u32, negative: bool) -> Option<i64> {
+    if digits.is_empty() || digits.starts_with(['+', '-']) {
+        return None;
+    }
+    let magnitude = i128::from(u64::from_str_radix(digits, radix).ok()?);
+    let value = if negative { -magnitude } else { magnitude };
+    i64::try_from(value)
+        .ok()
+        .filter(|value| Value::int_checked(*value).is_ok())
+}
+
 fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "convert.parse_int")?;
-    let trimmed = s.trim();
-    if let Some(hex) = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-    {
-        match i64::from_str_radix(hex, 16) {
-            Ok(n) => return option_some(vm, Value::int(n)),
-            Err(_) => return Ok(Value::none()),
-        }
-    }
-    if let Some(oct) = trimmed
-        .strip_prefix("0o")
-        .or_else(|| trimmed.strip_prefix("0O"))
-    {
-        match i64::from_str_radix(oct, 8) {
-            Ok(n) => return option_some(vm, Value::int(n)),
-            Err(_) => return Ok(Value::none()),
-        }
-    }
-    if let Some(bin) = trimmed
-        .strip_prefix("0b")
-        .or_else(|| trimmed.strip_prefix("0B"))
-    {
-        match i64::from_str_radix(bin, 2) {
-            Ok(n) => return option_some(vm, Value::int(n)),
-            Err(_) => return Ok(Value::none()),
-        }
-    }
-
-    match trimmed.parse::<i64>() {
-        Ok(n) => option_some(vm, Value::int(n)),
-        Err(_) => {
-            // Try parsing as float and truncating (with range check)
-            match trimmed.parse::<f64>() {
-                Ok(f) => match make_int_checked(vm, f as i64, "convert.parse_int") {
-                    Ok(value) => option_some(vm, value),
-                    Err(_) => Ok(Value::none()),
-                },
-                Err(_) => Ok(Value::none()),
-            }
-        }
+    match parse_int_text(s) {
+        Some(n) => option_some(vm, Value::int(n)),
+        None => Ok(Value::none()),
     }
 }
 
@@ -112,9 +99,14 @@ fn native_parse_int_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
     }
 
     let radix = u32::try_from(radix).expect("radix was range checked");
-    match i64::from_str_radix(s.trim(), radix) {
-        Ok(n) => option_some(vm, Value::int(n)),
-        Err(_) => Ok(Value::none()),
+    let trimmed = s.trim();
+    let (negative, digits) = match trimmed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    match parse_digits(digits, radix, negative) {
+        Some(n) => option_some(vm, Value::int(n)),
+        None => Ok(Value::none()),
     }
 }
 
@@ -223,7 +215,7 @@ fn native_to_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Ok(Value::int(i));
     }
     if let Some(f) = value.as_float() {
-        return make_int_checked(vm, f as i64, "convert.to_int");
+        return float_to_int_checked(vm, f, "convert.to_int");
     }
     if let Some(b) = value.as_bool() {
         return Ok(Value::int(if b { 1 } else { 0 }));
@@ -232,14 +224,15 @@ fn native_to_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return Ok(Value::int(0));
     }
 
-    // Try string conversion
     if let Ok(s) = get_string(vm, value, "convert.to_int") {
-        if let Ok(n) = s.trim().parse::<i64>() {
-            return Ok(Value::int(n));
-        }
-        if let Ok(f) = s.trim().parse::<f64>() {
-            return make_int_checked(vm, f as i64, "convert.to_int");
-        }
+        return match parse_int_text(s) {
+            Some(n) => Ok(Value::int(n)),
+            None => Err(convert_error(
+                vm,
+                "convert.to_int",
+                format!("{s:?} is not an integer in the 48-bit range"),
+            )),
+        };
     }
 
     Err(convert_error(

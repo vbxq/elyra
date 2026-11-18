@@ -1,6 +1,6 @@
 use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
-use crate::typed_ast::TypedStmtKind;
+use crate::typed_ast::{TypedExprKind, TypedStmtKind};
 use crate::types::InferType;
 use aelys_syntax::{Expr, Span, Stmt};
 
@@ -42,7 +42,12 @@ impl TypeInference {
         }
     }
 
-    pub(super) fn infer_while_stmt(&mut self, condition: &Expr, body: &Stmt) -> TypedStmtKind {
+    pub(super) fn infer_while_stmt(
+        &mut self,
+        condition: &Expr,
+        body: &Stmt,
+        label: Option<&String>,
+    ) -> TypedStmtKind {
         let typed_cond = self.infer_expr(condition);
 
         if !self.reject_dynamic(
@@ -64,14 +69,18 @@ impl TypeInference {
             ));
         }
 
-        let typed_body = self.infer_stmt(body);
+        let typed_body = self
+            .with_loop_frame(label, false, |inference| inference.infer_stmt(body))
+            .0;
 
         TypedStmtKind::While {
             condition: typed_cond,
             body: Box::new(typed_body),
+            label: label.cloned(),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn infer_for_stmt(
         &mut self,
         iterator: &str,
@@ -80,24 +89,37 @@ impl TypeInference {
         inclusive: bool,
         step: Option<&Expr>,
         body: &Stmt,
+        label: Option<&String>,
     ) -> TypedStmtKind {
-        let typed_start = self.infer_expr(start);
-        let typed_end = self.infer_expr(end);
-        let typed_step = step.map(|s| self.infer_expr(s));
+        let mut typed_start = self.infer_expr(start);
+        let mut typed_end = self.infer_expr(end);
+        let mut typed_step = step.map(|s| self.infer_expr(s));
+        let bound_ty = [&typed_start.ty, &typed_end.ty]
+            .into_iter()
+            .find(|ty| ty.is_sized_integer())
+            .cloned()
+            .unwrap_or(InferType::I64);
+        if bound_ty.is_sized_integer() {
+            self.fit_int_literal(&mut typed_start, &bound_ty);
+            self.fit_int_literal(&mut typed_end, &bound_ty);
+            if let Some(typed_step) = typed_step.as_mut() {
+                self.fit_int_literal(typed_step, &bound_ty);
+            }
+        }
 
         if !self.reject_dynamic(
             &typed_start.ty,
-            &InferType::I64,
+            &bound_ty,
             start.span,
             ConstraintReason::ForBounds,
         ) && !self.reject_untyped_native(
             &typed_start.ty,
-            &InferType::I64,
+            &bound_ty,
             start.span,
             ConstraintReason::ForBounds,
         ) {
             self.constraints.push(Constraint::equal(
-                InferType::I64,
+                bound_ty.clone(),
                 typed_start.ty.clone(),
                 start.span,
                 ConstraintReason::ForBounds,
@@ -105,17 +127,17 @@ impl TypeInference {
         }
         if !self.reject_dynamic(
             &typed_end.ty,
-            &InferType::I64,
+            &bound_ty,
             end.span,
             ConstraintReason::ForBounds,
         ) && !self.reject_untyped_native(
             &typed_end.ty,
-            &InferType::I64,
+            &bound_ty,
             end.span,
             ConstraintReason::ForBounds,
         ) {
             self.constraints.push(Constraint::equal(
-                InferType::I64,
+                bound_ty.clone(),
                 typed_end.ty.clone(),
                 end.span,
                 ConstraintReason::ForBounds,
@@ -123,19 +145,16 @@ impl TypeInference {
         }
         if let Some(ref ts) = typed_step {
             let step_span = step.map(|s| s.span).unwrap_or(body.span);
-            if !self.reject_dynamic(
-                &ts.ty,
-                &InferType::I64,
-                step_span,
-                ConstraintReason::ForBounds,
-            ) && !self.reject_untyped_native(
-                &ts.ty,
-                &InferType::I64,
-                step_span,
-                ConstraintReason::ForBounds,
-            ) {
+            if !self.reject_dynamic(&ts.ty, &bound_ty, step_span, ConstraintReason::ForBounds)
+                && !self.reject_untyped_native(
+                    &ts.ty,
+                    &bound_ty,
+                    step_span,
+                    ConstraintReason::ForBounds,
+                )
+            {
                 self.constraints.push(Constraint::equal(
-                    InferType::I64,
+                    bound_ty.clone(),
                     ts.ty.clone(),
                     step_span,
                     ConstraintReason::ForBounds,
@@ -144,8 +163,10 @@ impl TypeInference {
         }
 
         self.env.push_scope();
-        self.env.define_local(iterator.to_string(), InferType::I64);
-        let typed_body = self.infer_stmt(body);
+        self.env.define_local(iterator.to_string(), bound_ty);
+        let typed_body = self
+            .with_loop_frame(label, false, |inference| inference.infer_stmt(body))
+            .0;
         self.env.pop_scope();
 
         TypedStmtKind::For {
@@ -155,6 +176,7 @@ impl TypeInference {
             inclusive,
             step: Box::new(typed_step),
             body: Box::new(typed_body),
+            label: label.cloned(),
         }
     }
 
@@ -164,12 +186,12 @@ impl TypeInference {
         iterable: &Expr,
         body: &Stmt,
         read_only: bool,
-        _span: Span,
+        label: Option<&String>,
     ) -> TypedStmtKind {
         let typed_iterable = self.infer_expr(iterable);
 
         let elem_type = match &typed_iterable.ty {
-            InferType::String => InferType::String,
+            InferType::String => InferType::Char,
             InferType::Vec(inner) => (**inner).clone(),
             InferType::Array(inner) | InferType::FixedArray(inner, _) => (**inner).clone(),
             InferType::Dynamic => {
@@ -220,10 +242,13 @@ impl TypeInference {
         self.env.push_scope();
         self.env
             .define_local(iterator.to_string(), elem_type.clone());
+        self.record_binding_origins(iterable, &[iterator.to_string()]);
         if let Some(name) = collection_binding_name(iterable) {
             self.env.mark_read_only(name);
         }
-        let typed_body = self.infer_stmt(body);
+        let typed_body = self
+            .with_loop_frame(label, false, |inference| inference.infer_stmt(body))
+            .0;
         self.env.pop_scope();
 
         TypedStmtKind::ForEach {
@@ -232,8 +257,166 @@ impl TypeInference {
             elem_type,
             read_only,
             body: Box::new(typed_body),
+            label: label.cloned(),
         }
     }
+
+    fn with_loop_frame<T>(
+        &mut self,
+        label: Option<&String>,
+        yields_value: bool,
+        infer: impl FnOnce(&mut Self) -> T,
+    ) -> (T, LoopFrame) {
+        self.loop_frames.push(LoopFrame {
+            label: label.cloned(),
+            value: yields_value.then(|| self.type_gen.fresh()),
+            broken: false,
+        });
+        let result = infer(self);
+        let frame = self
+            .loop_frames
+            .pop()
+            .expect("the loop frame pushed above is still on the stack");
+        (result, frame)
+    }
+
+    pub(crate) fn infer_loop_expr(
+        &mut self,
+        body: &[Stmt],
+        label: Option<&String>,
+    ) -> (TypedExprKind, InferType) {
+        let while_let = is_while_let_body(body);
+        let (typed_body, frame) = self.with_loop_frame(label, !while_let, |inference| {
+            inference.env.push_scope();
+            let typed = inference.infer_stmts(body);
+            inference.env.pop_scope();
+            typed
+        });
+        let ty = match (frame.broken, frame.value) {
+            _ if while_let => InferType::Unit,
+            (true, Some(value)) => value,
+            _ => InferType::Never,
+        };
+        (
+            TypedExprKind::Loop {
+                body: typed_body,
+                label: label.cloned(),
+            },
+            ty,
+        )
+    }
+
+    fn loop_frame_index(&mut self, label: Option<&String>, span: Span) -> Option<usize> {
+        match label {
+            None => self.loop_frames.len().checked_sub(1),
+            Some(label) => {
+                let found = self
+                    .loop_frames
+                    .iter()
+                    .rposition(|frame| frame.label.as_ref() == Some(label));
+                if found.is_none() {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::UndefinedLabel {
+                            label: label.clone(),
+                        },
+                        span,
+                        reason: ConstraintReason::Other("loop label".to_string()),
+                    });
+                }
+                found
+            }
+        }
+    }
+
+    pub(super) fn infer_break_stmt(
+        &mut self,
+        label: Option<&String>,
+        value: Option<&Expr>,
+        span: Span,
+    ) -> TypedStmtKind {
+        let typed_value = value.map(|value| self.infer_expr(value));
+        if let Some(index) = self.loop_frame_index(label, span) {
+            let frame = &mut self.loop_frames[index];
+            frame.broken = true;
+            match (&frame.value, &typed_value) {
+                (Some(target), Some(found)) => {
+                    let target = target.clone();
+                    let reason = ConstraintReason::Other("`break` values of one loop".to_string());
+                    if !self.reject_dynamic(&found.ty, &target, found.span, reason.clone()) {
+                        self.constraints.push(Constraint::equal(
+                            target,
+                            found.ty.clone(),
+                            found.span,
+                            reason,
+                        ));
+                    }
+                }
+                (Some(target), None) => {
+                    let target = target.clone();
+                    self.constraints.push(Constraint::equal(
+                        target,
+                        InferType::Unit,
+                        span,
+                        ConstraintReason::Other("`break` values of one loop".to_string()),
+                    ));
+                }
+                (None, Some(_)) => self.errors.push(TypeError {
+                    kind: TypeErrorKind::BreakValueOutsideLoop {
+                        label: label.cloned(),
+                    },
+                    span,
+                    reason: ConstraintReason::Other("break value".to_string()),
+                }),
+                (None, None) => {}
+            }
+        }
+        TypedStmtKind::Break {
+            label: label.cloned(),
+            value: typed_value,
+        }
+    }
+
+    pub(super) fn infer_continue_stmt(
+        &mut self,
+        label: Option<&String>,
+        span: Span,
+    ) -> TypedStmtKind {
+        self.loop_frame_index(label, span);
+        TypedStmtKind::Continue {
+            label: label.cloned(),
+        }
+    }
+}
+
+pub(crate) struct LoopFrame {
+    label: Option<String>,
+    value: Option<InferType>,
+    broken: bool,
+}
+
+// the parser spells `while let` as a loop over a match whose synthetic last arm breaks
+fn is_while_let_body(body: &[Stmt]) -> bool {
+    let [stmt] = body else {
+        return false;
+    };
+    let aelys_syntax::StmtKind::Expression(Expr {
+        kind: aelys_syntax::ExprKind::Match { arms, .. },
+        ..
+    }) = &stmt.kind
+    else {
+        return false;
+    };
+    arms.last().is_some_and(|arm| {
+        arm.synthetic
+            && matches!(
+                &arm.body,
+                aelys_syntax::MatchArmBody::Block(stmts)
+                    if matches!(
+                        stmts.as_slice(),
+                        [Stmt { kind: aelys_syntax::StmtKind::Break { label: None, value: None }, .. }]
+                    )
+            )
+    })
 }
 
 fn collection_binding_name(expr: &aelys_syntax::Expr) -> Option<&str> {

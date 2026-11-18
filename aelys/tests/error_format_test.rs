@@ -39,11 +39,13 @@ fn test_runtime_error_with_stack_trace() {
                 function_name: Some("foo".to_string()),
                 line: 2,
                 column: 5,
+                source: None,
             },
             StackFrame {
                 function_name: None,
                 line: 4,
                 column: 1,
+                source: None,
             },
         ],
         source,

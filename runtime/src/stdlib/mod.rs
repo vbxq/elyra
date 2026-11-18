@@ -221,6 +221,22 @@ pub mod helpers {
         Ok(handle as usize)
     }
 
+    // the range test runs on the f64 itself: `f as i64` saturates and would hide the overflow
+    pub fn float_to_int_checked(vm: &VM, f: f64, op: &'static str) -> Result<Value, RuntimeError> {
+        let truncated = f.trunc();
+        if !truncated.is_finite()
+            || truncated < Value::INT_MIN as f64
+            || truncated > Value::INT_MAX as f64
+        {
+            return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+                operation: op,
+                expected: "float with an integer value in the 48-bit range",
+                got: format!("{f}"),
+            }));
+        }
+        make_int_checked(vm, truncated as i64, op)
+    }
+
     pub fn make_int_checked(vm: &VM, n: i64, op: &'static str) -> Result<Value, RuntimeError> {
         Value::int_checked(n).map_err(|_| {
             vm.runtime_error(RuntimeErrorKind::TypeError {

@@ -55,6 +55,7 @@ fn test_captures() {
 fn test_functions() {
     let mut env = TypeEnv::new();
     let fn_type = InferType::Function {
+        modes: aelys_sema::types::ParamModes::plain(),
         params: vec![InferType::I64],
         ret: Box::new(InferType::I64),
     };

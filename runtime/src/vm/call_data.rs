@@ -1,4 +1,4 @@
-use super::{GcRef, NativeFunction, Value};
+use super::{GcRef, NativeFunctionImpl, Value};
 
 /// Cached function call data to avoid repeated heap lookups.
 pub(super) enum CallData {
@@ -12,7 +12,8 @@ pub(super) enum CallData {
         constants_len: usize,
     },
     Native {
-        native: NativeFunction,
+        arity: u16,
+        func: Option<NativeFunctionImpl>,
     },
     Closure {
         inner_func_ref: GcRef,

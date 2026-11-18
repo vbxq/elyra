@@ -1,6 +1,6 @@
 use super::super::decode::decode_abc;
 use super::super::state::{DispatchControl, DispatchState};
-use crate::vm::{CallFrame, GcRef, MAX_REGISTERS, NativeFunction, ObjectKind, VM, Value};
+use crate::vm::{CallFrame, GcRef, MAX_REGISTERS, NativeFunctionImpl, ObjectKind, VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 enum CallData {
@@ -13,7 +13,7 @@ enum CallData {
         constants: *const Value,
         constants_len: usize,
     },
-    Native(NativeFunction),
+    Native(u16, Option<NativeFunctionImpl>),
     Closure {
         arity: u16,
         callee_gmap: usize,
@@ -62,7 +62,7 @@ pub(crate) fn execute(
                 constants: function.constants.as_ptr(),
                 constants_len: function.constants.len(),
             },
-            ObjectKind::Native(native) => CallData::Native(native.clone()),
+            ObjectKind::Native(native) => CallData::Native(native.arity, vm.native_impl(native)),
             ObjectKind::Closure(closure) => {
                 let callee_gmap = vm
                     .heap
@@ -96,17 +96,10 @@ pub(crate) fn execute(
         }
     };
 
-    if let CallData::Native(native) = call_data {
-        validate_arity(vm, native.arity, argument_count)?;
-        let mut arguments = Vec::with_capacity(usize::from(argument_count));
-        for argument in 0..usize::from(argument_count) {
-            arguments.push(state.read_register(
-                vm,
-                state.base + usize::from(destination) + 1 + argument,
-                instruction_pointer,
-            )?);
-        }
-        let result = vm.call_cached_native(&native, &arguments)?;
+    if let CallData::Native(arity, func) = call_data {
+        validate_arity(vm, arity, argument_count)?;
+        let first = state.base + usize::from(destination) + 1;
+        let result = vm.call_native_registers(func, callee, first, usize::from(argument_count))?;
         state.write_register(
             vm,
             state.base + usize::from(destination),
@@ -179,7 +172,7 @@ pub(crate) fn execute(
                 true,
             )
         }
-        CallData::Native(_) => unreachable!("native call returned before frame construction"),
+        CallData::Native(..) => unreachable!("native call returned before frame construction"),
         CallData::Invalid => {
             return Err(vm.runtime_error(RuntimeErrorKind::NotCallable(
                 "non-callable object".to_string(),

@@ -22,6 +22,7 @@ const MAX_FRAME_REGISTERS: usize = 256;
 const PAYLOAD: u64 = 0x0000_FFFF_FFFF_FFFF;
 const TAG_BITS: u64 = 0x7FFF_0000_0000_0000;
 const QNAN: u64 = 0x7FF8_0000_0000_0000;
+const CHAR_FLAG: u64 = 0x0000_8000_0000_0000;
 
 pub(crate) struct FrameCompiled {
     info: FrameCodeInfo,
@@ -176,6 +177,15 @@ fn decode(function: &Function) -> Option<Vec<Inst>> {
                 inst.d = usize::try_from(second & 0xffff).ok()?;
                 inst.valid = word & 0x00ff_0000 == 0
                     && (inst.d == 0 || matches!(op, OpCode::EnumLoad | OpCode::EnumNew));
+            }
+            InstructionFormat::Fixed => {
+                let first = words[ip + 1];
+                let second = words[ip + 2];
+                inst.imm = i64::from(word & 0x00ff_ffff);
+                inst.a = usize::try_from(first >> 16).ok()?;
+                inst.b = usize::try_from(first & 0xffff).ok()?;
+                inst.c = usize::try_from(second >> 16).ok()?;
+                inst.d = usize::try_from(second & 0xffff).ok()?;
             }
             _ => inst.valid = false,
         }
@@ -352,6 +362,16 @@ impl Analysis<'_> {
                 self.field_check(schema, c)?;
                 simple(vec![a, b], None)
             }
+            MulShr | ShlDiv => {
+                if fixed_kind(inst) != aelys_bytecode::FixedKind::INT_BYTE {
+                    return None;
+                }
+                if fixed_mode(inst) == 0 {
+                    simple(vec![b, c], Some(a))
+                } else {
+                    simple(vec![b, c, inst.d], Some(a))
+                }
+            }
             EnumTest => {
                 let schema = usize::try_from(inst.imm).ok()?;
                 self.function.enum_schemas.get(schema)?.variants.get(c)?;
@@ -476,6 +496,7 @@ impl Analysis<'_> {
                     None => every(),
                 }
             }
+            MulShr | ShlDiv => simple(vec![b, c, inst.d], Some(a)),
             StructNew | EnumNew | EnumTest | EnumLoad => {
                 let (Some(first), Some(second)) = (words.get(inst.ip + 1), words.get(inst.ip + 2))
                 else {
@@ -519,6 +540,11 @@ fn integer_registers(
     let mut candidate = Live::all(analysis.registers);
     let mut wanted = Live::default();
     let mut counters = Live::default();
+    let entry = region
+        .live_in
+        .get(&region.entry)
+        .copied()
+        .unwrap_or_default();
     for inst in &insts {
         let loop_registers: &[usize] = match inst.op {
             ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
@@ -544,6 +570,7 @@ fn integer_registers(
             ArrayLoadI | ArrayLoadF | ArrayLoadB | ArrayLoadP | VecLoadI | VecLoadF | VecLoadB
             | VecLoadP => &[inst.c],
             ArrayStoreI | VecStoreI => &[inst.b, inst.c],
+            MulShr | ShlDiv => &[inst.b, inst.c],
             ArrayStoreF | ArrayStoreB | ArrayStoreP | VecStoreF | VecStoreB | VecStoreP => {
                 &[inst.b]
             }
@@ -588,7 +615,8 @@ fn integer_registers(
                             | Shr | BitAnd | BitOr | BitXor | ShlII | ShrII | AndII | OrII
                             | XorII | NotI | BitNot | ShlIImm | ShrIImm | AndIImm | OrIImm
                             | XorIImm | ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong
-                            | VecLoadI | ArrayLoadI | VecLen | ArrayLen | AddGlobalI => true,
+                            | VecLoadI | ArrayLoadI | VecLen | ArrayLen | AddGlobalI | MulShr
+                            | ShlDiv => true,
                             LoadK | LoadKWide => constant_index(inst).is_some_and(|index| {
                                 matches!(
                                     analysis.function.constants.get(index),
@@ -601,7 +629,11 @@ fn integer_registers(
                                     Some(FieldCheck::Int(_))
                                 )
                             }),
-                            Move => candidate.contains(inst.b) && wanted.contains(inst.b),
+                            Move => {
+                                candidate.contains(inst.b)
+                                    && wanted.contains(inst.b)
+                                    && (!entry.contains(inst.b) || counters.contains(inst.b))
+                            }
                             _ => false,
                         };
                         defs.push((def, integer));
@@ -621,11 +653,6 @@ fn integer_registers(
             break;
         }
     }
-    let entry = region
-        .live_in
-        .get(&region.entry)
-        .copied()
-        .unwrap_or_default();
     let mut ints = Live::default();
     for register in 0..analysis.registers {
         if candidate.contains(register)
@@ -709,6 +736,14 @@ fn function_liveness(
     (by_ip_map(live_in), by_ip_map(live_out))
 }
 
+fn fixed_kind(inst: &Inst) -> u8 {
+    ((inst.imm >> 16) & 0xff) as u8
+}
+
+fn fixed_mode(inst: &Inst) -> u8 {
+    ((inst.imm >> 8) & 0xff) as u8
+}
+
 fn constant_index(inst: &Inst) -> Option<usize> {
     match inst.op {
         OpCode::LoadK => usize::try_from(inst.imm & 0xffff).ok(),
@@ -783,6 +818,7 @@ fn region(
 }
 
 struct Helpers {
+    shl_div: FuncRef,
     enumeration: FuncRef,
     element: FuncRef,
     view: FuncRef,
@@ -972,25 +1008,18 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         }
     }
 
-    fn global_view(&mut self) -> (ClifValue, ClifValue) {
-        let globals = self.builder.ins().load(
-            types::I64,
-            Self::trusted(),
-            self.context,
-            FrameJitContext::GLOBALS,
-        );
-        let length = self.builder.ins().load(
-            types::I64,
-            Self::trusted(),
-            self.context,
-            FrameJitContext::GLOBALS_LEN,
-        );
-        (globals, length)
-    }
-
     // every global read of machine code goes through here, so a read check belongs in this one place
     fn load_global(&mut self, index: usize, exit: Block) -> ClifValue {
-        let (globals, length) = self.global_view();
+        let values = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.data,
+            FrameData::VIEW_VALUES,
+        );
+        let length =
+            self.builder
+                .ins()
+                .load(types::I64, Self::trusted(), self.data, FrameData::VIEW_LEN);
         let inside = self.builder.ins().icmp_imm_s(
             IntCC::UnsignedGreaterThan,
             length,
@@ -998,9 +1027,17 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         );
         self.guard(inside, exit);
         let offset = i32::try_from(index * 8).unwrap_or(i32::MAX);
-        self.builder
+        let value = self
+            .builder
             .ins()
-            .load(types::I64, Self::trusted(), globals, offset)
+            .load(types::I64, Self::trusted(), values, offset);
+        let initialized = self.builder.ins().icmp_imm_s(
+            IntCC::NotEqual,
+            value,
+            i64::from_ne_bytes(Value::uninit().raw().to_ne_bytes()),
+        );
+        self.guard(initialized, exit);
+        value
     }
 
     fn store_global(&mut self, index: usize, value: ClifValue, exit: Block) {
@@ -1008,10 +1045,10 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             .builder
             .ins()
             .iconst(types::I64, i64::try_from(index).unwrap_or(i64::MAX));
-        let call = self
-            .builder
-            .ins()
-            .call(self.helpers.set_global, &[self.context, index, value]);
+        let call = self.builder.ins().call(
+            self.helpers.set_global,
+            &[self.context, self.data, index, value],
+        );
         let stored = self.builder.inst_results(call)[0];
         self.guard(stored, exit);
     }
@@ -1164,7 +1201,16 @@ impl<'a, 'b> Lowerer<'a, 'b> {
     }
 
     fn is_null(&mut self, value: ClifValue) -> ClifValue {
-        self.tag_is(value, Value::null().raw() & TAG_BITS)
+        let mask = TAG_BITS | CHAR_FLAG;
+        let masked = self
+            .builder
+            .ins()
+            .band_imm_s(value, i64::from_ne_bytes(mask.to_ne_bytes()));
+        self.builder.ins().icmp_imm_s(
+            IntCC::Equal,
+            masked,
+            i64::from_ne_bytes((Value::null().raw() & mask).to_ne_bytes()),
+        )
     }
 
     fn is_float(&mut self, value: ClifValue) -> ClifValue {
@@ -1383,7 +1429,14 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         let raw = match inst.op {
             OpCode::Add | OpCode::AddII | OpCode::AddIIG => self.builder.ins().iadd(left, right),
             OpCode::Sub | OpCode::SubII | OpCode::SubIIG => self.builder.ins().isub(left, right),
-            OpCode::Mul | OpCode::MulII | OpCode::MulIIG => self.builder.ins().imul(left, right),
+            OpCode::Mul | OpCode::MulII | OpCode::MulIIG => {
+                let low = self.builder.ins().imul(left, right);
+                let high = self.builder.ins().smulhi(left, right);
+                let sign = self.builder.ins().sshr_imm_s(low, 63);
+                let fits = self.builder.ins().icmp(IntCC::Equal, high, sign);
+                self.guard(fits, exit);
+                low
+            }
             _ => {
                 let nonzero = self.builder.ins().icmp_imm_s(IntCC::NotEqual, right, 0);
                 self.guard(nonzero, exit);
@@ -1433,13 +1486,17 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.set(inst.a, boxed);
     }
 
-    // the only copy of the interpreter's shift rule: count masked to 63, result wrapped to 48 bits
+    // the only copy of the interpreter's shift rule: count masked to 63, a left shift that leaves the 48-bit range traps
     fn shift(&mut self, left: ClifValue, count: ClifValue, op: OpCode) -> ClifValue {
         let count = self.builder.ins().band_imm_s(count, 63);
         let left = self.unbox_int(left);
         if matches!(op, OpCode::Shl | OpCode::ShlII | OpCode::ShlIImm) {
+            let exit = self.exit();
             let raw = self.builder.ins().ishl(left, count);
-            self.box_int(raw)
+            let back = self.builder.ins().sshr(raw, count);
+            let exact = self.builder.ins().icmp(IntCC::Equal, back, left);
+            self.guard(exact, exit);
+            self.box_int_checked(raw, exit)
         } else {
             let raw = self.builder.ins().sshr(left, count);
             self.box_int_in_range(raw)
@@ -1960,6 +2017,46 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 let exit = self.exit();
                 let (_, length) = self.resolve(inst.b, CacheKind::Collection(LENGTH_KIND), exit);
                 let boxed = self.box_int_in_range(length);
+                self.set(inst.a, boxed);
+            }
+            MulShr | ShlDiv => {
+                let exit = self.exit();
+                let left = self.get(inst.b);
+                let left = self.unbox_int(left);
+                let right = self.get(inst.c);
+                let right = self.unbox_int(right);
+                let shift = if fixed_mode(inst) == 0 {
+                    self.builder.ins().iconst(types::I64, inst.imm & 0xff)
+                } else {
+                    let shift = self.get(inst.d);
+                    self.unbox_int(shift)
+                };
+                let shift = self.builder.ins().band_imm_s(shift, 63);
+                let raw = if inst.op == MulShr {
+                    let wide_left = self.builder.ins().sextend(types::I128, left);
+                    let wide_right = self.builder.ins().sextend(types::I128, right);
+                    let product = self.builder.ins().imul(wide_left, wide_right);
+                    let exact = self.builder.ins().sshr(product, shift);
+                    let low = self.builder.ins().ireduce(types::I64, exact);
+                    let back = self.builder.ins().sextend(types::I128, low);
+                    let fits = self.builder.ins().icmp(IntCC::Equal, back, exact);
+                    self.guard(fits, exit);
+                    low
+                } else {
+                    let call = self
+                        .builder
+                        .ins()
+                        .call(self.helpers.shl_div, &[self.context, left, right, shift]);
+                    let ok = self.builder.inst_results(call)[0];
+                    self.guard(ok, exit);
+                    self.builder.ins().load(
+                        types::I64,
+                        Self::trusted(),
+                        self.context,
+                        FrameJitContext::SCRATCH0,
+                    )
+                };
+                let boxed = self.box_int_checked(raw, exit);
                 self.set(inst.a, boxed);
             }
             EnumTest | EnumLoad => {
@@ -2542,7 +2639,11 @@ pub(crate) fn compile_frame(
 
     let mut jit_builder =
         JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
-    let symbols: [(&str, *const u8); 11] = [
+    let symbols: [(&str, *const u8); 12] = [
+        (
+            "aelys_frame_shl_div",
+            aelys_runtime::aelys_frame_shl_div as *const u8,
+        ),
         (
             "aelys_frame_enum",
             aelys_runtime::aelys_frame_enum as *const u8,
@@ -2629,6 +2730,13 @@ pub(crate) fn compile_frame(
     };
     let i64t = types::I64;
     let helpers = Helpers {
+        shl_div: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_shl_div",
+            &[pointer, i64t, i64t, i64t],
+            &[i64t],
+        )?,
         enumeration: declare(
             &mut module,
             &mut context.func,
@@ -2654,7 +2762,7 @@ pub(crate) fn compile_frame(
             &mut module,
             &mut context.func,
             "aelys_frame_set_global",
-            &[pointer, i64t, i64t],
+            &[pointer, pointer, i64t, i64t],
             &[i64t],
         )?,
         call: declare(

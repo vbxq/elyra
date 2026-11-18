@@ -7,28 +7,49 @@ use crate::object::{
 
 impl Heap {
     pub fn alloc(&mut self, mut obj: GcObject) -> GcRef {
-        self.bytes_allocated += Self::estimate_object_size(&obj);
+        let size = Self::estimate_object_size(&obj);
+        if let ObjectKind::String(string) = &obj.kind {
+            string.commit_charge();
+        }
+        self.bytes_allocated += size;
+        self.peak_bytes = self.peak_bytes.max(self.bytes_allocated);
+        self.alloc_clock = self
+            .alloc_clock
+            .saturating_add(u64::try_from(size).unwrap_or(u64::MAX));
         self.allocation_count = self.allocation_count.saturating_add(1);
-        if self.major_collection_active() {
-            obj.marked = true;
-        }
+        self.live_objects += 1;
 
-        if let Some(idx) = self.free_list.pop() {
-            let slot = self.objects[idx as usize].as_mut();
-            slot.object = Some(obj);
-            slot.heap_generation = super::HeapGeneration::Young;
-            slot.survival_count = 0;
-            GcRef::from_parts(idx, slot.generation)
-        } else {
-            let idx = u32::try_from(self.objects.len()).expect("heap slot limit exceeded");
-            self.objects.push(Box::new(super::HeapSlot {
-                generation: 0,
-                heap_generation: super::HeapGeneration::Young,
-                survival_count: 0,
-                object: Some(obj),
-            }));
-            GcRef::from_parts(idx, 0)
+        let index = match self.free_list.pop() {
+            Some(index) => index,
+            None => {
+                let index = u32::try_from(self.objects.len()).expect("heap slot limit exceeded");
+                self.objects.push(Box::new(super::HeapSlot {
+                    generation: 0,
+                    card_table: 0,
+                    heap_generation: super::HeapGeneration::Young,
+                    flags: 0,
+                    object: None,
+                }));
+                index
+            }
+        };
+        let position = index as usize;
+        obj.marked = match self.phase {
+            super::MajorPhase::Idle => false,
+            super::MajorPhase::Mark => true,
+            super::MajorPhase::Sweep => position >= self.sweep_cursor,
+        };
+        let gray = self.phase == super::MajorPhase::Mark && Self::may_have_children(&obj.kind);
+        let slot = self.objects[position].as_mut();
+        slot.object = Some(obj);
+        slot.heap_generation = super::HeapGeneration::Young;
+        slot.flags = 0;
+        let reference = GcRef::from_parts(index, slot.generation);
+        self.young.push(index);
+        if gray {
+            self.gray.push((reference, 0));
         }
+        reference
     }
 
     pub fn alloc_string(&mut self, s: &str) -> GcRef {

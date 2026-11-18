@@ -24,8 +24,13 @@ impl VM {
         program_args: Vec<String>,
     ) -> Result<Self, RuntimeError> {
         let random_seed = super::random::initial_random_state();
+        let mut heap = Heap::new();
+        heap.set_nursery_bytes(config.gc_nursery_bytes);
+        heap.set_stress(config.gc_stress);
+        heap.set_max_heap_bytes(config.max_heap_bytes);
+        heap.set_verify(config.gc_verify);
         let mut vm = Self {
-            heap: Heap::new(),
+            heap,
             config,
             registers: {
                 let mut regs = Vec::with_capacity(MAX_REGISTERS);
@@ -36,10 +41,12 @@ impl VM {
             globals: HashMap::new(),
             global_mutability: HashMap::new(),
             globals_by_index_cache: Vec::new(),
+            global_name_ids: HashMap::new(),
+            global_names_by_id: Vec::new(),
+            global_users: Vec::new(),
             globals_by_index: Vec::with_capacity(64),
             globals_by_index_dirty: false,
             global_generations: Vec::with_capacity(64),
-            global_view: super::globals::GlobalView::default(),
             inline_call_cache: HashMap::with_capacity(64),
             last_inline_call_cache: None,
             jit_executor: None,
@@ -51,18 +58,23 @@ impl VM {
             schema_registry: HashMap::new(),
             schema_index: HashMap::new(),
             next_schema_id: 1,
+            enum_index: HashMap::new(),
+            enum_registry: Vec::new(),
             source,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),
             resources: Vec::with_capacity(16),
             native_modules: HashMap::new(),
             native_registry: HashMap::new(),
+            native_impls: Vec::new(),
             random_state: random_seed,
             random_seed,
             execution_control: super::ExecutionControl::default(),
             execution_stats: super::ExecutionStats::default(),
+            gc_pauses: super::gc::GcPauseStats::default(),
             jit_control_error: None,
             host_roots: Arc::new(super::roots::HostRootSet::new()),
+            native_call_roots: Vec::new(),
             id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
             current_global_mapping_id: 0,
             program_args,
@@ -71,6 +83,7 @@ impl VM {
             repl_known_globals: HashSet::new(),
             repl_known_native_globals: HashSet::new(),
             repl_symbol_origins: HashMap::new(),
+            prelude: Arc::default(),
         };
         super::builtins::register_builtins(&mut vm)?;
 
@@ -107,6 +120,12 @@ impl VM {
             }
         }
 
+        vm.prelude = Arc::new(super::core::PreludeScope {
+            module_aliases: vm.repl_module_aliases.clone(),
+            known_globals: vm.repl_known_globals.clone(),
+            known_native_globals: vm.repl_known_native_globals.clone(),
+            symbol_origins: vm.repl_symbol_origins.clone(),
+        });
         Ok(vm)
     }
 }

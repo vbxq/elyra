@@ -13,6 +13,13 @@ impl Value {
         self.is_float().then(|| f64::from_bits(self.0))
     }
 
+    pub fn as_char(&self) -> Option<char> {
+        if !self.is_char() {
+            return None;
+        }
+        char::from_u32(u32::try_from(self.0 & 0xFFFF_FFFF).unwrap_or(u32::MAX))
+    }
+
     pub fn as_bool(&self) -> Option<bool> {
         self.is_bool().then_some((self.0 & 1) != 0)
     }

@@ -50,7 +50,10 @@ macro_rules! execute_arithmetic {
                 let right = $reg_get!($base + c as usize);
 
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                    $reg_set!($base + a as usize, $int_value!(l.wrapping_mul(r)));
+                    $reg_set!(
+                        $base + a as usize,
+                        $int_value!(l.checked_mul(r).unwrap_or(i64::MAX))
+                    );
                 } else {
                     $vm.frames[$current_frame_idx].ip = $ip;
                     match $vm.mul_values(left, right) {
@@ -134,7 +137,10 @@ macro_rules! execute_arithmetic {
                 let (a, b, c) = decode_abc($instr);
                 let l = $reg_ref!($base + b as usize).as_int_unchecked();
                 let r = $reg_ref!($base + c as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, $int_value!(l.wrapping_mul(r)));
+                $reg_set!(
+                    $base + a as usize,
+                    $int_value!(l.checked_mul(r).unwrap_or(i64::MAX))
+                );
             }
 
             // DivII (52)
@@ -255,7 +261,10 @@ macro_rules! execute_arithmetic {
                 let left = $reg_get!($base + b as usize);
                 let right = $reg_get!($base + c as usize);
                 if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
-                    $reg_set!($base + a as usize, $int_value!(l.wrapping_mul(r)));
+                    $reg_set!(
+                        $base + a as usize,
+                        $int_value!(l.checked_mul(r).unwrap_or(i64::MAX))
+                    );
                 } else {
                     let l_float = left.as_float().or_else(|| left.as_int().map(|i| i as f64));
                     let r_float = right

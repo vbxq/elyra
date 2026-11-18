@@ -11,9 +11,11 @@ mod upvalue;
 pub use buffer::BytecodeBuffer;
 pub use constant::Constant;
 pub use decode::{decode_a, decode_b, decode_c};
-pub use function::Function;
+pub use function::{FixedShift, Function};
 pub use global_layout::GlobalLayout;
-pub use opcode::{CastTarget, InstructionFormat, OpCode, WideRegisterOperands};
+pub use opcode::{
+    CastTarget, FixedKind, InstructionFormat, OpCode, SizedInt, WideRegisterOperands, WrappingOp,
+};
 pub use operand::{Arity, ConstantIndex, GlobalIndex, JumpOffset, OperandRangeError, Register};
 pub use schema::{
     DefId, EnumDefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth, IntWidth,

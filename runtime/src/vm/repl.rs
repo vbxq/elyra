@@ -32,6 +32,10 @@ impl VM {
         &self.repl_known_native_globals
     }
 
+    pub fn prelude_scope(&self) -> std::sync::Arc<super::core::PreludeScope> {
+        std::sync::Arc::clone(&self.prelude)
+    }
+
     pub fn repl_symbol_origins(&self) -> &HashMap<String, String> {
         &self.repl_symbol_origins
     }

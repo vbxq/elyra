@@ -54,7 +54,6 @@ impl VM {
         self.open_upvalues.clear();
         self.current_upvalues.clear();
         self.globals_by_index.clear();
-        self.global_view.clear();
         self.current_global_mapping_id = 0;
     }
 
@@ -109,18 +108,14 @@ impl VM {
             for (idx, name) in global_layout.names().iter().enumerate() {
                 if !name.is_empty() {
                     self.globals_by_index[idx] =
-                        self.globals.get(name).copied().unwrap_or(Value::null());
+                        self.globals.get(name).copied().unwrap_or(Value::uninit());
                 } else {
                     self.globals_by_index[idx] = Value::null();
                 }
             }
-            self.globals_by_index.truncate(needed_len);
             self.bump_global_generations(needed_len);
-            self.global_view
-                .reset(global_layout.names(), Some(global_mapping_id));
         } else {
             self.globals_by_index.clear();
-            self.global_view.clear();
         }
 
         self.current_global_mapping_id = global_mapping_id;

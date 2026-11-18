@@ -18,6 +18,9 @@ pub struct Parser {
     type_depth: usize,
     legacy_collections: bool,
     no_brace_construction: bool,
+    synthetic_counter: usize,
+    pending: Vec<Stmt>,
+    destructure_count: usize,
 }
 
 impl Parser {
@@ -30,6 +33,9 @@ impl Parser {
             type_depth: 0,
             legacy_collections: false,
             no_brace_construction: false,
+            synthetic_counter: 0,
+            pending: Vec::new(),
+            destructure_count: 0,
         }
     }
 
@@ -46,6 +52,9 @@ impl Parser {
             type_depth: 0,
             legacy_collections: true,
             no_brace_construction: false,
+            synthetic_counter: 0,
+            pending: Vec::new(),
+            destructure_count: 0,
         }
     }
 
@@ -58,6 +67,7 @@ impl Parser {
             }
 
             statements.push(self.declaration()?);
+            statements.append(&mut self.pending);
         }
 
         Ok(statements)
@@ -122,11 +132,42 @@ impl Parser {
         }
     }
 
+    fn consume_declared_identifier(&mut self, expected: &str) -> Result<String> {
+        let span = self.peek().span;
+        let name = self.consume_identifier(expected)?;
+        self.reject_reserved_name(&name, span)?;
+        Ok(name)
+    }
+
+    fn reject_reserved_name(&self, name: &str, span: aelys_syntax::Span) -> Result<()> {
+        if name.starts_with("__") {
+            return Err(CompileError::new(
+                CompileErrorKind::ReservedIdentifier {
+                    name: name.to_string(),
+                },
+                span,
+                Arc::clone(&self.source),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     fn check(&self, kind: &TokenKind) -> bool {
         if self.is_at_end() {
             return false;
         }
         self.peek().kind == *kind
+    }
+
+    // `step` is a keyword only after the range of a `for` header
+    fn match_step_keyword(&mut self) -> bool {
+        if matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "step") {
+            self.advance();
+            true
+        } else {
+            false
+        }
     }
 
     fn match_token(&mut self, kind: &TokenKind) -> bool {
@@ -160,6 +201,19 @@ impl Parser {
         } else {
             self.tokens.last().unwrap()
         }
+    }
+
+    pub(crate) fn tuple_struct_name(&self, arity: usize) -> Result<String> {
+        if arity > aelys_syntax::MAX_TUPLE_ARITY {
+            return Err(self.error(CompileErrorKind::UnexpectedToken {
+                expected: format!(
+                    "a tuple of at most {} elements",
+                    aelys_syntax::MAX_TUPLE_ARITY
+                ),
+                found: format!("{arity} elements"),
+            }));
+        }
+        Ok(aelys_syntax::tuple_struct_name(arity))
     }
 
     fn previous(&self) -> &Token {

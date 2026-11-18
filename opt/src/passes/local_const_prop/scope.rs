@@ -35,9 +35,13 @@ impl ScopeStack {
     }
 
     pub fn get(&self, name: &str) -> Option<&TypedExpr> {
-        for scope in self.scopes.iter().rev() {
+        self.get_with_depth(name).map(|(_, expr)| expr)
+    }
+
+    pub fn get_with_depth(&self, name: &str) -> Option<(usize, &TypedExpr)> {
+        for (depth, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(entry) = scope.get(name) {
-                return entry.as_ref();
+                return entry.as_ref().map(|expr| (depth, expr));
             }
         }
         None

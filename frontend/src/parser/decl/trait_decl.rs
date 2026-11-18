@@ -15,7 +15,7 @@ impl Parser {
         let start_span = self.peek().span;
         self.advance();
 
-        let name = self.consume_identifier("trait name")?;
+        let name = self.consume_declared_identifier("trait name")?;
         if name.chars().next().is_none_or(|c| !c.is_uppercase()) {
             return Err(self.error(CompileErrorKind::UnexpectedToken {
                 expected: "capitalized trait name".to_string(),
@@ -51,7 +51,7 @@ impl Parser {
                 match word.as_str() {
                     "type" => {
                         self.advance();
-                        let name = self.consume_identifier("associated type name")?;
+                        let name = self.consume_declared_identifier("associated type name")?;
                         associated_types.push(aelys_syntax::AssociatedTypeDecl {
                             name,
                             span: item_span.merge(self.previous().span),
@@ -61,7 +61,7 @@ impl Parser {
                     }
                     "const" => {
                         self.advance();
-                        let name = self.consume_identifier("associated constant name")?;
+                        let name = self.consume_declared_identifier("associated constant name")?;
                         self.consume(&TokenKind::Colon, ":")?;
                         let type_annotation = self.parse_type_annotation()?;
                         associated_consts.push(aelys_syntax::AssociatedConstDecl {
@@ -108,7 +108,7 @@ impl Parser {
         let mut where_clauses = Vec::new();
         loop {
             let span = self.peek().span;
-            let name = self.consume_identifier("type parameter")?;
+            let name = self.consume_declared_identifier("type parameter")?;
             params.push(name.clone());
             if self.match_token(&TokenKind::Colon) {
                 let bounds = self.parse_bound_list()?;
@@ -194,7 +194,7 @@ impl Parser {
         let start_span = self.peek().span;
         self.advance();
 
-        let name = self.consume_identifier("trait method name")?;
+        let name = self.consume_declared_identifier("trait method name")?;
         let (type_params, mut where_clauses) = self.parse_type_params_with_bounds()?;
         self.consume(&TokenKind::LParen, "(")?;
 

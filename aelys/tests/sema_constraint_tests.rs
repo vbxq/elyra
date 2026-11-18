@@ -6024,9 +6024,8 @@ fn compile_outcome(source: &str) -> String {
     }
 }
 
-const DECLARABLE_CONSTANT_TYPES: [&str; 18] = [
+const DECLARABLE_CONSTANT_TYPES: [&str; 16] = [
     "int",
-    "i64",
     "float",
     "bool",
     "string",
@@ -6034,7 +6033,6 @@ const DECLARABLE_CONSTANT_TYPES: [&str; 18] = [
     "i8",
     "i32",
     "u8",
-    "u64",
     "f32",
     "Vec<int>",
     "Vec<Vec<int>>",
@@ -6396,7 +6394,7 @@ fn the_associated_constant_diagnostics_read_the_same_under_either_declaration_or
     }
 }
 
-const FOLDABLE_DECLARED_CONSTANT_TYPES: [&str; 2] = ["int", "i64"];
+const FOLDABLE_DECLARED_CONSTANT_TYPES: [&str; 1] = ["int"];
 
 const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
     ("float", "float"),
@@ -6408,7 +6406,6 @@ const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
     ("i32", "i32"),
     ("u8", "u8"),
     ("u32", "u32"),
-    ("u64", "u64"),
     ("f32", "f32"),
     ("f64", "float"),
     ("Vec<int>", "Vec<int>"),
@@ -6416,6 +6413,7 @@ const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
     ("Result<int, string>", "Result<int, string>"),
     ("[int; 3]", "[int; 3]"),
     ("fn(int, string) -> bool", "fn(int, string) -> bool"),
+    ("(int, int)", "(int, int)"),
 ];
 
 // a nominal and a generic nominal complete the enumeration; they are kept apart
@@ -6426,11 +6424,12 @@ const UNFOLDABLE_DECLARED_NOMINAL_TYPES: [(&str, &str); 3] = [
 ];
 
 // refused before the declaration is typed, so e0434 never sees them
-const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 4] = [
+const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 5] = [
     ("[int]", "E0101"),
-    ("(int, int)", "E0101"),
     ("array<int>", "E0101"),
     ("dynamic", "E0347"),
+    ("i64", "E0461"),
+    ("u64", "E0461"),
 ];
 
 fn declared_constant_type_program(declared: &str) -> String {

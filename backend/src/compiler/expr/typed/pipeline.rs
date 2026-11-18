@@ -57,7 +57,7 @@ impl Compiler {
         self.compile_typed_expr(object, source_reg)?;
         self.emit_a(select_vec_new(output_inner), dest, 0, 0, span);
 
-        let loop_base = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;
         let index_reg = loop_base + 1;
         let source_loop_reg = loop_base + 2;
@@ -88,11 +88,11 @@ impl Compiler {
         self.compile_typed_expr(object, source_reg)?;
         self.emit_a(select_vec_new(output_inner), dest, 0, 0, span);
 
-        let loop_base = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;
         let index_reg = loop_base + 1;
         let source_loop_reg = loop_base + 2;
-        let callback_base = self.alloc_consecutive_registers_for_call(3, span)?;
+        let callback_base = self.alloc_call_window(3, span)?;
         self.alloc_consecutive_from(callback_base, 3)?;
         let callback_result = callback_base + 1;
         let callback_arg = callback_base + 2;
@@ -135,11 +135,11 @@ impl Compiler {
         self.compile_typed_expr(object, source_reg)?;
         self.emit_a(select_vec_new(output_inner), dest, 0, 0, span);
 
-        let loop_base = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;
         let index_reg = loop_base + 1;
         let source_loop_reg = loop_base + 2;
-        let callback_base = self.alloc_consecutive_registers_for_call(3, span)?;
+        let callback_base = self.alloc_call_window(3, span)?;
         self.alloc_consecutive_from(callback_base, 3)?;
         let predicate = callback_base + 1;
         let callback_arg = callback_base + 2;
@@ -176,11 +176,11 @@ impl Compiler {
     ) -> Result<()> {
         let source_reg = self.alloc_register()?;
         self.compile_typed_expr(object, source_reg)?;
-        let loop_base = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;
         let index_reg = loop_base + 1;
         let source_loop_reg = loop_base + 2;
-        let callback_base = self.alloc_consecutive_registers_for_call(4, span)?;
+        let callback_base = self.alloc_call_window(4, span)?;
         self.alloc_consecutive_from(callback_base, 4)?;
         let accumulator = callback_base + 1;
         let accumulator_arg = callback_base + 2;

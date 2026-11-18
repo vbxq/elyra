@@ -36,6 +36,25 @@ pub struct LoopContext {
     pub break_jumps: Vec<usize>,
     pub continue_jumps: Vec<usize>, // for-loop: forward patch to increment
     pub is_for_loop: bool,          // for: continue forward, while: continue back
+    pub label: Option<String>,
+    pub result: Option<u16>,
+    pub locals_start: usize,
+    pub captured_names: std::collections::HashSet<String>,
+}
+
+impl LoopContext {
+    pub fn new(start: usize, is_for_loop: bool, locals_start: usize) -> Self {
+        Self {
+            start,
+            break_jumps: Vec::new(),
+            continue_jumps: Vec::new(),
+            is_for_loop,
+            label: None,
+            result: None,
+            locals_start,
+            captured_names: std::collections::HashSet::new(),
+        }
+    }
 }
 
 pub struct Compiler {
@@ -49,10 +68,12 @@ pub struct Compiler {
     pub all_enclosing_locals: Vec<Vec<Local>>, // transitive capture chain
     pub loop_stack: Vec<LoopContext>,
     pub loop_variables: Vec<String>, // can't assign inside loop body
+    pub(crate) hoisted_literals: Vec<(i64, u16)>,
     pub scope_depth: usize,
     pub next_register: u32,
     pub(crate) register_pool: Box<[bool]>,
     pub(crate) register_search_start: usize,
+    pub(crate) call_window_fault: Option<(u16, u16, aelys_syntax::Span)>,
     pub globals: HashMap<String, bool>, // name -> mutable
     pub global_indices: HashMap<String, u32>,
     pub next_global_index: u32,
@@ -66,4 +87,8 @@ pub struct Compiler {
     pub struct_schemas: Rc<Vec<StructSchema>>,
     pub enum_schemas: Rc<Vec<EnumSchema>>,
     pub module_sources: Rc<HashMap<String, Arc<Source>>>,
+    // a module's own function lives in its module's slot, so another module's same name never replaces it
+    pub own_slots: Rc<HashMap<String, String>>,
+    pub module_scopes:
+        Rc<std::collections::BTreeMap<String, aelys_sema::infer::imports::ModuleScope>>,
 }

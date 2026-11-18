@@ -28,124 +28,26 @@ impl ModuleLoader {
             return Ok(self.get_load_result(needs));
         }
 
-        if self.loading_stack.contains(&module_path_str) {
+        let (resolution, root, actual_path, symbol) =
+            self.resolve_path_with_fallback(&needs.path, needs)?;
+        let key = self.module_key(&resolution.path, root.as_deref(), &actual_path);
+        self.resolved_needs.insert(
+            (self.base_dir.clone(), module_path_str.clone()),
+            super::types::ResolvedNeeds {
+                key: key.clone(),
+                symbol: symbol.clone(),
+            },
+        );
+
+        if self.loading_stack.contains(&key) {
             let mut chain = self.loading_stack.clone();
-            chain.push(module_path_str.clone());
+            chain.push(key.clone());
             return Err(AelysError::Compile(CompileError::new(
                 CompileErrorKind::CircularDependency { chain },
                 needs.span,
                 self.source.clone(),
             )));
         }
-
-        if self.loaded_modules.contains_key(&module_path_str) {
-            if let Some(_prev) = self.native_fingerprints.get(&module_path_str).cloned() {
-                let file_path = self
-                    .loaded_modules
-                    .get(&module_path_str)
-                    .map(|info| info.file_path.clone())
-                    .ok_or_else(|| {
-                        AelysError::Compile(CompileError::new(
-                            CompileErrorKind::ModuleNotFound {
-                                module_path: module_path_str.clone(),
-                                searched_paths: vec![],
-                            },
-                            needs.span,
-                            self.source.clone(),
-                        ))
-                    })?;
-                let current = self.current_native_fingerprint(&file_path);
-                if let Some(current) = current {
-                    self.native_fingerprints
-                        .insert(module_path_str.clone(), current);
-                }
-            }
-
-            let module_info = self.loaded_modules.get(&module_path_str).ok_or_else(|| {
-                AelysError::Compile(CompileError::new(
-                    CompileErrorKind::ModuleNotFound {
-                        module_path: module_path_str.clone(),
-                        searched_paths: vec![],
-                    },
-                    needs.span,
-                    self.source.clone(),
-                ))
-            })?;
-
-            match &needs.kind {
-                ImportKind::Symbols(symbols) => {
-                    for symbol in symbols {
-                        if !module_info.exports.contains_key(symbol) {
-                            self.reject_unimportable_symbol(&module_path_str, symbol, needs.span)?;
-                            continue;
-                        }
-
-                        let value = vm.get_global(symbol).ok_or_else(|| {
-                            AelysError::Compile(CompileError::new(
-                                CompileErrorKind::SymbolNotFound {
-                                    symbol: symbol.clone(),
-                                    module: module_path_str.clone(),
-                                },
-                                needs.span,
-                                self.source.clone(),
-                            ))
-                        })?;
-                        vm.set_global(symbol.clone(), value);
-                    }
-                }
-                ImportKind::Module { alias } => {
-                    let module_alias = self.get_module_alias(needs);
-                    for name in module_info.exports.keys() {
-                        let value = vm.get_global(name).ok_or_else(|| {
-                            AelysError::Compile(CompileError::new(
-                                CompileErrorKind::SymbolNotFound {
-                                    symbol: name.clone(),
-                                    module: module_path_str.clone(),
-                                },
-                                needs.span,
-                                self.source.clone(),
-                            ))
-                        })?;
-                        let alias_name = format!("{}::{}", module_alias, name);
-                        vm.set_global(alias_name, value);
-                        if alias.is_none() {
-                            vm.set_global(name.clone(), value);
-                        }
-                    }
-                }
-                ImportKind::Wildcard => {
-                    for name in module_info.exports.keys() {
-                        let value = vm.get_global(name).ok_or_else(|| {
-                            AelysError::Compile(CompileError::new(
-                                CompileErrorKind::SymbolNotFound {
-                                    symbol: name.clone(),
-                                    module: module_path_str.clone(),
-                                },
-                                needs.span,
-                                self.source.clone(),
-                            ))
-                        })?;
-                        vm.set_global(name.clone(), value);
-                    }
-                }
-            }
-            return Ok(self.get_load_result(needs));
-        }
-
-        let (resolution, actual_path, symbol) =
-            self.resolve_path_with_fallback(&needs.path, needs)?;
-        let actual_path_str = actual_path.join(".");
-
-        if let Some(sym) = symbol.as_ref()
-            && let Some(module_info) = self.loaded_modules.get(&actual_path_str)
-        {
-            if !module_info.exports.contains_key(sym) {
-                self.reject_unimportable_symbol(&actual_path_str, sym, needs.span)?;
-            }
-            return Ok(LoadResult::Symbol(sym.clone()));
-        }
-
-        self.loading_stack.push(actual_path_str.clone());
 
         let effective_needs = if let Some(sym) = &symbol {
             NeedsStmt {
@@ -157,18 +59,31 @@ impl ModuleLoader {
             needs.clone()
         };
 
-        let result = match resolution.kind {
-            aelys_modules::resolution::ModuleKind::Script => {
-                self.compile_module(&resolution.path, &actual_path_str, &effective_needs, vm)
+        if self.loaded_modules.contains_key(&key) {
+            if self.native_fingerprints.contains_key(&key)
+                && let Some(current) = self.current_native_fingerprint(&resolution.path)
+            {
+                self.native_fingerprints.insert(key.clone(), current);
             }
-            aelys_modules::resolution::ModuleKind::Native => {
-                self.load_native_module(&resolution.path, &actual_path_str, &effective_needs, vm)
-            }
-        };
-
-        self.loading_stack.pop();
-
-        result?;
+            let exports = self
+                .loaded_modules
+                .get(&key)
+                .map(|module_info| module_info.exports.clone())
+                .unwrap_or_default();
+            self.register_exports(&effective_needs, &key, &exports, vm)?;
+        } else {
+            self.loading_stack.push(key.clone());
+            let result = match resolution.kind {
+                aelys_modules::resolution::ModuleKind::Script => {
+                    self.compile_module(&resolution.path, &key, &effective_needs, vm)
+                }
+                aelys_modules::resolution::ModuleKind::Native => {
+                    self.load_native_module(&resolution.path, &key, &effective_needs, vm)
+                }
+            };
+            self.loading_stack.pop();
+            result?;
+        }
 
         if let Some(sym) = symbol {
             Ok(LoadResult::Symbol(sym))

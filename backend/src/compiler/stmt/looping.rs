@@ -11,15 +11,15 @@ impl Compiler {
         condition: &aelys_sema::TypedExpr,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
+        let hoisted = self.hoist_loop_literals(Some(condition), body)?;
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: false,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, false, self.locals.len());
+        context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
+        self.loop_stack.push(context);
 
         let cond_reg = self.alloc_register()?;
         self.compile_typed_expr(condition, cond_reg)?;
@@ -43,6 +43,7 @@ impl Compiler {
         for jump in ctx.break_jumps {
             self.patch_jump(jump);
         }
+        self.release_loop_literals(hoisted);
 
         Ok(())
     }
@@ -57,10 +58,11 @@ impl Compiler {
         step: Option<&aelys_sema::TypedExpr>,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         self.begin_scope();
 
-        let iter_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let iter_reg = self.alloc_consecutive_registers(3, span)?;
         let end_reg = iter_reg + 1;
         let step_reg = iter_reg + 2;
 
@@ -86,6 +88,8 @@ impl Compiler {
         );
         self.loop_variables.push(iterator.to_string());
 
+        let hoisted = self.hoist_loop_literals(None, body)?;
+
         // this ensures that for empty ranges (like 0..0), the loop body is never executed
         self.emit_a(OpCode::Sub, iter_reg, iter_reg, step_reg, span);
 
@@ -93,12 +97,10 @@ impl Compiler {
 
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
+        context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
+        self.loop_stack.push(context);
 
         let opcode = if inclusive {
             OpCode::ForLoopIInc
@@ -109,6 +111,7 @@ impl Compiler {
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
+        self.close_captured_iteration_variable(iter_reg, span);
 
         self.patch_jump(jump_to_forloop);
 
@@ -135,6 +138,7 @@ impl Compiler {
         }
 
         self.loop_variables.pop();
+        self.release_loop_literals(hoisted);
         self.free_register(step_reg);
         self.free_register(end_reg);
         self.end_scope();
@@ -149,9 +153,12 @@ impl Compiler {
         elem_type: &InferType,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         match &iterable.ty {
-            InferType::String => self.compile_string_for_each(iterator, iterable, body, span),
+            InferType::String => {
+                self.compile_string_for_each(iterator, iterable, body, span, label)
+            }
             InferType::Vec(inner) => self.compile_collection_for_each(
                 iterator,
                 iterable,
@@ -159,6 +166,7 @@ impl Compiler {
                 body,
                 OpCode::VecForLoop,
                 span,
+                label,
             ),
             InferType::Array(inner) | InferType::FixedArray(inner, _) => self
                 .compile_collection_for_each(
@@ -168,6 +176,7 @@ impl Compiler {
                     body,
                     OpCode::ArrayForLoop,
                     span,
+                    label,
                 ),
             InferType::Dynamic | InferType::Var(_) => self.compile_collection_for_each(
                 iterator,
@@ -176,6 +185,7 @@ impl Compiler {
                 body,
                 OpCode::VecForLoop,
                 span,
+                label,
             ),
             _ => Err(aelys_common::AelysError::Compile(CompileError::new(
                 CompileErrorKind::TypeInferenceError(format!(
@@ -188,10 +198,22 @@ impl Compiler {
         }
     }
 
+    // the loop variable is per iteration, so a closure keeps the value of its own iteration
+    pub(crate) fn close_captured_iteration_variable(&mut self, register: u16, span: Span) {
+        if self
+            .locals
+            .iter()
+            .any(|local| local.register == register && local.is_captured)
+        {
+            self.emit_a(OpCode::CloseUpvals, register, 0, 0, span);
+        }
+    }
+
     fn infer_to_resolved(ty: &InferType) -> aelys_sema::ResolvedType {
         aelys_sema::ResolvedType::from_infer_type(ty)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compile_collection_for_each(
         &mut self,
         iterator: &str,
@@ -200,10 +222,11 @@ impl Compiler {
         body: &aelys_sema::TypedStmt,
         opcode: OpCode,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         self.begin_scope();
 
-        let elem_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let elem_reg = self.alloc_consecutive_registers(3, span)?;
         let index_reg = elem_reg + 1;
         let coll_reg = elem_reg + 2;
 
@@ -220,12 +243,10 @@ impl Compiler {
 
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
+        context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
+        self.loop_stack.push(context);
 
         let resolved = Self::infer_to_resolved(inner_type);
         self.add_local(iterator.to_string(), false, elem_reg, resolved);
@@ -233,6 +254,7 @@ impl Compiler {
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
+        self.close_captured_iteration_variable(elem_reg, span);
 
         self.patch_jump(jump_to_forloop);
 
@@ -270,10 +292,11 @@ impl Compiler {
         iterable: &aelys_sema::TypedExpr,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         self.begin_scope();
 
-        let char_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let char_reg = self.alloc_consecutive_registers(3, span)?;
         let offset_reg = char_reg + 1;
         let str_reg = char_reg + 2;
 
@@ -290,12 +313,10 @@ impl Compiler {
 
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
+        context.label = label.cloned();
+        context.captured_names = super::super::liveness::captured_names(std::slice::from_ref(body));
+        self.loop_stack.push(context);
 
         self.add_local(
             iterator.to_string(),
@@ -307,6 +328,7 @@ impl Compiler {
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
+        self.close_captured_iteration_variable(char_reg, span);
 
         self.patch_jump(jump_to_forloop);
 

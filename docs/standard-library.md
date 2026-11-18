@@ -9,6 +9,11 @@ The safe modules `std::io`, `std::math`, `std::string`, `std::convert`, and
 immediately without `needs`. For example, `println("hello")` and
 `math::sqrt(16.0)` work out of the box.
 
+Two builtins sit outside every module and need no `needs`: `panic(message)`, of
+type `never`, and `assert(condition, message)`. Both stop the program with
+`panic: <message>`, the source location, and the stack trace on stderr, and the
+runner exits with status 101 (see Panics in the language specification).
+
 You can still use `needs` with an alias if you want a shorter name:
 
 ```rust
@@ -158,6 +163,10 @@ All functions work in radians.
 | `round(x)` | Round to nearest |
 | `trunc(x)` | Truncate toward zero |
 
+The four rounding functions return an `int`. A NaN, an infinity, or a result outside
+the 48-bit `int` range is a runtime error, never a saturated or zero value.
+`abs` of the smallest `int` (-140737488355328) is an integer overflow error.
+
 ### Special
 
 | Function | Description |
@@ -207,12 +216,21 @@ This distinction matters for non-ASCII text.
 | `s.char_at(i)` | Character at index (empty if out of bounds) |
 | `s.byte_at(i)` | Byte at index (-1 if out of bounds) |
 | `s.substr(start, len)` | Extract substring by character position |
+| `s.chars()` | `Vec<char>` of the characters |
+| `s.bytes()` | `Vec<int>` of the UTF-8 bytes |
+| `string::from_char(c)` | One-character string from a `char` |
+| `s.push(c)` | Append a `char` to a string variable or place with a mutable root (`p.name.push(c)`) |
 
 ```rust
 "hello".char_at(0)    // "h"
 "hello".char_at(10)   // "" (out of bounds)
 "hello".substr(1, 3)  // "ell"
+"héllo".chars()       // vec!['h', 'é', 'l', 'l', 'o']
+"Aé".bytes()          // vec![65, 195, 169]
 ```
+
+`s[i]` and a for-each over a string yield `char` values; `char_at` keeps
+returning a one-character string.
 
 ### Case Conversion
 
@@ -264,19 +282,29 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 
 | Method | Description |
 |--------|-------------|
-| `s.split(sep)` | Split by separator |
-| `string::join(parts, sep)` | Join parts with separator |
-| `s.lines()` | Split into lines |
+| `s.split(sep)` | `Vec<string>` of the pieces between separators; an empty `sep` splits into characters |
+| `s.lines()` | `Vec<string>` of the lines, without `\n` or `\r\n` terminators |
+| `v.join(sep)` | Join a `Vec<string>` with `sep` (a Vec method) |
+| `string::join(text, sep)` | Join the lines of a newline-separated string with `sep` |
 | `s.line_count()` | Count lines |
 
-`split` and `join` use newline-separated strings for compatibility with this API. Arrays
-and `Vec` are first-class collections; use their collection methods when you need typed
-elements or collection pipelines.
-
 ```rust
-let parts = "a,b,c".split(",")       // "a\nb\nc"
-string::join(parts, "-")              // "a-b-c"
+let parts = "a,b,,c".split(",")      // vec!["a", "b", "", "c"]
+parts.join("-")                      // "a-b--c"
+"".split(",").len()                  // 1
 ```
+
+### Comparison and building
+
+Strings compare with `<`, `<=`, `>` and `>=` lexicographically by Unicode scalar
+value. `s += x` (and `s + x` where `s` is the most recent string built on its
+buffer) appends in place in amortised O(1): the result shares the left operand's
+buffer when nothing else has extended it, so a loop that appends n times costs
+O(n) overall, and every earlier string value keeps its own contents.
+A shared buffer counts against `-ae.max-heap` once, for its whole reserved
+capacity, for as long as any string that views it is alive: a short string that
+once had a long string appended to it keeps that long buffer alive. Appending
+past the budget is a clean `out of memory` error at the append.
 
 ### Predicates
 
@@ -303,7 +331,11 @@ Type conversions and introspection. Auto-registered -- no `needs` required.
 | `parse_float(s)` | Parse string to `Option<float>` |
 | `parse_bool(s)` | Parse boolean to `Option<bool>` |
 
-`parse_int` automatically handles `0x`, `0o`, `0b` prefixes:
+`parse_int` accepts an optional sign followed by decimal digits or a `0x`, `0o`, or
+`0b` prefix, with surrounding whitespace ignored. Anything else is `None`: it never
+panics and never truncates, so `"3.9"`, `"1e3"`, `"-2.5"`, `"nan"`, and a value
+outside the 48-bit `int` range (-140737488355328 to 140737488355327) all give
+`None`. `parse_int_radix` follows the same rules for its base.
 
 ```rust
 match convert::parse_int("42") {
@@ -320,6 +352,11 @@ match convert::parse_int("42") {
 | `to_int(x)` | Convert to int |
 | `to_float(x)` | Convert to float |
 | `to_bool(x)` | Convert to bool (truthiness) |
+
+`to_int` truncates a float toward zero; a NaN, an infinity, or a float outside the
+48-bit range is a runtime error. A string passed to `to_int` must be an integer
+under the `parse_int` rules, otherwise `to_int` is a runtime error (`to_int("3.9")`
+is an error, not `3`).
 
 `.to_string()` can be called as a method on any value:
 
@@ -397,8 +434,8 @@ For measuring elapsed time accurately:
 |----------|-------------|
 | `timer()` | Create timer, returns handle |
 | `elapsed(h)` | Seconds since timer created |
-| `elapsed_ms(h)` | Milliseconds elapsed |
-| `elapsed_us(h)` | Microseconds elapsed |
+| `elapsed_ms(h)` | Milliseconds elapsed (int) |
+| `elapsed_us(h)` | Microseconds elapsed (int) |
 | `reset(h)` | Reset timer to now |
 
 ```rust
@@ -474,10 +511,13 @@ needs std::fs
 | `open(path, mode)` | Open file as `Result<int, string>` |
 | `read(handle)` | Read as `Result<string, string>` |
 | `read_line(handle)` | Read as `Result<Option<string>, string>` |
-| `read_bytes(handle, n)` | Read as `Result<int, string>` |
+| `read_bytes(handle, n)` | Read up to `n` bytes (at most 16 MiB) into a new byte buffer, `Result<int, string>`; fewer than `n` only at end of file |
+| `read_file_bytes(path)` | Read a whole file into one new byte buffer, `Result<int, string>`; a file larger than the 256 MiB (268435456-byte) byte-buffer limit, or an endless one such as `/dev/zero`, is an `Err` after reading at most one byte past the limit |
 | `close(handle)` | Close as `Result<unit, string>` |
 
 Modes: `"r"` (read), `"w"` (write), `"a"` (append), `"rw"` (read+write).
+
+`read`, `read_line` and `read_bytes` share one buffered reader per handle, so they can be mixed: each continues where the previous one stopped.
 
 ```rust
 let content = match fs::read_text("config.txt") {
@@ -507,7 +547,22 @@ let _ = fs::close(f)
 | `write_text(path, content)` | Write string to file (overwrite) |
 | `append_text(path, content)` | Append string to file |
 | `write(handle, data)` | Write to handle |
+| `write_bytes(handle, data)` | Same as `write`: `data` is a string and is written as UTF-8 |
 | `write_line(handle, line)` | Write with newline |
+| `write_buffer(handle, buffer)` | Write the raw bytes of a `std::bytes` buffer to a handle as `Result<int, string>` (bytes written) |
+| `write_file_bytes(path, buffer)` | Write the raw bytes of a `std::bytes` buffer to `path` (overwrite) as `Result<unit, string>` |
+
+Strings are UTF-8, so a byte of 0x80 or more cannot pass through `write`,
+`write_bytes` or `write_text` unchanged. Binary files go through a byte buffer:
+
+```rust
+needs std::fs
+needs std::bytes as bytes
+let buffer = bytes::alloc(2)
+bytes::write_u8(buffer, 0, 0xC8)
+bytes::write_u8(buffer, 1, 0xFF)
+let _ = fs::write_file_bytes("out.bin", buffer)
+```
 
 ```rust
 let _ = fs::write_text("output.txt", "Hello, file!")
@@ -521,7 +576,7 @@ let _ = fs::append_text("log.txt", "New entry\n")
 | `exists(path)` | Check if path exists |
 | `is_file(path)` | Check if regular file |
 | `is_dir(path)` | Check if directory |
-| `size(path)` | File size in bytes |
+| `size(path)` | File size in bytes as `Result<int, string>` |
 
 ### Directory Operations
 
@@ -668,6 +723,19 @@ needs std::sys
 | `random_seed(seed)` | Restart the VM-local random sequence from a seed |
 | `random_state()` | Return the current random state |
 | `random_set_state(state)` | Restore a previously returned random state |
+| `gc_max_pause_us()` | Longest garbage collection pause since the VM started, in microseconds |
+| `gc_window_max_pause_us()` | Longest pause since the previous call of this function, in microseconds |
+| `gc_p99_pause_us()` | 99th percentile of the pauses, in microseconds (10 µs resolution) |
+| `gc_max_pause_cpu_us()` | Longest pause counted in thread CPU time, which leaves out time the OS spent running other processes |
+| `gc_total_pause_us()` | Sum of all pauses, in microseconds |
+| `gc_pause_count()` | Number of pauses (minor collections and major slices) |
+| `gc_minor_collections()` | Completed minor collections |
+| `gc_major_collections()` | Completed major collections |
+| `gc_heap_bytes()` | Estimated bytes currently allocated on the heap |
+| `gc_live_objects()` | Objects currently on the heap, garbage not yet collected included |
+| `gc_allocations()` | Objects allocated since the VM started |
+| `gc_stats()` | One-line summary of the figures above, as a string |
+| `gc_collect()` | Run a full collection now (minor, then a complete major); its pause grows with the heap |
 
 The command and directory functions return `Err(message)` when the operating
 system operation cannot be started or completed. A nonzero child exit status is
@@ -709,7 +777,7 @@ needs std::bytes
 | `write_u16(buf, offset, value)` | Write 16-bit unsigned int |
 | `read_u32(buf, offset)` | Read 32-bit unsigned int |
 | `write_u32(buf, offset, value)` | Write 32-bit unsigned int |
-| `read_u64(buf, offset)` | Read 64-bit unsigned int |
+| `read_u64(buf, offset)` | Read 64-bit unsigned int; a value above the 48-bit `int` range is an error |
 | `write_u64(buf, offset, value)` | Write 64-bit unsigned int |
 
 ### Signed Integer Operations (Little-Endian)
@@ -722,7 +790,7 @@ needs std::bytes
 | `write_i16(buf, offset, value)` | Write 16-bit signed int |
 | `read_i32(buf, offset)` | Read 32-bit signed int |
 | `write_i32(buf, offset, value)` | Write 32-bit signed int |
-| `read_i64(buf, offset)` | Read 64-bit signed int |
+| `read_i64(buf, offset)` | Read 64-bit signed int; a value outside the 48-bit `int` range is an error |
 | `write_i64(buf, offset, value)` | Write 64-bit signed int |
 
 ### Big-Endian Operations
@@ -758,6 +826,12 @@ All `_be` variants for network byte order:
 | `reverse(buf, offset, len)` | Reverse bytes in range. |
 | `swap(buf, i, j)` | Swap bytes at indices i and j. |
 | `find(buf, start, end, byte)` | Find first occurrence of byte. Returns -1 if not found. Use -1 for end to search to buffer end. |
+| `copy_from_vec(buf, offset, v)` | Write every element of `v: Vec<int>` as one byte at `offset`, `offset + 1`, ... in one call. Returns `Result<unit, string>`: `Err` names the first element outside 0..=255, or the range past the buffer end, and then nothing is written. |
+| `copy_to_vec(buf, offset, v)` | Overwrite every element of `v: Vec<int>` with the byte at `offset`, `offset + 1`, ...; `v` keeps its length. Returns `Result<unit, string>`: `Err` when the range passes the buffer end, and then `v` is unchanged. |
+
+`copy_from_vec` and `copy_to_vec` take a `Vec<int>`, not a fixed array. They
+move a whole frame in one native call: copying 64000 elements costs well under a
+millisecond, against one native call per byte for `write_u8`.
 
 ### String Operations
 

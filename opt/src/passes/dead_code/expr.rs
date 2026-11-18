@@ -38,7 +38,9 @@ impl DeadCodeEliminator {
             TypedExprKind::Assign { value, .. } => self.eliminate_in_expr(value),
             TypedExprKind::Grouping(inner) => self.eliminate_in_expr(inner),
             TypedExprKind::Lambda(inner) => self.eliminate_in_expr(inner),
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { body, .. }
+            | TypedExprKind::Block(body)
+            | TypedExprKind::Loop { body, .. } => {
                 self.eliminate_in_block(body);
             }
             TypedExprKind::Member { object, .. } => self.eliminate_in_expr(object),
@@ -128,6 +130,7 @@ impl DeadCodeEliminator {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::Unit
             | TypedExprKind::Null
             | TypedExprKind::AssociatedConst { .. }

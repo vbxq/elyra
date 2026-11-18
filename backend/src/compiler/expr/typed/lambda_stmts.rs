@@ -8,6 +8,7 @@ impl Compiler {
     pub(super) fn compile_typed_lambda_with_stmts(
         &mut self,
         params: &[aelys_sema::TypedParam],
+        unit_return: bool,
         body: &[aelys_sema::TypedStmt],
         captures: &[(String, aelys_sema::InferType)],
         dest: u16,
@@ -27,6 +28,7 @@ impl Compiler {
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
         );
+        nested_compiler.own_slots = self.own_slots.clone();
         nested_compiler.struct_schemas = self.struct_schemas.clone();
         nested_compiler.current.struct_schemas = nested_compiler.struct_schemas.as_ref().clone();
         nested_compiler.enum_schemas = self.enum_schemas.clone();
@@ -95,26 +97,22 @@ impl Compiler {
             }
 
             let last_stmt = &body[body.len() - 1];
-            match &last_stmt.kind {
-                aelys_sema::TypedStmtKind::Expression(expr) => {
-                    let result_reg = nested_compiler.alloc_register()?;
-                    nested_compiler.compile_typed_expr(expr, result_reg)?;
-                    nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
-                }
-                aelys_sema::TypedStmtKind::Return(_) => {
-                    nested_compiler.compile_typed_stmt(last_stmt)?;
-                }
-                _ => {
-                    nested_compiler.compile_typed_stmt(last_stmt)?;
-                    nested_compiler.emit_return0(last_stmt.span);
-                }
+            if !unit_return && Compiler::typed_stmt_yields_value(last_stmt) {
+                let result_reg = nested_compiler.alloc_register()?;
+                nested_compiler.compile_typed_stmt_value(last_stmt, result_reg)?;
+                nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
+            } else if let aelys_sema::TypedStmtKind::Return(_) = &last_stmt.kind {
+                nested_compiler.compile_typed_stmt(last_stmt)?;
+            } else {
+                nested_compiler.compile_typed_stmt(last_stmt)?;
+                nested_compiler.emit_return0(last_stmt.span);
             }
         } else {
             nested_compiler.emit_return0(span);
         }
 
         nested_compiler.end_scope();
-        nested_compiler.current.num_registers = nested_compiler.next_register;
+        nested_compiler.finish_registers()?;
         nested_compiler.current.global_layout = nested_compiler.build_global_layout()?;
         nested_compiler.current.compute_global_layout_hash();
         nested_compiler.current.finalize_bytecode();

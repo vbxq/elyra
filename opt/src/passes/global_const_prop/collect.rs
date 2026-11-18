@@ -62,6 +62,8 @@ impl GlobalConstantPropagator {
                 break;
             }
         }
+
+        self.late = late_constants(stmts, &self.constants);
     }
 
     pub(super) fn substitute_in_expr_for_collection(&self, expr: &mut TypedExpr) {
@@ -93,6 +95,31 @@ impl GlobalConstantPropagator {
             _ => {}
         }
     }
+}
+
+fn late_constants(
+    stmts: &[TypedStmt],
+    constants: &std::collections::HashMap<String, TypedExpr>,
+) -> HashSet<String> {
+    let mut late = HashSet::new();
+    let mut code_ran = false;
+    for stmt in stmts {
+        match &stmt.kind {
+            TypedStmtKind::Let { name, .. } if constants.contains_key(name) => {
+                if code_ran {
+                    late.insert(name.clone());
+                }
+            }
+            TypedStmtKind::Function(_)
+            | TypedStmtKind::ImplDecl { .. }
+            | TypedStmtKind::StructDecl { .. }
+            | TypedStmtKind::TraitDecl { .. }
+            | TypedStmtKind::EnumDecl { .. }
+            | TypedStmtKind::Needs(_) => {}
+            _ => code_ran = true,
+        }
+    }
+    late
 }
 
 // a name the top level binds twice is two variables, and the substitution walk has no way

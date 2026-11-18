@@ -15,7 +15,7 @@ impl ModuleLoader {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Function(func) => {
-                    if func.is_pub {
+                    if func.is_pub && func.type_params.is_empty() {
                         exports.insert(
                             func.name.clone(),
                             ExportInfo {
@@ -52,12 +52,13 @@ impl ModuleLoader {
     pub(crate) fn register_exports(
         &self,
         needs: &aelys_syntax::NeedsStmt,
+        module_key: &str,
         exports: &std::collections::HashMap<String, ExportInfo>,
         vm: &mut VM,
     ) -> Result<()> {
         let module_alias = self.get_module_alias(needs);
-        let module_path_str = needs.path.join(".");
-        let module_id = aelys_syntax::ModuleId::new(module_path_str.as_str());
+        let module_path_str = module_key.to_string();
+        let module_id = aelys_syntax::ModuleId::new(module_key);
         // stdlib constant this module never wrote
         let read = |vm: &VM, name: &str| {
             vm.get_global(&aelys_sema::module_scoped_global(module_id.as_str(), name))
@@ -142,6 +143,9 @@ impl ModuleLoader {
             {
                 return Ok(());
             }
+            if exported_types.pub_generic_fns.contains_key(symbol) {
+                return Ok(());
+            }
             if exported_types.private_names.contains(symbol) {
                 return Err(AelysError::Compile(CompileError::new(
                     CompileErrorKind::SymbolNotPublic {
@@ -170,7 +174,158 @@ impl ModuleLoader {
             .unwrap_or(false)
     }
 
+    // an import spelling is local to one importer, so it reads the defining module's own slot
+    pub(crate) fn import_renames(
+        &self,
+        needs: &aelys_syntax::NeedsStmt,
+        kind: &ImportKind,
+        module_key: &str,
+    ) -> Vec<(String, String)> {
+        let Some(module_info) = self.loaded_modules.get(module_key) else {
+            return Vec::new();
+        };
+        if self.loaded_native_modules.contains_key(module_key) {
+            return Vec::new();
+        }
+        let is_std = module_key.starts_with("std.");
+        let target = |name: &str| {
+            if is_std {
+                format!("{}::{}", module_info.name, name)
+            } else {
+                aelys_sema::module_scoped_global(
+                    aelys_syntax::ModuleId::new(module_key).as_str(),
+                    name,
+                )
+            }
+        };
+        let alias = self.get_module_alias(needs);
+        let mut renames = Vec::new();
+        match kind {
+            ImportKind::Module { alias: None } | ImportKind::Wildcard => {
+                for name in module_info.exports.keys() {
+                    renames.push((format!("{alias}::{name}"), target(name)));
+                    renames.push((name.clone(), target(name)));
+                }
+            }
+            ImportKind::Module { alias: Some(_) } => {
+                for name in module_info.exports.keys() {
+                    renames.push((format!("{alias}::{name}"), target(name)));
+                }
+            }
+            ImportKind::Symbols(symbols) => {
+                for name in symbols {
+                    if module_info.exports.contains_key(name) {
+                        renames.push((name.clone(), target(name)));
+                    }
+                }
+            }
+        }
+        renames
+    }
+
+    pub(crate) fn import_mutability(
+        &self,
+        needs: &aelys_syntax::NeedsStmt,
+        kind: &ImportKind,
+        module_key: &str,
+    ) -> (Vec<String>, Vec<String>) {
+        let Some(module_info) = self.loaded_modules.get(module_key) else {
+            return (Vec::new(), Vec::new());
+        };
+        let alias = self.get_module_alias(needs);
+        let mut immutable = Vec::new();
+        let mut mutable = Vec::new();
+        let bare: Vec<&String> = match kind {
+            ImportKind::Module { alias: None } | ImportKind::Wildcard => {
+                module_info.exports.keys().collect()
+            }
+            ImportKind::Module { alias: Some(_) } => Vec::new(),
+            ImportKind::Symbols(symbols) => symbols.iter().collect(),
+        };
+        for name in bare {
+            match module_info.exports.get(name) {
+                Some(export) if export.is_mutable => mutable.push(name.clone()),
+                Some(_) => immutable.push(name.clone()),
+                None => {}
+            }
+        }
+        if !matches!(kind, ImportKind::Symbols(_)) {
+            for (name, export) in &module_info.exports {
+                if !export.is_mutable {
+                    immutable.push(format!("{alias}::{name}"));
+                }
+            }
+        }
+        (immutable, mutable)
+    }
+
     pub fn get_module(&self, module_path: &str) -> Option<&ModuleInfo> {
         self.loaded_modules.get(module_path)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct GenericTargets {
+    qualified: std::collections::HashMap<String, String>,
+    bare: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    explicit: std::collections::HashMap<String, String>,
+}
+
+impl GenericTargets {
+    // a generic function joins the same bare-name rules as every other import
+    pub(crate) fn note(
+        &mut self,
+        module_info: &ModuleInfo,
+        module_path: &str,
+        alias: &str,
+        kind: &ImportKind,
+        bare_imports: &mut super::types::BareImports,
+    ) -> Option<(String, String)> {
+        let generics = &module_info.exported_types.pub_generic_fns;
+        let whole = match kind {
+            ImportKind::Module { alias: explicit } => explicit.is_none(),
+            ImportKind::Wildcard => true,
+            ImportKind::Symbols(symbols) => {
+                for name in symbols {
+                    if let Some(symbol) = generics.get(name) {
+                        if let Some(previous) = bare_imports.note_explicit(name, module_path) {
+                            return Some((name.clone(), previous));
+                        }
+                        self.explicit.insert(name.clone(), symbol.clone());
+                    }
+                }
+                return None;
+            }
+        };
+        for (name, symbol) in generics {
+            self.qualified
+                .insert(format!("{alias}::{name}"), symbol.clone());
+            if whole {
+                bare_imports.note_bare(name, module_path, alias);
+                self.bare
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(module_path.to_string(), symbol.clone());
+            }
+        }
+        None
+    }
+
+    pub(crate) fn finish(
+        self,
+        bare_imports: &super::types::BareImports,
+        ambiguous: &std::collections::BTreeMap<String, Vec<String>>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut targets = self.qualified;
+        for (name, modules) in self.bare {
+            if bare_imports.is_explicit(&name) || ambiguous.contains_key(&name) {
+                continue;
+            }
+            if let Some(symbol) = modules.into_values().next() {
+                targets.insert(name, symbol);
+            }
+        }
+        targets.extend(self.explicit);
+        targets
     }
 }

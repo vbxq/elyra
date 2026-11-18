@@ -617,6 +617,20 @@ fn lower_function(
             )
         })
         .collect::<HashMap<_, _>>();
+    let parameter_types = ir
+        .blocks
+        .iter()
+        .map(|block| {
+            (
+                block.id,
+                block
+                    .parameters
+                    .iter()
+                    .map(|(_, ty)| *ty)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mut values = HashMap::new();
     for block in &ir.blocks {
         let lowered = blocks[&block.id];
@@ -978,12 +992,31 @@ fn lower_function(
                 values.insert(result_id, result);
             }
         }
+        // a dead parameter is lowered as i64 whatever type its predecessor leaves in the register
+        let mut block_arguments = |target: &BlockId, arguments: &[ValueId]| {
+            let parameters = parameter_types.get(target);
+            arguments
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    let value = values[value];
+                    let dead = parameters
+                        .and_then(|types| types.get(index))
+                        .is_some_and(|ty| *ty == IrType::Uninitialized);
+                    let value = match builder.func.dfg.value_type(value) {
+                        ty if !dead || ty == types::I64 => value,
+                        types::F64 => builder
+                            .ins()
+                            .bitcast(types::I64, MemFlagsData::new(), value),
+                        _ => builder.ins().uextend(types::I64, value),
+                    };
+                    BlockArg::from(value)
+                })
+                .collect::<Vec<BlockArg>>()
+        };
         match &block.terminator {
             IrTerminator::Jump { target, arguments } => {
-                let arguments = arguments
-                    .iter()
-                    .map(|value| BlockArg::from(values[value]))
-                    .collect::<Vec<BlockArg>>();
+                let arguments = block_arguments(target, arguments);
                 builder.ins().jump(blocks[target], &arguments);
             }
             IrTerminator::Branch {
@@ -993,14 +1026,8 @@ fn lower_function(
                 else_target,
                 else_arguments,
             } => {
-                let then_arguments = then_arguments
-                    .iter()
-                    .map(|value| BlockArg::from(values[value]))
-                    .collect::<Vec<BlockArg>>();
-                let else_arguments = else_arguments
-                    .iter()
-                    .map(|value| BlockArg::from(values[value]))
-                    .collect::<Vec<BlockArg>>();
+                let then_arguments = block_arguments(then_target, then_arguments);
+                let else_arguments = block_arguments(else_target, else_arguments);
                 builder.ins().brif(
                     values[condition],
                     blocks[then_target],

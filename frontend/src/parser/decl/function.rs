@@ -23,7 +23,7 @@ impl Parser {
         let name = if self.match_token(&TokenKind::From) {
             "from".to_string()
         } else {
-            self.consume_identifier("function name")?
+            self.consume_declared_identifier("function name")?
         };
 
         let (type_params, mut where_clauses) = self.parse_type_params_with_bounds()?;

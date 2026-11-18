@@ -2,7 +2,7 @@ use crate::{Function, Value};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::Arc;
 
 pub const JIT_TIER1_BACKEDGE_THRESHOLD: u64 = 10_000;
@@ -23,9 +23,50 @@ pub struct JitExecutionContext {
     pub controlled: bool,
 }
 
+// keys are never attacker chosen, so a weak hash is safe
+#[derive(Default)]
+pub(crate) struct WordHasher(u64);
+
+impl WordHasher {
+    #[inline(always)]
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl Hasher for WordHasher {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    #[inline(always)]
+    fn write_u32(&mut self, value: u32) {
+        self.add(u64::from(value));
+    }
+
+    #[inline(always)]
+    fn write_u64(&mut self, value: u64) {
+        self.add(value);
+    }
+
+    #[inline(always)]
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
+}
+
 pub(crate) struct InlineMap<K, V> {
     inline: SmallVec<[(K, V); 4]>,
-    heap: Option<HashMap<K, V>>,
+    heap: Option<HashMap<K, V, BuildHasherDefault<WordHasher>>>,
 }
 
 impl<K, V> Default for InlineMap<K, V> {
@@ -86,7 +127,10 @@ impl<K: Eq + Hash, V> InlineMap<K, V> {
             self.inline.push((key, value));
             return;
         }
-        let mut heap = HashMap::with_capacity(self.inline.len().saturating_mul(2));
+        let mut heap = HashMap::with_capacity_and_hasher(
+            self.inline.len().saturating_mul(2),
+            BuildHasherDefault::default(),
+        );
         heap.extend(std::mem::take(&mut self.inline));
         heap.insert(key, value);
         self.heap = Some(heap);
@@ -173,7 +217,10 @@ impl FrameData {
     pub const FUNCTION: i32 = 8;
     pub const CODE: i32 = 16;
     pub const VIEW_GENERATION: i32 = 32;
-    pub const HEADER_WORDS: usize = 5;
+    pub const VIEW_VALUES: i32 = 40;
+    pub const VIEW_LEN: i32 = 48;
+    pub const MAPPING: i32 = 56;
+    pub const HEADER_WORDS: usize = 8;
     pub const SITE_WORDS: usize = 5;
     pub const SITE_EPOCH: i32 = 0;
     pub const SITE_VALUE: i32 = 8;

@@ -160,6 +160,7 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
         InferType::F32 => push_len_prefixed(result, "f32"),
         InferType::F64 => push_len_prefixed(result, "f64"),
         InferType::Bool => push_len_prefixed(result, "bool"),
+        InferType::Char => push_len_prefixed(result, "char"),
         InferType::String => push_len_prefixed(result, "string"),
         InferType::Unit => push_len_prefixed(result, "unit"),
         InferType::Null => push_len_prefixed(result, "null"),
@@ -204,6 +205,11 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
             encode_type_key(ok, result);
             encode_type_key(err, result);
         }
+        InferType::Map(key, value) => {
+            push_len_prefixed(result, "map");
+            encode_type_key(key, result);
+            encode_type_key(value, result);
+        }
         InferType::Array(inner) => {
             push_len_prefixed(result, "array");
             encode_type_key(inner, result);
@@ -224,7 +230,7 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
                 encode_type_key(element, result);
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             push_len_prefixed(result, "function");
             push_len_prefixed(result, &params.len().to_string());
             for param in params {
@@ -255,7 +261,7 @@ fn nominal_instance_name(name: &str, args: &[InferType]) -> String {
 
 fn is_structural_subterm(candidate: &InferType, parent: &InferType) -> bool {
     match parent {
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params
                 .iter()
                 .any(|param| candidate == param || is_structural_subterm(candidate, param))
@@ -268,7 +274,7 @@ fn is_structural_subterm(candidate: &InferType, parent: &InferType) -> bool {
         | InferType::Option(inner) => {
             candidate == inner.as_ref() || is_structural_subterm(candidate, inner)
         }
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             candidate == ok.as_ref()
                 || candidate == err.as_ref()
                 || is_structural_subterm(candidate, ok)
@@ -321,7 +327,7 @@ fn collect_nominal_applications(
         InferType::Projection { self_ty, .. } => {
             collect_nominal_applications(self_ty, type_table, applications);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_nominal_applications(param, type_table, applications);
             }
@@ -331,7 +337,7 @@ fn collect_nominal_applications(
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_nominal_applications(inner, type_table, applications),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_nominal_applications(ok, type_table, applications);
             collect_nominal_applications(err, type_table, applications);
         }
@@ -351,6 +357,7 @@ fn collect_nominal_applications(
         | InferType::F32
         | InferType::F64
         | InferType::Bool
+        | InferType::Char
         | InferType::String
         | InferType::Unit
         | InferType::Null
@@ -382,7 +389,8 @@ fn replace_nominal_type(ty: &InferType, replacements: &HashMap<String, String>) 
         };
     }
     match ty {
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params
                 .iter()
                 .map(|param| replace_nominal_type(param, replacements))
@@ -402,6 +410,10 @@ fn replace_nominal_type(ty: &InferType, replacements: &HashMap<String, String>) 
             InferType::Option(Box::new(replace_nominal_type(inner, replacements)))
         }
         InferType::Result(ok, err) => InferType::Result(
+            Box::new(replace_nominal_type(ok, replacements)),
+            Box::new(replace_nominal_type(err, replacements)),
+        ),
+        InferType::Map(ok, err) => InferType::Map(
             Box::new(replace_nominal_type(ok, replacements)),
             Box::new(replace_nominal_type(err, replacements)),
         ),
@@ -455,7 +467,9 @@ fn rewrite_nominal_stmt(
                 rewrite_nominal_stmt(else_branch, replacements, type_table);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             rewrite_nominal_expr(condition, replacements, type_table);
             rewrite_nominal_stmt(body, replacements, type_table);
         }
@@ -483,7 +497,7 @@ fn rewrite_nominal_stmt(
             rewrite_nominal_expr(iterable, replacements, type_table);
             rewrite_nominal_stmt(body, replacements, type_table);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 rewrite_nominal_expr(expr, replacements, type_table);
             }
@@ -507,6 +521,9 @@ fn rewrite_nominal_stmt(
                     param.ty = replace_nominal_type(&param.ty, replacements);
                 }
                 method.return_type = replace_nominal_type(&method.return_type, replacements);
+                for (_, ty) in &mut method.captures {
+                    *ty = replace_nominal_type(ty, replacements);
+                }
                 for stmt in &mut method.body {
                     rewrite_nominal_stmt(stmt, replacements, type_table);
                 }
@@ -534,8 +551,7 @@ fn rewrite_nominal_stmt(
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. } => {}
     }
@@ -596,6 +612,11 @@ fn rewrite_nominal_expr(
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                rewrite_nominal_stmt(stmt, replacements, type_table);
             }
         }
         TypedExprKind::LambdaInner {
@@ -724,6 +745,7 @@ fn rewrite_nominal_expr(
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -792,7 +814,9 @@ fn rewrite_nominal_pattern(
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Char(_)
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }
 
@@ -848,7 +872,9 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
                 collect_stmt_types(else_branch, types);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_expr_types(condition, types);
             collect_stmt_types(body, types);
         }
@@ -876,7 +902,7 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
             collect_expr_types(iterable, types);
             collect_stmt_types(body, types);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 collect_expr_types(expr, types);
             }
@@ -909,8 +935,7 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::Needs(_) => {}
     }
@@ -978,6 +1003,11 @@ fn collect_expr_types(expr: &TypedExpr, types: &mut Vec<(InferType, Span)>) {
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                collect_stmt_types(stmt, types);
             }
         }
         TypedExprKind::LambdaInner {
@@ -1080,6 +1110,7 @@ fn collect_expr_types(expr: &TypedExpr, types: &mut Vec<(InferType, Span)>) {
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -1104,14 +1135,16 @@ fn collect_pattern_types(pattern: &TypedPattern, types: &mut Vec<(InferType, Spa
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Char(_)
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }
 
 fn collect_type(ty: &InferType, span: Span, types: &mut Vec<(InferType, Span)>) {
     types.push((ty.clone(), span));
     match ty {
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_type(param, span, types);
             }
@@ -1121,7 +1154,7 @@ fn collect_type(ty: &InferType, span: Span, types: &mut Vec<(InferType, Span)>) 
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_type(inner, span, types),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_type(ok, span, types);
             collect_type(err, span, types);
         }
@@ -1146,14 +1179,14 @@ fn contains_open_generic_type(ty: &InferType) -> bool {
         | InferType::Var(_)
         | InferType::Dynamic
         | InferType::UntypedNative(_) => true,
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_open_generic_type) || contains_open_generic_type(ret)
         }
         InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => contains_open_generic_type(inner),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             contains_open_generic_type(ok) || contains_open_generic_type(err)
         }
         InferType::Tuple(elements) => elements.iter().any(contains_open_generic_type),
@@ -1176,6 +1209,17 @@ impl TypeInference {
             .filter_map(|stmt| match &stmt.kind {
                 TypedStmtKind::Function(function) if !function.type_params.is_empty() => {
                     Some((function.name.clone(), function.clone()))
+                }
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let generic_modules = stmts
+            .iter()
+            .filter_map(|stmt| match (&stmt.kind, &stmt.definition_module) {
+                (TypedStmtKind::Function(function), Some(module))
+                    if !function.type_params.is_empty() =>
+                {
+                    Some((function.name.clone(), module.clone()))
                 }
                 _ => None,
             })
@@ -1237,10 +1281,10 @@ impl TypeInference {
             let Some(function) = instance else {
                 continue;
             };
-            specialized.push(TypedStmt::new(
-                TypedStmtKind::Function(function),
-                template.span,
-            ));
+            let mut instance_stmt =
+                TypedStmt::new(TypedStmtKind::Function(function), template.span);
+            instance_stmt.definition_module = generic_modules.get(&frame.key.name).cloned();
+            specialized.push(instance_stmt);
             if specialized.len() > MAX_INSTANCES {
                 errors.push(TypeError {
                     kind: TypeErrorKind::MonomorphizationLimit {
@@ -1275,14 +1319,28 @@ impl TypeInference {
 
     pub(super) fn resolve_deferred_members(&mut self, stmts: &mut [TypedStmt]) {
         let type_table = &self.type_table;
-        let hidden = |name: &str| self.refused_private_nominal(name).is_some();
+        let current_module = self.current_module.clone();
         let mut errors = Vec::new();
         for stmt in stmts.iter_mut() {
+            // a carried body reads its own module's nominals, which the importer may never name
+            let carried = stmt
+                .definition_module
+                .as_ref()
+                .is_some_and(|module| *module != self.root_module);
+            let hidden = |name: &str| !carried && self.refused_private_nominal(name).is_some();
             visit_exprs_stmt(stmt, &mut |expr| {
+                resolve_deferred_field_assign(expr, type_table, &current_module, &mut errors);
                 resolve_deferred_expr(expr, type_table, &hidden, &mut errors);
             });
             visit_exprs_stmt(stmt, &mut |expr| {
                 resolve_deferred_call_type(expr);
+                if let TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } =
+                    &mut expr.kind
+                {
+                    for stmt in stmts {
+                        resolve_deferred_statement_types(stmt);
+                    }
+                }
             });
             resolve_deferred_statement_types(stmt);
         }
@@ -1806,6 +1864,32 @@ impl TypeInference {
         for (ty, _) in types {
             collect_nominal_applications(&ty, &self.type_table, &mut applications);
         }
+        // an imported definition carries its tuple fields unmaterialized
+        let mut field_types = Vec::new();
+        for definition in self.type_table.structs_in_declaration_order() {
+            if definition.type_params.is_empty() {
+                field_types.extend(definition.fields.iter().map(|field| field.ty.clone()));
+            }
+        }
+        for definition in self.type_table.enums_in_declaration_order() {
+            if !definition.type_params.is_empty() {
+                continue;
+            }
+            for variant in &definition.variants {
+                match &variant.fields {
+                    crate::types::EnumVariantFieldsDef::Unit => {}
+                    crate::types::EnumVariantFieldsDef::Tuple(fields) => {
+                        field_types.extend(fields.iter().cloned())
+                    }
+                    crate::types::EnumVariantFieldsDef::Named(fields) => {
+                        field_types.extend(fields.iter().map(|field| field.ty.clone()))
+                    }
+                }
+            }
+        }
+        for ty in field_types.iter().filter(|ty| applies_only_tuples(ty)) {
+            collect_nominal_applications(ty, &self.type_table, &mut applications);
+        }
         loop {
             let before = applications.len();
             let discovered = applications.values().cloned().collect::<Vec<_>>();
@@ -2009,9 +2093,36 @@ impl TypeInference {
             }
         }
         self.type_table.remove_open_nominals();
+        self.type_table.rewrite_field_types(|ty| {
+            if applies_only_tuples(ty) {
+                replace_nominal_type(ty, &replacements)
+            } else {
+                ty.clone()
+            }
+        });
         for stmt in stmts {
             rewrite_nominal_stmt(stmt, &replacements, &self.type_table);
         }
+    }
+}
+
+// a generic nominal in field position stays the e0349 refusal; only tuples are materialized there
+fn applies_only_tuples(ty: &InferType) -> bool {
+    match ty {
+        InferType::Applied { name, args } => {
+            aelys_syntax::tuple_arity(name).is_some() && args.iter().all(applies_only_tuples)
+        }
+        InferType::Option(inner)
+        | InferType::Array(inner)
+        | InferType::FixedArray(inner, _)
+        | InferType::Vec(inner) => applies_only_tuples(inner),
+        InferType::Result(ok, error) | InferType::Map(ok, error) => {
+            applies_only_tuples(ok) && applies_only_tuples(error)
+        }
+        InferType::Function { params, ret, .. } => {
+            params.iter().all(applies_only_tuples) && applies_only_tuples(ret)
+        }
+        _ => true,
     }
 }
 
@@ -2261,7 +2372,9 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
                 collect_impl_calls_stmt(else_branch, calls);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_impl_calls_expr(condition, calls);
             collect_impl_calls_stmt(body, calls);
         }
@@ -2283,7 +2396,7 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
             collect_impl_calls_expr(iterable, calls);
             collect_impl_calls_stmt(body, calls);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 collect_impl_calls_expr(expr, calls);
             }
@@ -2300,8 +2413,7 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -2378,6 +2490,11 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
                 }
             }
         }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                collect_impl_calls_stmt(stmt, calls);
+            }
+        }
         TypedExprKind::LambdaInner { body, .. } => {
             for stmt in body {
                 collect_impl_calls_stmt(stmt, calls);
@@ -2451,6 +2568,7 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -2458,7 +2576,7 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
     }
 }
 
-fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr)) {
+pub(super) fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr)) {
     match &mut stmt.kind {
         TypedStmtKind::Expression(expr) => visit_exprs_expr(expr, visit),
         TypedStmtKind::Let { initializer, .. } => visit_exprs_expr(initializer, visit),
@@ -2478,7 +2596,9 @@ fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr))
                 visit_exprs_stmt(else_branch, visit);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             visit_exprs_expr(condition, visit);
             visit_exprs_stmt(body, visit);
         }
@@ -2500,7 +2620,7 @@ fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr))
             visit_exprs_expr(iterable, visit);
             visit_exprs_stmt(body, visit);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 visit_exprs_expr(expr, visit);
             }
@@ -2517,8 +2637,7 @@ fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr))
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -2569,6 +2688,11 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                visit_exprs_stmt(stmt, visit);
             }
         }
         TypedExprKind::LambdaInner { body, .. } => {
@@ -2644,6 +2768,7 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -2950,6 +3075,80 @@ fn resolve_deferred_expr(
     resolve_deferred_member(expr, type_table, hidden, errors);
 }
 
+fn resolve_deferred_field_assign(
+    expr: &mut TypedExpr,
+    type_table: &crate::types::TypeTable,
+    current_module: &aelys_syntax::ModuleId,
+    errors: &mut Vec<TypeError>,
+) {
+    let TypedExprKind::MemberAssign {
+        object,
+        member,
+        offset,
+        schema_index,
+        value,
+    } = &mut expr.kind
+    else {
+        return;
+    };
+    if *schema_index != crate::infer::expr::member::DEFERRED_FIELD_SCHEMA {
+        return;
+    }
+    let resolved = crate::infer::expr::member::nominal_parts(&object.ty, type_table).and_then(
+        |(name, substitutions)| {
+            let definition = type_table.get_struct(&name)?;
+            Some((name.clone(), definition.clone(), substitutions))
+        },
+    );
+    let Some((name, definition, substitutions)) = resolved else {
+        errors.push(TypeError {
+            kind: TypeErrorKind::UndeterminedType,
+            span: expr.span,
+            reason: ConstraintReason::Other("deferred field assignment".to_string()),
+        });
+        return;
+    };
+    let Some(field) = definition.fields.iter().find(|field| field.name == *member) else {
+        errors.push(TypeError {
+            kind: TypeErrorKind::UnknownField {
+                structure: name,
+                field: member.clone(),
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("deferred field assignment".to_string()),
+        });
+        return;
+    };
+    if !field.is_pub && !current_module.is_same_or_descendant_of(&definition.owner) {
+        errors.push(TypeError {
+            kind: TypeErrorKind::PrivateFieldAccess {
+                structure: name,
+                field: member.clone(),
+                owner: definition.owner.clone(),
+                current: current_module.clone(),
+                operation: "write".to_string(),
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("private field write".to_string()),
+        });
+        return;
+    }
+    let field_ty = field.ty.substitute_params(&substitutions);
+    if !fits_call_site(&field_ty, &value.ty, &[], &mut HashMap::new()) {
+        errors.push(TypeError {
+            kind: TypeErrorKind::Mismatch {
+                expected: field_ty.clone(),
+                found: value.ty.clone(),
+            },
+            span: value.span,
+            reason: ConstraintReason::Other("deferred field assignment".to_string()),
+        });
+    }
+    *offset = field.ordinal;
+    *schema_index = type_table.schema_index(&name).unwrap_or(0);
+    expr.ty = field_ty;
+}
+
 fn resolve_deferred_member(
     expr: &mut TypedExpr,
     type_table: &crate::types::TypeTable,
@@ -3237,10 +3436,10 @@ fn resolve_deferred_member(
     }
     // a projection the receiver's impls answer alike is that answer, as on the member route
     let function_type = settle_projections(
-        &InferType::Function {
-            params: method.params.into_iter().skip(1).collect(),
-            ret: Box::new(method.return_type),
-        },
+        &InferType::function(
+            method.params.into_iter().skip(1).collect(),
+            method.return_type,
+        ),
         type_table,
     );
     // the call site fixes the method's own parameters, and nothing else
@@ -3280,7 +3479,8 @@ fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> I
             Some(resolved) if resolved != *ty => settle(&resolved),
             _ => ty.clone(),
         },
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params.iter().map(settle).collect(),
             ret: Box::new(settle(ret)),
         },
@@ -3297,6 +3497,7 @@ fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> I
         InferType::Result(ok, err) => {
             InferType::Result(Box::new(settle(ok)), Box::new(settle(err)))
         }
+        InferType::Map(ok, err) => InferType::Map(Box::new(settle(ok)), Box::new(settle(err))),
         InferType::Tuple(elements) => InferType::Tuple(elements.iter().map(settle).collect()),
         other => other.clone(),
     }
@@ -3322,10 +3523,12 @@ fn fits_call_site(
             InferType::Function {
                 params: formal_params,
                 ret: formal_ret,
+                ..
             },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) => {
             formal_params.len() == actual_params.len()
@@ -3360,7 +3563,8 @@ fn fits_call_site(
         (InferType::FixedArray(formal, formal_len), InferType::FixedArray(actual, actual_len)) => {
             formal_len == actual_len && fits_call_site(formal, actual, own_params, bound)
         }
-        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err)) => {
+        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err))
+        | (InferType::Map(formal_ok, formal_err), InferType::Map(actual_ok, actual_err)) => {
             fits_call_site(formal_ok, actual_ok, own_params, bound)
                 && fits_call_site(formal_err, actual_err, own_params, bound)
         }
@@ -3429,8 +3633,8 @@ fn resolve_deferred_statement_types(stmt: &mut TypedStmt) {
         }
         TypedStmtKind::Expression(_)
         | TypedStmtKind::Return(_)
-        | TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        | TypedStmtKind::Break { .. }
+        | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -3456,10 +3660,7 @@ pub(crate) fn mark_display_argument(arg: &mut TypedExpr) {
             method: crate::prelude::DISPLAY_METHOD.to_string(),
             separator: aelys_syntax::MemberSeparator::Dot,
         },
-        InferType::Function {
-            params: vec![object_ty],
-            ret: Box::new(InferType::String),
-        },
+        InferType::function(vec![object_ty], InferType::String),
         span,
     );
     *arg = TypedExpr::new(
@@ -3613,7 +3814,9 @@ fn rewrite_stmt(
                 );
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             rewrite_expr(
                 inference,
                 condition,
@@ -3707,7 +3910,7 @@ fn rewrite_stmt(
                 errors,
             );
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 rewrite_expr(
                     inference,
@@ -3751,8 +3954,7 @@ fn rewrite_stmt(
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -3943,6 +4145,20 @@ fn rewrite_expr(
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                rewrite_stmt(
+                    inference,
+                    stmt,
+                    generic_defs,
+                    queue,
+                    queued,
+                    symbols,
+                    symbol_keys,
+                    errors,
+                );
             }
         }
         TypedExprKind::LambdaInner { body, .. } => {
@@ -4180,6 +4396,7 @@ fn rewrite_expr(
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -4203,7 +4420,9 @@ fn rewrite_pattern(pattern: &mut TypedPattern) {
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Char(_)
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }
 
@@ -4648,7 +4867,7 @@ fn instance_arguments(
     for (formal, actual) in template.params.iter().zip(args) {
         match_types(&formal.ty, &actual.ty, &mut mapping)?;
     }
-    if let InferType::Function { params, ret } = &callee.ty {
+    if let InferType::Function { params, ret, .. } = &callee.ty {
         for (formal, actual) in template.params.iter().map(|param| &param.ty).zip(params) {
             match_types(formal, actual, &mut mapping)?;
         }
@@ -4680,10 +4899,12 @@ pub(crate) fn match_types(
             InferType::Function {
                 params,
                 ret: formal_ret,
+                ..
             },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) if params.len() == actual_params.len() => {
             for (formal, actual) in params.iter().zip(actual_params) {
@@ -4701,7 +4922,8 @@ pub(crate) fn match_types(
         {
             match_types(formal, actual, mapping)
         }
-        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err)) => {
+        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err))
+        | (InferType::Map(formal_ok, formal_err), InferType::Map(actual_ok, actual_err)) => {
             match_types(formal_ok, actual_ok, mapping)?;
             match_types(formal_err, actual_err, mapping)
         }

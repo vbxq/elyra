@@ -30,6 +30,9 @@ impl ModuleLoader {
     fn rooted(base_dir: PathBuf, source: Arc<Source>, manifest: Option<Manifest>) -> Self {
         let base_root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
         Self {
+            project_dir: base_dir.clone(),
+            file_keys: std::collections::HashMap::new(),
+            resolved_needs: std::collections::HashMap::new(),
             base_dir,
             base_root,
             loaded_modules: std::collections::HashMap::new(),
