@@ -77,7 +77,7 @@ impl VM {
     // packed int storage holds only inline values: a boxed int turns the container into objects
     #[inline]
     pub(crate) fn admit_boxed_int(&mut self, container: GcRef, value: Value) {
-        if value.is_ptr() {
+        if value.is_ptr() && self.heap.boxed_ints_seen() {
             self.admit_boxed_int_slow(container, value);
         }
     }
