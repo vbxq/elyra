@@ -29,6 +29,12 @@ MAX_VALUE
 Thing2
 ```
 
+A name that starts with two underscores (`__clone`, `__tostring`) belongs to
+the compiler and its builtins. Calling a builtin such as `__tostring(x)` is
+allowed, but declaring such a name (a variable, constant, function, parameter,
+pattern or loop binding, type, field, variant, type parameter or module alias)
+is E0114.
+
 ### Reserved Words
 
 ```
@@ -2504,6 +2510,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0110 | MatchArmValueRequired | a match arm must produce a value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
+| E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
 
 ### E02xx, names and emission limits
 

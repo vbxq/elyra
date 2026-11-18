@@ -125,6 +125,27 @@ impl Parser {
         }
     }
 
+    fn consume_declared_identifier(&mut self, expected: &str) -> Result<String> {
+        let span = self.peek().span;
+        let name = self.consume_identifier(expected)?;
+        self.reject_reserved_name(&name, span)?;
+        Ok(name)
+    }
+
+    fn reject_reserved_name(&self, name: &str, span: aelys_syntax::Span) -> Result<()> {
+        if name.starts_with("__") {
+            return Err(CompileError::new(
+                CompileErrorKind::ReservedIdentifier {
+                    name: name.to_string(),
+                },
+                span,
+                Arc::clone(&self.source),
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     fn check(&self, kind: &TokenKind) -> bool {
         if self.is_at_end() {
             return false;

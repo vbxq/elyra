@@ -8,7 +8,7 @@ impl Parser {
         self.advance();
 
         let mutable = self.match_token(&TokenKind::Mut);
-        let name = self.consume_identifier("variable name")?;
+        let name = self.consume_declared_identifier("variable name")?;
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {
             Some(self.parse_type_annotation()?)
@@ -38,7 +38,7 @@ impl Parser {
     pub(super) fn const_declaration(&mut self, is_pub: bool) -> Result<Stmt> {
         let start_span = self.peek().span;
         self.advance();
-        let name = self.consume_identifier("constant name")?;
+        let name = self.consume_declared_identifier("constant name")?;
         let type_annotation = if self.match_token(&TokenKind::Colon) {
             Some(self.parse_type_annotation()?)
         } else {

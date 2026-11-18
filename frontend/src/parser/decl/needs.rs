@@ -100,7 +100,7 @@ impl Parser {
         }
 
         let kind = if self.match_token(&TokenKind::As) {
-            let alias = self.consume_identifier("alias name")?;
+            let alias = self.consume_declared_identifier("alias name")?;
             ImportKind::Module { alias: Some(alias) }
         } else {
             ImportKind::Module { alias: None }

@@ -250,6 +250,7 @@ impl Parser {
                         Some("Ok" | "Err" | "Some" | "None")
                     );
                     if path.len() == 1 && fields.is_empty() && !is_variant_name {
+                        self.reject_reserved_name(&path[0], start_span)?;
                         PatternKind::Binding(path.remove(0))
                     } else {
                         PatternKind::Variant {

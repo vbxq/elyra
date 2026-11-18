@@ -428,3 +428,46 @@ a.x * 10000 + b.x * 100 + k.x + c.x * 0 + d.x * 0
         99 * 10000 + 99 * 100 + 5,
     );
 }
+
+#[test]
+fn a_reserved_double_underscore_name_cannot_be_declared() {
+    let cases = [
+        "struct P { x: int }\nfn __clone(p: P) -> P { p }",
+        "let __clone = 5",
+        "let mut __tostring = 5",
+        "const __N = 3",
+        "fn f(__clone: int) -> int { __clone }",
+        "let g = fn(__clone: int) -> int { __clone }",
+        "fn f() -> int { let __clone = 1\n__clone }",
+        "for __i in 0..3 { }",
+        "let r = match 3 { __x => __x }",
+        "struct __P { x: int }",
+        "struct P { __x: int }",
+        "enum __E { A }",
+        "enum E { __A }",
+        "trait __T { fn m(self) -> int }",
+        "fn id<__T>(x: __T) -> __T { x }",
+        "struct S { x: int }\nimpl S { fn __clone(self) -> S { self } }",
+        "needs std::math as __m",
+    ];
+    for body in cases {
+        let message = assert_rejected(body, "E0114");
+        assert!(message.contains("reserved"), "{message}");
+    }
+}
+
+#[test]
+fn clone_and_repeat_copies_still_reach_the_builtin() {
+    assert_int_everywhere(
+        r#"
+struct P { x: int }
+let a = P { x: 1 }
+let mut b = a.clone()
+b.x = 99
+let mut v = [P { x: 1 }; 2]
+v[0].x = 5
+a.x * 100 + v[1].x * 10 + __tostring(7).len()
+"#,
+        100 + 10 + 1,
+    );
+}
