@@ -79,7 +79,7 @@ fn expected_with(extra: i64) -> String {
 
 #[test]
 fn a_hot_function_calling_an_imported_function_keeps_its_caller_frame() {
-    let main = r#"needs utils
+    let main = r#"use utils
 fn hot(x: int) -> int {
     return utils::twice(x) + 1
 }
@@ -101,8 +101,8 @@ println("{run(3000)}")
 
 #[test]
 fn a_hot_function_mixing_a_native_and_an_imported_call_keeps_its_caller_frame() {
-    let main = r#"needs utils
-needs std::math
+    let main = r#"use utils
+use std::math
 fn hot(x: int) -> int {
     let a = math::abs(0 - 1)
     return utils::twice(x) + a

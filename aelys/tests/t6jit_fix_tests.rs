@@ -302,7 +302,7 @@ fn run(n: int) -> int {
 #[test]
 fn a_hot_function_calling_a_native_reads_user_globals_correctly() {
     let body = r#"
-needs std::math
+use std::math
 let mut g = 2
 fn f(x: int) -> int { math::abs(x) + g }
 let mut s = 0
@@ -310,7 +310,7 @@ for i in 0..40000 { s = s + f(i) }
 "#;
     let hot = check(body, "s", 800_060_000);
     let helper = r#"
-needs std::math
+use std::math
 let mut g = 2
 fn h() -> int { g }
 fn f(x: int) -> int { math::abs(x) + h() }
@@ -319,7 +319,7 @@ for i in 0..40000 { s = s + f(i) }
 "#;
     check(helper, "s", 800_060_000);
     let changing = r#"
-needs std::math
+use std::math
 let mut g = 2
 fn f(x: int) -> int { math::abs(0 - x) + g }
 let mut s = 0
@@ -338,7 +338,7 @@ for i in 0..40000 {
 #[test]
 fn a_native_error_in_machine_code_reports_the_interpreter_stack() {
     let source = r#"
-needs std::bytes
+use std::bytes
 fn read_at(buf: int, i: int) -> int { return bytes::read_u8(buf, i) }
 fn sum(buf: int, n: int) -> int {
     let mut s = 0
@@ -361,15 +361,14 @@ println("{sum(buf, 50000)}")
 #[test]
 fn natives_that_collect_keep_machine_code_references_alive() {
     let source = r#"
-needs std::convert
-needs std::string
+use std::string
 struct Box { label: string, n: int }
 fn run(n: int) -> int {
     let keep: Vec<int> = vec![5, 6, 7]
     let boxed = Box { label: "kept", n: 3 }
     let mut s = 0
     for i in 0..n {
-        let text = convert::to_string(i)
+        let text = i.to_string()
         s = (s + string::len(text) + keep[1] + boxed.n + string::len(boxed.label)) & 0xFFFFFFF
     }
     return s
@@ -429,7 +428,7 @@ pub fn total() -> int { return hits + last }
     std::fs::write(
         &main,
         r#"
-needs tally
+use tally
 let mut mine = 0
 fn drive(n: int) -> int {
     let mut s = 0

@@ -83,7 +83,7 @@ fn execute_module(runtime: &Runtime, module: &aelys::CompiledModule) -> Value {
 
 // a value read through a global function, a vec and a global, all replaced after the compile was requested
 const SWAPPED_BEFORE_INSTALL: &str = r#"
-needs std::time
+use std::time
 fn one() -> int { return 1 }
 fn two() -> int { return 2 }
 let mut pick = one
@@ -134,8 +134,8 @@ fn a_module_global_written_between_snapshot_and_install_is_read_live() {
     let main = directory.path().join("main.aelys");
     std::fs::write(
         &main,
-        r#"needs std::time
-needs counter
+        r#"use std::time
+use counter
 fn work(k: int) -> int {
     let mut acc = 0
     let mut i = 0
