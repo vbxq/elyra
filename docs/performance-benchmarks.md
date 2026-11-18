@@ -25,15 +25,16 @@ User-space machine instructions (`perf stat -e instructions:u`) per run of the s
 
 | bench | before | after | ratio |
 |---|---|---|---|
-| int_loop (10 M iterations) | 13 234 M | 2 694 M | 4.9x |
-| array_fill (20 M element operations) | 14 993 M | 4 281 M | 3.5x |
-| nested_calls | 7 630 M | 2 604 M | 2.9x |
-| struct_field | 18 436 M | 5 805 M | 3.2x |
-| pixel_buffer (6.4 M pixels) | 10 704 M | 2 879 M | 3.7x |
-| method_dispatch | 14 612 M | 5 322 M | 2.7x |
-| fib(31) | 4 692 M | 1 792 M | 2.6x |
+| int_loop (10 M iterations) | 13 234 M | 2 744 M | 4.8x |
+| array_fill (20 M element operations) | 14 993 M | 4 334 M | 3.5x |
+| nested_calls | 7 630 M | 2 639 M | 2.9x |
+| struct_field | 18 436 M | 5 769 M | 3.2x |
+| pixel_buffer (6.4 M pixels) | 10 704 M | 2 893 M | 3.7x |
+| method_dispatch | 14 612 M | 5 343 M | 2.7x |
+| fib(31) | 4 692 M | 1 825 M | 2.6x |
 | fixed_mul | 6 984 M | 1 926 M | 3.6x |
-| Doom renderer, one frame of E1M1 | 326 M | 83 M | 3.9x |
+| Doom renderer, one frame of E1M1 | 327 M | 84 M | 3.9x |
+| closure call in a loop (1 M calls) | 1 555 M | 574 M | 2.7x |
 
 `-ae.jit=on` now gives the interpreter's results at the interpreter's cost on these benches (it was up to 1.5x slower on method_dispatch): functions the JIT refuses, functions handed a struct and loops past their back-edge threshold stay on the hot path.
 
