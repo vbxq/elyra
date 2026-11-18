@@ -1464,6 +1464,7 @@ impl TypeInference {
         let mut typed_arms = Vec::with_capacity(arms.len());
         let mut implicit_unit_arms = Vec::new();
         let mut value_arms = 0usize;
+        let mut arm_types = Vec::new();
 
         let patterns: Vec<Pattern> = arms
             .iter()
@@ -1529,6 +1530,7 @@ impl TypeInference {
                             implicit_unit_arms.push(arm.span);
                         } else {
                             value_arms += 1;
+                            arm_types.push(body_type.clone());
                             self.constraints.push(Constraint::equal(
                                 result_type.clone(),
                                 body_type,
@@ -1564,6 +1566,9 @@ impl TypeInference {
                 .collect();
             self.unify_branch_literals(&mut bodies);
             for arm in &typed_arms {
+                if let TypedMatchArmBody::Expr(typed_expr) = &arm.body {
+                    arm_types.push(typed_expr.ty.clone());
+                }
                 if let TypedMatchArmBody::Expr(typed_expr) = &arm.body
                     && !self.reject_dynamic(
                         &typed_expr.ty,
@@ -1582,6 +1587,7 @@ impl TypeInference {
             }
         }
 
+        let settles = !discarded && implicit_unit_arms.is_empty();
         if !implicit_unit_arms.is_empty() {
             if value_arms == 0 {
                 self.constraints.push(Constraint::equal(
@@ -1619,6 +1625,8 @@ impl TypeInference {
             },
             if dynamic_result {
                 InferType::Dynamic
+            } else if settles {
+                super::expr::if_expr::settled_arm_type(&arm_types).unwrap_or(result_type)
             } else {
                 result_type
             },
@@ -1749,6 +1757,43 @@ impl TypeInference {
         ));
     }
 
+    fn enum_named_by_pattern(
+        &mut self,
+        path: &[String],
+        variant: &str,
+        ty: &InferType,
+        span: Span,
+    ) -> Option<InferType> {
+        if !matches!(ty, InferType::Var(_)) || path.len() < 2 {
+            return None;
+        }
+        let enum_name = path[..path.len() - 1].join("::");
+        let definition = self.type_table.get_enum(&enum_name)?;
+        if !definition
+            .variants
+            .iter()
+            .any(|known| known.name == variant)
+        {
+            return None;
+        }
+        let params = definition.type_params.len();
+        let pinned = if params == 0 {
+            InferType::Struct(enum_name)
+        } else {
+            InferType::Applied {
+                name: enum_name,
+                args: (0..params).map(|_| self.type_gen.fresh()).collect(),
+            }
+        };
+        self.constraints.push(Constraint::equal(
+            ty.clone(),
+            pinned.clone(),
+            span,
+            ConstraintReason::Comparison,
+        ));
+        Some(pinned)
+    }
+
     fn infer_pattern(&mut self, pattern: &Pattern, ty: &InferType) -> TypedPattern {
         let kind = match &pattern.kind {
             PatternKind::Wildcard => TypedPatternKind::Wildcard,
@@ -1829,6 +1874,8 @@ impl TypeInference {
                 fields,
             } => {
                 let variant = path.last().cloned().unwrap_or_default();
+                let pinned = self.enum_named_by_pattern(path, &variant, ty, pattern.span);
+                let ty = pinned.as_ref().unwrap_or(ty);
                 if let Some(enum_name) = enum_type_name(ty)
                     && let Some(enum_def) = self.type_table.get_enum(&enum_name).cloned()
                 {
