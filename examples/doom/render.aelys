@@ -43,6 +43,7 @@ let mut tex_pics: Vec<Picture> = vec![]
 let mut tex_heights: Vec<int> = vec![]
 let mut flat_pix: Vec<Vec<int>> = vec![]
 let mut lit_flats: Vec<Vec<int>> = vec![]
+let mut sky_lit: Vec<Vec<int>> = vec![]
 let mut sky_flat = -1
 let mut sky_tex = 0
 let mut actors: Vec<Actor> = vec![]
@@ -86,8 +87,7 @@ let mut pl_pic: Vec<int> = vec![0; 128]
 let mut pl_light: Vec<int> = vec![0; 128]
 let mut pl_minx: Vec<int> = vec![0; 128]
 let mut pl_maxx: Vec<int> = vec![0; 128]
-let mut pl_top: Vec<int> = vec![255; 41216]
-let mut pl_bottom: Vec<int> = vec![0; 41216]
+let mut pl_tb: Vec<int> = vec![65280; 41216]
 let mut num_planes = 0
 
 let mut ds_x1: Vec<int> = vec![0; 256]
@@ -614,6 +614,15 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
         if fp >= 0 and flat_pix[fp].len() == 0 { flat_pix[fp] = gfx::flat_pixels(w, g.flats[fp]); nflat++ }
         if cp >= 0 and flat_pix[cp].len() == 0 { flat_pix[cp] = gfx::flat_pixels(w, g.flats[cp]); nflat++ }
     }
+    let sky = tex_pics[sky_tex]
+    sky_lit = vec![]
+    for c in 0..sky.width {
+        let mut col: Vec<int> = vec![0; 200]
+        if sky.heightmask >= 0 {
+            for y in 0..200 { col[y] = cmap_rows[0][sky.cols[c][y & sky.heightmask]] }
+        }
+        sky_lit.push(col)
+    }
     lit_flats = vec![]
     for i in 0..(flat_pix.len() * 32) { lit_flats.push(no_flat) }
     for s in 0..rm_light.len() {
@@ -884,7 +893,7 @@ fn check_plane(p: int, start: int, stop: int) -> int {
     let base = p * 322 + 1
     let mut x = intrl
     while x <= intrh {
-        if pl_top[base + x] != 255 { break }
+        if pl_tb[base + x] != 65280 { break }
         x++
     }
     if x > intrh {
@@ -1130,8 +1139,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
     let mut out = fb
     let mut cclip = ceilingclip
     let mut fclip = floorclip
-    let mut pltop = pl_top
-    let mut plbot = pl_bottom
+    let mut pltb = pl_tb
     let mut opn = openings
     let slight = scalelight
     let cmaps = cmap_rows
@@ -1163,8 +1171,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
             let mut bot = yl - 1
             if bot >= fc { bot = fc - 1 }
             if cc < bot {
-                pltop[cbase + x] = cc + 1
-                plbot[cbase + x] = bot
+                pltb[cbase + x] = ((cc + 1) << 8) | bot
             }
         }
         let mut yh = bottomfrac >> 12
@@ -1173,8 +1180,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
             let mut tp = yh + 1
             if tp <= cc { tp = cc + 1 }
             if tp < fc {
-                pltop[fbase + x] = tp
-                plbot[fbase + x] = fc - 1
+                pltb[fbase + x] = (tp << 8) | (fc - 1)
             }
         }
         let mut texcol = 0
@@ -1578,103 +1584,136 @@ fn lit_flat(k: int) -> Vec<int> {
     made
 }
 
-fn map_plane(mut out: Vec<int>, litbase: int, zrow: int, height: int, y: int, x1: int, x2: int) {
-    let mut distance = 0
-    let mut xstep = 0
-    let mut ystep = 0
-    if height != cachedheight[y] {
-        cachedheight[y] = height
-        distance = height.mul_shr(yslope[y], 16)
-        cacheddistance[y] = distance
-        xstep = distance.mul_shr(basexscale, 16)
-        cachedxstep[y] = xstep
-        ystep = distance.mul_shr(baseyscale, 16)
-        cachedystep[y] = ystep
-    } else {
-        distance = cacheddistance[y]
-        xstep = cachedxstep[y]
-        ystep = cachedystep[y]
-    }
-    let length = distance.mul_shr(distscale[x1], 16)
-    let angle = fine_index(viewangle + fixed::xtoviewangle[x1])
-    let xfrac = viewx + fixed::finesine[angle + 2048].mul_shr(length, 16)
-    let yfrac = -viewy - fixed::finesine[angle].mul_shr(length, 16)
-    let mut index = distance >> 20
-    if index >= 128 { index = 127 }
-    let k = litbase + zlight[zrow + index]
-    let mut lit = lit_flats[k]
-    if lit.len() == 0 { lit = lit_flat(k) }
-    let mut pos = ((xfrac & 0x3FFFFF) << 24) | (yfrac & 0x3FFFFF)
-    let step = ((xstep & 0x3FFFFF) << 24) | (ystep & 0x3FFFFF)
-    let row = y * 320
-    for d in (row + x1)..=(row + x2) {
-        out[d] = lit[((pos >> 10) & 4032) + (pos >> 40)]
-        pos = (pos + step) & 0x3FFFFF3FFFFF
-    }
-}
-
 fn draw_planes() {
+    let mut out = fb
+    let mut tb = pl_tb
+    let mut starts = spanstart
+    let mut ch = cachedheight
+    let mut cd = cacheddistance
+    let mut cxs = cachedxstep
+    let mut cys = cachedystep
+    let mut lits = lit_flats
+    let ys = yslope
+    let dscale = distscale
+    let zl = zlight
+    let sine = fixed::finesine
+    let xtov = fixed::xtoviewangle
+    let vx = viewx
+    let vy = viewy
+    let va = viewangle
+    let bxs = basexscale
+    let bys = baseyscale
     for p in 0..num_planes {
         let minx = pl_minx[p]
         let maxx = pl_maxx[p]
         if minx > maxx { continue }
         let base = p * 322 + 1
-        if pl_pic[p] == sky_flat {
+        let pic = pl_pic[p]
+        if pic == sky_flat {
             let sky = tex_pics[sky_tex]
-            let sky_row = cmap_rows[0]
-            let xtov = fixed::xtoviewangle
+            let sky_wm = sky.widthmask
             for x in minx..=maxx {
-                let yl = pl_top[base + x]
-                let yh = pl_bottom[base + x]
+                let v = tb[base + x]
+                let yl = v >> 8
+                let yh = v & 255
                 if yl <= yh {
-                    let angle = ang_add(viewangle, xtov[x]) >> 22
-                    draw_column(fb, sky_row, sky.cols[angle & sky.widthmask], x, yl, yh, 6553600, 65536, sky.heightmask, sky.height)
+                    let angle = ang_add(va, xtov[x]) >> 22
+                    if sky.heightmask >= 0 {
+                        let col = sky_lit[angle & sky_wm]
+                        let mut y = yl
+                        for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                            out[d] = col[y]
+                            y++
+                        }
+                    } else {
+                        draw_column(out, cmap_rows[0], sky.cols[angle & sky_wm], x, yl, yh, 6553600, 65536, sky.heightmask, sky.height)
+                    }
                 }
             }
             continue
         }
-        if pl_pic[p] < 0 { continue }
-        let litbase = pl_pic[p] * 32
+        if pic < 0 { continue }
+        let litbase = pic * 32
         let mut height = pl_height[p] - viewz
         if height < 0 { height = -height }
         let mut light = pl_light[p] >> 4
         if light < 0 { light = 0 }
         if light > 15 { light = 15 }
         let zrow = light * 128
-        pl_top[base + maxx + 1] = 255
-        pl_top[base + minx - 1] = 255
-        let mut prev_t = 255
-        let mut prev_b = 0
-        for x in minx..=(maxx + 1) {
-            let mut t1 = prev_t
-            let mut b1 = prev_b
-            let mut t2 = pl_top[base + x]
-            let mut b2 = pl_bottom[base + x]
-            prev_t = t2
-            prev_b = b2
-            if t1 == t2 and b1 == b2 { continue }
-            while t1 < t2 and t1 <= b1 {
-                map_plane(fb, litbase, zrow, height, t1, spanstart[t1], x - 1)
-                t1++
-            }
-            while b1 > b2 and b1 >= t1 {
-                map_plane(fb, litbase, zrow, height, b1, spanstart[b1], x - 1)
-                b1--
-            }
-            while t2 < t1 and t2 <= b2 {
-                spanstart[t2] = x
-                t2++
-            }
-            while b2 > b1 and b2 >= t2 {
-                spanstart[b2] = x
-                b2--
+        tb[base + maxx + 1] = 65280
+        tb[base + minx - 1] = 65280
+        let mut pv = 65280
+        for i in (base + minx)..=(base + maxx + 1) {
+            let v = tb[i]
+            if v != pv {
+                let x = i - base
+                let mut t1 = pv >> 8
+                let mut b1 = pv & 255
+                let mut t2 = v >> 8
+                let mut b2 = v & 255
+                pv = v
+                while true {
+                    let mut y = 0
+                    if t1 < t2 and t1 <= b1 {
+                        y = t1
+                        t1++
+                    } else {
+                        if b1 > b2 and b1 >= t1 {
+                            y = b1
+                            b1--
+                        } else {
+                            break
+                        }
+                    }
+                    let x1 = starts[y]
+                    let mut distance = 0
+                    let mut xstep = 0
+                    let mut ystep = 0
+                    if height != ch[y] {
+                        ch[y] = height
+                        distance = height.mul_shr(ys[y], 16)
+                        cd[y] = distance
+                        xstep = distance.mul_shr(bxs, 16)
+                        cxs[y] = xstep
+                        ystep = distance.mul_shr(bys, 16)
+                        cys[y] = ystep
+                    } else {
+                        distance = cd[y]
+                        xstep = cxs[y]
+                        ystep = cys[y]
+                    }
+                    let length = distance.mul_shr(dscale[x1], 16)
+                    let angle = fine_index(va + xtov[x1])
+                    let xfrac = vx + sine[angle + 2048].mul_shr(length, 16)
+                    let yfrac = -vy - sine[angle].mul_shr(length, 16)
+                    let mut index = distance >> 20
+                    if index >= 128 { index = 127 }
+                    let k = litbase + zl[zrow + index]
+                    let mut lit = lits[k]
+                    if lit.len() == 0 { lit = lit_flat(k) }
+                    let mut pos = ((xfrac & 0x3FFFFF) << 24) | (yfrac & 0x3FFFFF)
+                    let step = ((xstep & 0x3FFFFF) << 24) | (ystep & 0x3FFFFF)
+                    let row = y * 320
+                    for d in (row + x1)..(row + x) {
+                        out[d] = lit[((pos >> 10) & 4032) + (pos >> 40)]
+                        pos = (pos + step) & 0x3FFFFF3FFFFF
+                    }
+                }
+                while t2 < t1 and t2 <= b2 {
+                    starts[t2] = x
+                    t2++
+                }
+                while b2 > b1 and b2 >= t2 {
+                    starts[b2] = x
+                    b2--
+                }
             }
         }
     }
     for p in 0..num_planes {
         let base = p * 322 + 1
         if pl_minx[p] <= pl_maxx[p] {
-            for i in (base + pl_minx[p])..=(base + pl_maxx[p]) { pl_top[i] = 255 }
+            for i in (base + pl_minx[p])..=(base + pl_maxx[p]) { tb[i] = 65280 }
         }
     }
 }
