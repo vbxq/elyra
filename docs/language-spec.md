@@ -2043,8 +2043,9 @@ whose last statement is an assignment (`a = 5`, `a += 2`, `v[i] = x`, `s.f *= 2`
 block ending in one, or an `if`/`else` or `match` every branch of which ends in one or
 leaves by `return`, `break`, `continue` or a call that never returns) has the value unit,
 like a function without a declared return type. When some branch ends in a value instead,
-the script keeps the `if` or `match` value: `match a { 1 => 9, _ => { a = 2 } }` with
-`a == 1` gives 9. The CLI prints a script's value after it runs only when that value
+the script keeps the `if` or `match` value, and a branch ending in an assignment then gives
+the assigned value: `match a { 1 => 9, _ => { a = 2 } }` gives 9 when `a == 1` and 2
+otherwise. The CLI prints a script's value after it runs only when that value
 is neither unit nor null, so such a script prints nothing extra; the REPL follows the
 same rule for each line.
 A variable that is read anywhere in a loop (its condition included) and assigned
