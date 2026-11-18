@@ -143,26 +143,6 @@ fn mark(t0: int) {
     }
 }
 
-fn sorted_copy(v: Vec<float>) -> Vec<float> {
-    let n = v.len()
-    let mut s: Vec<float> = vec![0.0; n]
-    for i in 0..n { s[i] = v[i] }
-    let mut gap = n / 2
-    while gap > 0 {
-        for i in gap..n {
-            let x = s[i]
-            let mut j = i
-            while j >= gap and s[j - gap] > x {
-                s[j] = s[j - gap]
-                j -= gap
-            }
-            s[j] = x
-        }
-        gap = gap / 2
-    }
-    s
-}
-
 fn report(wall_total_ms: float) {
     let wall_ms = wall_total_ms - snap_ms
     let n = frame_ms.len()
@@ -171,7 +151,8 @@ fn report(wall_total_ms: float) {
     println("final fixed {play::player_x()} {play::player_y()} {play::player_z()} {play::player_angle()}")
     println("tic logic avg {tic_ms_total / convert::to_float(tics)} ms max {tic_ms_max} ms, trymoves {play::moves_count()} slides {play::slide_count()}")
     if n == 0 { return () }
-    let s = sorted_copy(frame_ms)
+    let mut s = frame_ms.clone()
+    s.sort()
     let mut worst = 0
     for i in 0..n {
         if frame_ms[i] > frame_ms[worst] { worst = i }

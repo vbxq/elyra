@@ -76,21 +76,8 @@ fn sample(t0: int) {
 }
 
 fn sorted(v: Vec<int>) -> Vec<int> {
-    let n = v.len()
     let mut s = v.clone()
-    let mut gap = n / 2
-    while gap > 0 {
-        for i in gap..n {
-            let x = s[i]
-            let mut j = i
-            while j >= gap and s[j - gap] > x {
-                s[j] = s[j - gap]
-                j -= gap
-            }
-            s[j] = x
-        }
-        gap = gap / 2
-    }
+    s.sort()
     s
 }
 
