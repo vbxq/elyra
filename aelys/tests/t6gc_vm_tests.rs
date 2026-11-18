@@ -309,7 +309,7 @@ fn graph_oracle() -> i64 {
     }
     let mut ids: Vec<i64> = Vec::new();
     let mut kids: Vec<Vec<usize>> = Vec::new();
-    let mut new_node =
+    let new_node =
         |id: i64, children: Vec<usize>, ids: &mut Vec<i64>, kids: &mut Vec<Vec<usize>>| {
             ids.push(id);
             kids.push(children);
@@ -356,8 +356,7 @@ fn graph_oracle() -> i64 {
             }
         }
         if step % 25 == 0 {
-            for k in 0..30 {
-                let node = all[k];
+            for &node in &all {
                 total += ids[node] * 31;
                 for (j, kid) in kids[node].iter().enumerate() {
                     total += ids[*kid] * (j as i64 + 1);
@@ -562,4 +561,30 @@ fn moved_to_locals_oracle() -> i64 {
 #[test]
 fn objects_moved_from_the_heap_into_locals_during_marking_survive_the_major() {
     assert_program(MOVED_TO_LOCALS, moved_to_locals_oracle());
+}
+
+const ROUNDS_OF_FRESH_VECS: &str = r#"
+struct P { x: int, y: int }
+let mut t = 0
+for r in 0..10 {
+    let mut v: Vec<P> = vec![]
+    for i in 0..100000 { v.push(P { x: 1, y: 2 }) }
+    t += v.len()
+}
+t
+"#;
+
+#[test]
+fn rounds_of_fresh_large_vecs_complete_with_a_bounded_heap() {
+    let (value, vm) = run_int_with(VmConfig::default(), ROUNDS_OF_FRESH_VECS);
+    assert_eq!(value, 1_000_000);
+    assert!(
+        vm.heap().major_collection_count() > 0 || vm.heap().major_collection_active(),
+        "no major started"
+    );
+    assert!(
+        vm.heap().peak_bytes() < 40 * 1024 * 1024,
+        "heap peaked at {} bytes",
+        vm.heap().peak_bytes()
+    );
 }
