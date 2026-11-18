@@ -865,14 +865,15 @@ fn int_sequence(vm: &VM, value: Value, op: &'static str) -> Result<GcRef, Runtim
     }
 }
 
-fn sequence_bytes(vm: &VM, sequence: GcRef) -> Result<Vec<u8>, String> {
+// the number of elements, once every one is an int in 0..=255, with the message of the first that is not
+fn sequence_byte_count(vm: &VM, sequence: GcRef) -> Result<usize, String> {
     let values: Vec<Value> = match vm.heap().get(sequence).map(|object| &object.kind) {
         Some(ObjectKind::Vec(vector)) => match vector.data.as_ints() {
-            Some(ints) => return ints_to_bytes(ints.iter().copied()),
+            Some(ints) => return check_bytes(ints.iter().copied()),
             None => (0..vector.len()).filter_map(|i| vector.get(i)).collect(),
         },
         Some(ObjectKind::Array(array)) => match array.data.as_ints() {
-            Some(ints) => return ints_to_bytes(ints.iter().copied()),
+            Some(ints) => return check_bytes(ints.iter().copied()),
             None => (0..array.len()).filter_map(|i| array.get(i)).collect(),
         },
         _ => Vec::new(),
@@ -885,16 +886,18 @@ fn sequence_bytes(vm: &VM, sequence: GcRef) -> Result<Vec<u8>, String> {
                 .ok_or_else(|| format!("element {index} is not an int"))?,
         );
     }
-    ints_to_bytes(ints.into_iter())
+    check_bytes(ints.into_iter())
 }
 
-fn ints_to_bytes(ints: impl Iterator<Item = i64>) -> Result<Vec<u8>, String> {
-    ints.enumerate()
-        .map(|(index, value)| {
-            u8::try_from(value)
-                .map_err(|_| format!("element {index} is {value}, not a byte in 0..=255"))
-        })
-        .collect()
+fn check_bytes(ints: impl Iterator<Item = i64>) -> Result<usize, String> {
+    let mut count = 0;
+    for (index, value) in ints.enumerate() {
+        if u8::try_from(value).is_err() {
+            return Err(format!("element {index} is {value}, not a byte in 0..=255"));
+        }
+        count += 1;
+    }
+    Ok(count)
 }
 
 fn byte_window(
@@ -917,16 +920,41 @@ fn native_copy_from_vec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
     let handle = get_handle(vm, args[0], "copy_from_vec")?;
     let offset = get_int(vm, args[1], "copy_from_vec")?;
     let sequence = int_sequence(vm, args[2], "copy_from_vec")?;
-    let bytes = match sequence_bytes(vm, sequence) {
-        Ok(bytes) => bytes,
+    let length = match sequence_byte_count(vm, sequence) {
+        Ok(length) => length,
         Err(message) => return result_err(vm, &format!("copy_from_vec: {message}")),
     };
-    let start = match byte_window(vm, handle, offset, bytes.len(), "copy_from_vec")? {
+    let start = match byte_window(vm, handle, offset, length, "copy_from_vec")? {
         Ok(start) => start,
         Err(message) => return result_err(vm, &message),
     };
-    if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(handle) {
-        buf.data[start..start + bytes.len()].copy_from_slice(&bytes);
+    let (heap, resources) = (&vm.heap, &mut vm.resources);
+    if let Some(Some(Resource::ByteBuffer(buf))) = resources.get_mut(handle) {
+        let target = &mut buf.data[start..start + length];
+        let byte = |value: Option<Value>| value.and_then(|value| value.as_int()).unwrap_or(0) as u8;
+        match heap.get(sequence).map(|object| &object.kind) {
+            Some(ObjectKind::Vec(vector)) => match vector.data.as_ints() {
+                Some(ints) => target
+                    .iter_mut()
+                    .zip(ints)
+                    .for_each(|(slot, value)| *slot = *value as u8),
+                None => target
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|(index, slot)| *slot = byte(vector.get(index))),
+            },
+            Some(ObjectKind::Array(array)) => match array.data.as_ints() {
+                Some(ints) => target
+                    .iter_mut()
+                    .zip(ints)
+                    .for_each(|(slot, value)| *slot = *value as u8),
+                None => target
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|(index, slot)| *slot = byte(array.get(index))),
+            },
+            _ => {}
+        }
     }
     result_ok(vm, Value::unit())
 }

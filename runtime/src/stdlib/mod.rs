@@ -131,6 +131,9 @@ pub mod helpers {
     use super::*;
 
     pub fn result_ok(vm: &mut VM, value: Value) -> Result<Value, RuntimeError> {
+        if value.is_unit() {
+            return vm.unit_ok_value();
+        }
         let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultOk, value)?;
         Ok(Value::ptr(sum.index()))
     }

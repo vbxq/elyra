@@ -217,6 +217,9 @@ impl NativeFunctionImpl {
             }
             ForeignReturnKind::Result { ok, .. } => {
                 let value = vm.validate_foreign_payload(value, ok)?;
+                if value.is_unit() {
+                    return vm.unit_ok_value();
+                }
                 let sum = vm.alloc_sum(aelys_bytecode::object::SumTag::ResultOk, value)?;
                 Ok(Value::ptr(sum.index()))
             }
