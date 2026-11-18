@@ -62,7 +62,10 @@ println(where + dyn + self)
 0o755          // octal
 ```
 
-Integers are 48-bit signed (roughly +-140 trillion). This is due to NaN-boxing, the VM packs type information into the unused bits of IEEE 754 NaN values. You'll probably never hit this limit in practice.
+An integer literal is an `int`, a 48-bit signed integer (roughly +-140 trillion), unless its
+context expects a sized integer type (see [Integer types](#integer-types)). The 48-bit width
+comes from NaN-boxing: the VM packs type information into the unused bits of IEEE 754 NaN
+values. A literal outside the 48-bit range is E0209.
 
 Underscores are ignored, so `1_000_000` is just `1000000`. Handy for big numbers or binary patterns like `0b1111_0000`.
 
@@ -141,7 +144,9 @@ with a diagnostic that names these replacements.
 
 | Type | Description | Size |
 |------|-------------|------|
-| `int` | Signed integer | 48-bit |
+| `int` | Signed integer, overflow traps | 48-bit |
+| `i8` `i16` `i32` | Signed integer, wrapping | 8, 16, 32-bit |
+| `u8` `u16` `u32` | Unsigned integer, wrapping | 8, 16, 32-bit |
 | `float` | Floating point | 64-bit |
 | `string` | UTF-8 text | heap allocated |
 | `bool` | Boolean | 1 bit (packed) |
@@ -153,6 +158,100 @@ with a diagnostic that names these replacements.
 | `Name { field: T, ... }` | Fixed-layout struct | heap allocated |
 | `[T; N]` | Fixed-size array | heap allocated |
 | `Vec<T>` | Growable vector | heap allocated |
+
+### Integer types
+
+`int` is the default integer. Its arithmetic is checked: `+`, `-`, `*`, unary `-`, `<<`
+and an `as` conversion trap with `integer overflow outside the supported 48-bit range` when
+the exact result leaves the 48-bit range, and `/` or `%` by zero traps with
+`division by zero`. `int` has no other width; `i64`, `int64`, `u64` and `uint64` are E0461
+(`i64 is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping
+arithmetic`).
+
+The sized types `i8`, `i16`, `i32`, `u8`, `u16` and `u32` wrap. Every operator on them
+computes the exact result and keeps its low 8, 16 or 32 bits as two's complement, so the
+value always lies in the type's range, in a variable, a struct field, an array or a `Vec`:
+
+```rust
+let a: u32 = 0xFFFFFFFF
+let one: u32 = 1
+println(a + one)          // 0
+let b: i32 = 0x7FFFFFFF
+println(b + 1)            // -2147483648
+let c: u8 = 200
+println(c + c)            // 144
+```
+
+- `+ - * & | ^ ~` and unary `-` wrap to the width.
+- `/` truncates toward zero and `%` takes the sign of the dividend, as in C. Both trap on a
+  zero divisor. `i32::MIN / -1` wraps to `i32::MIN` and `i32::MIN % -1` is `0` (likewise
+  for `i8` and `i16`).
+- `<<` keeps the low bits. `>>` is arithmetic on a signed type and logical on an unsigned
+  one. The shift count is taken modulo the width (`& 7`, `& 15`, `& 31`), so `x << 33` on
+  an `i32` is `x << 1`.
+- Comparisons compare the values.
+
+A binary operator takes two operands of the same integer type. Mixing two integer types,
+`int` included, is E0460 `mismatched integer types in '+': i32 and int` with the help line
+``convert with `as` ``. A shift count has the type of the shifted value too.
+
+An integer literal takes the sized type its context expects: a `let` annotation, a struct
+field, a function argument, a return value or a function's last expression, an element of
+an array or `Vec` literal whose type is known, a `push` onto a `Vec<T>`, an assignment to a
+variable, field or element, the other operand of a binary operator, a compound assignment,
+a `match` pattern on a sized value, and the bounds of a `for` range whose other bound is
+sized (the loop variable then has that type). A literal that does not fit its type is
+E0301 `integer literal 256 does not fit in u8`. A literal passed to a generic parameter
+stays `int`; the other operand of a binary operator whose type is still being inferred
+gives the literal that type once inference settles it.
+
+```rust
+let x: i32 = 5
+let y: i32 = 3
+let p: i32 = (x * y) >> 16          // the 16 is an i32
+struct Pixel { v: u8 }
+let px = Pixel { v: 1 }
+let bytes: Vec<u8> = vec![1, 2, 255]
+let pair: [i32; 2] = [1, -1]
+```
+
+Any integer type, sized or not, indexes an array or a `Vec`.
+
+#### Conversions with `as`
+
+`as` converts between every integer type, `float` and `bool`:
+
+| From | To | Result |
+|------|----|--------|
+| any integer | a sized integer | the low bits, two's complement: `3000000000 as i32` is `-1294967296`, `-1 as u8` is `255` |
+| any integer | `int` | the same value (every sized value fits) |
+| `float` | `int` | truncated toward zero; NaN, an infinity or a value outside 48 bits traps with the overflow error |
+| `float` | a sized integer | truncated toward zero, then wrapped like an integer (`-2.7 as u8` is `254`); NaN or an infinity traps |
+| integer | `float` | the nearest float |
+| `bool` | integer | `0` or `1` |
+
+#### Fixed-point helpers
+
+`i32` and `int` have two methods with an exact intermediate, the `FixedMul` and
+`FixedDiv` of 16.16 fixed-point code:
+
+- `a.mul_shr(b, n)` is `(a * b) >> n` computed without overflow, then wrapped to `i32`
+  (or checked against 48 bits for `int`, trapping on overflow).
+- `a.shl_div(b, n)` is `(a << n) / b` computed without overflow and truncated toward zero,
+  then wrapped to `i32` (or checked for `int`). A zero `b` traps with `division by zero`.
+
+`b` has the receiver's type and `n` is an `int`, taken modulo 64.
+
+```rust
+fn fixed_mul(a: i32, b: i32) -> i32 { a.mul_shr(b, 16) }
+fn fixed_div(a: i32, b: i32) -> i32 { a.shl_div(b, 16) }
+println(fixed_mul(0x7FFF0000, 0x20000))   // -131072
+println(fixed_div(10 << 16, 4 << 16))     // 163840, 2.5 in 16.16
+```
+
+Each sized operator, and each of these two methods, is a single VM instruction. The JIT
+does not compile a function that uses them; it runs in the interpreter with the same
+results.
 
 ### Type Annotations
 
@@ -396,7 +495,10 @@ apply_twice(double, 5)  // 20
 | `/` | Division |
 | `%` | Modulo |
 
-Integer division truncates: `7 / 2` gives `3`. Use floats if you need decimal results.
+Integer division truncates toward zero: `7 / 2` gives `3` and `-7 / 2` gives `-3`; `%` takes
+the sign of the dividend (`-7 % 2` is `-1`). On `int` an overflowing result traps; on a sized
+integer type it wraps (see [Integer types](#integer-types)). Use floats if you need decimal
+results.
 
 ### Compound Assignment
 
@@ -512,7 +614,11 @@ Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same f
 | `^` | Bitwise XOR |
 | `~` | Bitwise NOT |
 | `<<` | Left shift |
-| `>>` | Right shift (arithmetic) |
+| `>>` | Right shift (arithmetic on `int` and signed types, logical on unsigned types) |
+
+Both operands have the same integer type. On `int` the shift count is taken modulo 64 and
+`<<` traps when the exact result leaves the 48-bit range, like `*`. On a sized type the
+count is taken modulo the width and the result wraps.
 
 ### Precedence (lowest to highest)
 
@@ -2478,3 +2584,5 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0442 | UnorderedSpecialization | two impls of one trait for one type are equally specific |
 | E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
+| E0460 | MixedIntegerOperands | a binary operator mixes two integer types |
+| E0461 | WideIntegerUnavailable | `i64` or `u64` is written; `int` is a 48-bit integer |
