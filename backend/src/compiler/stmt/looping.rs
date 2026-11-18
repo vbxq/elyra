@@ -194,6 +194,7 @@ impl Compiler {
         aelys_sema::ResolvedType::from_infer_type(ty)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compile_collection_for_each(
         &mut self,
         iterator: &str,

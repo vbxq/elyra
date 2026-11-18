@@ -149,7 +149,10 @@ impl<'a> Checker<'a> {
                                         types
                                             .iter()
                                             .map(|ty| {
-                                                (String::new(), ty.substitute_params(&substitutions))
+                                                (
+                                                    String::new(),
+                                                    ty.substitute_params(&substitutions),
+                                                )
                                             })
                                             .collect(),
                                     ),
@@ -192,7 +195,10 @@ impl<'a> Checker<'a> {
                             .fields
                             .iter()
                             .map(|field| {
-                                (field.name.clone(), field.ty.substitute_params(&substitutions))
+                                (
+                                    field.name.clone(),
+                                    field.ty.substitute_params(&substitutions),
+                                )
                             })
                             .collect(),
                     };
@@ -258,9 +264,10 @@ impl<'a> Checker<'a> {
                 let Some(last) = path.last() else {
                     return Pat::Wild;
                 };
-                let Some(index) = variants.iter().position(|variant| {
-                    variant.name.rsplit("::").next() == Some(last.as_str())
-                }) else {
+                let Some(index) = variants
+                    .iter()
+                    .position(|variant| variant.name.rsplit("::").next() == Some(last.as_str()))
+                else {
                     return Pat::Wild;
                 };
                 let variant = &variants[index];
@@ -539,9 +546,7 @@ impl<'a> Checker<'a> {
                             .collect::<Vec<_>>()
                             .join(", ")
                     ),
-                    VariantForm::Named => {
-                        self.render_named(&variant.name, &variant.fields, fields)
-                    }
+                    VariantForm::Named => self.render_named(&variant.name, &variant.fields, fields),
                 }
             }
             (

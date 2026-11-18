@@ -23,8 +23,8 @@ impl ConstantFolder {
                 }
             }
             TypedStmtKind::While {
-            condition, body, ..
-        } => {
+                condition, body, ..
+            } => {
                 self.optimize_expr(condition);
                 self.optimize_stmt(body);
             }

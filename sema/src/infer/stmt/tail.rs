@@ -64,10 +64,8 @@ impl TypeInference {
                 }
                 let (typed_then, then_ty) = self.infer_tail_value(then_branch);
                 let (typed_else, else_ty) = self.infer_tail_value(else_branch);
-                let ty = self.join_branch_types(&[
-                    (then_ty, then_branch.span),
-                    (else_ty, else_branch.span),
-                ]);
+                let ty = self
+                    .join_branch_types(&[(then_ty, then_branch.span), (else_ty, else_branch.span)]);
                 (
                     wrap(TypedStmtKind::If {
                         condition: typed_cond,

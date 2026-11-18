@@ -3,6 +3,7 @@ mod resolved_type;
 mod type_table;
 mod type_var;
 
+pub(crate) use aelys_syntax::tuple_arity;
 pub use infer_type::InferType;
 pub(crate) use infer_type::{SHADOWED_METHOD_SUFFIX, written_names};
 pub use resolved_type::ResolvedType;
@@ -16,4 +17,3 @@ pub(crate) use type_table::{
 };
 pub(crate) use type_table::{instantiation_key, positional_spelling};
 pub use type_var::{TypeVarGen, TypeVarId};
-pub(crate) use aelys_syntax::tuple_arity;

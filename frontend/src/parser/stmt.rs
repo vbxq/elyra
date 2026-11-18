@@ -147,7 +147,10 @@ impl Parser {
         let body = self.block_statements()?;
         let span = start_span.merge(self.previous().span);
         let mut body_stmts = body;
-        body_stmts.push(Stmt::new(StmtKind::Expression(Expr::new(ExprKind::Unit, span)), span));
+        body_stmts.push(Stmt::new(
+            StmtKind::Expression(Expr::new(ExprKind::Unit, span)),
+            span,
+        ));
         let arms = vec![
             MatchArm {
                 span: pattern.span,

@@ -121,15 +121,15 @@ impl Compiler {
             ExprKind::Try(_)
             | ExprKind::Match { .. }
             | ExprKind::Block(_)
-            | ExprKind::Loop { .. } => Err(
-                aelys_common::error::AelysError::Compile(aelys_common::error::CompileError::new(
+            | ExprKind::Loop { .. } => Err(aelys_common::error::AelysError::Compile(
+                aelys_common::error::CompileError::new(
                     aelys_common::error::CompileErrorKind::TypeInferenceError(
                         "typed sum expressions are required for the VM backend".to_string(),
                     ),
                     expr.span,
                     self.source.clone(),
-                )),
-            ),
+                ),
+            )),
         }
     }
 }

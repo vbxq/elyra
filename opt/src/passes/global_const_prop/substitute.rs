@@ -200,8 +200,8 @@ impl GlobalConstantPropagator {
                 }
             }
             TypedStmtKind::While {
-            condition, body, ..
-        } => {
+                condition, body, ..
+            } => {
                 self.substitute_constants(condition);
                 self.shadows.push();
                 self.substitute_in_stmt(body);

@@ -2030,11 +2030,34 @@ impl TypeInference {
             }
         }
         self.type_table.remove_open_nominals();
-        self.type_table
-            .rewrite_field_types(|ty| replace_nominal_type(ty, &replacements));
+        self.type_table.rewrite_field_types(|ty| {
+            if applies_only_tuples(ty) {
+                replace_nominal_type(ty, &replacements)
+            } else {
+                ty.clone()
+            }
+        });
         for stmt in stmts {
             rewrite_nominal_stmt(stmt, &replacements, &self.type_table);
         }
+    }
+}
+
+// a generic nominal in field position stays the e0349 refusal; only tuples are materialized there
+fn applies_only_tuples(ty: &InferType) -> bool {
+    match ty {
+        InferType::Applied { name, args } => {
+            aelys_syntax::tuple_arity(name).is_some() && args.iter().all(applies_only_tuples)
+        }
+        InferType::Option(inner)
+        | InferType::Array(inner)
+        | InferType::FixedArray(inner, _)
+        | InferType::Vec(inner) => applies_only_tuples(inner),
+        InferType::Result(ok, error) => applies_only_tuples(ok) && applies_only_tuples(error),
+        InferType::Function { params, ret } => {
+            params.iter().all(applies_only_tuples) && applies_only_tuples(ret)
+        }
+        _ => true,
     }
 }
 

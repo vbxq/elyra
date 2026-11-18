@@ -13,7 +13,10 @@ impl Compiler {
                 then_branch,
                 else_branch: Some(else_branch),
                 ..
-            } => Self::typed_stmt_yields_value(then_branch) || Self::typed_stmt_yields_value(else_branch),
+            } => {
+                Self::typed_stmt_yields_value(then_branch)
+                    || Self::typed_stmt_yields_value(else_branch)
+            }
             TypedStmtKind::Block(stmts) => stmts.last().is_some_and(Self::typed_stmt_yields_value),
             _ => false,
         }
@@ -90,7 +93,11 @@ impl Compiler {
         self.emit_jump_back(loop_start, span);
 
         let context = self.loop_stack.pop().ok_or_else(|| {
-            CompileError::new(CompileErrorKind::BreakOutsideLoop, span, self.source.clone())
+            CompileError::new(
+                CompileErrorKind::BreakOutsideLoop,
+                span,
+                self.source.clone(),
+            )
         })?;
         for jump in context.break_jumps {
             self.patch_jump(jump);

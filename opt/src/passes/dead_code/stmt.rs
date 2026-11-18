@@ -104,8 +104,8 @@ impl DeadCodeEliminator {
                 }
             }
             TypedStmtKind::While {
-            condition, body, ..
-        } => {
+                condition, body, ..
+            } => {
                 if Self::is_const_bool(condition) == Some(false) {
                     stmt.kind = TypedStmtKind::Block(vec![]);
                     self.stats.branches_eliminated += 1;

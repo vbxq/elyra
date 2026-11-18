@@ -2038,10 +2038,9 @@ impl TypeInference {
                         std::collections::HashMap::new()
                     } else {
                         let args: Vec<InferType> = match ty {
-                            InferType::Applied {
-                                name: actual,
-                                args,
-                            } if actual == &name && args.len() == def.type_params.len() => {
+                            InferType::Applied { name: actual, args }
+                                if actual == &name && args.len() == def.type_params.len() =>
+                            {
                                 args.clone()
                             }
                             _ => {
@@ -2212,18 +2211,6 @@ impl TypeInference {
             span: pattern.span,
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 fn enum_type_name(ty: &InferType) -> Option<String> {
@@ -2251,7 +2238,6 @@ fn enum_substitutions(
         .zip(args.iter().cloned())
         .collect()
 }
-
 
 fn contains_dynamic_type(ty: &InferType) -> bool {
     match ty {
@@ -2369,9 +2355,6 @@ fn collect_pattern_bindings(pattern: &TypedPattern, bindings: &mut Vec<(String, 
     }
 }
 
-
-
-
 fn describe_pattern(pattern: &Pattern) -> String {
     match &pattern.kind {
         PatternKind::Wildcard => "_".to_string(),
@@ -2404,11 +2387,6 @@ fn describe_pattern(pattern: &Pattern) -> String {
             .join(" | "),
     }
 }
-
-
-
-
-
 
 fn variant_family(variant: &str) -> Option<&'static str> {
     match variant {

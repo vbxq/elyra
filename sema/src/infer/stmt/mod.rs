@@ -85,13 +85,7 @@ impl TypeInference {
                 iterable,
                 body,
                 label,
-            } => self.infer_for_each_stmt(
-                iterator,
-                iterable,
-                body,
-                stmt.read_only,
-                label.as_ref(),
-            ),
+            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.read_only, label.as_ref()),
             StmtKind::Return(expr) => self.infer_return_stmt(stmt.span, expr.as_ref()),
             StmtKind::Break { label, value } => {
                 self.infer_break_stmt(label.as_ref(), value.as_ref(), stmt.span)

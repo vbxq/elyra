@@ -73,8 +73,8 @@ impl FunctionInliner {
             }
 
             TypedStmtKind::While {
-            condition, body, ..
-        } => {
+                condition, body, ..
+            } => {
                 self.inline_in_expr(condition, analysis);
                 self.inline_in_stmt(body, analysis);
             }

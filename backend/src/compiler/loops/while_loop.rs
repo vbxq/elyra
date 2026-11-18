@@ -48,7 +48,8 @@ impl Compiler {
 
             let loop_start = self.current_offset();
 
-            self.loop_stack.push(LoopContext::new(loop_start, false, self.locals.len()));
+            self.loop_stack
+                .push(LoopContext::new(loop_start, false, self.locals.len()));
 
             self.emit_b(OpCode::WhileLoopLt, iter_reg, 1, condition.span);
             let jump_to_end = self.emit_jump(OpCode::Jump, condition.span);
@@ -78,7 +79,8 @@ impl Compiler {
     pub fn compile_while_generic(&mut self, condition: &Expr, body: &Stmt) -> Result<()> {
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(LoopContext::new(loop_start, false, self.locals.len()));
+        self.loop_stack
+            .push(LoopContext::new(loop_start, false, self.locals.len()));
 
         let cond_reg = self.alloc_register()?;
         self.compile_expr(condition, cond_reg)?;

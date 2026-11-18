@@ -69,7 +69,9 @@ impl TypeInference {
             ));
         }
 
-        let typed_body = self.with_loop_frame(label, false, |inference| inference.infer_stmt(body)).0;
+        let typed_body = self
+            .with_loop_frame(label, false, |inference| inference.infer_stmt(body))
+            .0;
 
         TypedStmtKind::While {
             condition: typed_cond,
@@ -78,6 +80,7 @@ impl TypeInference {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn infer_for_stmt(
         &mut self,
         iterator: &str,
@@ -152,7 +155,9 @@ impl TypeInference {
 
         self.env.push_scope();
         self.env.define_local(iterator.to_string(), InferType::I64);
-        let typed_body = self.with_loop_frame(label, false, |inference| inference.infer_stmt(body)).0;
+        let typed_body = self
+            .with_loop_frame(label, false, |inference| inference.infer_stmt(body))
+            .0;
         self.env.pop_scope();
 
         TypedStmtKind::For {
@@ -231,7 +236,9 @@ impl TypeInference {
         if let Some(name) = collection_binding_name(iterable) {
             self.env.mark_read_only(name);
         }
-        let typed_body = self.with_loop_frame(label, false, |inference| inference.infer_stmt(body)).0;
+        let typed_body = self
+            .with_loop_frame(label, false, |inference| inference.infer_stmt(body))
+            .0;
         self.env.pop_scope();
 
         TypedStmtKind::ForEach {

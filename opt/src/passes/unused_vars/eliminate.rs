@@ -169,7 +169,8 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
 
 fn stmt_has_side_effects(stmt: &TypedStmt) -> bool {
     match &stmt.kind {
-        TypedStmtKind::Expression(expr) | TypedStmtKind::Let {
+        TypedStmtKind::Expression(expr)
+        | TypedStmtKind::Let {
             initializer: expr, ..
         } => has_side_effects(expr),
         _ => true,

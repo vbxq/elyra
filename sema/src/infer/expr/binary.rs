@@ -338,9 +338,9 @@ impl TypeInference {
                     })
             }
             TypedExprKind::Block(stmts) => self.is_explicit_dynamic_stmt_tail(stmts),
-            TypedExprKind::Loop { body, .. } => body
-                .iter()
-                .any(|stmt| self.is_explicit_dynamic_stmt(stmt)),
+            TypedExprKind::Loop { body, .. } => {
+                body.iter().any(|stmt| self.is_explicit_dynamic_stmt(stmt))
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)

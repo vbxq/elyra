@@ -263,9 +263,9 @@ impl Compiler {
             TypedExprKind::Cast { expr, .. } => Self::typed_expr_may_have_side_effects(expr),
             TypedExprKind::Unit => false,
             TypedExprKind::Try { operand, .. } => Self::typed_expr_may_have_side_effects(operand),
-            TypedExprKind::Match { .. }
-            | TypedExprKind::Block(_)
-            | TypedExprKind::Loop { .. } => true,
+            TypedExprKind::Match { .. } | TypedExprKind::Block(_) | TypedExprKind::Loop { .. } => {
+                true
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)

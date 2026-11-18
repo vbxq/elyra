@@ -383,7 +383,12 @@ fn stmt_always_returns(stmt: &Stmt, implicit_tail: bool) -> bool {
         StmtKind::Expression(aelys_syntax::Expr {
             kind: ExprKind::Loop { body, label },
             ..
-        }) if !body.iter().any(|stmt| breaks_out(stmt, label.as_deref(), 0)) => true,
+        }) if !body
+            .iter()
+            .any(|stmt| breaks_out(stmt, label.as_deref(), 0)) =>
+        {
+            true
+        }
         StmtKind::Expression(_) => implicit_tail,
         StmtKind::If {
             then_branch,
@@ -409,9 +414,13 @@ fn breaks_out(stmt: &Stmt, label: Option<&str>, depth: usize) -> bool {
                 Some(target) => Some(target.as_str()) == label,
                 None => depth == 0,
             };
-            targets || value.as_ref().is_some_and(|value| expr_breaks_out(value, label, depth))
+            targets
+                || value
+                    .as_ref()
+                    .is_some_and(|value| expr_breaks_out(value, label, depth))
         }
-        StmtKind::Expression(expr) | StmtKind::Let {
+        StmtKind::Expression(expr)
+        | StmtKind::Let {
             initializer: expr, ..
         } => expr_breaks_out(expr, label, depth),
         StmtKind::Return(Some(expr)) => expr_breaks_out(expr, label, depth),

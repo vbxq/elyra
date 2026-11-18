@@ -78,8 +78,8 @@ impl LocalConstantPropagator {
             }
 
             TypedStmtKind::While {
-            condition, body, ..
-        } => {
+                condition, body, ..
+            } => {
                 let mut assigned = Vec::new();
                 Self::collect_assigned_vars(body, &mut assigned);
                 for name in &assigned {
@@ -180,8 +180,8 @@ impl LocalConstantPropagator {
                 }
             }
             TypedStmtKind::While {
-            condition, body, ..
-        } => {
+                condition, body, ..
+            } => {
                 Self::collect_assigned_vars_expr(condition, out);
                 Self::collect_assigned_vars(body, out);
             }
