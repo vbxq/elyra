@@ -95,6 +95,10 @@ impl VM {
                     self.frames[current_frame_idx].ip = ip;
                     return Err(self.global_index_error("wide GetGlobalIdx", index));
                 };
+                if value.is_uninit() {
+                    self.frames[current_frame_idx].ip = ip;
+                    return Err(self.uninitialized_global_error(index));
+                }
                 reg_set!(base + a, value);
             }
             OpCode::SetGlobalIdx => {

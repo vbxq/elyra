@@ -283,6 +283,10 @@ impl VM {
                     let right_value = *reg_ref!(base + usize::from(source));
                     let (Some(left), Some(right)) = (left_value.as_int(), right_value.as_int())
                     else {
+                        if left_value.is_uninit() {
+                            self.frames[current_frame_idx].ip = ip;
+                            return Err(self.uninitialized_global_error(usize::from(global)));
+                        }
                         let found = if left_value.as_int().is_some() {
                             right_value
                         } else {
@@ -791,6 +795,9 @@ impl VM {
                             current_func_ptr = match func_value.as_ptr() {
                                 Some(p) => p,
                                 None => {
+                                    if func_value.is_uninit() {
+                                        return Err(self.uninitialized_global_error(idx));
+                                    }
                                     if func_value.is_null() {
                                         let global_name = self.heap.get(func_ref).and_then(|obj| {
                                             match &obj.kind {

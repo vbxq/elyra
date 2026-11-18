@@ -121,6 +121,10 @@ impl VM {
                     self.frames[current_frame_idx].ip = ip;
                     return Err(self.global_index_error("GetGlobalIdx", idx));
                 };
+                if value.is_uninit() {
+                    self.frames[current_frame_idx].ip = ip;
+                    return Err(self.uninitialized_global_error(idx));
+                }
                 reg_set!(base + a as usize, value);
             }
 
@@ -142,6 +146,10 @@ impl VM {
                     self.frames[current_frame_idx].ip = ip;
                     return Err(self.global_index_error("GetGlobalIdxWide", index));
                 };
+                if value.is_uninit() {
+                    self.frames[current_frame_idx].ip = ip;
+                    return Err(self.uninitialized_global_error(index));
+                }
                 reg_set!(base + register as usize, value);
             }
 

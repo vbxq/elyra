@@ -108,7 +108,7 @@ impl VM {
             for (idx, name) in global_layout.names().iter().enumerate() {
                 if !name.is_empty() {
                     self.globals_by_index[idx] =
-                        self.globals.get(name).copied().unwrap_or(Value::null());
+                        self.globals.get(name).copied().unwrap_or(Value::uninit());
                 } else {
                     self.globals_by_index[idx] = Value::null();
                 }
