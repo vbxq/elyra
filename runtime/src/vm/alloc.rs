@@ -150,6 +150,8 @@ impl VM {
             Some(object) => match &mut object.kind {
                 ObjectKind::Vec(vector) => {
                     if vector.push(value) {
+                        let index = vector.len() - 1;
+                        self.heap.write_barrier_element(vector_ref, index, value);
                         Ok(())
                     } else {
                         Err(self.runtime_error(RuntimeErrorKind::TypeError {
@@ -206,7 +208,7 @@ impl VM {
     }
 
     pub fn intern_string(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
-        if let Some(existing) = self.heap.find_interned_string(s) {
+        if let Some(existing) = self.heap.lookup_interned_string(s) {
             return Ok(existing);
         }
         let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
@@ -215,7 +217,7 @@ impl VM {
     }
 
     fn intern_string_without_collection(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
-        if let Some(existing) = self.heap.find_interned_string(s) {
+        if let Some(existing) = self.heap.lookup_interned_string(s) {
             return Ok(existing);
         }
         let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);

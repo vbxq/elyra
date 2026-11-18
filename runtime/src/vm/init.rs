@@ -24,8 +24,11 @@ impl VM {
         program_args: Vec<String>,
     ) -> Result<Self, RuntimeError> {
         let random_seed = super::random::initial_random_state();
+        let mut heap = Heap::new();
+        heap.set_nursery_bytes(config.gc_nursery_bytes);
+        heap.set_stress(config.gc_stress);
         let mut vm = Self {
-            heap: Heap::new(),
+            heap,
             config,
             registers: {
                 let mut regs = Vec::with_capacity(MAX_REGISTERS);
@@ -59,6 +62,7 @@ impl VM {
             random_seed,
             execution_control: super::ExecutionControl::default(),
             execution_stats: super::ExecutionStats::default(),
+            gc_pauses: super::gc::GcPauseStats::default(),
             jit_control_error: None,
             host_roots: Arc::new(super::roots::HostRootSet::new()),
             id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),

@@ -25,6 +25,7 @@ fn young_survivors_promote_and_mutations_enter_remembered_set() {
         panic!("owner must remain a vec");
     };
     assert!(values.push(Value::ptr(child.index())));
+    heap.write_barrier_element(owner, 0, Value::ptr(child.index()));
     assert_eq!(heap.remembered_count(), 1);
 
     heap.mark_young([owner]);
@@ -72,25 +73,30 @@ fn minor_collection_does_not_leave_old_objects_marked_for_major_gc() {
 }
 
 #[test]
-fn minor_collection_prunes_remembered_owners_without_young_edges() {
+fn minor_collection_empties_the_remembered_set_because_survivors_are_promoted() {
     let mut heap = Heap::new();
     let owner = heap.alloc(GcObject::new(ObjectKind::Vec(AelysVec::from_objects(
         Vec::new(),
     ))));
-    for _ in 0..2 {
-        heap.mark_young([owner]);
-        heap.sweep_young();
-    }
+    heap.mark_young([owner]);
+    heap.sweep_young();
+    assert_eq!(heap.heap_generation(owner), Some(HeapGeneration::Old));
 
-    let child = heap.alloc_string("temporary child");
+    let child = heap.alloc_string("younger child");
     let object = heap.get_mut(owner).unwrap();
     let ObjectKind::Vec(values) = &mut object.kind else {
         panic!("owner must remain a vec");
     };
     assert!(values.push(Value::ptr(child.index())));
-    heap.mark_young([owner]);
-    heap.sweep_young();
+    heap.write_barrier_element(owner, 0, Value::ptr(child.index()));
+    heap.write_barrier_element(owner, 0, Value::ptr(child.index()));
     assert_eq!(heap.remembered_count(), 1);
+
+    heap.mark_young([]);
+    heap.sweep_young();
+    assert_eq!(heap.heap_generation(child), Some(HeapGeneration::Old));
+    assert_eq!(heap.remembered_count(), 0);
+    assert_eq!(heap.young_count(), 0);
 
     let object = heap.get_mut(owner).unwrap();
     let ObjectKind::Vec(values) = &mut object.kind else {
@@ -100,34 +106,6 @@ fn minor_collection_prunes_remembered_owners_without_young_edges() {
     heap.mark_young([owner]);
     heap.sweep_young();
     assert_eq!(heap.remembered_count(), 0);
-}
-
-#[test]
-fn promotion_remembers_an_owner_that_still_points_to_a_younger_object() {
-    let mut heap = Heap::new();
-    let owner = heap.alloc(GcObject::new(ObjectKind::Vec(AelysVec::from_objects(
-        Vec::new(),
-    ))));
-    heap.mark_young([owner]);
-    heap.sweep_young();
-
-    let child = heap.alloc_string("younger child");
-    let object = heap.get_mut(owner).unwrap();
-    let ObjectKind::Vec(values) = &mut object.kind else {
-        panic!("owner must remain a vec");
-    };
-    assert!(values.push(Value::ptr(child.index())));
-    assert_eq!(heap.remembered_count(), 0);
-
-    heap.mark_young([owner]);
-    heap.sweep_young();
-    assert_eq!(heap.heap_generation(owner), Some(HeapGeneration::Old));
-    assert_eq!(heap.heap_generation(child), Some(HeapGeneration::Young));
-    assert_eq!(heap.remembered_count(), 1);
-
-    heap.mark_young([]);
-    heap.sweep_young();
-    assert!(heap.get(child).is_some());
 }
 
 #[test]
@@ -145,6 +123,7 @@ fn major_promotion_rebuilds_old_to_young_edges() {
         panic!("owner must remain a vec");
     };
     assert!(values.push(Value::ptr(child.index())));
+    heap.write_barrier_element(owner, 0, Value::ptr(child.index()));
 
     assert!(heap.begin_major_collection(vec![owner]));
     while heap.major_collection_active() {
@@ -184,7 +163,7 @@ fn incremental_major_collection_preserves_graph_and_reclaims_garbage() {
 }
 
 #[test]
-fn incremental_mark_retraces_mutated_objects() {
+fn incremental_mark_shades_values_stored_after_marking_started() {
     let mut heap = Heap::new();
     let owner = heap.alloc(GcObject::new(ObjectKind::Vec(AelysVec::from_objects(
         Vec::new(),
@@ -201,6 +180,7 @@ fn incremental_mark_retraces_mutated_objects() {
         panic!("owner must remain a vec");
     };
     assert!(values.push(Value::ptr(late_child.index())));
+    heap.write_barrier_element(owner, 0, Value::ptr(late_child.index()));
 
     while heap.major_collection_active() {
         heap.major_collection_slice(Duration::ZERO);

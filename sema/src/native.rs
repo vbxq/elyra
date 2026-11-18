@@ -150,6 +150,21 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             result(InferType::I64, InferType::String),
         ),
         ("sys", "random_state") => function(0, InferType::I64),
+        (
+            "sys",
+            "gc_max_pause_us"
+            | "gc_window_max_pause_us"
+            | "gc_p99_pause_us"
+            | "gc_total_pause_us"
+            | "gc_pause_count"
+            | "gc_minor_collections"
+            | "gc_major_collections"
+            | "gc_heap_bytes"
+            | "gc_live_objects"
+            | "gc_allocations",
+        ) => function(0, InferType::I64),
+        ("sys", "gc_stats") => function(0, InferType::String),
+        ("sys", "gc_collect") => function(0, InferType::Unit),
 
         ("time", "now" | "now_us" | "now_ns") => function(0, InferType::F64),
         ("time", "elapsed" | "elapsed_us") => function_with(vec![InferType::I64], InferType::F64),

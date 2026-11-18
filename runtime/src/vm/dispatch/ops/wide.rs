@@ -504,6 +504,8 @@ impl VM {
                         self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length })
                     );
                 }
+                self.heap
+                    .write_barrier_element(array_ref, index_usize, value);
             }
             OpCode::ArrayNewI | OpCode::ArrayNewF | OpCode::ArrayNewB | OpCode::ArrayNewP => {
                 let count = reg_get!(base + b).as_int().unwrap_or(0);
@@ -773,6 +775,7 @@ impl VM {
                         self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length })
                     );
                 }
+                self.heap.write_barrier_element(vec_ref, index_usize, value);
             }
             OpCode::StringLoadChar => {
                 let string_value = reg_get!(base + b);

@@ -56,6 +56,8 @@ pub struct ExecutionStats {
     pub major_collections: u64,
     pub gc_pause_micros: u64,
     pub gc_max_pause_micros: u64,
+    pub gc_pause_nanos: u64,
+    pub gc_max_pause_nanos: u64,
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub allocations: u64,
