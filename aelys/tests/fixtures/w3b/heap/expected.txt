@@ -1,0 +1,8 @@
+fay:6 gus:5 lu:5 cy:4 jo:4 hal:2 ada:1 bob:1 dee:1 kai:1 eve:0 ivy:0
+sorted ok: true
+processed 12, ticks 7, left 0
+alarms: ["door@15", "tea@15", "snack@22", "bed@33"]
+queue empty
+event heap pushes 12
+x:1/-6 z:3/-6 w:6/-5 y:4/-4
+boosted sorted ok: true

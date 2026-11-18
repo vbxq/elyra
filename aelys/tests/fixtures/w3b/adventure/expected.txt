@@ -1,0 +1,47 @@
+1 > look: in the hall: lamp, note
+2 > take lamp: taken: lamp
+3 > go down: it is too dark to go down
+4 > light: the lamp glows
+5 > light: already lit
+6 > take note: taken: note
+7 > read: it reads: the key is in the garden
+8 > go down: you enter the cellar
+9 > look: in the cellar: coin(10), key#3
+10 > take coin: you pocket 10 gold
+11 > take key: taken: key#3
+12 > go east: a locked door (lock 7)
+13 > use key: key 3 does not fit
+14 > drop key: dropped key#3
+15 > go up: you enter the hall
+16 > go north: you enter the garden
+17 > take key: taken: key#7
+18 > take coin: you pocket 5 gold
+19 > take coin: no coin here
+20 > go s: you enter the hall
+21 > go down: you enter the cellar
+22 > use key: the door creaks open
+23 > go east: you enter the vault
+24 > look: in the vault: coin(100), coin(1)
+25 > take coin: you pocket 100 gold
+26 > take coin: you pocket 1 gold
+27 > stash note: stashed note in slot 0
+28 > stash lamp: stashed lamp(lit) in slot 1
+29 > stash key: belt full
+30 > dance: ?? unknown verb 'dance'
+31 > go sideways: ?? unknown direction 'sideways'
+32 > wait 3: time passes (3)
+33 > wait -2: ?? wait must be positive
+34 > wait: time passes (1)
+35 > go west: you enter the cellar
+36 > go west: no exit that way
+37 > use key: the door creaks open
+38 > take: ?? take what?
+39 > look: in the cellar: key#3
+inventory: [key#7]
+belt 0: note
+belt 1: lamp lit=true
+room: cellar vault_open=true turns=37 score=116
+floor cellar: 1 [key#3]
+floor garden: 0 []
+floor hall: 0 []
+floor vault: 0 []

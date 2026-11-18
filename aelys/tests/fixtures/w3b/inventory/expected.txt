@@ -1,0 +1,28 @@
+1: ok
+2: ok
+3: ok
+4: ok
+5: left 11
+6: error: not enough ruby: have 2, want 3
+7: error: no such item: pear
+8: error: invalid command: number x
+9: error: invalid command: category stone
+10: left 0
+11: total 322
+12: ok
+13: ok
+14: error: invalid command: frobnicate
+15: left 0
+16: total 372
+errors: 5
+created: 6
+by category: {"gem": 2, "tool": 2, "food": 4}
+items: ["bread", "ruby", "saw"]
+ruby [gem] 2 @ 150 -> worth 300
+saw [tool] 2 @ 30 -> worth 60
+bread [food] 4 @ 3 -> worth 12
+largest item: ruby
+largest order: hammer 36
+orders total: 66
+stock total: 372
+log: 9 entries, last = take apple x11
