@@ -91,14 +91,15 @@ impl VM {
             }
             OpCode::GetGlobalIdx => {
                 let index = (b << 16) | c;
-                let Some(value) = self.globals_by_index.get(index).copied() else {
+                let Some(value) = self
+                    .globals_by_index
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_uninit())
+                else {
                     self.frames[current_frame_idx].ip = ip;
-                    return Err(self.global_index_error("wide GetGlobalIdx", index));
+                    return Err(self.global_read_error("wide GetGlobalIdx", index));
                 };
-                if value.is_uninit() {
-                    self.frames[current_frame_idx].ip = ip;
-                    return Err(self.uninitialized_global_error(index));
-                }
                 reg_set!(base + a, value);
             }
             OpCode::SetGlobalIdx => {

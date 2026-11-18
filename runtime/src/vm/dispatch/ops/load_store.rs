@@ -117,14 +117,15 @@ impl VM {
             75 => {
                 let (a, imm) = decode_aimm(instr);
                 let idx = usize::from(u16::from_ne_bytes(imm.to_ne_bytes()));
-                let Some(value) = self.globals_by_index.get(idx).copied() else {
+                let Some(value) = self
+                    .globals_by_index
+                    .get(idx)
+                    .copied()
+                    .filter(|value| !value.is_uninit())
+                else {
                     self.frames[current_frame_idx].ip = ip;
-                    return Err(self.global_index_error("GetGlobalIdx", idx));
+                    return Err(self.global_read_error("GetGlobalIdx", idx));
                 };
-                if value.is_uninit() {
-                    self.frames[current_frame_idx].ip = ip;
-                    return Err(self.uninitialized_global_error(idx));
-                }
                 reg_set!(base + a as usize, value);
             }
 
@@ -142,14 +143,15 @@ impl VM {
                 let (register, _, _) = decode_abc(instr);
                 let index = unsafe { *bytecode_ptr.add(ip) } as usize;
                 ip += 1;
-                let Some(value) = self.globals_by_index.get(index).copied() else {
+                let Some(value) = self
+                    .globals_by_index
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_uninit())
+                else {
                     self.frames[current_frame_idx].ip = ip;
-                    return Err(self.global_index_error("GetGlobalIdxWide", index));
+                    return Err(self.global_read_error("GetGlobalIdxWide", index));
                 };
-                if value.is_uninit() {
-                    self.frames[current_frame_idx].ip = ip;
-                    return Err(self.uninitialized_global_error(index));
-                }
                 reg_set!(base + register as usize, value);
             }
 

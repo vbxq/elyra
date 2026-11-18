@@ -36,6 +36,16 @@ impl VM {
 
     #[cold]
     #[inline(never)]
+    pub(crate) fn global_read_error(&self, operation: &str, index: usize) -> RuntimeError {
+        if index < self.globals_by_index.len() {
+            self.uninitialized_global_error(index)
+        } else {
+            self.global_index_error(operation, index)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
     pub(crate) fn uninitialized_global_error(&self, index: usize) -> RuntimeError {
         let name = self
             .frames
