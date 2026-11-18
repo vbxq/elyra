@@ -329,6 +329,21 @@ impl TypeInference {
             ));
         }
         self.fit_int_literal(&mut typed_args[0], &receiver);
+        if let Some(count) = constant_int(&typed_args[1])
+            && !(0..=63).contains(&count)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::FixedPointShiftOutOfRange {
+                    method: member.clone(),
+                    count,
+                },
+                span: typed_args[1].span,
+                reason: ConstraintReason::Argument {
+                    func_name: member.clone(),
+                    arg_index: 1,
+                },
+            });
+        }
         let params = vec![receiver.clone(), InferType::I64];
         for (index, (arg, expected)) in typed_args.iter().zip(params.iter()).enumerate() {
             let reason = ConstraintReason::Argument {
@@ -1624,4 +1639,16 @@ fn is_method_callee(callee: &TypedExpr) -> bool {
         TypedExprKind::StructMethod { separator, .. }
             if *separator == aelys_syntax::MemberSeparator::Dot
     )
+}
+
+fn constant_int(expr: &TypedExpr) -> Option<i64> {
+    match &expr.kind {
+        TypedExprKind::Int(value) => Some(*value),
+        TypedExprKind::Grouping(inner) => constant_int(inner),
+        TypedExprKind::Unary {
+            op: aelys_syntax::UnaryOp::Neg,
+            operand,
+        } => constant_int(operand)?.checked_neg(),
+        _ => None,
+    }
 }

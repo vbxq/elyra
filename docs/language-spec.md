@@ -240,7 +240,9 @@ Any integer type, sized or not, indexes an array or a `Vec`.
 - `a.shl_div(b, n)` is `(a << n) / b` computed without overflow and truncated toward zero,
   then wrapped to `i32` (or checked for `int`). A zero `b` traps with `division by zero`.
 
-`b` has the receiver's type and `n` is an `int`, taken modulo 64.
+`b` has the receiver's type and `n` is an `int`. A literal `n` outside 0..=63 is E0462
+`shift count 64 of 'mul_shr' is outside 0..=63`; a computed `n` is taken modulo 64
+(`& 63`), so 64 shifts by 0 and -1 by 63.
 
 ```rust
 fn fixed_mul(a: i32, b: i32) -> i32 { a.mul_shr(b, 16) }
@@ -2586,3 +2588,4 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
 | E0460 | MixedIntegerOperands | a binary operator mixes two integer types |
 | E0461 | WideIntegerUnavailable | `i64` or `u64` is written; `int` is a 48-bit integer |
+| E0462 | FixedPointShiftOutOfRange | a literal shift count of `mul_shr` or `shl_div` lies outside 0..=63 |

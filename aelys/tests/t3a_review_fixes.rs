@@ -609,3 +609,42 @@ fn l1_branch_literals_take_the_sized_type_of_a_sibling_or_the_context() {
         );
     }
 }
+
+#[test]
+fn l3_a_literal_fixed_point_shift_count_outside_0_to_63_is_refused() {
+    for (call, count) in [
+        ("a.mul_shr(b, 64)", "64"),
+        ("a.mul_shr(b, -1)", "-1"),
+        ("a.shl_div(b, 130)", "130"),
+        ("a.shl_div(b, (-64))", "-64"),
+    ] {
+        for ty in ["i32", "int"] {
+            let source = format!("fn f(a: {ty}, b: {ty}) -> {ty} {{ {call} }}\nf(3, 5)");
+            let error = run_aelys_err(&source);
+            let method = &call[2..9];
+            assert!(
+                error.contains("E0462")
+                    && error.contains(&format!(
+                        "shift count {count} of '{method}' is outside 0..=63"
+                    )),
+                "{error}"
+            );
+        }
+    }
+    assert_int_at_every_level(
+        "fn f(a: i32, b: i32) -> i32 { a.mul_shr(b, 62) }\nf(-2147483648, -2147483648) as int",
+        1,
+    );
+    assert_int_at_every_level(
+        "fn f(a: int, b: int) -> int { a.shl_div(b, 0) }\nf(7, 2)",
+        3,
+    );
+    assert_int_at_every_level(
+        "fn f(a: i32, b: i32, n: int) -> i32 { a.mul_shr(b, n) }\nf(3, 5, 64) as int",
+        15,
+    );
+    assert_int_at_every_level(
+        "fn f(a: i32, b: i32, n: int) -> i32 { a.mul_shr(b, n) }\nf(1 << 20, 1 << 20, -1) as int",
+        0,
+    );
+}

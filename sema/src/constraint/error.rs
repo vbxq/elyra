@@ -526,6 +526,10 @@ pub enum TypeErrorKind {
     WideIntegerUnavailable {
         name: String,
     },
+    FixedPointShiftOutOfRange {
+        method: String,
+        count: i64,
+    },
     EnumLayoutTooLarge {
         enum_name: String,
         item: String,
@@ -1487,6 +1491,9 @@ impl TypeError {
                 operand,
                 left.source_spelling()
             ),
+            TypeErrorKind::FixedPointShiftOutOfRange { method, count } => {
+                write!(f, "shift count {} of '{}' is outside 0..=63", count, method)
+            }
             TypeErrorKind::WideIntegerUnavailable { name } => write!(
                 f,
                 "{} is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping arithmetic",
@@ -1768,6 +1775,7 @@ impl TypeErrorKind {
             Self::IntegerLiteralOutOfRange { .. } => 209,
             Self::MixedIntegerOperands { .. } => 460,
             Self::WideIntegerUnavailable { .. } => 461,
+            Self::FixedPointShiftOutOfRange { .. } => 462,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,
             Self::GenericArityMismatch { .. } => 357,
