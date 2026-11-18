@@ -671,6 +671,7 @@ needs std::sys
 | `gc_max_pause_us()` | Longest garbage collection pause since the VM started, in microseconds |
 | `gc_window_max_pause_us()` | Longest pause since the previous call of this function, in microseconds |
 | `gc_p99_pause_us()` | 99th percentile of the pauses, in microseconds (10 µs resolution) |
+| `gc_max_pause_cpu_us()` | Longest pause counted in thread CPU time, which leaves out time the OS spent running other processes |
 | `gc_total_pause_us()` | Sum of all pauses, in microseconds |
 | `gc_pause_count()` | Number of pauses (minor collections and major slices) |
 | `gc_minor_collections()` | Completed minor collections |

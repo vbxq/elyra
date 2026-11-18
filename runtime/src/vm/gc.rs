@@ -8,69 +8,37 @@ const PAUSE_BUCKETS: usize = 2048;
 const HISTOGRAM_EDGES_US: [u64; 10] = [50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000];
 
 #[derive(Debug, Clone)]
-pub struct GcPauseStats {
-    count: u64,
-    total_nanos: u64,
+struct PauseHistogram {
     max_nanos: u64,
-    window_max_nanos: u64,
-    max_cpu_nanos: u64,
     buckets: Box<[u64]>,
 }
 
-impl Default for GcPauseStats {
+impl Default for PauseHistogram {
     fn default() -> Self {
         Self {
-            count: 0,
-            total_nanos: 0,
             max_nanos: 0,
-            window_max_nanos: 0,
-            max_cpu_nanos: 0,
             buckets: vec![0; PAUSE_BUCKETS + 1].into_boxed_slice(),
         }
     }
 }
 
-impl GcPauseStats {
-    fn record(&mut self, nanos: u64, cpu_nanos: u64) {
-        self.max_cpu_nanos = self.max_cpu_nanos.max(cpu_nanos);
-        self.count = self.count.saturating_add(1);
-        self.total_nanos = self.total_nanos.saturating_add(nanos);
+impl PauseHistogram {
+    fn record(&mut self, nanos: u64) {
         self.max_nanos = self.max_nanos.max(nanos);
-        self.window_max_nanos = self.window_max_nanos.max(nanos);
         let bucket = usize::try_from(nanos / PAUSE_BUCKET_NANOS)
             .unwrap_or(PAUSE_BUCKETS)
             .min(PAUSE_BUCKETS);
         self.buckets[bucket] = self.buckets[bucket].saturating_add(1);
     }
 
-    pub fn count(&self) -> u64 {
-        self.count
-    }
-
-    pub fn total_nanos(&self) -> u64 {
-        self.total_nanos
-    }
-
-    pub fn max_nanos(&self) -> u64 {
-        self.max_nanos
-    }
-
-    pub fn max_cpu_nanos(&self) -> u64 {
-        self.max_cpu_nanos
-    }
-
-    pub fn take_window_max_nanos(&mut self) -> u64 {
-        std::mem::take(&mut self.window_max_nanos)
-    }
-
-    pub fn percentile_nanos(&self, percentile: f64) -> u64 {
-        if self.count == 0 {
+    fn percentile_nanos(&self, count: u64, percentile: f64) -> u64 {
+        if count == 0 {
             return 0;
         }
-        let wanted = ((self.count as f64) * percentile / 100.0).ceil().max(1.0) as u64;
+        let wanted = ((count as f64) * percentile / 100.0).ceil().max(1.0) as u64;
         let mut seen = 0u64;
-        for (bucket, count) in self.buckets.iter().enumerate() {
-            seen = seen.saturating_add(*count);
+        for (bucket, hits) in self.buckets.iter().enumerate() {
+            seen = seen.saturating_add(*hits);
             if seen >= wanted {
                 if bucket == PAUSE_BUCKETS {
                     return self.max_nanos;
@@ -82,7 +50,7 @@ impl GcPauseStats {
         self.max_nanos
     }
 
-    pub fn histogram(&self) -> Vec<(String, u64)> {
+    fn rows(&self) -> Vec<(String, u64)> {
         let mut rows = Vec::new();
         let mut lower = 0u64;
         for upper in HISTOGRAM_EDGES_US {
@@ -107,6 +75,61 @@ impl GcPauseStats {
             .unwrap_or(PAUSE_BUCKETS + 1)
             .min(PAUSE_BUCKETS + 1);
         self.buckets[first..last].iter().sum()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GcPauseStats {
+    count: u64,
+    total_nanos: u64,
+    window_max_nanos: u64,
+    wall: PauseHistogram,
+    cpu: PauseHistogram,
+}
+
+impl GcPauseStats {
+    fn record(&mut self, nanos: u64, cpu_nanos: u64) {
+        self.count = self.count.saturating_add(1);
+        self.total_nanos = self.total_nanos.saturating_add(nanos);
+        self.window_max_nanos = self.window_max_nanos.max(nanos);
+        self.wall.record(nanos);
+        self.cpu.record(cpu_nanos);
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub fn total_nanos(&self) -> u64 {
+        self.total_nanos
+    }
+
+    pub fn max_nanos(&self) -> u64 {
+        self.wall.max_nanos
+    }
+
+    pub fn max_cpu_nanos(&self) -> u64 {
+        self.cpu.max_nanos
+    }
+
+    pub fn take_window_max_nanos(&mut self) -> u64 {
+        std::mem::take(&mut self.window_max_nanos)
+    }
+
+    pub fn percentile_nanos(&self, percentile: f64) -> u64 {
+        self.wall.percentile_nanos(self.count, percentile)
+    }
+
+    pub fn cpu_percentile_nanos(&self, percentile: f64) -> u64 {
+        self.cpu.percentile_nanos(self.count, percentile)
+    }
+
+    pub fn histogram(&self) -> Vec<(String, u64)> {
+        self.wall.rows()
+    }
+
+    pub fn cpu_histogram(&self) -> Vec<(String, u64)> {
+        self.cpu.rows()
     }
 }
 
@@ -290,7 +313,7 @@ impl VM {
     pub fn gc_stats_report(&self) -> String {
         let pauses = &self.gc_pauses;
         let mut report = format!(
-            "gc-stats: collections={} minor={} major={} pauses={} max_pause_us={} max_pause_cpu_us={} p99_pause_us={} total_pause_us={} allocations={} allocated_bytes={} heap_bytes={} peak_heap_bytes={} live_objects={}",
+            "gc-stats: collections={} minor={} major={} pauses={} max_pause_us={} p99_pause_us={} max_pause_cpu_us={} p99_pause_cpu_us={} total_pause_us={} allocations={} allocated_bytes={} heap_bytes={} peak_heap_bytes={} live_objects={}",
             self.heap
                 .minor_collection_count()
                 .saturating_add(self.heap.major_collection_count()),
@@ -298,8 +321,9 @@ impl VM {
             self.heap.major_collection_count(),
             pauses.count(),
             pauses.max_nanos() / 1000,
-            pauses.max_cpu_nanos() / 1000,
             pauses.percentile_nanos(99.0) / 1000,
+            pauses.max_cpu_nanos() / 1000,
+            pauses.cpu_percentile_nanos(99.0) / 1000,
             pauses.total_nanos() / 1000,
             self.heap.allocation_count(),
             self.heap.total_allocated_bytes(),
@@ -309,6 +333,10 @@ impl VM {
         );
         report.push_str("\ngc-stats: pause histogram (us)");
         for (label, count) in pauses.histogram() {
+            let _ = write!(report, " {label}={count}");
+        }
+        report.push_str("\ngc-stats: pause cpu-time histogram (us)");
+        for (label, count) in pauses.cpu_histogram() {
             let _ = write!(report, " {label}={count}");
         }
         report

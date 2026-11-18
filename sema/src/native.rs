@@ -155,6 +155,7 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             "gc_max_pause_us"
             | "gc_window_max_pause_us"
             | "gc_p99_pause_us"
+            | "gc_max_pause_cpu_us"
             | "gc_total_pause_us"
             | "gc_pause_count"
             | "gc_minor_collections"

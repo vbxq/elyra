@@ -25,7 +25,7 @@ Storing a pointer into an object runs a write barrier. An old object that receiv
 
 A major collection starts when the heap reaches twice its size after the previous major (4 MiB at least). It marks and then sweeps in slices interleaved with minor collections. One slice runs per 32 KiB allocated, does work proportional to the heap so that the collection ends within one heap's worth of allocation, and stops after 1 ms. Large Vecs and arrays are marked in chunks of 2048 elements.
 
-`-ae.gc-stats=on` prints, when the VM exits, the number of minor and major collections, the maximum, p99 and total pause, the allocation count and bytes, and a pause histogram. A program can read the same figures at run time with the `sys::gc_*` functions (see the standard library). `-ae.gc-stress=on` collects after almost every allocation and is meant for testing.
+`-ae.gc-stats=on` prints, when the VM exits, the number of minor and major collections, the maximum, p99 and total pause (wall-clock, plus the maximum and p99 in thread CPU time, which leaves out preemption by other processes), the allocation count and bytes, and a pause histogram. A program can read the same figures at run time with the `sys::gc_*` functions (see the standard library). `-ae.gc-stress=on` collects after almost every allocation and is meant for testing.
 
 ## Practical
 

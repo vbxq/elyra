@@ -50,6 +50,7 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("gc_max_pause_us", 0, native_gc_max_pause_us);
     reg_fn!("gc_window_max_pause_us", 0, native_gc_window_max_pause_us);
     reg_fn!("gc_p99_pause_us", 0, native_gc_p99_pause_us);
+    reg_fn!("gc_max_pause_cpu_us", 0, native_gc_max_pause_cpu_us);
     reg_fn!("gc_total_pause_us", 0, native_gc_total_pause_us);
     reg_fn!("gc_pause_count", 0, native_gc_pause_count);
     reg_fn!("gc_minor_collections", 0, native_gc_minor_collections);
@@ -487,6 +488,10 @@ fn native_gc_window_max_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, 
 
 fn native_gc_p99_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(gc_int(vm.gc_pause_stats().percentile_nanos(99.0) / 1000))
+}
+
+fn native_gc_max_pause_cpu_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.gc_pause_stats().max_cpu_nanos() / 1000))
 }
 
 fn native_gc_total_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
