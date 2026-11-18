@@ -578,3 +578,53 @@ A * 1000 + f() * 100 + g() * 10 + h()
         1000 + 1000 + 20 + 3,
     );
 }
+
+#[test]
+fn assigning_an_option_or_result_to_any_place_uses_the_value() {
+    assert_int_everywhere(
+        r#"
+struct N { id: int, next: Option<int> }
+struct L { nodes: Vec<N> }
+impl N {
+    fn link(mut self, v: int) { self.next = Some(v) }
+}
+let mut a = N { id: 1, next: None }
+a.next = Some(3)
+let mut l = L { nodes: vec![N { id: 2, next: None }] }
+l.nodes[0].next = Some(9)
+let mut opts: Vec<Option<int>> = vec![None]
+opts[0] = Some(5)
+let mut arr: [Option<int>; 2] = [None, None]
+arr[1] = Some(4)
+let mut g: Option<int> = None
+fn setg() { g = Some(7) }
+setg()
+let mut rs: Vec<Result<int, string>> = vec![Ok(1)]
+rs[0] = Err("x")
+let mut b = N { id: 3, next: None }
+b.link(20)
+let mut c = N { id: 4, next: None }
+let set_c = fn(v: int) { c.next = Some(v) }
+set_c(30)
+let total = a.next.unwrap() + l.nodes[0].next.unwrap() + opts[0].unwrap() + arr[1].unwrap()
+total + g.unwrap() + rs.len() + b.next.unwrap() + c.next.unwrap()
+"#,
+        3 + 9 + 5 + 4 + 7 + 1 + 20 + 30,
+    );
+}
+
+#[test]
+fn an_ignored_option_or_result_is_still_rejected() {
+    for body in [
+        "fn f() -> Option<int> { Some(1) }\nf()",
+        "let v = vec![Some(1)]\nv[0]",
+        "struct N { next: Option<int> }\nlet a = N { next: None }\na.next",
+        "fn r() -> Result<int, string> { Ok(1) }\nfn g() { r() }\ng()",
+    ] {
+        let message = rejected(body);
+        assert!(
+            message.contains("E0304") || message.contains("E0303"),
+            "{body}\n{message}"
+        );
+    }
+}

@@ -150,8 +150,7 @@ impl TypeInference {
                 .collect();
 
             let last_stmt = &func.body[func.body.len() - 1];
-            let typed_last = self.infer_stmt_with_implicit_return(last_stmt, &return_type);
-            stmts.push(typed_last);
+            stmts.extend(self.infer_body_tail(last_stmt, &return_type, func.return_type.is_some()));
 
             stmts
         };

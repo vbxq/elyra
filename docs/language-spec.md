@@ -2384,6 +2384,10 @@ println(match parse("nope") { Some(value) => value, None => 0 })  // 0
 `match` on `Option` and `Result` is exhaustive. Omitting a variant is a compile
 error. A named `Option` or `Result` cannot be silently discarded: use it, return it,
 match it, call a consuming method, or write `let _ = expression` explicitly.
+Assigning one to a variable, a field or an element (`a.next = Some(x)`,
+`v[i] = Ok(1)`) uses it. A function or lambda without a declared return type
+whose last statement is an assignment returns unit, so a setter such as
+`fn link(mut self, v: int) { self.next = Some(v) }` can be called as a statement.
 
 The `?` operator propagates `Err` or `None` from a compatible enclosing return type.
 The available consuming methods include `unwrap`, `expect`, `unwrap_or`,

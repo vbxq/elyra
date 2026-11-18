@@ -925,6 +925,9 @@ impl TypeInference {
     }
 
     pub(super) fn record_must_use_value(&mut self, expr: &TypedExpr) {
+        if is_assignment(expr) {
+            return;
+        }
         self.must_use_values.push(MustUseResidual {
             ty: expr.ty.clone(),
             span: expr.span,
@@ -2604,6 +2607,16 @@ fn qualified_family(callee: &Expr) -> Option<&'static str> {
         "Result" => Some("Result"),
         "Error" => Some("Error"),
         _ => None,
+    }
+}
+
+fn is_assignment(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        TypedExprKind::Assign { .. }
+        | TypedExprKind::MemberAssign { .. }
+        | TypedExprKind::IndexAssign { .. } => true,
+        TypedExprKind::Grouping(inner) => is_assignment(inner),
+        _ => false,
     }
 }
 
