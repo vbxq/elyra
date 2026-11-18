@@ -1578,7 +1578,7 @@ So you don't need to annotate everything. `@inline` and `@inline_always` are for
 
 **Optimization never changes what a program does:**
 
-Every optimization level (`-O0` to `-O3`) produces the same output, exit code and runtime errors as `-O0`. An inlined call evaluates each argument exactly once, left to right, before the body, as a real call does: an argument whose parameter is unused still runs, and one that traps (division by zero, an out-of-bounds index, an integer overflow) traps at the same point. An unused `let` is only removed when its initializer can neither write anything nor trap; `let _x = v[i]`, `let _x = a / b` or `let _x = a * b` still raise their error when they would at `-O0`.
+Every optimization level (`-O0` to `-O3`) produces the same output and exit code as `-O0`, and raises the same runtime error at the same point of the run. Only the location reported for an error raised inside an inlined function can differ: it is the line of the call that was inlined, and the stack trace has no frame for the inlined function. An inlined call evaluates each argument exactly once, left to right, before the body, as a real call does: an argument whose parameter is unused still runs, and one that traps (division by zero, an out-of-bounds index, an integer overflow, `<<` on `int` leaving the 48-bit range, a NaN or infinite float converted with `as`, a global read before its initialiser ran) traps at the same point. A call is only inlined when its name resolves to the top-level `fn`; a parameter, a local closure or a nested `fn` of the same name is called as written. An unused `let` is only removed when its initializer can neither write anything nor trap; `let _x = v[i]`, `let _x = a / b`, `let _x = a * b` or `let _x = g.x` with `g` a global bound after code ran still raise their error when they would at `-O0`. Operators on the sized types wrap and never trap, except `/` and `%` by zero.
 
 ## Semicolons
 
@@ -3258,7 +3258,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0102 | ExpectedExpression | an expression was required |
 | E0103 | ExpectedIdentifier | an identifier was required |
 | E0104 | InvalidAssignmentTarget | the left side of `=` is not a place |
-| E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit: 256 levels of parentheses, calls, prefix operators, assignments and blocks |
+| E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit of 256 levels: each parenthesis, call, prefix operator, assignment, block and pattern level counts one, and so does the expression that holds them, so a `let` initializer accepts 255 nested parentheses, a call argument 254, and 254 nested `if` blocks |
 | E0106 | NullIsNotInSurface | `null` is not part of Aelys |
 | E0107 | ExpectedPattern | a pattern was required |
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
@@ -3359,7 +3359,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0365 | NotIterable | the value cannot be iterated |
 | E0366 | InvalidIndex | the value cannot be indexed that way |
 | E0367 | UntypedNativeTypeMismatch | a native signature does not match its use |
-| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree deeper than 1024 nodes |
+| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree of 1024 nested nodes or more, so a chain of 1023 `+` is accepted and 1024 is rejected |
 | E0369 | NamespaceIsNotAValue | a module path used where a value is required |
 | E0370 | NotANamespace | a path segment that names no module |
 | E0371 | NoSuchMember | no such member on that module |
