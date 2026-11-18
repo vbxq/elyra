@@ -9,6 +9,11 @@ The safe modules `std::io`, `std::math`, `std::string`, `std::convert`, and
 immediately without `needs`. For example, `println("hello")` and
 `math::sqrt(16.0)` work out of the box.
 
+Two builtins sit outside every module and need no `needs`: `panic(message)`, of
+type `never`, and `assert(condition, message)`. Both stop the program with
+`panic: <message>`, the source location, and the stack trace on stderr, and the
+runner exits with status 101 (see Panics in the language specification).
+
 You can still use `needs` with an alias if you want a shorter name:
 
 ```rust
@@ -158,6 +163,10 @@ All functions work in radians.
 | `round(x)` | Round to nearest |
 | `trunc(x)` | Truncate toward zero |
 
+The four rounding functions return an `int`. A NaN, an infinity, or a result outside
+the 48-bit `int` range is a runtime error, never a saturated or zero value.
+`abs` of the smallest `int` (-140737488355328) is an integer overflow error.
+
 ### Special
 
 | Function | Description |
@@ -303,7 +312,11 @@ Type conversions and introspection. Auto-registered -- no `needs` required.
 | `parse_float(s)` | Parse string to `Option<float>` |
 | `parse_bool(s)` | Parse boolean to `Option<bool>` |
 
-`parse_int` automatically handles `0x`, `0o`, `0b` prefixes:
+`parse_int` accepts an optional sign followed by decimal digits or a `0x`, `0o`, or
+`0b` prefix, with surrounding whitespace ignored. Anything else is `None`: it never
+panics and never truncates, so `"3.9"`, `"1e3"`, `"-2.5"`, `"nan"`, and a value
+outside the 48-bit `int` range (-140737488355328 to 140737488355327) all give
+`None`. `parse_int_radix` follows the same rules for its base.
 
 ```rust
 match convert::parse_int("42") {
@@ -320,6 +333,11 @@ match convert::parse_int("42") {
 | `to_int(x)` | Convert to int |
 | `to_float(x)` | Convert to float |
 | `to_bool(x)` | Convert to bool (truthiness) |
+
+`to_int` truncates a float toward zero; a NaN, an infinity, or a float outside the
+48-bit range is a runtime error. A string passed to `to_int` must be an integer
+under the `parse_int` rules, otherwise `to_int` is a runtime error (`to_int("3.9")`
+is an error, not `3`).
 
 `.to_string()` can be called as a method on any value:
 
@@ -709,7 +727,7 @@ needs std::bytes
 | `write_u16(buf, offset, value)` | Write 16-bit unsigned int |
 | `read_u32(buf, offset)` | Read 32-bit unsigned int |
 | `write_u32(buf, offset, value)` | Write 32-bit unsigned int |
-| `read_u64(buf, offset)` | Read 64-bit unsigned int |
+| `read_u64(buf, offset)` | Read 64-bit unsigned int; a value above the 48-bit `int` range is an error |
 | `write_u64(buf, offset, value)` | Write 64-bit unsigned int |
 
 ### Signed Integer Operations (Little-Endian)
@@ -722,7 +740,7 @@ needs std::bytes
 | `write_i16(buf, offset, value)` | Write 16-bit signed int |
 | `read_i32(buf, offset)` | Read 32-bit signed int |
 | `write_i32(buf, offset, value)` | Write 32-bit signed int |
-| `read_i64(buf, offset)` | Read 64-bit signed int |
+| `read_i64(buf, offset)` | Read 64-bit signed int; a value outside the 48-bit `int` range is an error |
 | `write_i64(buf, offset, value)` | Write 64-bit signed int |
 
 ### Big-Endian Operations

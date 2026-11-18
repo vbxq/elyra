@@ -2195,14 +2195,74 @@ println(match parse("nope") { Some(value) => value, None => 0 })  // 0
 
 `match` on `Option` and `Result` is exhaustive. Omitting a variant is a compile
 error. A named `Option` or `Result` cannot be silently discarded: use it, return it,
-match it, call a consuming method, or write `let _ = expression` explicitly.
+match it, call a consuming method, or write `let _ = expression` explicitly. That
+last spelling is the only discard; there is no `discard` keyword. E0303 (Result) and
+E0304 (Option) print these repairs. The check covers expression statements, block
+and closure bodies, match arms, and named bindings; a `Result` stored inside a
+collection literal such as `vec![r(), r()]` is not tracked.
 
-The `?` operator propagates `Err` or `None` from a compatible enclosing return type.
-The available consuming methods include `unwrap`, `expect`, `unwrap_or`,
-`unwrap_or_else`, `ok`, `err`, `map`, `map_err`, `and_then`, and `or_else`.
+The `?` operator propagates `Err` or `None` out of the enclosing function and
+otherwise yields the operand's success value. The success type of the operand and
+the success type of the function are independent: inside a function returning
+`Result<U, F>`, `expr?` with `expr: Result<T, E>` has type `T` whatever `U` is, and
+the same holds for `Option<T>` inside a function returning `Option<U>`:
+
+```rust
+fn port(text: string) -> Result<int, string> {
+    match convert::parse_int(text) { Some(n) => Ok(n), None => Err("bad port {text}") }
+}
+
+fn configure(text: string) -> Result<unit, string> {
+    let p = port(text)?          // Result<int, string>? is an int here
+    println("listening on {p}")
+    Ok(())
+}
+```
+
+`?` is valid inside functions, methods, and closures. At the top level of a script
+there is no function to return from, so `?` there is E0305 with a help line pointing
+at `match`, `unwrap_or`, or `expect`. `?` on a value that is neither an `Option` nor
+a `Result` is E0306.
+
+The available methods are `unwrap`, `expect`, `unwrap_or`, `unwrap_or_else`, `ok`,
+`err`, `map`, `map_err`, `and_then`, `or_else`, and the tests `is_ok`, `is_err`
+(Result) and `is_some`, `is_none` (Option), which return `bool`. `opt.ok_or(e)`
+turns an `Option<T>` into a `Result<T, E>`, with `e` evaluated eagerly. There is no
+`unwrap_or_default`: the language has no general notion of a default value.
 There is no null literal or null-inspection builtin in the surface language.
 The closed built-in `Error` family has one data-carrying constructor,
 `Error::Message(string)`.
+
+### Panics
+
+A panic stops the program. It never unwinds, never turns into an `Err`, and `?`
+cannot catch it. Four operations panic:
+
+- `panic(message: string)` has type `never`, so it fits any expression position,
+  such as a match arm whose other arms produce an `int`;
+- `assert(condition: bool, message: string)` panics with
+  `assertion failed: message` when the condition is `false`;
+- `unwrap()` on `None` or `Err`, and `expect(message)` on the same values.
+
+`panic` and `assert` print `panic: <message>` to stderr, followed by the source
+location and the stack trace, and the command-line runner exits with status 101.
+`unwrap` and `expect` failures print the error payload, as
+`Result::unwrap failed on Err: <payload>` or `<message>: <payload>`, followed by the
+location and the stack trace, and exit with status 1. A string payload prints as
+is; any other payload prints in a debug form such as `WadError::Short(3, 4)` or
+`Point { x: 1, y: 2 }`. All of these behave the same under `-ae.jit=on`.
+
+```rust
+fn lump_size(kind: int) -> int {
+    match kind {
+        0 => 4,
+        1 => 8,
+        _ => panic("unknown lump kind {kind}"),
+    }
+}
+```
+
+A program can shadow `panic` or `assert` with its own declaration of the same name.
 
 ### Error conversion through `?`
 
@@ -2236,13 +2296,18 @@ let converted = AppErr::from(ParseErr { line: 3 })
 ```
 
 For `Result<T, E>?` in a function returning `Result<U, F>`, the operand must be a
-`Result`, `T` must unify with the value context, and either `E` equals `F` or
-exactly one `From<E> for F` impl is selected. Selection tries the identity rule
+`Result`, the expression has type `T` with no relation required between `T` and
+`U`, and either `E` equals `F` or exactly one `From<E> for F` impl is selected. Selection tries the identity rule
 first and then the non-identity impls; the failure path calls the selected `from`
 symbol directly and returns `Err`. It never stringifies the error and never calls a
 runtime converter.
 
-`Option<T>?` is valid only in an `Option<U>` context and propagates `None`. Mixing
+Converting through `From` is a deliberate deviation from a "no hidden conversion"
+rule: the impl is always written out by the user, is selected at compile time, and
+is never replaced by a runtime converter.
+
+`Option<T>?` is valid only in an `Option<U>` context, has type `T`, and propagates
+`None`. Mixing
 an `Option` residual with a `Result` return, or the reverse, is `E0373`. A missing
 or ambiguous conversion is `E0374`, which names both types, the candidate impls,
 and `map_err` as the repair. Every `(From, T, T)` header is reserved for the
@@ -2355,10 +2420,10 @@ enums name the same condition at two stages of the pipeline and share its code.
 |------|------|---------|
 | E0301 | TypeInferenceError | a type mismatch or an unresolved name |
 | E0302 | NonExhaustiveMatch | a match is missing a constructor or `_` |
-| E0303 | IgnoredResult | a `Result` is discarded |
-| E0304 | IgnoredOption | an `Option` is discarded |
-| E0305 | QuestionMarkOutsideResult | `?` outside a compatible return type |
-| E0306 | QuestionMarkTypeMismatch | `?` on an operand of the wrong type |
+| E0303 | IgnoredResult | a `Result` is discarded; use it, `?`, `match`, or `let _ =` |
+| E0304 | IgnoredOption | an `Option` is discarded; use it, `?`, `match`, or `let _ =` |
+| E0305 | QuestionMarkOutsideResult | `?` at script top level or in a function returning neither `Option` nor `Result` |
+| E0306 | QuestionMarkTypeMismatch | `?` on an operand that is neither `Option` nor `Result` |
 | E0307 | UnresolvedSumType | the sum type of a constructor is unknown |
 | E0308 | UntypedSumValue | a sum value with no concrete type |
 | E0309 | InvalidSumMethod | no such method on that sum type |
