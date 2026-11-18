@@ -54,6 +54,14 @@ pub enum CompileErrorKind {
     ReservedName {
         name: String,
     },
+    RemovedLogicalKeyword {
+        word: String,
+        replacement: String,
+    },
+    RemovedNeedsImport {
+        rewritten: String,
+    },
+    RemovedConvertModule,
 
     UndefinedVariable(String),
     VariableAlreadyDefined(String),

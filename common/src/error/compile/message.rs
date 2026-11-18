@@ -32,6 +32,13 @@ impl CompileErrorKind {
             Self::ReservedIdentifier { name } => format!(
                 "'{name}' cannot be declared: names starting with `__` are reserved for the compiler and its builtins"
             ),
+            Self::RemovedLogicalKeyword { word, replacement } => format!(
+                "`{word}` is not an operator; logical operators are `&&`, `||` and `!`\n   = help: write `{replacement}`"
+            ),
+            Self::RemovedNeedsImport { rewritten } => {
+                format!("`needs` is not a keyword; write `use`\n   = help: {rewritten}")
+            }
+            Self::RemovedConvertModule => "std::convert was removed\n   = help: parse with `s.to_int()`, `s.to_int_radix(r)`, `s.to_float()` or `s.to_bool()`, format with `x.to_string()`, `n.to_hex()`, `n.to_binary()`, `n.to_octal()` or `n.to_radix(r)`, and convert numbers and chars with `as`".to_string(),
             Self::MatchArmValueRequired => {
                 "match arm must produce a value or diverge with return, break, or continue"
                     .to_string()
