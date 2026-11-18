@@ -1,0 +1,55 @@
+// needs the t4 native abi: run with a t4 aelys-cli and the sdl module copied here as sdl.so
+needs std::bytes as bytes
+needs std::sys
+needs println from std::io
+needs sdl
+needs wad
+needs render
+needs engine
+
+fn upload(pixels: int) {
+    let fb = render::framebuffer()
+    let mut i = 0
+    while i < 64000 {
+        let _ = bytes::write_u32(pixels, i, fb[i] | (fb[i + 1] << 8) | (fb[i + 2] << 16) | (fb[i + 3] << 24))
+        i += 4
+    }
+}
+
+fn present_frame(pixels: int, palette: int) -> bool {
+    upload(pixels)
+    let ok = match sdl::present_indexed(pixels, palette) {
+        Ok(_) => true,
+        Err(e) => false,
+    }
+    let mut quit = false
+    let mut ev = sdl::poll()
+    while ev != 0 {
+        if ev == 1 { quit = true }
+        ev = sdl::poll()
+    }
+    ok and not quit
+}
+
+let wad_path = engine::flag_value("--wad", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
+let g = engine::load(wad_path)
+let opened = match sdl::open("Elyra E1M1", 320, 200, 3) {
+    Ok(_) => true,
+    Err(e) => false,
+}
+if not opened {
+    println("sdl::open failed")
+    sys::exit(1)
+}
+let pixels = bytes::alloc(64000)
+let palette = bytes::alloc(768)
+for i in 0..768 {
+    let _ = bytes::write_u8(palette, i, g.playpal[i])
+}
+let present = fn() -> bool { present_frame(pixels, palette) }
+if engine::has_flag("--timedemo") {
+    engine::run_timedemo(present)
+} else {
+    engine::run_realtime(present)
+}
+sdl::close()

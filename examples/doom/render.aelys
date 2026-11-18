@@ -31,6 +31,8 @@ let mut yslope: Vec<int> = vec![0; 200]
 let mut distscale: Vec<int> = vec![0; 320]
 let mut checkcoord: Vec<int> = vec![]
 let mut skipped_things = 0
+let mut skill_bit = 2
+let mut no_monsters = false
 
 let mut viewx = 0
 let mut viewy = 0
@@ -662,7 +664,8 @@ pub fn setup(w: Wad, g: Graphics, lv: Level) {
         if t.kind >= 1 and t.kind <= 4 { continue }
         if t.kind == 11 { continue }
         if (t.flags & 16) != 0 { continue }
-        if (t.flags & 2) == 0 { continue }
+        if (t.flags & skill_bit) == 0 { continue }
+        if no_monsters and is_monster(t.kind) { continue }
         let kind = t.kind & 4095
         if kind_def[kind] == -2 {
             let k = thing_kind(t.kind)
@@ -688,6 +691,24 @@ pub fn setup(w: Wad, g: Graphics, lv: Level) {
 }
 
 pub fn framebuffer() -> Vec<int> { fb }
+
+pub fn set_skill_bit(b: int) { skill_bit = b }
+
+pub fn set_no_monsters(on: bool) { no_monsters = on }
+
+fn is_monster(kind: int) -> bool {
+    kind == 3004 or kind == 9 or kind == 3001 or kind == 3002 or kind == 58 or kind == 3006 or kind == 3005 or kind == 3003 or kind == 16 or kind == 7
+}
+
+pub fn set_sector_ceiling(s: int, h: int) {
+    let r = rooms[s]
+    rooms[s] = Room { floor: r.floor, ceil: h, floorpic: r.floorpic, ceilpic: r.ceilpic, light: r.light }
+}
+
+pub fn set_sector_floor(s: int, h: int) {
+    let r = rooms[s]
+    rooms[s] = Room { floor: h, ceil: r.ceil, floorpic: r.floorpic, ceilpic: r.ceilpic, light: r.light }
+}
 
 pub fn floor_height_at(x: int, y: int) -> int {
     rooms[sub_sector[point_in_subsector(x, y)]].floor

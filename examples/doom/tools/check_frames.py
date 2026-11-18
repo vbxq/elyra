@@ -124,7 +124,7 @@ def analyze(fn, frames):
                     break
         else:
             d, base = r[0], r[0] + 1
-            callee = ins["comment"].strip().rstrip("()")
+            callee = ins["comment"].strip().rstrip("()").replace("__aelys_modglobal::", "")
         if not callee or callee not in frames:
             continue
         size = frames[callee]
@@ -136,10 +136,17 @@ def analyze(fn, frames):
 
 def main():
     total = 0
+    parsed = {}
+    qualified = {}
     for path in sys.argv[1:]:
         text = subprocess.run([AELYS, "asm", path, "--stdout"], capture_output=True, text=True).stdout
-        funcs = parse(text)
-        frames = {}
+        parsed[path] = parse(text)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        for f in parsed[path]:
+            qualified.setdefault(stem + "::" + f["name"], f["regs"])
+    for path in sys.argv[1:]:
+        funcs = parsed[path]
+        frames = dict(qualified)
         for f in funcs:
             frames.setdefault(f["name"], f["regs"])
         seen = set()

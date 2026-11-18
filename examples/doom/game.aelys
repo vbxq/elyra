@@ -1,0 +1,20 @@
+needs println from std::io
+needs engine
+
+let wad_path = engine::flag_value("--wad", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
+
+if engine::has_flag("--sdl") {
+    println("--sdl: run game_sdl.aelys (t4 aelys-cli, sdl.so next to it)")
+} else {
+    let _ = engine::load(wad_path)
+    let present = fn() -> bool { true }
+    if engine::has_flag("--logic") {
+        engine::run_logic()
+    } else {
+        if engine::has_flag("--timedemo") {
+            engine::run_timedemo(present)
+        } else {
+            engine::run_realtime(present)
+        }
+    }
+}
