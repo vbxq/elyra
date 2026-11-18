@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 const MAX_FRAME_REGISTERS: usize = 256;
 // a call counts as this many loop iterations towards the optimizing recompile
 const CALL_WEIGHT: i64 = 16;
+const LOOP_TIER_UP: i64 = 1 << 20;
 const PAYLOAD: u64 = 0x0000_FFFF_FFFF_FFFF;
 const TAG_BITS: u64 = 0x7FFF_0000_0000_0000;
 const QNAN: u64 = 0x7FF8_0000_0000_0000;
@@ -526,6 +527,27 @@ impl Analysis<'_> {
 }
 
 // registers whose every definition in the region is an integer, so machine code keeps them unboxed
+fn loop_headers(
+    region: &Region,
+    instructions: &[Inst],
+    by_ip: &HashMap<usize, usize>,
+) -> BTreeSet<usize> {
+    let mut headers = BTreeSet::new();
+    for (ip, effect) in &region.effects {
+        let Some(effect) = effect else { continue };
+        let Some(inst) = by_ip.get(ip).map(|index| instructions[*index]) else {
+            continue;
+        };
+        if let Flow::Jump(target) | Flow::Branch(target) = effect.flow
+            && target <= inst.ip
+            && region.leaders.contains(&target)
+        {
+            headers.insert(target);
+        }
+    }
+    headers
+}
+
 fn integer_registers(
     analysis: &Analysis<'_>,
     region: &Region,
@@ -874,6 +896,7 @@ fn region(
 
 struct Helpers {
     tier_up: FuncRef,
+    promote_loop: FuncRef,
     shl_div: FuncRef,
     enumeration: FuncRef,
     element: FuncRef,
@@ -912,6 +935,8 @@ struct Lowerer<'a, 'b> {
     uses_globals: bool,
     ints: Live,
     counting: bool,
+    quick: bool,
+    headers: BTreeSet<usize>,
 }
 
 // a resolved storage address stays valid while the register still holds the object it was resolved for
@@ -1084,6 +1109,43 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.ins().jump(done, &[]);
         self.builder.seal_block(done);
         self.builder.switch_to_block(done);
+    }
+
+    // a quick-tier loop that runs long in one activation leaves at its header once, to come back in optimized code
+    fn promote_long_loop(&mut self, header: usize) {
+        if !self.quick || !self.headers.contains(&header) {
+            return;
+        }
+        let progress = self.builder.use_var(self.progress);
+        let hot = self
+            .builder
+            .ins()
+            .icmp_imm_s(IntCC::Equal, progress, LOOP_TIER_UP);
+        let promote = self.builder.create_block();
+        let leave = self.builder.create_block();
+        let stay = self.builder.create_block();
+        self.builder.set_cold_block(promote);
+        self.builder.set_cold_block(leave);
+        self.builder.ins().brif(hot, promote, &[], stay, &[]);
+        self.builder.seal_block(promote);
+        self.builder.switch_to_block(promote);
+        let ip = self
+            .builder
+            .ins()
+            .iconst(types::I64, i64::try_from(header).unwrap_or(i64::MAX));
+        let call = self
+            .builder
+            .ins()
+            .call(self.helpers.promote_loop, &[self.context, self.data, ip]);
+        let installed = self.builder.inst_results(call)[0];
+        self.builder.ins().brif(installed, leave, &[], stay, &[]);
+        self.builder.seal_block(leave);
+        self.builder.seal_block(stay);
+        self.builder.switch_to_block(leave);
+        let live = self.changed(self.region.live_in[&header], header);
+        self.flush(&live, None);
+        self.leave(header);
+        self.builder.switch_to_block(stay);
     }
 
     fn commit_progress(&mut self) {
@@ -1499,6 +1561,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.switch_to_block(block);
         self.known.clear();
         self.origins.clear();
+        self.promote_long_loop(leader);
         self.lower_block_body(leader)?;
         self.finish_exits();
         Ok(())
@@ -2763,7 +2826,11 @@ pub(crate) fn compile_frame(
 
     let mut jit_builder =
         JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
-    let symbols: [(&str, *const u8); 13] = [
+    let symbols: [(&str, *const u8); 14] = [
+        (
+            "aelys_frame_promote_loop",
+            aelys_runtime::aelys_frame_promote_loop as *const u8,
+        ),
         (
             "aelys_frame_tier_up",
             aelys_runtime::aelys_frame_tier_up as *const u8,
@@ -2858,6 +2925,13 @@ pub(crate) fn compile_frame(
     };
     let i64t = types::I64;
     let helpers = Helpers {
+        promote_loop: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_promote_loop",
+            &[pointer, pointer, i64t],
+            &[i64t],
+        )?,
         tier_up: declare(
             &mut module,
             &mut context.func,
@@ -3064,6 +3138,8 @@ pub(crate) fn compile_frame(
         uses_globals,
         ints: Live::default(),
         counting: counting && osr_ip.is_none(),
+        quick: counting,
+        headers: loop_headers(&region, &instructions, &by_ip),
     };
     lowerer.ints = ints;
     let entry_live = region.live_in.get(&entry_ip).copied().unwrap_or_default();

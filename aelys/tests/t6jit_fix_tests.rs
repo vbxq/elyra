@@ -487,3 +487,43 @@ fn drive(rows: int) -> int {
     }
     check(body, "drive(2500)", total * 10000 + 2500);
 }
+
+#[test]
+fn a_global_written_by_machine_code_is_seen_by_the_interpreted_script() {
+    let source = r#"
+struct Box { n: int }
+let mut hits = 0
+fn gw(x: int) -> int {
+    if x % 7 == 3 { hits = hits + 1 }
+    return x + hits
+}
+fn step(x: int) -> int {
+    let mut acc = 0
+    for i in 0..5 { acc = (acc + gw(x + i)) & 0xFFFFF }
+    return acc
+}
+let mut total = 0
+let mut seen = 0
+for it in 0..4000 {
+    let b = Box { n: it }
+    total = (total + step(b.n)) & 0xFFFFFF
+    seen = seen + hits
+}
+println("{hits} {total} {seen}")
+"#;
+    let (mut hits, mut total, mut seen) = (0i64, 0i64, 0i64);
+    for it in 0..4000i64 {
+        let mut acc = 0i64;
+        for i in 0..5 {
+            let x = it + i;
+            if x % 7 == 3 {
+                hits += 1;
+            }
+            acc = (acc + x + hits) & 0xF_FFFF;
+        }
+        total = (total + acc) & 0xFF_FFFF;
+        seen += hits;
+    }
+    let outcome = parity(source);
+    assert_eq!(first_line(&outcome), format!("{hits} {total} {seen}"));
+}

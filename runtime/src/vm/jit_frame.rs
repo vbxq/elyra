@@ -383,6 +383,7 @@ impl VM {
             EntryKind::Call => MAX_FRAMES.saturating_sub(self.frames.len() + 1),
             EntryKind::Osr => MAX_FRAMES.saturating_sub(self.frames.len()),
         };
+        self.register_current_view();
         let expected_globals = self.current_global_mapping_id;
         self.frame_jit.pending.clear();
         self.frame_jit.native_error = None;
@@ -724,6 +725,39 @@ impl VM {
         self.globals.get(name).copied().unwrap_or_else(Value::null)
     }
 
+    fn promote_loop(&mut self, function: GcRef, ip: u32) -> bool {
+        let Some(index) = self.frame_slot(function) else {
+            return false;
+        };
+        let slot = &mut self.frame_jit.slots[index];
+        let position = match slot.osr.iter().position(|entry| entry.ip == ip) {
+            Some(position) => position,
+            None => {
+                slot.osr.push(OsrEntry {
+                    ip,
+                    state: EntryState::Pending,
+                    legacy_tried: false,
+                    optimized: false,
+                    budget: ExitBudget::default(),
+                });
+                slot.osr.len() - 1
+            }
+        };
+        let entry = &mut slot.osr[position];
+        if entry.optimized {
+            return matches!(entry.state, EntryState::Ready(_));
+        }
+        if matches!(entry.state, EntryState::Refused) {
+            return false;
+        }
+        entry.optimized = true;
+        let Some(install) = self.install_frame_code(index, Some(ip), true) else {
+            return false;
+        };
+        self.frame_jit.slots[index].osr[position].state = EntryState::Ready(install);
+        true
+    }
+
     fn promote_call(&mut self, function: GcRef) {
         let Some(index) = self.frame_slot(function) else {
             return;
@@ -779,6 +813,7 @@ impl VM {
         let registers = self.registers.as_ptr();
         let result = self.call_cached_native(native, &arguments);
         self.frame_jit.native_depth -= 1;
+        self.register_current_view();
         self.frame_jit.root_ceiling = previous_ceiling;
         if self.registers.as_ptr() != registers {
             self.frame_jit.disabled = true;
@@ -830,6 +865,19 @@ pub unsafe extern "C" fn aelys_frame_tier_up(context: *mut FrameJitContext, data
     let function = GcRef::new(unsafe { *data.add(1) } as usize);
     vm.promote_call(function);
     0
+}
+
+pub unsafe extern "C" fn aelys_frame_promote_loop(
+    context: *mut FrameJitContext,
+    data: *mut u64,
+    ip: u64,
+) -> u64 {
+    let (_, vm) = context_vm(context);
+    let function = GcRef::new(unsafe { *data.add(1) } as usize);
+    let Ok(ip) = u32::try_from(ip) else {
+        return 0;
+    };
+    u64::from(vm.promote_loop(function, ip))
 }
 
 pub unsafe extern "C" fn aelys_frame_set_global(
@@ -1150,13 +1198,6 @@ impl VM {
     }
 
     fn frame_vec_push(&mut self, reference: GcRef, value: Value) -> bool {
-        let bytes = u64::try_from(self.heap.bytes_allocated()).unwrap_or(u64::MAX);
-        if bytes > self.config.max_heap_bytes
-            || self.heap.major_collection_active()
-            || self.heap.should_collect()
-        {
-            return false;
-        }
         let Some(ObjectKind::Vec(vector)) = self.heap.get(reference).map(|object| &object.kind)
         else {
             return false;
@@ -1165,6 +1206,20 @@ impl VM {
             return false;
         }
         let index = vector.len();
+        // only a push that grows the storage reaches the interpreter's collection point
+        if index >= vector.capacity() {
+            let bytes = u64::try_from(self.heap.bytes_allocated()).unwrap_or(u64::MAX);
+            if bytes > self.config.max_heap_bytes
+                || self.heap.major_collection_active()
+                || self.heap.should_collect()
+            {
+                return false;
+            }
+        }
+        let Some(ObjectKind::Vec(vector)) = self.heap.get(reference).map(|object| &object.kind)
+        else {
+            return false;
+        };
         let object_storage = matches!(vector.type_tag(), aelys_bytecode::object::TypeTag::Object);
         let Some(previous) = vector.try_size_bytes() else {
             return false;

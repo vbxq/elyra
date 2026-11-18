@@ -275,12 +275,16 @@ fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
 }
 
 impl VM {
+    #[inline(always)]
+    fn frame_jit_quiet_at(&self, target: usize) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.jit_quiet_ip == target)
+    }
+
     fn jit_loops_settled(&self, function: GcRef) -> bool {
         if self.frame_jit_active() {
-            return self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.jit_quiet_ip != usize::MAX);
+            return false;
         }
         self.jit_ignores(function)
             || self.frames.last().is_some_and(|frame| {
@@ -620,7 +624,9 @@ impl VM {
         macro_rules! branch {
             ($target:expr) => {{
                 let target = $target;
-                if (target <= ip && !settled!()) || target >= code_len {
+                if (target <= ip && !(settled!() || self.frame_jit_quiet_at(target)))
+                    || target >= code_len
+                {
                     leave!();
                 }
                 target

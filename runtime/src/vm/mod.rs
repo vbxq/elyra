@@ -52,9 +52,9 @@ pub use frame::CallFrame;
 pub use gc::GcPauseStats;
 pub use jit_frame::{
     FRAME_ENUM_INVALID, aelys_frame_call, aelys_frame_collection, aelys_frame_element,
-    aelys_frame_enum, aelys_frame_fmod, aelys_frame_push, aelys_frame_set_global,
-    aelys_frame_shl_div, aelys_frame_store_reference, aelys_frame_struct, aelys_frame_tier_up,
-    aelys_frame_vec_push, aelys_frame_view,
+    aelys_frame_enum, aelys_frame_fmod, aelys_frame_promote_loop, aelys_frame_push,
+    aelys_frame_set_global, aelys_frame_shl_div, aelys_frame_store_reference, aelys_frame_struct,
+    aelys_frame_tier_up, aelys_frame_vec_push, aelys_frame_view,
 };
 pub use native::{
     ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,

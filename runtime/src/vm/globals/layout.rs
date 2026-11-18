@@ -208,6 +208,54 @@ impl VM {
         Some((view.values.as_ptr(), view.values.len()))
     }
 
+    // the interpreter's current view gets a prepared copy, so a write from machine code reaches it through its users
+    pub(crate) fn register_current_view(&mut self) {
+        let mapping_id = self.current_global_mapping_id;
+        if mapping_id > Self::MAX_PREPARED_MAPPING
+            || matches!(self.globals_by_index_cache.get(mapping_id), Some(Some(_)))
+        {
+            return;
+        }
+        let Some(function) = self.frames.last().map(|frame| frame.function) else {
+            return;
+        };
+        let layout = match self.heap.get(function).map(|object| &object.kind) {
+            Some(ObjectKind::Function(function)) => Arc::clone(&function.function.global_layout),
+            Some(ObjectKind::Closure(closure)) => {
+                match self.heap.get(closure.function).map(|object| &object.kind) {
+                    Some(ObjectKind::Function(function)) => {
+                        Arc::clone(&function.function.global_layout)
+                    }
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+        let names = layout.names();
+        if layout.id() != mapping_id || names.len() != self.globals_by_index.len() {
+            return;
+        }
+        self.sync_current_function_globals();
+        let name_ids = names
+            .iter()
+            .map(|name| {
+                if name.is_empty() {
+                    UNNAMED_GLOBAL
+                } else {
+                    self.global_name_id(name)
+                }
+            })
+            .collect::<Vec<_>>();
+        let values = self.globals_by_index.clone();
+        self.store_prepared_mapping(
+            mapping_id,
+            PreparedGlobals {
+                values,
+                name_ids: name_ids.into_boxed_slice(),
+            },
+        );
+    }
+
     fn prepare_empty_global_mapping(&mut self, mapping_id: usize) -> usize {
         if mapping_id == self.current_global_mapping_id {
             return mapping_id;
