@@ -190,11 +190,13 @@ const SHARED_CODES: &[(u16, &[&str])] = &[
         &[
             "Mismatch",
             "NotOneOf",
+            "TuplePatternArity",
             "TypeInferenceError",
             "UndefinedVariable",
         ],
     ),
     (338, &["MissingSupertraitImpl", "UnsatisfiedTraitBound"]),
+    (363, &["TupleFieldOutOfRange", "UnknownField"]),
     (403, &["PrivateNominalNotExported", "SymbolNotPublic"]),
     (
         424,

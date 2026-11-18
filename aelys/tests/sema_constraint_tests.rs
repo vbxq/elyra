@@ -6396,7 +6396,7 @@ fn the_associated_constant_diagnostics_read_the_same_under_either_declaration_or
 
 const FOLDABLE_DECLARED_CONSTANT_TYPES: [&str; 1] = ["int"];
 
-const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 16] = [
+const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
     ("float", "float"),
     ("bool", "bool"),
     ("string", "string"),
@@ -6413,6 +6413,7 @@ const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 16] = [
     ("Result<int, string>", "Result<int, string>"),
     ("[int; 3]", "[int; 3]"),
     ("fn(int, string) -> bool", "fn(int, string) -> bool"),
+    ("(int, int)", "(int, int)"),
 ];
 
 // a nominal and a generic nominal complete the enumeration; they are kept apart
@@ -6423,9 +6424,8 @@ const UNFOLDABLE_DECLARED_NOMINAL_TYPES: [(&str, &str); 3] = [
 ];
 
 // refused before the declaration is typed, so e0434 never sees them
-const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 6] = [
+const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 5] = [
     ("[int]", "E0101"),
-    ("(int, int)", "E0101"),
     ("array<int>", "E0101"),
     ("dynamic", "E0347"),
     ("i64", "E0461"),

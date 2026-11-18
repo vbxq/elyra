@@ -51,6 +51,9 @@ impl CompileErrorKind {
             Self::TraitObjectDeferred { trait_name } => format!(
                 "trait object 'dyn {trait_name}' is deferred to Stage 3\n   = help: take a generic type parameter bound by {trait_name} instead"
             ),
+            Self::ReservedName { name } => format!(
+                "'{name}' cannot be written: names starting with `AelysTuple` are reserved for the compiler's tuple types\n   = help: write a tuple type as `(int, string)`, or rename the item"
+            ),
             Self::InvalidDefaultMethod => {
                 "'default fn' is only allowed on a method of a generic trait impl\n   \
                  = help: drop 'default', or move the method to a generic 'impl<T> Trait for Type<T>'"

@@ -78,7 +78,9 @@ impl ConstantFolder {
                 self.optimize_expr(else_branch);
             }
             TypedExprKind::Lambda(inner) => self.optimize_expr(inner),
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { body, .. }
+            | TypedExprKind::Block(body)
+            | TypedExprKind::Loop { body, .. } => {
                 for stmt in body {
                     self.optimize_stmt(stmt);
                 }

@@ -563,6 +563,32 @@ impl TypeTable {
         self.finalize_schema_indices();
     }
 
+    // a tuple instance is local to the module that built it; an importer materializes its own
+    pub fn rewrite_field_types(&mut self, rewrite: impl Fn(&InferType) -> InferType) {
+        for definition in self.structs.values_mut() {
+            for field in &mut definition.fields {
+                field.ty = rewrite(&field.ty);
+            }
+        }
+        for definition in self.enums.values_mut() {
+            for variant in &mut definition.variants {
+                match &mut variant.fields {
+                    EnumVariantFieldsDef::Unit => {}
+                    EnumVariantFieldsDef::Tuple(fields) => {
+                        for field in fields {
+                            *field = rewrite(field);
+                        }
+                    }
+                    EnumVariantFieldsDef::Named(fields) => {
+                        for field in fields {
+                            field.ty = rewrite(&field.ty);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn field_offset(&self, structure: &str, field: &str) -> Option<u16> {
         self.structs
             .get(structure)?

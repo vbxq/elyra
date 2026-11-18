@@ -687,6 +687,7 @@ fn hoist_impure_place_operands(place: &Expr, arg: &Expr, span: Span) -> Option<E
                     guard: None,
                     span,
                     body: MatchArmBody::Expr(Box::new(result)),
+                    synthetic: true,
                 }],
             },
             span,

@@ -21,6 +21,7 @@ impl CompileErrorKind {
             Self::TraitObjectDeferred { .. } => "trait objects arrive in Stage 3",
             Self::InvalidDefaultMethod => "'default' is not allowed here",
             Self::ReservedIdentifier { .. } => "names starting with `__` are reserved",
+            Self::ReservedName { .. } => "names starting with `AelysTuple` are reserved",
             Self::ReturnOutsideFunction => "not inside a function",
             Self::MissingReturnValue { .. } => "a reachable path has no value",
             Self::IntegerOverflow { .. } => "value exceeds range",

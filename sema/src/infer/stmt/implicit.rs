@@ -5,23 +5,7 @@ use crate::types::InferType;
 use aelys_syntax::{ExprKind, Stmt, StmtKind};
 
 fn is_assignment_statement(stmt: &Stmt) -> bool {
-    fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
-        match &expr.kind {
-            ExprKind::Assign { .. }
-            | ExprKind::MemberAssign { .. }
-            | ExprKind::IndexAssign { .. } => true,
-            ExprKind::Grouping(inner) => is_assignment(inner),
-            ExprKind::Match { arms, .. } => match arms.as_slice() {
-                [arm] => {
-                    matches!(&arm.pattern.kind, aelys_syntax::PatternKind::Binding(name) if name.starts_with("__"))
-                        && matches!(&arm.body, aelys_syntax::MatchArmBody::Expr(body) if is_assignment(body))
-                }
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-    matches!(&stmt.kind, StmtKind::Expression(expr) if is_assignment(expr))
+    matches!(&stmt.kind, StmtKind::Expression(expr) if super::super::functions::is_assignment(expr))
 }
 
 impl TypeInference {
@@ -49,6 +33,12 @@ impl TypeInference {
         return_type: &InferType,
     ) -> TypedStmt {
         match &stmt.kind {
+            aelys_syntax::StmtKind::Expression(expr)
+                if matches!(return_type, InferType::Var(_))
+                    && super::super::functions::is_assignment(expr) =>
+            {
+                self.infer_stmt(stmt)
+            }
             aelys_syntax::StmtKind::Expression(expr) => {
                 let mut typed_expr = self.infer_expr_expecting(expr, return_type);
                 self.fit_int_literal(&mut typed_expr, return_type);

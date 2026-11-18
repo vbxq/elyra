@@ -186,6 +186,10 @@ impl Compiler {
             TypedExprKind::Match { scrutinee, arms } => {
                 self.compile_typed_match(scrutinee, arms, dest, expr.span)
             }
+            TypedExprKind::Block(stmts) => self.compile_typed_stmts_value(stmts, dest, expr.span),
+            TypedExprKind::Loop { body, label } => {
+                self.compile_typed_loop(body, label.as_ref(), dest, expr.span)
+            }
         }
     }
 
@@ -260,7 +264,9 @@ impl Compiler {
             TypedExprKind::Cast { expr, .. } => Self::typed_expr_may_have_side_effects(expr),
             TypedExprKind::Unit => false,
             TypedExprKind::Try { .. } => true,
-            TypedExprKind::Match { .. } => true,
+            TypedExprKind::Match { .. } | TypedExprKind::Block(_) | TypedExprKind::Loop { .. } => {
+                true
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)

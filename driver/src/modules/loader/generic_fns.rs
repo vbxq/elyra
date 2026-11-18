@@ -103,7 +103,9 @@ impl Rewriter<'_> {
                     self.block(else_branch);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While {
+                condition, body, ..
+            } => {
                 self.expr(condition);
                 self.block(body);
             }
@@ -126,11 +128,15 @@ impl Rewriter<'_> {
                 iterator,
                 iterable,
                 body,
+                ..
             } => {
                 self.expr(iterable);
                 self.scoped(vec![iterator.clone()], |this| this.stmt(body));
             }
-            StmtKind::Return(Some(expr)) => self.expr(expr),
+            StmtKind::Return(Some(expr))
+            | StmtKind::Break {
+                value: Some(expr), ..
+            } => self.expr(expr),
             StmtKind::Function(func) => {
                 if self.scopes.len() > 1 {
                     self.bind(&func.name);
@@ -148,8 +154,8 @@ impl Rewriter<'_> {
                 }
             }
             StmtKind::Return(None)
-            | StmtKind::Break
-            | StmtKind::Continue
+            | StmtKind::Break { value: None, .. }
+            | StmtKind::Continue { .. }
             | StmtKind::Needs(_)
             | StmtKind::StructDecl { .. }
             | StmtKind::EnumDecl { .. } => {}
@@ -195,6 +201,9 @@ impl Rewriter<'_> {
                         }
                     });
                 }
+            }
+            ExprKind::Block(stmts) | ExprKind::Loop { body: stmts, .. } => {
+                self.scoped(Vec::new(), |this| this.stmts(stmts))
             }
             ExprKind::Lambda { params, body, .. } => {
                 let names: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
@@ -297,6 +306,7 @@ fn pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
         | PatternKind::Int(_)
         | PatternKind::String(_)
         | PatternKind::Char(_)
-        | PatternKind::Bool(_) => {}
+        | PatternKind::Bool(_)
+        | PatternKind::Range { .. } => {}
     }
 }

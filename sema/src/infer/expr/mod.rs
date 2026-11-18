@@ -10,7 +10,7 @@ mod primary;
 
 use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
-use crate::typed_ast::{TypedExpr, TypedExprKind, TypedFmtStringPart};
+use crate::typed_ast::{TypedExpr, TypedExprKind, TypedFmtStringPart, TypedStmt, TypedStmtKind};
 use crate::types::InferType;
 use aelys_syntax::{Expr, ExprKind};
 
@@ -184,6 +184,11 @@ impl TypeInference {
                 type_args,
                 fields,
             } => self.infer_enum_literal(path, type_args, fields, expr.span),
+            ExprKind::Block(stmts) => {
+                let (typed, ty) = self.infer_block_value(stmts);
+                (TypedExprKind::Block(typed), ty)
+            }
+            ExprKind::Loop { body, label } => self.infer_loop_expr(body, label.as_ref()),
             ExprKind::Cast {
                 expr: inner,
                 target,
@@ -421,14 +426,96 @@ impl TypeInference {
             }
             TypedExprKind::Match { arms, .. } => {
                 for arm in arms.iter_mut() {
-                    if let crate::typed_ast::TypedMatchArmBody::Expr(body) = &mut arm.body {
-                        self.retype_int_literal(body, target);
+                    match &mut arm.body {
+                        crate::typed_ast::TypedMatchArmBody::Expr(body) => {
+                            self.retype_int_literal(body, target)
+                        }
+                        crate::typed_ast::TypedMatchArmBody::Block(stmts) => {
+                            if let Some(tail) = stmts.last_mut() {
+                                self.retype_tail_literal(tail, target);
+                            }
+                        }
                     }
+                }
+            }
+            TypedExprKind::Block(stmts) => {
+                if let Some(tail) = stmts.last_mut() {
+                    self.retype_tail_literal(tail, target);
+                }
+            }
+            TypedExprKind::Loop { body, label } => {
+                let label = label.clone();
+                for stmt in body.iter_mut() {
+                    self.retype_break_literals(stmt, label.as_deref(), 0, target);
                 }
             }
             _ => return,
         }
         expr.ty = target.clone();
+    }
+
+    fn retype_tail_literal(&mut self, stmt: &mut TypedStmt, target: &InferType) {
+        match &mut stmt.kind {
+            TypedStmtKind::Expression(expr) => self.retype_int_literal(expr, target),
+            TypedStmtKind::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                self.retype_tail_literal(then_branch, target);
+                self.retype_tail_literal(else_branch, target);
+            }
+            TypedStmtKind::Block(stmts) => {
+                if let Some(tail) = stmts.last_mut() {
+                    self.retype_tail_literal(tail, target);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn retype_break_literals(
+        &mut self,
+        stmt: &mut TypedStmt,
+        label: Option<&str>,
+        depth: usize,
+        target: &InferType,
+    ) {
+        match &mut stmt.kind {
+            TypedStmtKind::Break {
+                label: name,
+                value: Some(value),
+            } if breaks_to(name.as_deref(), label, depth) => self.retype_int_literal(value, target),
+            TypedStmtKind::Block(stmts) => {
+                for stmt in stmts {
+                    self.retype_break_literals(stmt, label, depth, target);
+                }
+            }
+            TypedStmtKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.retype_break_literals(then_branch, label, depth, target);
+                if let Some(else_branch) = else_branch {
+                    self.retype_break_literals(else_branch, label, depth, target);
+                }
+            }
+            TypedStmtKind::While { body, .. }
+            | TypedStmtKind::For { body, .. }
+            | TypedStmtKind::ForEach { body, .. } => {
+                self.retype_break_literals(body, label, depth + 1, target)
+            }
+            TypedStmtKind::Expression(TypedExpr {
+                kind: TypedExprKind::Loop { body, .. },
+                ..
+            }) => {
+                for stmt in body {
+                    self.retype_break_literals(stmt, label, depth + 1, target);
+                }
+            }
+            _ => {}
+        }
     }
     fn infer_logical_expr(
         &mut self,
@@ -533,10 +620,85 @@ pub(crate) fn literal_shaped(expr: &TypedExpr) -> bool {
             !arms.is_empty()
                 && arms.iter().all(|arm| match &arm.body {
                     crate::typed_ast::TypedMatchArmBody::Expr(body) => literal_shaped(body),
-                    crate::typed_ast::TypedMatchArmBody::Block(_) => false,
+                    crate::typed_ast::TypedMatchArmBody::Block(stmts) => {
+                        stmts.last().is_some_and(tail_literal_shaped)
+                    }
                 })
         }
+        TypedExprKind::Block(stmts) => stmts.last().is_some_and(tail_literal_shaped),
+        TypedExprKind::Loop { body, label } => {
+            let mut values = Vec::new();
+            for stmt in body {
+                break_values(stmt, label.as_deref(), 0, &mut values);
+            }
+            !values.is_empty() && values.into_iter().all(literal_shaped)
+        }
         _ => false,
+    }
+}
+
+fn tail_literal_shaped(stmt: &TypedStmt) -> bool {
+    match &stmt.kind {
+        TypedStmtKind::Expression(expr) => literal_shaped(expr),
+        TypedStmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => tail_literal_shaped(then_branch) && tail_literal_shaped(else_branch),
+        TypedStmtKind::Block(stmts) => stmts.last().is_some_and(tail_literal_shaped),
+        TypedStmtKind::Return(_) | TypedStmtKind::Break { .. } | TypedStmtKind::Continue { .. } => {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn breaks_to(name: Option<&str>, label: Option<&str>, depth: usize) -> bool {
+    match name {
+        Some(name) => Some(name) == label,
+        None => depth == 0,
+    }
+}
+
+// depth counts the loops between a break and the loop whose value it gives
+fn break_values<'a>(
+    stmt: &'a TypedStmt,
+    label: Option<&str>,
+    depth: usize,
+    out: &mut Vec<&'a TypedExpr>,
+) {
+    match &stmt.kind {
+        TypedStmtKind::Break {
+            label: name,
+            value: Some(value),
+        } if breaks_to(name.as_deref(), label, depth) => out.push(value),
+        TypedStmtKind::Block(stmts) => {
+            for stmt in stmts {
+                break_values(stmt, label, depth, out);
+            }
+        }
+        TypedStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            break_values(then_branch, label, depth, out);
+            if let Some(else_branch) = else_branch {
+                break_values(else_branch, label, depth, out);
+            }
+        }
+        TypedStmtKind::While { body, .. }
+        | TypedStmtKind::For { body, .. }
+        | TypedStmtKind::ForEach { body, .. } => break_values(body, label, depth + 1, out),
+        TypedStmtKind::Expression(TypedExpr {
+            kind: TypedExprKind::Loop { body, .. },
+            ..
+        }) => {
+            for stmt in body {
+                break_values(stmt, label, depth + 1, out);
+            }
+        }
+        _ => {}
     }
 }
 

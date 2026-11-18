@@ -38,11 +38,19 @@ is E0114.
 ### Reserved Words
 
 ```
-let mut fn if else while for in step return break continue match struct enum
+let mut fn if else while for in return break continue match struct enum
 trait impl and or not pub needs as from true false null
 ```
 
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
+
+`loop` is contextual: it opens a loop only when a `{` follows it, so `let loop = 1`
+still declares a variable. `step` is contextual too: it is a keyword only after
+the range of a `for` header, so a function, variable or field may be named `step`.
+A label is an identifier written after a quote, `'outer`, and is only meaningful
+before `for`, `while` or `loop` and after `break` or `continue`. A quote, one
+character and a closing quote (`'a'`) is a char literal, not a label, and a quote,
+a longer name and a closing quote (`'ab'`) is an invalid char literal.
 
 `where`, `dyn`, `self` and `const` are contextual. They carry meaning in a
 generic bound, a type position, a method receiver and a constant declaration
@@ -180,6 +188,7 @@ with a diagnostic that names these replacements.
 | `[T; N]` | Fixed-size array | heap allocated |
 | `Vec<T>` | Growable vector | heap allocated |
 | `Map<K, V>` | Insertion-ordered hash map | heap allocated |
+| `(A, B, ...)` | Immutable tuple of 2 to 8 elements | heap allocated |
 
 ### Integer types
 
@@ -227,8 +236,11 @@ element of an array or `Vec` literal whose type is known, a `push` onto a `Vec<T
 element, key or value argument of the other `Vec`, array and `Map` methods
 (`v.extend(vec![255])`, `m.insert(1, 2)` on a `Map<u8, i32>`), an assignment to a
 variable, field, element or `Map` entry, the other operand of a binary operator, a
-compound assignment, a `match` pattern on a sized value, a branch of an `if` or a `match`
-arm whose sibling branch is sized, and the bounds of a `for` range whose other bound is
+compound assignment, a `match` pattern on a sized value (a literal, a range bound or a
+`const` naming an integer), a branch of an `if` or a `match` arm whose sibling branch is
+sized, the last expression of a value block (`{ ...; 200 }`, a multi-line `if` branch or a
+block `match` arm) and the `break` values of a `loop`, all wherever the block, `if`,
+`match` or `loop` itself has a sized context, and the bounds of a `for` range whose other bound is
 sized (the loop variable then has that type). The shifted value of `1 << n` takes the
 context's type; the count keeps its own. A literal that does not fit its type is E0301
 `integer literal 256 does not fit in u8`. The payload of a generic struct or enum takes
@@ -830,6 +842,70 @@ if n < 0 {
 
 Braces are required. Parentheses around conditions are not.
 
+`if` is also an expression. Every branch is a block whose value is its last
+statement when that statement is an expression (with or without a trailing `;`),
+an `if` that has an `else`, or a nested block; any other last statement, and an
+empty block, make the branch `unit`. A chain of any length yields the value of
+the branch it takes, in every position: a function or closure tail, a `let`
+initialiser, a match arm, an argument, a `return` operand, inside another block.
+
+```rust
+fn grade(score: int) -> int {
+    if score >= 90 { 4 } else if score >= 80 { 3 } else if score >= 70 { 2 } else { 0 }
+}
+
+let bonus = if grade(85) == 3 {
+    let extra = 1
+    10 + extra
+} else if grade(85) == 4 { 20 } else { 0 }
+println(bonus)   // 11
+```
+
+All branches must have the same type. In expression position an `if` needs an
+`else` (E0101 `expected else`); as the tail of a function whose return type is not
+`unit`, an `if` without `else` can fall through and is E0215 `function can fall
+through without returning int`, never a silent `unit`. A function or closure
+without a return type whose tail is not a value (an `if` without `else`, a `let`,
+a loop, an assignment) returns `unit`, so `let x: int = f(1)` is E0301; if such
+a body also returns a value with `return`, it can fall through and is E0215. An
+assignment `x = v` or `x += v` is never the value of such a tail, so
+`fn set(c: bool) { if c { count = 1 } else { name = "b" } }` is a `unit` function.
+Branches that are both values must still agree: `if c { v.push(1) } else { v.pop() }`
+as the tail of a function without a return type is E0301.
+
+### Block expressions
+
+A `{ ... }` in expression position is a block expression with its own scope. Its
+value follows the same rule as an `if` branch.
+
+```rust
+let x = 1
+let area = {
+    let x = 10
+    let width = x * 2
+    width * x
+}
+println(area + x)   // 201
+```
+
+### if let
+
+`if let PATTERN = value { ... } else { ... }` runs the first block when the
+pattern matches, with the pattern's bindings in scope only inside that block.
+`else` is optional, and `else if` / `else if let` chain as usual, after an `if`
+or an `if let`, in statement and expression position. It is an expression: when
+the chain ends with an `else` block every block gives its value and they must
+have the same type; a chain without a final `else` is `unit`, and is only
+allowed in statement position.
+
+```rust
+let found: Option<int> = Some(7)
+if let Some(v) = found { println(v) } else { println("none") }
+
+let doubled = if let Some(v) = found { v * 2 } else { 0 }
+println(doubled)   // 14
+```
+
 ### while
 
 ```rust
@@ -839,6 +915,40 @@ while n < 3 {
 }
 println(n)   // 3
 ```
+
+### while let
+
+`while let PATTERN = value { ... }` evaluates `value` before every iteration and
+stops at the first value the pattern does not match. `break` and `continue` act on
+it like on any loop.
+
+```rust
+let mut stack = vec![1, 2, 3]
+let mut sum = 0
+while let Some(top) = stack.pop() {
+    sum += top
+}
+println(sum)   // 6
+```
+
+### loop
+
+`loop { ... }` repeats until a `break` or a `return`. It is an expression:
+`break value` leaves the loop with that value, a bare `break` gives `unit`, and a
+loop no `break` leaves has the type `never`, so it satisfies any return type.
+Every `break` of one loop must carry values of the same type.
+
+```rust
+let mut i = 0
+let first_square_above_50 = loop {
+    i += 1
+    if i * i > 50 { break i }
+}
+println(first_square_above_50)   // 8
+```
+
+`break value` is only allowed for `loop`; on a `while`, `while let` or `for` it is
+E0391. The `break` values of one `loop` must share a type (E0301).
 
 ### for
 
@@ -927,7 +1037,90 @@ for i in 0..100 {
 }
 ```
 
-Work in `while` loops too.
+Work in `while`, `while let` and `loop` too.
+
+### Labels
+
+A loop may carry a label, `'name:`, written before `for`, `while` or `loop`.
+`break 'name` and `continue 'name` act on that loop from any depth of nested
+loops, and `break 'name value` gives a labeled `loop` its value. An unknown label
+is E0390. A closure created inside a loop body keeps its own copy of the
+variables of its iteration, the loop variable and the names declared in the body,
+including when the iteration ends by `break` or `continue`; a variable declared
+outside the loop stays shared, so every closure sees its later writes.
+
+```rust
+let mut pairs = 0
+'rows: for x in 0..10 {
+    for y in 0..10 {
+        if y > x { continue 'rows }
+        if x == 5 { break 'rows }
+        pairs += 1
+    }
+}
+println(pairs)   // 15
+
+let hit = 'search: loop {
+    for a in 1..20 {
+        for b in a..20 {
+            if a * b == 91 { break 'search a * 100 + b }
+        }
+    }
+    break 0
+}
+println(hit)   // 713
+```
+
+## Tuples
+
+A tuple groups 2 to 8 values of possibly different types. The type is written
+`(A, B, ...)`, a value `(a, b, ...)`, and an element is read with `.0`, `.1`, ...
+in declaration order. `(x)` is just a parenthesised `x`.
+
+```rust
+fn divmod(a: int, b: int) -> (int, int) { (a / b, a % b) }
+
+let t = divmod(17, 5)
+println(t.0)   // 3
+println(t.1)   // 2
+
+let pair: (int, string) = (1, "one")
+let nested = ((1, 2), 3)
+println(nested.0.1)   // 2
+```
+
+Tuples are immutable: writing an element, `t.0 = 1` or `t.0 += 1`, is E0393. They
+are aggregate values shared by reference (like structs, see
+[Structs](#structs)), which is never observable because no element can change.
+`==` compares them element by element. Tuples can be returned, passed, stored in
+`Vec`, arrays, struct fields and enum payloads, used in generic functions, and
+returned from a module; the tuple fields and payloads of a type imported from
+another module read and match like local ones. A tuple has no `Display`; print its elements. Reading an
+element past the arity, `t.2` on a pair, is E0363 `tuple (int, int) has no field
+2`. Names starting with `AelysTuple` are reserved for the compiler's tuple types:
+writing one anywhere (a type, a struct, a variable) is E0394.
+
+### Destructuring let
+
+`let` accepts a tuple pattern or a struct pattern on its left side. The pattern
+must be irrefutable: it may contain only names, `_`, tuple patterns and struct
+patterns (`..` allowed). `let mut` makes every name it binds mutable. A literal,
+range, variant or alternation is E0108 `refutable pattern in let`; use `match` or
+`if let` for those. A type that does not fit the pattern (wrong tuple arity, wrong
+struct) is E0301; a wrong arity says `tuple pattern has 3 elements, but the value
+is a tuple of 2 elements`, in `let` and in `match`.
+
+```rust
+struct Point { x: int, y: int }
+
+let (q, r) = divmod(23, 4)
+let (_, middle, _) = (7, 8, 9)
+let mut (a, b) = (1, 2)
+a += 10
+
+let Point { x, y } = Point { x: 3, y: 4 }
+println(q + r + middle + a + b + x + y)
+```
 
 ## Modules
 
@@ -1370,6 +1563,18 @@ Explicit semicolons let you put multiple statements on one line:
 let x = 1; let y = 2; let z = 3
 ```
 
+A newline directly inside `(...)` or `[...]` inserts nothing, so arguments and
+elements may span lines. A `{` opens a block where newlines end statements again,
+even inside parentheses or brackets, so a multi-line block, `if`, `match` or
+closure body works as an argument, a `vec!` element or a tuple element:
+
+```rust
+let total = apply(fn(a: int) -> int {
+    let doubled = a * 2
+    doubled + 1
+})
+```
+
 ## Collections
 
 ### Arrays and vectors
@@ -1645,12 +1850,37 @@ payload field occupies one immutable value slot. The compiler assigns the
 constructor and variant IDs, checks their field count and types, and resolves
 pattern field offsets before emitting bytecode.
 
-Matching an enum is exhaustive at compile time. Guards do not cover a
-constructor, and nested patterns are checked recursively. A missing arm emits
-E0302 `non-exhaustive match; missing E::B`, naming the missing constructor, with
-the help line `add a missing arm or '_'`. Alternation may combine constructors
-when all alternatives bind the same names and types. Integer and string matches
-still require `_`.
+Matching is exhaustive at compile time. The check is a usefulness analysis over
+the whole pattern, so it looks through every level of nesting: `Ok(_)`,
+`Err(AppE::Io(_))` and `Err(AppE::Bad(_))` together cover a
+`Result<int, AppE>`, and `Some(K::A)`, `Some(K::B)` and `None` cover an
+`Option<K>`, with no `_` needed. Guards do not cover a constructor. A missing
+arm emits E0302 `non-exhaustive match; missing ...`, naming every missing
+top-level constructor and, inside one, the precise nested shape that is left:
+`missing C::Red, C::Blue`, `missing Err(AppE::Bad(..))`,
+`missing Ok(Some(Mid::M(In::Y)))`, `missing E::A(false, false)`, with the help
+line `add a missing arm or '_'`. Alternation may combine constructors when all
+alternatives bind the same names and types.
+
+Integer matches are checked over the value range of the scrutinee's type
+(`int`, `i8` to `u32`): they need `_` unless their literals and
+[range patterns](#range-patterns) cover the whole range, and the message names
+the first uncovered interval, for example `missing 128` or `missing ..=-1`.
+String matches always need `_` (or a binding).
+
+A bare name in a pattern binds a new variable and matches everything. When the
+value at that position is an enum (including `Option` and `Result`) and the name
+starts with an uppercase letter, the pattern is almost certainly a misspelt or
+unqualified variant, so it is E0392 `pattern 'Blu' is not a variant`, with
+`did you mean Color::Blue?` when a variant is close. Write the variant with its
+enum path, or bind with a lowercase name.
+
+```rust
+enum Color { Red, Green, Blue }
+fn f(c: Color) -> int { match c { Color::Red => 1, Color::Green => 2, Blu => 3 } }
+// ✗ error[E0392]: pattern `Blu` is not a variant: a bare name binds a new variable that matches every value
+//   = help: did you mean Color::Blue?
+```
 
 ```rust
 enum BulletKind {
@@ -1671,6 +1901,25 @@ fn score(kind: BulletKind) -> int {
 println(score(BulletKind::Directed { damage: 2, speed: 1.5 }))
 ```
 
+A `match` used as a statement (not as a value and not as the last statement of a
+block that gives a value) discards its arm values, so its arms need not agree:
+`match o { Ok(v) => total = v, Err(_) => {} }` and arms that all `return` are
+accepted. A discarded `Result` or `Option` arm value is still E0303/E0304. The
+last statement of a script is its value, so a `match` there keeps its arm values.
+An assignment (`r = Some(3)`) is never a discarded value, whatever its type.
+
+A bare name in a pattern that names a `const` in scope matches the constant's value, as
+a literal would; it does not bind a new variable, and E0392 never applies to it. A local
+variable or parameter of the same name hides the constant, and then the name binds. A
+`float` constant cannot be a pattern (E0301).
+
+```rust
+const LIMIT = 10
+fn at_limit(x: int) -> int { match x { LIMIT => 1, _ => 0 } }
+fn hit(x: int) -> int { if let LIMIT = x { 1 } else { 0 } }
+println(at_limit(10) + hit(10) + at_limit(3))   // 2
+```
+
 ### Unreachable patterns
 
 Exhaustivity has a mirror rule. An arm that no value can reach is E0356
@@ -1688,6 +1937,10 @@ fn duplicate(k: Kind) -> int { match k { Kind::A => 1, Kind::A => 2, Kind::B => 
 // ✗ error[E0356]: unreachable pattern: Kind::A is already covered by an earlier arm
 ```
 
+An arm is also unreachable when the earlier unguarded arms together already
+cover it, for example `Some(_)` after `Some(K::A)` and `Some(K::B)`, or `3..=5`
+after `0..=9`.
+
 A guard makes the earlier arm conditional, so a later arm for the same
 constructor is still reachable and is accepted:
 
@@ -1704,6 +1957,34 @@ fn classify(k: Kind) -> int {
 
 println(classify(Kind::A(5)))    // 1
 println(classify(Kind::A(-5)))   // 2
+```
+
+### Range patterns
+
+An integer pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
+excluded), `..=hi` and `lo..` (open). Bounds are integer literals, possibly
+negative. A range applies to `int` and to the sized integers, whose bounds must
+fit the type: a bound outside it is E0301 `integer literal 256 does not fit in u8`, and on
+any other type a range is E0301. Exhaustiveness covers a sized integer by its own bounds
+(`u8` is covered by `0..=255`, `i8` by `-128..=127`), which is sound because sized
+arithmetic wraps, so a sized value never leaves its range. `int` is covered only by ranges
+reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character; the
+`char` domain is open, so a `match` on a `char` needs a `_` arm. A range that matches nothing
+(`9..=1`) or an inclusive range with no end is E0108. Ranges combine with `|`
+and nest inside variants and tuples.
+
+```rust
+fn class(n: int) -> int {
+    match n {
+        ..=-1 => 0,
+        0 => 1,
+        1..=9 => 2,
+        10.. => 3,
+    }
+}
+
+fn half(b: u8) -> int { match b { 0..=127 => 0, 128..=255 => 1 } }
+println(class(42) + half(200))   // 4
 ```
 
 Enum values are heap objects traced through every payload slot. A malformed
@@ -2942,7 +3223,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0107 | ExpectedPattern | a pattern was required |
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
 | E0109 | UnknownVariant | no such variant on that type |
-| E0110 | MatchArmValueRequired | a match arm must produce a value |
+| E0110 | MatchArmValueRequired | a match arm whose block ends without a value, in a match whose other arms produce a non-`unit` value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
 | E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
@@ -3052,6 +3333,11 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 | E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
 | E0396 | DuplicateConstant | a `const` declared twice in the same scope |
+| E0390 | UndefinedLabel | a `break` or `continue` names a label no enclosing loop declares |
+| E0391 | BreakValueOutsideLoop | `break` with a value targets a `while` or `for` |
+| E0392 | CapitalizedBindingPattern | a bare capitalised name in a pattern on an enum, which would bind instead of matching a variant |
+| E0393 | TupleFieldAssignment | a write to a tuple field; tuples are immutable |
+| E0394 | ReservedName | a name starts with `AelysTuple`, which is reserved for the compiler's tuple types |
 
 ### E04xx, modules, visibility, borrows, and associated items
 

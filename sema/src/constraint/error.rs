@@ -222,6 +222,27 @@ pub enum TypeErrorKind {
         expected: InferType,
     },
     MatchArmValueRequired,
+    UndefinedLabel {
+        label: String,
+    },
+    BreakValueOutsideLoop {
+        label: Option<String>,
+    },
+    CapitalizedBindingPattern {
+        name: String,
+        suggestion: Option<String>,
+    },
+    TupleFieldOutOfRange {
+        tuple: InferType,
+        field: String,
+    },
+    TuplePatternArity {
+        expected: usize,
+        found: usize,
+    },
+    TupleFieldAssignment {
+        field: String,
+    },
     GenericArityMismatch {
         name: String,
         expected: usize,
@@ -1669,6 +1690,47 @@ impl TypeError {
                 "non-exhaustive struct match for {}; add '_' or an irrefutable field pattern",
                 structure
             ),
+            TypeErrorKind::UndefinedLabel { label } => write!(
+                f,
+                "use of undeclared label '{}\n   = help: a label names an enclosing `for`, `while`, or `loop`, written `'{}: loop {{ .. }}`",
+                label, label
+            ),
+            TypeErrorKind::BreakValueOutsideLoop { label } => write!(
+                f,
+                "`break` with a value targets {}, which is not a `loop`\n   = help: only `loop` produces a value; `while` and `for` always produce unit",
+                label
+                    .as_ref()
+                    .map(|label| format!("'{label}"))
+                    .unwrap_or_else(|| "the innermost loop".to_string())
+            ),
+            TypeErrorKind::CapitalizedBindingPattern { name, suggestion } => match suggestion {
+                Some(suggestion) => write!(
+                    f,
+                    "pattern `{}` is not a variant: a bare name binds a new variable that matches every value\n   = help: did you mean {}?",
+                    name, suggestion
+                ),
+                None => write!(
+                    f,
+                    "pattern `{}` is not a variant: a bare name binds a new variable that matches every value\n   = help: write the variant with its enum path, or a lowercase name to bind the value",
+                    name
+                ),
+            },
+            TypeErrorKind::TupleFieldOutOfRange { tuple, field } => write!(
+                f,
+                "tuple {} has no field {}",
+                tuple.source_spelling(),
+                field
+            ),
+            TypeErrorKind::TuplePatternArity { expected, found } => write!(
+                f,
+                "tuple pattern has {} elements, but the value is a tuple of {} elements",
+                found, expected
+            ),
+            TypeErrorKind::TupleFieldAssignment { field } => write!(
+                f,
+                "cannot assign to field .{} of a tuple: tuples are immutable\n   = help: build a new tuple, or use a struct for a record with mutable fields",
+                field
+            ),
             TypeErrorKind::UnreachablePattern { pattern } => write!(
                 f,
                 "unreachable pattern: {} is already covered by an earlier arm\n   = help: remove the arm or move it above the arm that covers it",
@@ -1956,6 +2018,12 @@ impl TypeErrorKind {
             Self::ReservedIdentityConversion { .. } => 375,
             Self::UnknownVariant { .. } => 109,
             Self::MatchArmValueRequired => 110,
+            Self::UndefinedLabel { .. } => 390,
+            Self::BreakValueOutsideLoop { .. } => 391,
+            Self::CapitalizedBindingPattern { .. } => 392,
+            Self::TupleFieldAssignment { .. } => 393,
+            Self::TupleFieldOutOfRange { .. } => 363,
+            Self::TuplePatternArity { .. } => 301,
             Self::MissingReturnValue { .. } => 215,
             // an undefined name keeps 301 because the surface pins that code for it
             Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,

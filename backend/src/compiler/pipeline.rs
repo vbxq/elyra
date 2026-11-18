@@ -199,40 +199,13 @@ impl Compiler {
 
             let last_stmt = ordered[last_idx];
             let restore_last = self.enter_definition_module(last_stmt);
-            match &last_stmt.kind {
-                TypedStmtKind::Expression(expr) => {
-                    let result_reg = self.alloc_register()?;
-                    self.compile_typed_expr(expr, result_reg)?;
-                    self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
-                }
-                TypedStmtKind::If {
-                    condition,
-                    then_branch,
-                    else_branch: Some(else_branch),
-                } => {
-                    let result_reg = self.alloc_register()?;
-                    let cond_reg = self.alloc_register()?;
-                    self.compile_typed_expr(condition, cond_reg)?;
-                    let else_jump = self.emit_jump_if(OpCode::JumpIfNot, cond_reg, condition.span);
-                    self.free_register(cond_reg);
-
-                    self.compile_typed_if_branch_for_return(then_branch, result_reg)?;
-                    let end_jump = self.emit_jump(OpCode::Jump, then_branch.span);
-                    self.patch_jump(else_jump);
-                    self.compile_typed_if_branch_for_return(else_branch, result_reg)?;
-                    self.patch_jump(end_jump);
-
-                    self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
-                }
-                TypedStmtKind::Block(_) => {
-                    let result_reg = self.alloc_register()?;
-                    self.compile_typed_if_branch_for_return(last_stmt, result_reg)?;
-                    self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
-                }
-                _ => {
-                    self.compile_typed_stmt(last_stmt)?;
-                    self.emit_return0(last_stmt.span);
-                }
+            if Compiler::typed_stmt_yields_value(last_stmt) {
+                let result_reg = self.alloc_register()?;
+                self.compile_typed_stmt_value(last_stmt, result_reg)?;
+                self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
+            } else {
+                self.compile_typed_stmt(last_stmt)?;
+                self.emit_return0(last_stmt.span);
             }
             self.leave_definition_module(restore_last);
         }

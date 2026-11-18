@@ -1216,6 +1216,16 @@ impl TypeInference {
                     } else if let Some(gated) = self.supertrait_gate_error(&name, member, _span) {
                         self.errors.push(gated);
                         InferType::Poison
+                    } else if aelys_syntax::tuple_arity(&name).is_some() {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::TupleFieldOutOfRange {
+                                tuple: typed_object.ty.clone(),
+                                field: member.to_string(),
+                            },
+                            span: _span,
+                            reason: ConstraintReason::Other("tuple field lookup".to_string()),
+                        });
+                        InferType::Poison
                     } else {
                         self.errors.push(TypeError {
                             kind: TypeErrorKind::UnknownField {
@@ -1311,6 +1321,27 @@ impl TypeInference {
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
+        let mut substitutions = substitutions;
+        let tuple_literal =
+            explicit_type_args.is_empty() && aelys_syntax::tuple_arity(name).is_some();
+        let mut typed_values: Vec<Option<TypedExpr>> = Vec::new();
+        if tuple_literal && let Some(definition) = &def {
+            for field in fields {
+                let typed_value = self.infer_expr(&field.value);
+                if let Some(field_def) = definition.fields.iter().find(|df| df.name == field.name)
+                    && let InferType::Param(param) = &field_def.ty
+                    && !matches!(
+                        typed_value.ty,
+                        InferType::Never | InferType::Dynamic | InferType::Poison
+                    )
+                    && !typed_value.ty.contains_dynamic()
+                {
+                    substitutions.insert(param.clone(), typed_value.ty.clone());
+                }
+                typed_values.push(Some(typed_value));
+            }
+        }
+        let mut typed_values = typed_values.into_iter();
         let instance_type = if let Some(definition) = &def {
             if definition.type_params.is_empty() {
                 InferType::Struct(name.to_string())
@@ -1338,7 +1369,10 @@ impl TypeInference {
         let typed_fields: Vec<(String, Box<TypedExpr>)> = fields
             .iter()
             .filter_map(|f| {
-                let mut typed_value = self.infer_expr(&f.value);
+                let mut typed_value = match typed_values.next().flatten() {
+                    Some(typed_value) => typed_value,
+                    None => self.infer_expr(&f.value),
+                };
 
                 if !seen.insert(f.name.clone()) {
                     self.errors.push(TypeError {
@@ -1479,6 +1513,17 @@ impl TypeInference {
         span: Span,
     ) -> (TypedExprKind, InferType) {
         let value_span = typed_value.span;
+        if let InferType::Applied { name, .. } = &typed_object.ty
+            && aelys_syntax::tuple_arity(name).is_some()
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::TupleFieldAssignment {
+                    field: member.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("tuple field assignment".to_string()),
+            });
+        }
         let Some(root) = root_binding_name(object) else {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {

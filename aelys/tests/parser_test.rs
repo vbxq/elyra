@@ -155,7 +155,9 @@ fn test_while_statement() {
     let stmts = parse("while x < 10 { x++ }");
 
     match &stmts[0].kind {
-        StmtKind::While { condition, body } => {
+        StmtKind::While {
+            condition, body, ..
+        } => {
             assert!(matches!(
                 &condition.kind,
                 ExprKind::Binary {

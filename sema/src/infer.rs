@@ -3,6 +3,7 @@ mod captures;
 pub(crate) mod constants;
 mod constraints;
 pub mod entry;
+mod exhaustive;
 mod expr;
 mod expr_sum;
 mod finalize;
@@ -199,6 +200,8 @@ pub struct TypeInference {
     must_use_values: Vec<expr_sum::MustUseResidual>,
     sum_method_residuals: Vec<expr_sum::SumMethodResidual>,
     match_exhaustivity_residuals: Vec<expr_sum::MatchExhaustivityResidual>,
+    loop_frames: Vec<stmt::LoopFrame>,
+    match_unit_residuals: Vec<(InferType, Vec<aelys_syntax::Span>)>,
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
     alias_residuals: Vec<places::AliasResidual>,
@@ -206,6 +209,9 @@ pub struct TypeInference {
     global_constants: HashMap<String, constants::ConstValue>,
     exported_constants: std::collections::BTreeMap<String, constants::ConstValue>,
     function_mutable_params: HashMap<String, Vec<Option<String>>>,
+    fall_through_residuals: Vec<(InferType, aelys_syntax::Span, String)>,
+    statement_match: bool,
+    script_tail: bool,
     surface_dynamic_spans: HashSet<(usize, usize)>,
     pending_int_literals: Vec<(InferType, Vec<(i64, aelys_syntax::Span)>)>,
     nominal_expectation: Option<InferType>,
@@ -429,6 +435,25 @@ impl TypeInference {
                 kind: TypeErrorKind::Mismatch { expected, found },
                 span: residual.span,
                 reason: residual.reason.clone(),
+            });
+        }
+    }
+
+    pub(super) fn validate_fall_through_residuals(&mut self, subst: &crate::unify::Substitution) {
+        for (ty, span, func_name) in std::mem::take(&mut self.fall_through_residuals) {
+            let expected = subst.apply(&ty);
+            if !expected.is_concrete()
+                || matches!(
+                    expected,
+                    InferType::Unit | InferType::Never | InferType::Dynamic
+                )
+            {
+                continue;
+            }
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MissingReturnValue { expected },
+                span,
+                reason: ConstraintReason::Return { func_name },
             });
         }
     }

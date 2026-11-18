@@ -60,6 +60,8 @@ impl Default for TypeInference {
             must_use_values: Vec::new(),
             sum_method_residuals: Vec::new(),
             match_exhaustivity_residuals: Vec::new(),
+            loop_frames: Vec::new(),
+            match_unit_residuals: Vec::new(),
             dynamic_residuals: Vec::new(),
             bound_residuals: Vec::new(),
             alias_residuals: Vec::new(),
@@ -67,6 +69,9 @@ impl Default for TypeInference {
             global_constants: HashMap::new(),
             exported_constants: std::collections::BTreeMap::new(),
             function_mutable_params: HashMap::new(),
+            fall_through_residuals: Vec::new(),
+            statement_match: false,
+            script_tail: false,
             surface_dynamic_spans: HashSet::new(),
             pending_int_literals: Vec::new(),
             nominal_expectation: None,
@@ -1681,7 +1686,7 @@ impl TypeInference {
         inf.collect_global_bindings(&stmts);
         inf.predeclare_constants(&stmts, true);
 
-        let typed_stmts = inf.infer_stmts(&stmts);
+        let typed_stmts = inf.infer_program_stmts(&stmts);
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
@@ -1691,6 +1696,7 @@ impl TypeInference {
         inf.validate_dynamic_residuals(&subst);
         inf.validate_bound_residuals(&subst);
         inf.validate_alias_residuals(&subst);
+        inf.validate_fall_through_residuals(&subst);
         inf.validate_try_residuals(&subst);
         inf.validate_must_use_values(&subst);
         inf.validate_match_reachability(&subst);
@@ -1966,6 +1972,7 @@ fn error_priority(kind: &TypeErrorKind) -> u8 {
         // a mangling collision is a symptom: a coherence verdict, a duplicate
         TypeErrorKind::MangledSymbolCollision { .. } => 3,
         TypeErrorKind::PoisonedType
+        | TypeErrorKind::UnresolvedTypeVariable
         | TypeErrorKind::UnmaterializedAppliedType { .. }
         | TypeErrorKind::IgnoredResult
         | TypeErrorKind::IgnoredOption => 2,

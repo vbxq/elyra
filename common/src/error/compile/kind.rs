@@ -47,6 +47,9 @@ pub enum CompileErrorKind {
     ReservedIdentifier {
         name: String,
     },
+    ReservedName {
+        name: String,
+    },
 
     UndefinedVariable(String),
     VariableAlreadyDefined(String),

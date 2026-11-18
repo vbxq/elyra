@@ -67,10 +67,105 @@ pub(crate) fn render_place(expr: &Expr) -> String {
     }
 }
 
-fn tail_expr(stmts: &[Stmt]) -> Option<&Expr> {
-    match stmts.last().map(|stmt| &stmt.kind) {
-        Some(StmtKind::Expression(expr)) => Some(expr),
-        _ => None,
+fn tail_places<'a>(stmts: &'a [Stmt], places: &mut Vec<&'a Expr>) {
+    if let Some(stmt) = stmts.last() {
+        stmt_tail_places(stmt, places);
+    }
+}
+
+fn stmt_tail_places<'a>(stmt: &'a Stmt, places: &mut Vec<&'a Expr>) {
+    match &stmt.kind {
+        StmtKind::Expression(expr) => source_places(expr, places),
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            stmt_tail_places(then_branch, places);
+            stmt_tail_places(else_branch, places);
+        }
+        StmtKind::Block(stmts) => tail_places(stmts, places),
+        _ => {}
+    }
+}
+
+// depth counts the loops between a break and the loop whose value it gives
+fn break_places<'a>(stmt: &'a Stmt, label: Option<&str>, depth: usize, places: &mut Vec<&'a Expr>) {
+    match &stmt.kind {
+        StmtKind::Break {
+            label: target,
+            value: Some(value),
+        } if match target {
+            Some(target) => Some(target.as_str()) == label,
+            None => depth == 0,
+        } =>
+        {
+            source_places(value, places)
+        }
+        StmtKind::Expression(expr) => expr_break_places(expr, label, depth, places),
+        StmtKind::Block(stmts) => {
+            for stmt in stmts {
+                break_places(stmt, label, depth, places);
+            }
+        }
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            break_places(then_branch, label, depth, places);
+            if let Some(else_branch) = else_branch {
+                break_places(else_branch, label, depth, places);
+            }
+        }
+        StmtKind::While { body, .. }
+        | StmtKind::For { body, .. }
+        | StmtKind::ForEach { body, .. } => break_places(body, label, depth + 1, places),
+        _ => {}
+    }
+}
+
+fn expr_break_places<'a>(
+    expr: &'a Expr,
+    label: Option<&str>,
+    depth: usize,
+    places: &mut Vec<&'a Expr>,
+) {
+    match &expr.kind {
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                break_places(stmt, label, depth, places);
+            }
+        }
+        ExprKind::Loop { body, .. } => {
+            for stmt in body {
+                break_places(stmt, label, depth + 1, places);
+            }
+        }
+        ExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            expr_break_places(then_branch, label, depth, places);
+            expr_break_places(else_branch, label, depth, places);
+        }
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                match &arm.body {
+                    aelys_syntax::MatchArmBody::Expr(body) => {
+                        expr_break_places(body, label, depth, places)
+                    }
+                    aelys_syntax::MatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            break_places(stmt, label, depth, places);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::Grouping(inner) => expr_break_places(inner, label, depth, places),
+        _ => {}
     }
 }
 
@@ -89,12 +184,14 @@ fn source_places<'a>(expr: &'a Expr, places: &mut Vec<&'a Expr>) {
             for arm in arms {
                 match &arm.body {
                     aelys_syntax::MatchArmBody::Expr(body) => source_places(body, places),
-                    aelys_syntax::MatchArmBody::Block(stmts) => {
-                        if let Some(tail) = tail_expr(stmts) {
-                            source_places(tail, places);
-                        }
-                    }
+                    aelys_syntax::MatchArmBody::Block(stmts) => tail_places(stmts, places),
                 }
+            }
+        }
+        ExprKind::Block(stmts) => tail_places(stmts, places),
+        ExprKind::Loop { body, label } => {
+            for stmt in body {
+                break_places(stmt, label.as_deref(), 0, places);
             }
         }
         _ if place_root(expr).is_some() || is_path_place(expr) => places.push(expr),

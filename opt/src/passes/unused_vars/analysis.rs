@@ -35,7 +35,9 @@ fn collect_uses_in_stmt(stmt: &TypedStmt, used: &mut HashSet<String>) {
                 collect_uses_in_stmt(else_b, used);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_uses_in_expr(condition, used);
             collect_uses_in_stmt(body, used);
         }
@@ -65,7 +67,10 @@ fn collect_uses_in_stmt(stmt: &TypedStmt, used: &mut HashSet<String>) {
             collect_uses_in_stmt(body, used);
             used.insert(iterator.clone());
         }
-        TypedStmtKind::Return(Some(expr)) => collect_uses_in_expr(expr, used),
+        TypedStmtKind::Return(Some(expr))
+        | TypedStmtKind::Break {
+            value: Some(expr), ..
+        } => collect_uses_in_expr(expr, used),
         TypedStmtKind::Function(func) => collect_uses_in_function(func, used),
         TypedStmtKind::ImplDecl { methods, .. } => {
             for method in methods {
@@ -73,8 +78,8 @@ fn collect_uses_in_stmt(stmt: &TypedStmt, used: &mut HashSet<String>) {
             }
         }
         TypedStmtKind::Return(None)
-        | TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        | TypedStmtKind::Break { value: None, .. }
+        | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::TraitDecl { .. }
@@ -218,6 +223,11 @@ fn collect_uses_in_expr(expr: &TypedExpr, used: &mut HashSet<String>) {
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                collect_uses_in_stmt(stmt, used);
             }
         }
         TypedExprKind::Int(_)

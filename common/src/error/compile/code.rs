@@ -26,6 +26,7 @@ impl CompileErrorKind {
             Self::TraitObjectDeferred { .. } => 113,
             Self::InvalidDefaultMethod => 441,
             Self::ReservedIdentifier { .. } => 114,
+            Self::ReservedName { .. } => 394,
             Self::UndefinedVariable(_) => 201,
             Self::VariableAlreadyDefined(_) => 202,
             Self::AssignToImmutable(_) => 203,

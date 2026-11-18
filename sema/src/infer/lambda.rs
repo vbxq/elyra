@@ -32,12 +32,13 @@ impl TypeInference {
             Some(ann) => {
                 self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
             }
-            None if body.is_empty() => InferType::Unit,
+            None if !super::functions::body_yields_value(body) => InferType::Unit,
             None => self.type_gen.fresh(),
         };
 
         let saved_env = std::mem::replace(&mut self.env, closure_env);
         let saved_forwarded_borrows = std::mem::take(&mut self.forwarded_mutable_borrows);
+        let saved_loop_frames = std::mem::take(&mut self.loop_frames);
 
         for (param, syntax_param) in typed_params.iter().zip(params) {
             if param.ty.contains_dynamic() {
@@ -69,6 +70,14 @@ impl TypeInference {
             stmts
         };
 
+        if return_type_ann.is_none()
+            && super::functions::body_yields_value(body)
+            && !super::functions::body_always_returns(body, true)
+        {
+            self.fall_through_residuals
+                .push((return_type.clone(), span, "<lambda>".to_string()));
+        }
+
         if return_type_ann.is_some()
             && !matches!(return_type, InferType::Unit)
             && !super::functions::body_always_returns(body, true)
@@ -89,6 +98,7 @@ impl TypeInference {
         self.pop_return_type();
         self.env = saved_env;
         self.forwarded_mutable_borrows = saved_forwarded_borrows;
+        self.loop_frames = saved_loop_frames;
 
         let param_types: Vec<InferType> = typed_params.iter().map(|p| p.ty.clone()).collect();
         let fn_type = InferType::Function {

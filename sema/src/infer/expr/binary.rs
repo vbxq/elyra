@@ -410,6 +410,10 @@ impl TypeInference {
                             }
                     })
             }
+            TypedExprKind::Block(stmts) => self.is_explicit_dynamic_stmt_tail(stmts),
+            TypedExprKind::Loop { body, .. } => {
+                body.iter().any(|stmt| self.is_explicit_dynamic_stmt(stmt))
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
@@ -461,9 +465,9 @@ impl TypeInference {
                         .as_deref()
                         .is_some_and(|branch| self.is_explicit_dynamic_stmt(branch))
             }
-            TypedStmtKind::While { condition, body } => {
-                self.is_explicit_dynamic_expr(condition) || self.is_explicit_dynamic_stmt(body)
-            }
+            TypedStmtKind::While {
+                condition, body, ..
+            } => self.is_explicit_dynamic_expr(condition) || self.is_explicit_dynamic_stmt(body),
             TypedStmtKind::For {
                 start,
                 end,
@@ -496,8 +500,10 @@ impl TypeInference {
                     .last()
                     .is_some_and(|stmt| self.is_explicit_dynamic_stmt(stmt))
             }),
-            TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            TypedStmtKind::Break { value, .. } => value
+                .as_ref()
+                .is_some_and(|value| self.is_explicit_dynamic_expr(value)),
+            TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }

@@ -72,6 +72,7 @@ impl TypeInference {
             ));
         }
 
+        let settled = settled_branch_type(&typed_then.ty, &typed_else.ty);
         (
             TypedExprKind::If {
                 condition: Box::new(typed_cond),
@@ -83,7 +84,7 @@ impl TypeInference {
             } else if dynamic_result {
                 InferType::Dynamic
             } else {
-                result_type
+                settled.unwrap_or(result_type)
             },
         )
     }
@@ -99,4 +100,15 @@ fn known_aggregate(ty: &InferType) -> bool {
             | InferType::Vec(_)
             | InferType::Map(_, _)
     ) && ty.is_concrete()
+}
+
+// a method call on the if needs its receiver type before the constraints are solved
+pub(crate) fn settled_branch_type(then_ty: &InferType, else_ty: &InferType) -> Option<InferType> {
+    match (then_ty, else_ty) {
+        (InferType::Never, other) | (other, InferType::Never) if other.is_concrete() => {
+            Some(other.clone())
+        }
+        (left, right) if left == right && left.is_concrete() => Some(left.clone()),
+        _ => None,
+    }
 }

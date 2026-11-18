@@ -4,6 +4,9 @@ mod let_stmt;
 mod loop_stmt;
 mod needs;
 mod return_stmt;
+mod tail;
+
+pub(crate) use loop_stmt::LoopFrame;
 
 use super::TypeInference;
 use crate::typed_ast::{TypedStmt, TypedStmtKind};
@@ -14,7 +17,19 @@ impl TypeInference {
         stmts.iter().map(|s| self.infer_stmt(s)).collect()
     }
 
+    // the last statement of a script is its value, so a match there keeps its arm values
+    pub(super) fn infer_program_stmts(&mut self, stmts: &[Stmt]) -> Vec<TypedStmt> {
+        let Some((last, prefix)) = stmts.split_last() else {
+            return Vec::new();
+        };
+        let mut typed = self.infer_stmts(prefix);
+        self.script_tail = true;
+        typed.push(self.infer_stmt(last));
+        typed
+    }
+
     pub(super) fn infer_stmt(&mut self, stmt: &Stmt) -> TypedStmt {
+        let script_tail = std::mem::take(&mut self.script_tail);
         let previous_module = self.current_module.clone();
         let mut definition_scope = false;
         let mut definition_mark = None;
@@ -47,8 +62,12 @@ impl TypeInference {
         }
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
+                self.statement_match =
+                    !script_tail && matches!(expr.kind, aelys_syntax::ExprKind::Match { .. });
                 let typed_expr = self.infer_expr(expr);
-                self.record_must_use_value(&typed_expr);
+                if !super::functions::is_assignment(expr) {
+                    self.record_must_use_value(&typed_expr);
+                }
                 TypedStmtKind::Expression(typed_expr)
             }
             StmtKind::Let {
@@ -87,7 +106,11 @@ impl TypeInference {
                 then_branch,
                 else_branch,
             } => self.infer_if_stmt(condition, then_branch, else_branch.as_deref()),
-            StmtKind::While { condition, body } => self.infer_while_stmt(condition, body),
+            StmtKind::While {
+                condition,
+                body,
+                label,
+            } => self.infer_while_stmt(condition, body, label.as_ref()),
             StmtKind::For {
                 iterator,
                 start,
@@ -95,6 +118,7 @@ impl TypeInference {
                 inclusive,
                 step,
                 body,
+                label,
             } => self.infer_for_stmt(
                 iterator,
                 start,
@@ -102,15 +126,19 @@ impl TypeInference {
                 *inclusive,
                 step.as_ref().as_ref(),
                 body,
+                label.as_ref(),
             ),
             StmtKind::ForEach {
                 iterator,
                 iterable,
                 body,
-            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.read_only, stmt.span),
+                label,
+            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.read_only, label.as_ref()),
             StmtKind::Return(expr) => self.infer_return_stmt(stmt.span, expr.as_ref()),
-            StmtKind::Break => TypedStmtKind::Break,
-            StmtKind::Continue => TypedStmtKind::Continue,
+            StmtKind::Break { label, value } => {
+                self.infer_break_stmt(label.as_ref(), value.as_ref(), stmt.span)
+            }
+            StmtKind::Continue { label } => self.infer_continue_stmt(label.as_ref(), stmt.span),
             StmtKind::Function(func) => {
                 let typed_func = self.infer_function(func);
                 TypedStmtKind::Function(typed_func)

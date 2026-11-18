@@ -95,16 +95,13 @@ impl Compiler {
 
         let body_start = self.current_offset();
 
-        self.loop_stack.push(LoopContext {
-            start: body_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        self.loop_stack
+            .push(LoopContext::new(body_start, true, self.locals.len()));
 
         self.compile_stmt(body)?;
 
         let forloop_pos = self.current_offset();
+        self.close_captured_iteration_variable(iter_reg, span);
 
         self.patch_jump(jump_to_forloop);
 
