@@ -1,4 +1,4 @@
-use aelys_bytecode::object::SumTag;
+use aelys_bytecode::object::{AelysVec, SumTag};
 use aelys_runtime::Value;
 use aelys_runtime::stdlib::{ByteBuffer, Resource, register_std_module};
 use aelys_runtime::vm::{GcRef, ObjectKind, VM};
@@ -125,6 +125,11 @@ fn arguments(vm: &mut VM, fixture: &Fixture, path: &str, params: &[InferType]) -
             (_, _, _, InferType::Numeric) => Value::int(2),
             (_, _, _, InferType::Bool) => Value::bool(true),
             (_, _, _, InferType::String) => string(vm, "12"),
+            (_, _, _, InferType::Char) => Value::char('a'),
+            (_, _, _, InferType::Vec(element)) if **element == InferType::I64 => {
+                let vector = AelysVec::from_ints(vec![1, 2]);
+                Value::ptr(vm.alloc_vec(vector).unwrap().index())
+            }
             (_, _, _, other) => panic!("{path}: no argument for parameter type {other:?}"),
         };
         out.push(value);
@@ -168,6 +173,15 @@ fn matches(vm: &VM, value: Value, expected: &InferType) -> bool {
         InferType::Bool => value.is_bool(),
         InferType::Unit => value.is_unit(),
         InferType::Numeric => value.is_int() || value.is_float(),
+        InferType::Char => value.as_char().is_some(),
+        InferType::Vec(inner) => match value.as_ptr().and_then(|p| vm.heap().get(GcRef::new(p))) {
+            Some(object) => match &object.kind {
+                ObjectKind::Vec(vector) => (0..vector.len())
+                    .all(|index| vector.get(index).is_some_and(|e| matches(vm, e, inner))),
+                _ => false,
+            },
+            None => false,
+        },
         InferType::String => value
             .as_ptr()
             .and_then(|p| vm.heap().get(GcRef::new(p)))
