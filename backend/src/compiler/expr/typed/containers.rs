@@ -53,7 +53,9 @@ fn map_native(member: &str, arity: usize) -> bool {
 }
 
 fn element_tag(element: &InferType) -> TypeTag {
-    if element.is_integer() {
+    if *element == InferType::U8 {
+        TypeTag::Byte
+    } else if element.is_integer() {
         TypeTag::Int
     } else if element.is_float() {
         TypeTag::Float
