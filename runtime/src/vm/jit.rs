@@ -67,6 +67,7 @@ impl VM {
         if needs_native_globals {
             self.prepare_globals_for_function(function);
         }
+        let mut unpassable = false;
         let result = (|| {
             let context = Some(self.jit_execution_context(
                 self.execution_control.report || self.execution_control_enabled(),
@@ -100,6 +101,10 @@ impl VM {
                         };
                         jit_arguments.push(JitArgument::IntegerVec(values));
                     }
+                    ObjectKind::Struct(_) | ObjectKind::Enum(_) => {
+                        unpassable = true;
+                        return JitCallResult::Unsupported;
+                    }
                     _ => return JitCallResult::Unsupported,
                 };
             }
@@ -120,6 +125,10 @@ impl VM {
         if let Some(globals) = saved_globals {
             self.globals_by_index = globals;
             self.current_global_mapping_id = previous_mapping;
+        }
+        // compiled code takes numbers and integer collections only, so a function handed a struct keeps paying for nothing
+        if unpassable {
+            self.jit_refused.insert(function, ());
         }
         result
     }

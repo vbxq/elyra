@@ -129,6 +129,14 @@ fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
 }
 
 impl VM {
+    fn jit_ignores(&self, function: GcRef) -> bool {
+        let unsupported = matches!(
+            self.heap.get(function).map(|object| &object.kind),
+            Some(ObjectKind::Function(target)) if target.function.jit_unsupported_struct
+        );
+        unsupported || self.jit_refused.get(&function).is_some()
+    }
+
     fn hot_schemas(&self, function: GcRef) -> Option<Arc<FunctionSchemas>> {
         let ObjectKind::Function(function) = &self.heap.get(function)?.kind else {
             return None;
@@ -161,6 +169,7 @@ impl VM {
         }
         let mut regs = unsafe { self.registers.as_mut_ptr().add(base) };
         let mut schemas: Option<Arc<FunctionSchemas>> = None;
+        let mut loops_stay = !JIT || self.jit_ignores(function);
 
         macro_rules! get {
             ($index:expr) => {
@@ -259,7 +268,7 @@ impl VM {
         macro_rules! branch {
             ($target:expr) => {{
                 let target = $target;
-                if JIT && target <= ip {
+                if !loops_stay && target <= ip {
                     leave!();
                 }
                 target
@@ -583,7 +592,7 @@ impl VM {
                         advanced > end
                     };
                     let target = next.wrapping_add_signed(imm as isize);
-                    if again && JIT && target <= ip {
+                    if again && !loops_stay && target <= ip {
                         leave!();
                     }
                     set!(a, value);
@@ -732,9 +741,6 @@ impl VM {
                     next + 2
                 }
                 CALL_GLOBAL => {
-                    if JIT {
-                        leave!();
-                    }
                     let callee = GcRef::new(or_leave!(
                         self.globals_by_index
                             .get(b)
@@ -745,6 +751,12 @@ impl VM {
                         leave!();
                     };
                     if !target.verified || target.arity() != c as u16 {
+                        leave!();
+                    }
+                    let callee_ignored = !JIT
+                        || target.function.jit_unsupported_struct
+                        || self.jit_refused.get(&callee).is_some();
+                    if !callee_ignored {
                         leave!();
                     }
                     let callee_code = target.function.bytecode.as_ptr();
@@ -789,6 +801,7 @@ impl VM {
                     constants_len = callee_constants_len;
                     regs = unsafe { self.registers.as_mut_ptr().add(base) };
                     schemas = None;
+                    loops_stay = callee_ignored;
                     0
                 }
                 RETURN | RETURN0 => {
