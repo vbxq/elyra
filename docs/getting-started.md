@@ -16,7 +16,7 @@ Run it:
 aelys hello.aelys
 ```
 
-That's your first program ! The safe standard modules (`std.io`, `std.math`, `std.string`, `std.convert`, `std.time`) are auto-registered at startup, so you don't need to import them. The `needs` statement is still required for privileged modules like `std.fs`, `std.net`, `std.sys`, and `std.bytes`.
+That's your first program ! The safe standard modules (`std.io`, `std.math`, `std.string`, `std.time`) are auto-registered at startup, so you don't need to import them. The `use` statement is still required for privileged modules like `std.fs`, `std.net`, `std.sys`, and `std.bytes`.
 
 You don't need a `main` function, top-level code just runs.
 
@@ -179,14 +179,14 @@ for c in name {
 
 ## Logical Operators
 
-It's `and`, `or`, and `not`, you can also use `&&`, `||`, and `!` if you prefer :
+They are `&&`, `||` and `!`, and `&&` and `||` short-circuit (the words `and`, `or` and `not` are not operators):
 
 ```rust
-if x > 0 and y > 0 {
+if x > 0 && y > 0 {
     println("both positive")
 }
 
-if not valid {
+if !valid {
     println("invalid")
 }
 ```

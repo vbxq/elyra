@@ -4,33 +4,33 @@ All standard library modules live under `std::` paths.
 
 ### Auto-registered modules
 
-The safe modules `std::io`, `std::math`, `std::string`, `std::convert`, and
+The safe modules `std::io`, `std::math`, `std::string` and
 `std::time` are auto-registered at VM startup. You can use their functions
-immediately without `needs`. For example, `println("hello")` and
+immediately without `use`. For example, `println("hello")` and
 `math::sqrt(16.0)` work out of the box.
 
-Two builtins sit outside every module and need no `needs`: `panic(message)`, of
+Two builtins sit outside every module and need no `use`: `panic(message)`, of
 type `never`, and `assert(condition, message)`. Both stop the program with
 `panic: <message>`, the source location, and the stack trace on stderr, and the
 runner exits with status 101 (see Panics in the language specification).
 
-You can still use `needs` with an alias if you want a shorter name:
+You can still write `use` with an alias if you want a shorter name:
 
 ```rust
-needs std::math as m
+use std::math as m
 ```
 
 
 ```rust
-needs std::fs
-needs std::net
+use std::fs
+use std::net
 ```
 
 ---
 
 ## std::io
 
-Console input/output. Auto-registered -- no `needs` required.
+Console input/output. Auto-registered -- no `use` required.
 
 ### Output Functions
 
@@ -85,7 +85,7 @@ println("Here!")
 
 ## std::math
 
-Math functions and constants. Auto-registered -- no `needs` required.
+Math functions and constants. Auto-registered -- no `use` required.
 
 ### Constants
 
@@ -181,7 +181,7 @@ the 48-bit `int` range is a runtime error, never a saturated or zero value.
 
 ## std::string
 
-String manipulation. Strings are UTF-8. Auto-registered -- no `needs` required.
+String manipulation. Strings are UTF-8. Auto-registered -- no `use` required.
 
 String functions can be called as methods on string values. The qualified `string::func(s, ...)` syntax also still works.
 
@@ -324,45 +324,42 @@ past the budget is a clean `out of memory` error at the append.
 
 ---
 
-## std::convert
+## Conversions
 
-Type conversions and introspection. Auto-registered -- no `needs` required.
+There is no `std::convert` module (`use std::convert` and a call such as
+`convert::parse_int(s)` are E0449, whose help line names the replacement).
+Parsing is a `string` method, formatting a method of the value, and numeric and
+character conversions are `as` casts.
 
 ### Parsing Strings
 
-| Function | Description |
+| Method | Description |
 |----------|-------------|
-| `parse_int(s)` | Parse string to `Option<int>` |
-| `parse_int_radix(s, radix)` | Parse with base 2-36 as `Option<int>` |
-| `parse_float(s)` | Parse string to `Option<float>` |
-| `parse_bool(s)` | Parse boolean to `Option<bool>` |
+| `s.to_int()` | Parse string to `Option<int>` |
+| `s.to_int_radix(radix)` | Parse with base 2-36 as `Option<int>` |
+| `s.to_float()` | Parse string to `Option<float>` |
+| `s.to_bool()` | Parse boolean to `Option<bool>` (`true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`, any case) |
 
-`parse_int` accepts an optional sign followed by decimal digits or a `0x`, `0o`, or
+`s.to_int()` accepts an optional sign followed by decimal digits or a `0x`, `0o`, or
 `0b` prefix, with surrounding whitespace ignored. Anything else is `None`: it never
 panics and never truncates, so `"3.9"`, `"1e3"`, `"-2.5"`, `"nan"`, and a value
 outside the 48-bit `int` range (-140737488355328 to 140737488355327) all give
-`None`. `parse_int_radix` follows the same rules for its base.
+`None`. `s.to_int_radix(radix)` follows the same rules for its base, without a
+prefix; a radix outside 2-36 is a runtime error.
 
 ```rust
-match convert::parse_int("42") {
+match "42".to_int() {
     Some(value) => value,
     None => 0,
 }
 ```
 
-### Type Conversion
+### Numbers
 
-| Function | Description |
-|----------|-------------|
-| `to_string(x)` | Render a `Display` value as a string, aggregates in the form described under Display in the language spec |
-| `to_int(x)` | Convert to int |
-| `to_float(x)` | Convert to float |
-| `to_bool(x)` | Convert to bool (truthiness) |
-
-`to_int` truncates a float toward zero; a NaN, an infinity, or a float outside the
-48-bit range is a runtime error. A string passed to `to_int` must be an integer
-under the `parse_int` rules, otherwise `to_int` is a runtime error (`to_int("3.9")`
-is an error, not `3`).
+`x as int`, `x as float` and the sized integer types convert between numbers (see
+Conversions with `as` in the language spec): `as int` truncates a float toward
+zero, and a NaN, an infinity, or a float outside the 48-bit range is a runtime
+error. A string is never cast; parse it with `s.to_int()` or `s.to_float()`.
 
 `.to_string()` can be called as a method on a scalar, a `string` or a built-in
 aggregate; an aggregate holding a struct, an enum or a closure is E0338, as for `println`.
@@ -380,54 +377,43 @@ vec!["a"].to_string() // "[\"a\"]"
 
 ### Numeric Formatting
 
-| Function | Description |
+| Method | Description |
 |----------|-------------|
-| `to_hex(n)` | Int to hexadecimal string |
-| `to_binary(n)` | Int to binary string |
-| `to_octal(n)` | Int to octal string |
-| `to_radix(n, radix)` | Int to string in given radix |
+| `n.to_hex()` | Int to hexadecimal string |
+| `n.to_binary()` | Int to binary string |
+| `n.to_octal()` | Int to octal string |
+| `n.to_radix(radix)` | Int to string in given radix (2-36) |
+
+Digits are lowercase and a negative value keeps its sign (`(-255).to_hex()` is
+`"-ff"`). These methods exist on every integer type.
 
 ```rust
-convert::to_hex(255)      // "ff"
-convert::to_binary(10)    // "1010"
-convert::to_radix(100, 7) // "202"
+255.to_hex()      // "ff"
+10.to_binary()    // "1010"
+100.to_radix(7)   // "202"
 ```
 
-### Character Conversion
+### Characters
 
-| Function | Description |
+| Cast | Description |
 |----------|-------------|
-| `ord(char)` | Character to Unicode code point |
-| `chr(code)` | Code point to character |
+| `c as int` | Character to Unicode code point |
+| `n as char` | Code point to character; a value outside `0..=0x10FFFF` or a surrogate is a runtime error |
 
 ```rust
-convert::ord("A")    // 65
-convert::chr(65)     // "A"
-convert::chr(0x1F600)  // "😀"
+'A' as int                     // 65
+(65 as char).to_string()       // "A"
+(0x1F600 as char).to_string()  // "😀"
 ```
 
-### Type Checking
-
-| Function | Description |
-|----------|-------------|
-| `type_of(x)` | Get type name as string |
-| `is_int(x)` | Check if int |
-| `is_float(x)` | Check if float |
-| `is_string(x)` | Check if string |
-| `is_bool(x)` | Check if bool |
-| `is_function(x)` | Check if function |
-
-```rust
-convert::type_of(42)        // "int"
-convert::type_of("hello")   // "string"
-convert::is_int(42)         // true
-```
+Values have static types, so there is no `type_of`, no `is_int`-style predicate and
+no truthiness conversion: compare explicitly (`n != 0`, `s.len() > 0`).
 
 ---
 
 ## std::time
 
-Time operations and measurement. Auto-registered -- no `needs` required.
+Time operations and measurement. Auto-registered -- no `use` required.
 
 ### Current Time
 
@@ -512,7 +498,7 @@ time::iso()                        // "2024-01-15T14:30:45Z"
 File system operations.
 
 ```rust
-needs std::fs
+use std::fs
 ```
 
 ### Reading Files
@@ -568,8 +554,8 @@ Strings are UTF-8, so a byte of 0x80 or more cannot pass through `write`,
 `write_bytes` or `write_text` unchanged. Binary files go through a byte buffer:
 
 ```rust
-needs std::fs
-needs std::bytes as bytes
+use std::fs
+use std::bytes as bytes
 let buffer = bytes::alloc(2)
 bytes::write_u8(buffer, 0, 0xC8)
 bytes::write_u8(buffer, 1, 0xFF)
@@ -630,7 +616,7 @@ fs::join("/home/user", "../../etc/passwd")  // stays within /home/user
 Network operations.
 
 ```rust
-needs std::net
+use std::net
 ```
 
 ### TCP Client
@@ -717,7 +703,7 @@ let _ = net::close(sock)
 System information.
 
 ```rust
-needs std::sys
+use std::sys
 ```
 
 | Function | Description |
@@ -762,7 +748,7 @@ through in order. A program run through the embedding API sees the arguments its
 set, and none by default.
 
 ```rust
-needs std::sys
+use std::sys
 
 if sys::arg_count() == 0 {
     println("usage: tool <file>")
@@ -787,7 +773,7 @@ println("Running on {sys::platform()} {sys::arch()}")
 Byte-level memory operations for binary data manipulation.
 
 ```rust
-needs std::bytes
+use std::bytes
 ```
 
 ### Allocation & Buffer Management
@@ -878,7 +864,7 @@ millisecond, against one native call per byte for `write_u8`.
 ### Example
 
 ```rust
-needs std::bytes
+use std::bytes
 
 fn parse_network_packet() {
     let buf = bytes::alloc(16)

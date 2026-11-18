@@ -2,7 +2,7 @@
 
 A native module is a shared library (`.so`, `.dylib`, `.dll`) written against
 the aelys-native ABI, usually in Rust with the `aelys-native` crate. Elyra
-loads it with `needs`, type-checks every call against the signatures the
+loads it with `use`, type-checks every call against the signatures the
 module declares, and calls it on the VM thread.
 
 There is no generic C FFI: Elyra cannot `dlopen` an arbitrary library and call
@@ -59,7 +59,7 @@ mod exports {
 
 `#[aelys_module]` generates the C wrappers, the export table, the signatures
 and the module descriptor; no descriptor is written by hand. The `name` is the
-name Elyra code uses (`needs pixels`, `pixels::checksum(buf)`), and it must also
+name Elyra code uses (`use pixels`, `pixels::checksum(buf)`), and it must also
 be the file name the library is copied to (`pixels.so`).
 
 ### Types that cross the boundary
@@ -212,7 +212,7 @@ cargo build --release --manifest-path my-module/Cargo.toml
 cp my-module/target/release/libmy_module.so game/pixels.so
 ```
 
-`needs pixels` in `game/main.aelys` finds `pixels.so` next to the script. A
+`use pixels` in `game/main.aelys` finds `pixels.so` next to the script. A
 manifest `main.aelys.toml` (or a project `aelys.toml`) can pin it:
 
 ```toml

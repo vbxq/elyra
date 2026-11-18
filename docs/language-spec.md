@@ -39,8 +39,12 @@ is E0114.
 
 ```
 let mut fn if else while for in return break continue match struct enum
-trait impl and or not pub needs as from true false null
+trait impl pub use as true false null
 ```
+
+`and`, `or`, `not` and `needs` are ordinary identifiers. Written where an operator
+or an import belongs (`a and b`, `not x`, `needs std::fs`) they are E0117 and E0118,
+whose help line gives the spelling to write: `a && b`, `!x`, `use std::fs`.
 
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
 
@@ -265,7 +269,7 @@ Any integer type, sized or not, indexes an array or a `Vec`.
 
 #### Conversions with `as`
 
-`as` converts between every integer type, `float` and `bool`:
+`as` converts between every integer type, `float`, `bool` and `char`:
 
 | From | To | Result |
 |------|----|--------|
@@ -275,6 +279,41 @@ Any integer type, sized or not, indexes an array or a `Vec`.
 | `float` | a sized integer | truncated toward zero, then wrapped like an integer (`-2.7 as u8` is `254`); NaN or an infinity traps with `cannot convert NaN to u8` (or `inf`, `-inf`, and the target type) |
 | integer | `float` | the nearest float |
 | `bool` | integer | `0` or `1` |
+| `char` | any integer | its Unicode scalar value, wrapped to a sized type (`'€' as u8` is `172`) |
+| any integer | `char` | the scalar with that value; outside `0..=0x10FFFF` or inside the surrogate range `0xD800..=0xDFFF` it traps with `invalid char: N is not a Unicode scalar value` |
+
+#### Parsing and formatting
+
+Text becomes a number through methods of `string`, each returning an `Option`
+that is `None` for text that is not a value of the type, never a truncated or
+partial value and never a trap:
+
+| Method | Result |
+|--------|--------|
+| `s.to_int()` | `Option<int>`; surrounding whitespace is ignored, an optional sign, then decimal digits or a `0x`, `0o`, `0b` prefix; `None` outside the 48-bit range |
+| `s.to_int_radix(r)` | `Option<int>` for digits in radix `r`, 2 to 36, with an optional sign and no prefix; a radix outside 2..=36 traps |
+| `s.to_float()` | `Option<float>`, the decimal or scientific notation Rust's `f64` parser accepts (`inf` and `NaN` included) |
+| `s.to_bool()` | `Option<bool>`, case-insensitive `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off` |
+
+A number becomes text with `x.to_string()` (any `Display` value), and an integer
+with `n.to_hex()`, `n.to_binary()`, `n.to_octal()` or `n.to_radix(r)`, lowercase
+digits with a leading `-` for a negative value (`(-255).to_hex()` is `"-ff"`);
+`to_radix` traps on a radix outside 2..=36.
+
+```rust
+let n = "0x1F".to_int().unwrap_or(0)    // 31
+let f = " 2.5 ".to_float()               // Some(2.5)
+println(n.to_binary())                   // 11111
+println(255.to_radix(36))                // 73
+println('A' as int)                      // 65
+println(97 as char)                      // a
+```
+
+There is no `std::convert` module: `use std::convert` is E0449, and so is a
+call to one of its former functions (`s.to_int()`, or the bare
+`to_int(x)`, `type_of(x)`, `is_int(x)`) unless the program declares or imports
+a function of that name; the help line names the replacement. A value's type is
+known at compile time, so there is no runtime type inspection.
 
 #### Fixed-point helpers
 
@@ -409,8 +448,8 @@ struct Frame { pixels: [int; SCREEN_W] } // an array length in a type
 ```
 
 The initializer must be a constant expression: integer, float, bool and string
-literals; unary `-`, `~` and `not`; arithmetic, shifts and bitwise operators on
-integers; arithmetic on floats; comparisons; `and`/`or` on bools; string `+`;
+literals; unary `-`, `~` and `!`; arithmetic, shifts and bitwise operators on
+integers; arithmetic on floats; comparisons; `&&`/`||` on bools; string `+`;
 `as` between the integer types and `float`; and other constants, including another
 module's `pub const` (`cfg::W`) and associated constants (`Cfg::N`). The value is
 computed with the runtime's rules for the constant's type: a sized constant wraps
@@ -434,7 +473,7 @@ declared earlier, and inside closures. A constant can also be declared inside a
 function body. It cannot be assigned (E0203), and a local `let` of the same name
 shadows it like any other binding.
 
-Across modules, `needs cfg` makes `cfg::W` and `W` available, `needs cfg::W`
+Across modules, `use cfg` makes `cfg::W` and `W` available, `use cfg::W`
 makes `W` available, and both forms work as repeat counts and array lengths. A
 constant without `pub` stays private (E0313).
 
@@ -826,11 +865,17 @@ println(a == b)   // true
 
 | Operator | Description |
 |----------|-------------|
-| `and` | Logical AND (short-circuit) |
-| `or` | Logical OR (short-circuit) |
-| `not` | Logical NOT |
+| `&&` | Logical AND (short-circuit) |
+| `\|\|` | Logical OR (short-circuit) |
+| `!` | Logical NOT |
 
-Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same for `or` with true.
+Short-circuit evaluation: `a && b` doesn't evaluate `b` if `a` is false. Same for `||` with true.
+`!` applies to the whole postfix expression after it: `!f(x)`, `!s.ready` and
+`!v[i]` negate the call, the field and the element. `!=` is one token, so `a != b`
+is a comparison, and `vec![...]` keeps its `!`.
+
+The words `and`, `or` and `not` are not operators (E0117). `not(x)` with no space
+before the parenthesis is a call to a function named `not`.
 
 ### Bitwise
 
@@ -876,18 +921,18 @@ to another object.
 
 ### Precedence (lowest to highest)
 
-1. `or`
-2. `and`
-3. `not`
-4. `==`, `!=`, `<`, `<=`, `>`, `>=`
-5. `|`
-6. `^`
-7. `&`
+1. `||`
+2. `&&`
+3. `|`
+4. `^`
+5. `&`
+6. `==`, `!=`
+7. `<`, `<=`, `>`, `>=`
 8. `<<`, `>>`
 9. `+`, `-`
 10. `*`, `/`, `%`
-11. Unary `-`, `~`, `not`
-12. Call `()`, value member access `.`, module and associated paths `::`
+11. Unary `-`, `~`, `!`, borrow `&` and `&mut`
+12. Call `()`, index `[]`, value member access `.`, module and associated paths `::`, `?`, `as`
 
 When in doubt, use parentheses
 
@@ -1248,37 +1293,50 @@ println(q + r + middle + a + b + x + y)
 
 ### Imports
 
-The `needs` keyword imports modules:
+The `use` keyword imports modules:
 
 ```rust
-needs std::fs                     // whole module
-needs std::math as m              // aliased
-needs sqrt, pow from std::math    // multiple functions
+use std::fs                     // whole module
+use std::math as m              // aliased
+use std::math::{sqrt, pow}      // selected names
+use game::lib::util             // a module in a subdirectory
+use game::lib::{spawn, Mobj}    // selected names of a nested module
+use std::fs::*                  // every export by its bare name
 ```
 
-Safe stdlib modules (io, math, string, convert, time) are auto-registered, so you can call their functions directly without `needs`. You can still use `needs` with them for aliasing or selective imports if you want:
+A selection lists names between braces, separated by commas; it may span several
+lines and end with a comma. Native modules are imported the same way (`use pixels`,
+`use pixels::{checksum}`).
+
+Safe stdlib modules (io, math, string, time) are auto-registered, so you can call their functions directly without `use`. You can still write `use` with them for aliasing or selective imports if you want:
 
 ```rust
-needs std::math as m              // now use m::sqrt() instead of math::sqrt()
-needs sqrt, pow from std::math    // import specific functions
+use std::math as m              // now use m::sqrt() instead of math::sqrt()
+use std::math::{sqrt, pow}      // import specific functions
 ```
 
-With an alias (`needs std::math as m`), only the aliased form works: `m::sqrt()`.
+With an alias (`use std::math as m`), only the aliased form works: `m::sqrt()`.
 
-After `needs sqrt from std::math`, you call `sqrt()` directly without the module prefix.
+After `use std::math::{sqrt}`, you call `sqrt()` directly without the module prefix.
+
+A path written without braces names a module, so `use std::math` imports the
+module; to bind one function by its bare name, select it: `use std::math::{sqrt}`.
+The old spelling `needs ...` is E0118, and its help line is the `use` line to write
+(`needs a, b from m` becomes `use m::{a, b}`). `use std::convert` is E0449: that
+module was removed (see [Parsing and formatting](#parsing-and-formatting)).
 
 A whole-module import without an alias also binds the module's exports by their
-bare names. Two such imports may export the same name: `needs std::fs` next to
-`needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
+bare names. Two such imports may export the same name: `use std::fs` next to
+`use std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
 both fine. Only an unqualified use of the shared name is refused, at the use, with
 E0445 `symbol 'size' is exported by multiple modules: bytes, fs`; assigning to
 the bare name is the same E0445. A name imported
-by name with `needs size from std::bytes` wins over the whole-module imports, and
-two `needs size from ...` lines naming different modules are E0410 at the second
+by name with `use std::bytes::{size}` wins over the whole-module imports, and
+two `use ...::{size}` lines naming different modules are E0410 at the second
 line, whose hint is to import the name from one module only.
 
-Aliases and bare names belong to the file that writes them. `needs util as u` in
-one module and `needs other as u` in another give each module its own `u`, and a
+Aliases and bare names belong to the file that writes them. `use util as u` in
+one module and `use other as u` in another give each module its own `u`, and a
 name a file imports never changes what another module's code reads.
 
 A declaration of your own always takes precedence over an auto-registered name.
@@ -1296,18 +1354,17 @@ precedence over a built-in string or collection method of the same name:
 
 ### Standard Library Modules
 
-The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement, in the entry file and in every module it imports alike:
+The safe standard library modules are **auto-registered**, their functions are available without any `use` statement, in the entry file and in every module it imports alike:
 
 - `std::io` - console I/O
 - `std::math` - math functions and constants
 - `std::string` - string manipulation
-- `std::convert` - type conversions
 - `std::time` - time and timers
 
 
 See [Standard Library](standard-library.md) for full documentation.
 
-Native modules (shared libraries written against the aelys-native ABI, such as the SDL2 module in `modules/sdl`) are imported with `needs` like any module; how to write, build and load one, and the rules for byte buffers they borrow, are in [Native modules](native-modules.md).
+Native modules (shared libraries written against the aelys-native ABI, such as the SDL2 module in `modules/sdl`) are imported with `use` like any module; how to write, build and load one, and the rules for byte buffers they borrow, are in [Native modules](native-modules.md).
 
 ### Custom Modules
 
@@ -1323,24 +1380,23 @@ project/
 
 From `main.aelys`:
 ```rust
-needs utils              // imports utils.aelys
-needs lib::helper        // imports lib/helper.aelys
+use utils              // imports utils.aelys
+use lib::helper        // imports lib/helper.aelys
 ```
 
 Top-level definitions in a file become the module's exports. A `pub const`
 is exported with its value, so an importer can use it as a repeat count or an
 array length (`[0; cfg::W]`); see [Constants](#constants).
 
-A dotted path is resolved from the file that writes the `needs` line: `needs
-lib::util` in `game/mobj.aelys` looks for `game/lib/util.aelys` (then
+A dotted path is resolved from the file that writes the `use` line: `use lib::util` in `game/mobj.aelys` looks for `game/lib/util.aelys` (then
 `game/lib/util/mod.aelys` and the native forms) first, and only then for
 `lib/util.aelys` under the project root, the directory of the entry file. The
 first file found is the module. Resolution depends only on the importing file and
-the path, never on the order of `needs` lines nor on what another file imported
+the path, never on the order of `use` lines nor on what another file imported
 first.
 
-A module is its file. One file reached by two spellings, `needs game::lib::util`
-from the entry file and `needs lib::util` from `game/mobj.aelys`, is one module:
+A module is its file. One file reached by two spellings, `use game::lib::util`
+from the entry file and `use lib::util` from `game/mobj.aelys`, is one module:
 its top-level code runs once and its variables exist once. Two different files
 that the same dotted path names from two different importers are two modules.
 
@@ -1375,7 +1431,7 @@ or of the entry file are distinct functions: each module's code calls its own.
 A generic declaration crosses the boundary as a template that every importer
 specializes with its own types. A `pub fn` with type parameters is imported like
 any other function, bare, qualified (`container::largest(v, key)`, `c::largest`)
-or by name (`needs largest from container`), and each call instantiates it in the
+or by name (`use container::{largest}`), and each call instantiates it in the
 importing file. A `pub struct` or `pub enum` with type parameters is imported the
 same way, with its impls, and `Stack<int>` built in the module and `Stack<int>`
 built in the importer are one type. The carried body keeps its module's scope:
@@ -1414,7 +1470,7 @@ A method is reachable wherever its type is, so `pub` written on an item of an
 
 `pub` also applies to a `struct`, an `enum`, and a `trait`, and a public one can
 be used from another module. A type is imported by name with the selective form
-of `needs`, not reached through a module path: `module::Name` does not name a
+of `use`, not reached through a module path: `module::Name` does not name a
 type. Given `shapes.aelys`:
 
 ```rust
@@ -1430,7 +1486,7 @@ impl Scorable for Point { fn score(self) -> int { self.x + self.y } }
 an importer writes:
 
 ```rust
-needs Point, Scorable from shapes
+use shapes::{Point, Scorable}
 
 println(Point { x: 1, y: 2 }.score())
 ```
@@ -1438,14 +1494,13 @@ println(Point { x: 1, y: 2 }.score())
 The selective form is exactly selective. A public type the `from` list does not
 name stays out of scope, and using one is E0378 `'Kind' is exported by module
 'shapes' but this file does not import it`, which names the module and the
-`needs` line that would fix it. The whole-module form `needs shapes` is
+`use` line that would fix it. The whole-module form `use shapes` is
 unchanged and still brings every public type into scope.
 
 A public type that an imported function returns or takes is reachable without
-being named: `needs spawn from game::mobj` lets `spawn(5).hp` read a `pub` field
+being named: `use game::mobj::{spawn}` lets `spawn(5).hp` read a `pub` field
 of the returned `Mobj` and call `Mobj`'s inherent methods. Writing the name
-`Mobj` itself, in a literal or an annotation, still needs `needs Mobj from
-game::mobj` (E0378).
+`Mobj` itself, in a literal or an annotation, still needs `use game::mobj::{Mobj}` (E0378).
 
 An impl written in the defining module travels with its type, but only when
 every end of the impl is itself in scope. An inherent `impl Point` arrives with
@@ -1456,13 +1511,13 @@ trait as well; naming only `Point` leaves `score` unresolved, and naming only
 way:
 
 ```rust
-needs Kind from shapes
+use shapes::{Kind}
 
 println(match Kind::Round { Kind::Round => 1, Kind::Sharp => 2 })
 ```
 
 ```rust
-needs Scorable from shapes
+use shapes::{Scorable}
 
 struct Local { n: int }
 impl Scorable for Local { fn score(self) -> int { self.n } }
@@ -1475,14 +1530,13 @@ Importing a type that is not `pub` is E0403 `'Point' is not public in module
 An impl body the importer inlines is still checked and compiled in its defining
 module's terms. Everything that body reads travels with it: the types, traits and
 free functions the defining module imported, the names it reaches through a module
-path or through a module alias (a standard library alias such as `needs std::bytes
-as by` included), the auto-registered modules, the module's own globals, public or
+path or through a module alias (a standard library alias such as `use std::bytes as by` included), the auto-registered modules, the module's own globals, public or
 not, and the types its free functions return, and the
 module's **own private `struct`, `enum` and `trait` declarations together with the
 impls over them**, on the same gate as its private globals. The
-importer never has to write those `needs` lines, and never sees the names they
+importer never has to write those `use` lines, and never sees the names they
 bind: naming one itself is E0403 `'Hidden' is not public in module 'support'`,
-which offers no `needs` line, there being none that would reach it. A diagnostic
+which offers no `use` line, there being none that would reach it. A diagnostic
 about such a body reports against the file that owns the
 statement, however many modules deep it lies, not against the importing file, and
 a repair it offers is written in the terms of that file: an ambiguity raised
@@ -1505,7 +1559,7 @@ file is E0410 `symbol 'K' is exported by multiple modules: cored, corec`, report
 at the importer whether or not the file named either declaring module; when the
 declaration only arrives with a body the file inlines, the report adds
 `note: carried into this file by:` and the modules the file did write. The report
-does not depend on the order of the `needs` lines. A selective import has no `as`
+does not depend on the order of the `use` lines. A selective import has no `as`
 form, so the repair E0410 names is to import the name from one module only, or,
 when the file declared the other itself, to rename its own declaration.
 
@@ -1533,7 +1587,7 @@ literal or pattern is E0413. A rest pattern may omit private fields without
 revealing them, but it may not name them:
 
 ```rust
-needs shapes
+use shapes
 let point = shapes::make()
 point.x                              // ✓ public field
 point.y                              // ✗ error[E0412]
@@ -2464,7 +2518,7 @@ println(Shrine { n: "Reimu" }.greet())
 
 A default travels with its trait: an impl in an importing module adopts it, and a
 type of another module implementing an imported trait answers its defaults through a
-whole-module or a selective `needs`. A default body runs in the module of the impl
+whole-module or a selective `use`. A default body runs in the module of the impl
 adopting it. Calling a method no impl or default supplies is E0363 `unknown method`.
 
 An associated function is selected with `Trait::name` or `Type::name`; a value
@@ -2596,7 +2650,7 @@ impl Display for Point {
 
 let p = Point { x: 1, y: 2 }
 println(p)                        // (1, 2)
-println(convert::to_string(p))    // (1, 2)
+println(p.to_string())    // (1, 2)
 println(__tostring(p))            // (1, 2)
 println("point is {p}")           // point is (1, 2)
 println(p.to_display())           // (1, 2)
@@ -2618,12 +2672,12 @@ println("{Color::Blue}") // blue
 Rendering a struct or an enum that has no `Display` impl is E0338 `trait
 'Display' is not implemented for Point; add an impl or change the bound`. Every
 path that renders the value reports it: the direct argument of `println`,
-`convert::to_string` and `__tostring`, the argument behind a `{}` placeholder,
+the receiver of `.to_string()` and `__tostring`, the argument behind a `{}` placeholder,
 and an interpolated `{p}` inside a format string.
 
 An aggregate renders in a form modelled on Rust's `Debug`, everywhere a `Display`
 value is accepted (`println` and the other print functions, a `{}` placeholder, an
-interpolated `{v}`, `convert::to_string`, `__tostring` and a `T: Display` bound):
+interpolated `{v}`, `.to_string()`, `__tostring` and a `T: Display` bound):
 
 | Value | Rendering |
 |-------|-----------|
@@ -2766,7 +2820,7 @@ a trait, `Self`, or a bounded type parameter names associated items.
 
 A **module-qualified receiver is not implemented**. `support::Counter::Item` is
 E0372 `unknown type 'support'`, and so is `support::Counter` on its own: a module
-path names no type in this language, whichever `needs` form imported the module.
+path names no type in this language, whichever `use` form imported the module.
 The bare receiver is the working spelling, and it works under every import form,
 selective, whole-module, and aliased, because an import brings the type itself
 into scope rather than a path to it.
@@ -3297,7 +3351,7 @@ returns `Option<T>`:
 
 ```rust
 fn read(text: string) -> Result<int, Error> {
-    match convert::parse_int(text) {
+    match text.to_int() {
         Some(value) => Ok(value),
         None => Err(Error::Message("not a number")),
     }
@@ -3312,14 +3366,14 @@ println(match doubled("21") { Ok(value) => value, Err(error) => 0 })   // 42
 println(match doubled("x") { Ok(value) => value, Err(error) => -1 })   // -1
 ```
 
-`?` follows the residual, not the wish. `convert::parse_int` returns
+`?` follows the residual, not the wish. `s.to_int()` returns
 `Option<int>`, so applying `?` to it inside a `Result`-returning function is
 E0373 and the match above is what converts the absence into an error. In an
 `Option`-returning function the same `?` is exactly right:
 
 ```rust
 fn parse(text: string) -> Option<int> {
-    let value = convert::parse_int(text)?
+    let value = text.to_int()?
     Some(value + 1)
 }
 
@@ -3352,7 +3406,7 @@ the same holds for `Option<T>` inside a function returning `Option<U>`:
 
 ```rust
 fn port(text: string) -> Result<int, string> {
-    match convert::parse_int(text) { Some(n) => Ok(n), None => Err("bad port {text}") }
+    match text.to_int() { Some(n) => Ok(n), None => Err("bad port {text}") }
 }
 
 fn configure(text: string) -> Result<unit, string> {
@@ -3432,7 +3486,7 @@ fn run() -> Result<int, AppErr> {
 ```
 
 `from` is an ordinary associated function, so it can also be called by name
-outside any `?`. The word is a keyword only inside a `needs ... from ...` clause:
+outside any `?`. `from` is not a keyword:
 
 ```rust
 let converted = AppErr::from(ParseErr { line: 3 })
@@ -3544,6 +3598,8 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0112 | PrimitiveImplUnsupported | a trait impl for a built-in type such as `int` or `string` |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
 | E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
+| E0117 | RemovedLogicalKeyword | `and`, `or` or `not` written as an operator; the help line gives `&&`, `\|\|` or `!` |
+| E0118 | RemovedNeedsImport | an import written with `needs`; the help line is the same import written with `use` |
 
 ### E02xx, names and emission limits
 
@@ -3646,7 +3702,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0375 | ReservedIdentityConversion | a user impl of the reserved identity `From` |
 | E0376 | GlobalWithoutSignature | a global with no usable signature |
 | E0377 | UndeterminedType | a type that never became determinate |
-| E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
+| E0378 | TypeNotImported | a public type of an imported module the selective `use` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 | E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
@@ -3705,6 +3761,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
 | E0445 | AmbiguousImport | an unqualified use of a name two whole-module imports both bind |
 | E0446 | AssignToImmutableImport | an assignment to an imported `pub let` or imported function |
+| E0449 | RemovedConvertModule | `use std::convert`, or a call to one of its former functions (`convert::parse_int`, a bare `to_int`, `type_of`, ...) that the program does not declare; the help line names the replacement |
 | E0460 | MixedIntegerOperands | a binary operator mixes two integer types |
 | E0461 | WideIntegerUnavailable | `i64` or `u64` is written; `int` is a 48-bit integer |
 | E0462 | FixedPointShiftOutOfRange | a literal shift count of `mul_shr` or `shl_div` lies outside 0..=63 |
