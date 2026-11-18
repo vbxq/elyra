@@ -58,8 +58,8 @@ def main():
         w, h, raw = read_ppm(path)
         out = path.rsplit(".", 1)[0] + ".png"
         write_png(out, w, h, raw, scale)
-        p6 = path.rsplit(".", 1)[0] + ".p6.ppm"
-        open(p6, "wb").write(b"P6\n%d %d\n255\n" % (w, h) + raw)
+        # elyra can only write text, so snap.aelys emits P3; rewrite it as P6 in place
+        open(path, "wb").write(b"P6\n%d %d\n255\n" % (w, h) + raw)
         print(out)
 
 
