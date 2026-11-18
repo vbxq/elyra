@@ -22,7 +22,7 @@ fn malformed_literals_are_lexical_errors() {
     for (program, needle) in [
         ("let c = ''\n0", "exactly one character"),
         ("let c = 'ab'\n0", "exactly one character"),
-        ("let c = 'a\n0", "missing closing quote"),
+        ("let c = '1\n0", "missing closing quote"),
         ("let c = '\\u{110000}'\n0", "unicode escape"),
         ("let c = '\\u{d800}'\n0", "unicode escape"),
         ("let c = '\\q'\n0", "E0005"),
@@ -166,4 +166,38 @@ fn char_and_string_do_not_mix() {
     assert!(err.contains("E0301"), "{err}");
     let err = run_aelys_err("let b = 'a' == \"a\"\n0");
     assert!(err.contains("E0301"), "{err}");
+}
+
+#[test]
+fn a_quote_before_a_longer_name_lexes_as_a_label_not_a_char() {
+    for program in [
+        "'outer: while true { break 'outer }\n0",
+        "let mut i = 0\n'scan: for j in 0..3 { i += j }\ni",
+        "while true { break 'done }\n0",
+        "let c = 'a\n0",
+        "let c = '_x\n0",
+    ] {
+        let err = run_aelys_err(program);
+        assert!(
+            err.contains("E0008") && err.contains("loop label"),
+            "{program}: {err}"
+        );
+    }
+    let err = run_aelys_err("let c = 'ab'\n0");
+    assert!(err.contains("exactly one character"), "{err}");
+}
+
+#[test]
+fn a_single_identifier_character_between_quotes_stays_a_char() {
+    assert_aelys_str(
+        r#"
+let a = 'a'
+let u = '_'
+let e = 'é'
+let z = 'Z'
+let s = match a { 'a' => "A", _ => "?" }
+"{a}{u}{e}{z}{s}{a as int}"
+"#,
+        "a_éZA97",
+    );
 }

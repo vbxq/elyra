@@ -110,6 +110,9 @@ impl Lexer {
         if self.is_at_end() || self.peek() == '\n' {
             return Err(invalid(self, "missing closing quote"));
         }
+        if (self.peek().is_alphabetic() || self.peek() == '_') && self.peek_next() != '\'' {
+            return self.label();
+        }
         let value = match self.peek() {
             '\'' => return Err(invalid(self, "a char literal holds exactly one character")),
             '\\' => {
@@ -145,6 +148,24 @@ impl Lexer {
         self.advance();
         self.add_token(TokenKind::Char(value));
         Ok(())
+    }
+
+    // a quote, one character and a quote is a char; a quote and a longer name with no closing quote is a label
+    fn label(&mut self) -> Result<()> {
+        while self.peek().is_alphanumeric() || self.peek() == '_' {
+            self.advance();
+        }
+        let reason = if self.peek() == '\'' {
+            "a char literal holds exactly one character; use \"...\" for a string".to_string()
+        } else {
+            let name: String = self.chars[self.start..self.current].iter().collect();
+            format!(
+                "`{name}` is a loop label, and loop labels are not supported; a char literal is one character between single quotes"
+            )
+        };
+        Err(AelysError::Compile(
+            self.error(CompileErrorKind::InvalidCharLiteral { reason }),
+        ))
     }
 
     fn escaped(&mut self, value: char) -> char {
