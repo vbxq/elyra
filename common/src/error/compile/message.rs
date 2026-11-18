@@ -51,15 +51,15 @@ impl CompileErrorKind {
             Self::TraitObjectDeferred { trait_name } => format!(
                 "trait object 'dyn {trait_name}' is deferred to Stage 3\n   = help: take a generic type parameter bound by {trait_name} instead"
             ),
+            Self::ReservedName { name } => format!(
+                "'{name}' cannot be written: names starting with `AelysTuple` are reserved for the compiler's tuple types\n   = help: write a tuple type as `(int, string)`, or rename the item"
+            ),
             Self::InvalidDefaultMethod => {
                 "'default fn' is only allowed on a method of a generic trait impl\n   \
                  = help: drop 'default', or move the method to a generic 'impl<T> Trait for Type<T>'"
                     .to_string()
             }
-            Self::UndefinedVariable(name) => format!(
-                "undefined variable '{}'",
-                crate::naming::unscoped_global_name(name)
-            ),
+            Self::UndefinedVariable(name) => crate::naming::undefined_variable_message(name),
             Self::VariableAlreadyDefined(name) => {
                 format!("variable '{}' already defined in this scope", name)
             }
@@ -79,6 +79,12 @@ impl CompileErrorKind {
             Self::CompilationLimitExceeded(message) => {
                 format!("compilation limit exceeded: {message}")
             }
+            Self::CallWindowOverlap {
+                register,
+                window_base,
+            } => format!(
+                "internal compiler error: the call frame based at r{window_base} would overwrite live register r{register}"
+            ),
             Self::BreakOutsideLoop => "'break' outside of loop".to_string(),
             Self::ContinueOutsideLoop => "'continue' outside of loop".to_string(),
             Self::ReturnOutsideFunction => "'return' outside of function".to_string(),
@@ -165,14 +171,6 @@ impl CompileErrorKind {
                     super::kind::SymbolConflictRepair::NameOne => format!(
                         "import '{}' from one module only; a selective import has no 'as' form",
                         symbol
-                    ),
-                    super::kind::SymbolConflictRepair::Qualify => format!(
-                        "both modules were imported whole; write the qualified name: {}",
-                        modules
-                            .iter()
-                            .map(|module| format!("{module}::{symbol}"))
-                            .collect::<Vec<_>>()
-                            .join(" or ")
                     ),
                     super::kind::SymbolConflictRepair::RenameLocal => format!(
                         "rename this file's '{}'; a selective import has no 'as' form to alias the other",

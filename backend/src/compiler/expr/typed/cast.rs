@@ -12,10 +12,22 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        if self.compile_char_cast(inner, target, dest, span)? {
+        let target_kind =
+            crate::opcode_select::sized_kind(&aelys_sema::ResolvedType::from_infer_type(target));
+        if self.compile_char_cast(
+            inner,
+            target,
+            target_kind.map(CastTarget::sized),
+            dest,
+            span,
+        )? {
             return Ok(());
         }
-        let target = if target.is_integer() {
+        let source_kind =
+            crate::opcode_select::sized_kind(&aelys_sema::ResolvedType::from_infer_type(&inner.ty));
+        let target = if let Some(kind) = target_kind {
+            CastTarget::sized(kind)
+        } else if target.is_integer() {
             CastTarget::Int
         } else if target.is_float() {
             CastTarget::Float
@@ -25,16 +37,24 @@ impl Compiler {
             return self.compile_typed_expr(inner, dest);
         };
 
-        if (inner.ty.is_integer() && target == CastTarget::Int)
-            || (inner.ty.is_float() && target == CastTarget::Float)
-            || (inner.ty == InferType::Bool && target == CastTarget::Bool)
-        {
+        let identity = match (target.sized_kind(), source_kind) {
+            (Some(to), Some(from)) => {
+                to == from || (to.contains(from.min()) && to.contains(from.max()))
+            }
+            (Some(_), None) => false,
+            (None, _) => {
+                (inner.ty.is_integer() && target == CastTarget::Int)
+                    || (inner.ty.is_float() && target == CastTarget::Float)
+                    || (inner.ty == InferType::Bool && target == CastTarget::Bool)
+            }
+        };
+        if identity {
             return self.compile_typed_expr(inner, dest);
         }
 
         let source = self.alloc_register()?;
         self.compile_typed_expr(inner, source)?;
-        self.emit_a(OpCode::Cast, dest, source, target as u8, span);
+        self.emit_a(OpCode::Cast, dest, source, u16::from(target as u8), span);
         self.free_register(source);
         Ok(())
     }

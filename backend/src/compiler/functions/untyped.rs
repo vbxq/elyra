@@ -50,7 +50,7 @@ impl Compiler {
             func_compiler.emit_return0(func.span);
         }
 
-        func_compiler.current.num_registers = func_compiler.next_register;
+        func_compiler.finish_registers()?;
         func_compiler.current.arity = u16::try_from(func.params.len()).map_err(|_| {
             aelys_common::error::CompileError::new(
                 aelys_common::error::CompileErrorKind::TooManyArguments,

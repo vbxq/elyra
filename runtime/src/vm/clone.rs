@@ -24,7 +24,6 @@ impl VM {
                 if replacement == child {
                     continue;
                 }
-                self.heap.write_barrier_value(shell, replacement);
                 self.store_aggregate_child(shell, slot, replacement)?;
             }
         }
@@ -114,8 +113,10 @@ impl VM {
         };
         if let ObjectKind::Map(map) = &mut object.kind {
             map.set_value_at(slot, replacement);
+            self.heap.write_barrier_value(shell, replacement);
             return Ok(());
         }
+        let indexed = matches!(object.kind, ObjectKind::Array(_) | ObjectKind::Vec(_));
         let target = match &mut object.kind {
             ObjectKind::Struct(structure) => structure.slots.get_mut(slot),
             ObjectKind::Enum(value) => value.slots.get_mut(slot),
@@ -132,6 +133,11 @@ impl VM {
         };
         if let Some(target) = target {
             *target = replacement;
+        }
+        if indexed {
+            self.heap.write_barrier_element(shell, slot, replacement);
+        } else {
+            self.heap.write_barrier_value(shell, replacement);
         }
         Ok(())
     }

@@ -65,6 +65,9 @@ impl VM {
         let saved_globals = (needs_native_globals && target_mapping != previous_mapping)
             .then(|| self.globals_by_index.clone());
         if needs_native_globals {
+            if target_mapping != previous_mapping {
+                self.sync_current_function_globals();
+            }
             self.prepare_globals_for_function(function);
         }
         let result = (|| {

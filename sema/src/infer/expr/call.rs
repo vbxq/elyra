@@ -100,7 +100,11 @@ impl TypeInference {
         args: &[Expr],
         span: Span,
     ) -> (TypedExprKind, InferType) {
-        self.with_borrow_call_scope(|this| this.infer_call_expr_inner(callee, args, span))
+        self.constructor_expectation = self.nominal_expectation.take();
+        let typed =
+            self.with_borrow_call_scope(|this| this.infer_call_expr_inner(callee, args, span));
+        self.constructor_expectation = None;
+        typed
     }
 
     fn infer_call_expr_inner(
@@ -144,6 +148,10 @@ impl TypeInference {
                 return result;
             }
 
+            if let Some(result) = self.infer_fixed_point_call(callee, args, span) {
+                return result;
+            }
+
             if let Some(result) = self.infer_string_method_call(callee, args) {
                 return result;
             }
@@ -168,6 +176,15 @@ impl TypeInference {
         {
             self.register_receiver_borrow(object, reference, callee.span);
         }
+        let param_types = match &typed_callee.ty {
+            InferType::Function { params, .. }
+                if params.len() == args.len()
+                    && !matches!(&typed_callee.kind, TypedExprKind::StructMethod { .. }) =>
+            {
+                params.clone()
+            }
+            _ => Vec::new(),
+        };
         let mut typed_args: Vec<TypedExpr> = args
             .iter()
             .enumerate()
@@ -177,38 +194,51 @@ impl TypeInference {
                 } else {
                     reference_modes.get(index).copied().flatten()
                 };
-                self.infer_call_argument(arg, expected)
+                self.nominal_expectation = param_types.get(index).cloned();
+                let typed = self.infer_call_argument(arg, expected);
+                self.nominal_expectation = None;
+                typed
             })
             .collect();
-        let through_value = self.calls_through_function_value(callee, &typed_callee);
-        let (mutable_params, through_value) = match through_value {
-            None => (self.mutable_params_for_call(callee, &typed_callee), false),
-            Some(Some(known)) => (known, false),
-            Some(None) => (Vec::new(), true),
+        let argument_indices = effective_argument_indices(&typed_args);
+        let declared = if self.calls_through_function_value(callee, &typed_callee) {
+            None
+        } else {
+            self.mutable_params_for_call(callee, &typed_callee)
         };
-        let receiver_offset = usize::from(matches!(
-            &typed_callee.kind,
-            TypedExprKind::StructMethod {
-                separator: aelys_syntax::MemberSeparator::Dot,
-                ..
+        match declared {
+            Some(mutable_params) => {
+                let receiver_offset = usize::from(matches!(
+                    &typed_callee.kind,
+                    TypedExprKind::StructMethod {
+                        separator: aelys_syntax::MemberSeparator::Dot,
+                        ..
+                    }
+                ));
+                for (index, (arg, typed_arg)) in args.iter().zip(&typed_args).enumerate() {
+                    if let Some(Some(parameter)) = mutable_params.get(index + receiver_offset) {
+                        self.record_mutable_alias(
+                            arg,
+                            &typed_arg.ty,
+                            crate::constraint::AliasSite::Parameter(parameter.to_string()),
+                        );
+                    }
+                }
             }
-        ));
-        for (index, (arg, typed_arg)) in args.iter().zip(&typed_args).enumerate() {
-            if let Some(Some(parameter)) = mutable_params.get(index + receiver_offset) {
-                self.record_mutable_alias(
-                    arg,
-                    &typed_arg.ty,
-                    crate::constraint::AliasSite::Parameter(parameter.to_string()),
-                );
-            } else if through_value {
-                self.record_mutable_alias(
-                    arg,
-                    &typed_arg.ty,
-                    crate::constraint::AliasSite::FunctionValue,
-                );
+            None => {
+                for (position, index) in argument_indices.iter().enumerate() {
+                    if let (Some(arg), Some(typed_arg)) = (args.get(*index), typed_args.get(*index))
+                    {
+                        self.record_function_value_alias(
+                            arg,
+                            &typed_arg.ty,
+                            &typed_callee.ty,
+                            position,
+                        );
+                    }
+                }
             }
         }
-        let argument_indices = effective_argument_indices(&typed_args);
         self.record_native_obligations(
             &native_obligations,
             &typed_callee.ty,
@@ -241,26 +271,7 @@ impl TypeInference {
                             reason: reason.clone(),
                         });
                     }
-                    if let TypedExprKind::Int(value) = &arg.kind
-                        && param_ty.is_integer()
-                        && *param_ty != InferType::I64
-                    {
-                        if InferType::int_fits(*value, param_ty) {
-                            arg.ty = param_ty.clone();
-                        } else {
-                            self.errors.push(TypeError {
-                                kind: TypeErrorKind::Mismatch {
-                                    expected: param_ty.clone(),
-                                    found: InferType::I64,
-                                },
-                                span: arg.span,
-                                reason: ConstraintReason::IntLiteralOverflow {
-                                    value: *value,
-                                    target: param_ty.clone(),
-                                },
-                            });
-                        }
-                    }
+                    self.fit_int_literal(arg, param_ty);
                     if let TypedExprKind::Float(value) = &arg.kind
                         && *param_ty == InferType::F32
                     {
@@ -289,8 +300,10 @@ impl TypeInference {
                 .iter()
                 .map(|index| typed_args[*index].ty.clone())
                 .collect();
+            let modes = self.fresh_param_modes(arg_types.len());
             let expected_fn_type = InferType::Function {
                 params: arg_types,
+                modes,
                 ret: Box::new(ret.clone()),
             };
 
@@ -319,6 +332,110 @@ impl TypeInference {
             },
             ret_type,
         )
+    }
+
+    fn infer_fixed_point_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<(TypedExprKind, InferType)> {
+        let ExprKind::Member {
+            object,
+            member,
+            separator: aelys_syntax::MemberSeparator::Dot,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        if !matches!(member.as_str(), "mul_shr" | "shl_div") {
+            return None;
+        }
+        let typed_object = self.infer_expr(object);
+        let receiver = typed_object.ty.clone();
+        if !matches!(receiver, InferType::I32 | InferType::I64) {
+            return None;
+        }
+        let mut typed_args: Vec<TypedExpr> = args.iter().map(|arg| self.infer_expr(arg)).collect();
+        if typed_args.len() != 2 {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: typed_args.len(),
+                },
+                span,
+                reason: ConstraintReason::Other(format!("method '{member}'")),
+            });
+            return Some((
+                TypedExprKind::Call {
+                    callee: Box::new(TypedExpr::new(
+                        TypedExprKind::Member {
+                            object: Box::new(typed_object),
+                            member: member.clone(),
+                            separator: aelys_syntax::MemberSeparator::Dot,
+                        },
+                        InferType::Poison,
+                        callee.span,
+                    )),
+                    args: typed_args,
+                },
+                InferType::Poison,
+            ));
+        }
+        self.fit_int_literal(&mut typed_args[0], &receiver);
+        if let Some(count) = constant_int(&typed_args[1])
+            && !(0..=63).contains(&count)
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::FixedPointShiftOutOfRange {
+                    method: member.clone(),
+                    count,
+                },
+                span: typed_args[1].span,
+                reason: ConstraintReason::Argument {
+                    func_name: member.clone(),
+                    arg_index: 1,
+                },
+            });
+        }
+        let params = vec![receiver.clone(), InferType::I64];
+        for (index, (arg, expected)) in typed_args.iter().zip(params.iter()).enumerate() {
+            let reason = ConstraintReason::Argument {
+                func_name: member.clone(),
+                arg_index: index,
+            };
+            if self.reject_dynamic(&arg.ty, expected, arg.span, reason.clone())
+                || self.reject_untyped_native(&arg.ty, expected, arg.span, reason.clone())
+            {
+                continue;
+            }
+            self.constraints.push(Constraint::equal(
+                expected.clone(),
+                arg.ty.clone(),
+                arg.span,
+                reason,
+            ));
+        }
+        let typed_callee = TypedExpr::new(
+            TypedExprKind::Member {
+                object: Box::new(typed_object),
+                member: member.clone(),
+                separator: aelys_syntax::MemberSeparator::Dot,
+            },
+            InferType::Function {
+                params,
+                ret: Box::new(receiver.clone()),
+                modes: crate::types::ParamModes::plain(),
+            },
+            callee.span,
+        );
+        Some((
+            TypedExprKind::Call {
+                callee: Box::new(typed_callee),
+                args: typed_args,
+            },
+            receiver,
+        ))
     }
 
     fn mark_display_arguments(
@@ -437,6 +554,7 @@ impl TypeInference {
         callee: &Expr,
         args: &[Expr],
     ) -> Option<(TypedExprKind, InferType)> {
+        let expectation = self.constructor_expectation.take();
         let ExprKind::Member {
             object,
             member,
@@ -446,7 +564,10 @@ impl TypeInference {
             return None;
         };
         let (enum_name, explicit_type_args) = match &object.kind {
-            ExprKind::Identifier(enum_name) => (enum_name.clone(), Vec::new()),
+            ExprKind::Identifier(enum_name) => (
+                enum_name.clone(),
+                Self::expected_type_args(expectation, enum_name),
+            ),
             ExprKind::GenericApply { callee, type_args } => {
                 let ExprKind::Identifier(enum_name) = &callee.kind else {
                     return None;
@@ -543,7 +664,8 @@ impl TypeInference {
                     .zip(expected.iter())
                     .map(|(arg, expected)| {
                         let expected = expected.substitute_params(&substitutions);
-                        let typed = self.infer_expr(arg);
+                        let mut typed = self.infer_expr(arg);
+                        self.fit_int_literal(&mut typed, &expected);
                         if !self.reject_dynamic(
                             &typed.ty,
                             &expected,
@@ -882,6 +1004,7 @@ impl TypeInference {
         }
         let method_type = InferType::Function {
             params: method.params.clone(),
+            modes: crate::types::ParamModes::from_flags([method.mutable_self]),
             ret: Box::new(method.return_type.clone()),
         };
         let typed_callee = TypedExpr::new(
@@ -943,10 +1066,7 @@ impl TypeInference {
         let ty = typed_object.ty.clone();
         let typed_callee = TypedExpr::new(
             TypedExprKind::Identifier(CLONE_BUILTIN.to_string()),
-            InferType::Function {
-                params: vec![ty.clone()],
-                ret: Box::new(ty.clone()),
-            },
+            InferType::function(vec![ty.clone()], ty.clone()),
             callee.span,
         );
         Some((
@@ -985,7 +1105,7 @@ impl TypeInference {
             return None;
         }
         let signature = crate::native::function_signature(&format!("string::{member}"))?;
-        let InferType::Function { params, ret } = signature else {
+        let InferType::Function { params, ret, .. } = signature else {
             return None;
         };
         let receiver = params.first()?;
@@ -1036,10 +1156,7 @@ impl TypeInference {
                     member: member.clone(),
                     separator: aelys_syntax::MemberSeparator::Dot,
                 },
-                InferType::Function {
-                    params: vec![InferType::Poison; typed_args.len()],
-                    ret: Box::new(InferType::Poison),
-                },
+                InferType::function(vec![InferType::Poison; typed_args.len()], InferType::Poison),
                 callee.span,
             );
             return Some((
@@ -1082,10 +1199,7 @@ impl TypeInference {
                 member: member.clone(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: expected_args,
-                ret: Box::new(output.clone()),
-            },
+            InferType::function(expected_args, output.clone()),
             callee.span,
         );
         Some((
@@ -1098,7 +1212,7 @@ impl TypeInference {
     }
 
     fn specialize_numeric_signature(&mut self, callee: TypedExpr) -> TypedExpr {
-        let InferType::Function { params, ret } = &callee.ty else {
+        let InferType::Function { params, modes, ret } = &callee.ty else {
             return callee;
         };
         if !params.iter().any(contains_numeric) && !contains_numeric(ret) {
@@ -1117,6 +1231,7 @@ impl TypeInference {
                 .iter()
                 .map(|param| replace_numeric(param, &numeric))
                 .collect(),
+            modes: modes.clone(),
             ret: Box::new(replace_numeric(ret, &numeric)),
         };
         TypedExpr::new(callee.kind, specialized, callee.span)
@@ -1238,7 +1353,7 @@ impl TypeInference {
         if matches!(member.as_str(), "push" | "pop" | "reserve") {
             self.require_mutable_collection(object, member, &typed_object.ty);
         }
-        let typed_args: Vec<TypedExpr> = args.iter().map(|arg| self.infer_expr(arg)).collect();
+        let mut typed_args: Vec<TypedExpr> = args.iter().map(|arg| self.infer_expr(arg)).collect();
         let (output, expected_args) = match (member.as_str(), is_vec, args.len()) {
             ("len", _, 0) | ("capacity", true, 0) => (InferType::I64, Vec::new()),
             ("is_empty", _, 0) => (InferType::Bool, Vec::new()),
@@ -1267,6 +1382,7 @@ impl TypeInference {
                     InferType::Vec(Box::new(mapped.clone())),
                     vec![InferType::Function {
                         params: vec![element.clone()],
+                        modes: self.fresh_param_modes(1),
                         ret: Box::new(mapped),
                     }],
                 )
@@ -1275,6 +1391,7 @@ impl TypeInference {
                 InferType::Vec(Box::new(element.clone())),
                 vec![InferType::Function {
                     params: vec![element.clone()],
+                    modes: self.fresh_param_modes(1),
                     ret: Box::new(InferType::Bool),
                 }],
             ),
@@ -1286,6 +1403,7 @@ impl TypeInference {
                         accumulator.clone(),
                         InferType::Function {
                             params: vec![accumulator, element.clone()],
+                            modes: self.fresh_param_modes(2),
                             ret: Box::new(typed_args[0].ty.clone()),
                         },
                     ],
@@ -1299,6 +1417,11 @@ impl TypeInference {
             "reserve" => vec![InferType::I64],
             _ => expected_args,
         };
+        if member == "push"
+            && let Some(arg) = typed_args.first_mut()
+        {
+            self.fit_int_literal(arg, &element);
+        }
         for (index, (arg, expected)) in typed_args.iter().zip(expected_args.iter()).enumerate() {
             let reason = ConstraintReason::Argument {
                 func_name: format!("collection::{member}"),
@@ -1321,10 +1444,7 @@ impl TypeInference {
                 member: member.clone(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: expected_args,
-                ret: Box::new(output.clone()),
-            },
+            InferType::function(expected_args, output.clone()),
             callee.span,
         );
         Some((
@@ -1370,10 +1490,7 @@ impl TypeInference {
                 member: member.to_string(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: vec![InferType::Poison; typed_args.len()],
-                ret: Box::new(InferType::Poison),
-            },
+            InferType::function(vec![InferType::Poison; typed_args.len()], InferType::Poison),
             callee.span,
         );
         (
@@ -1405,7 +1522,7 @@ pub(super) fn collect_generic_params(
                 names.push(name.clone());
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_generic_params(param, names, seen);
             }
@@ -1442,7 +1559,8 @@ fn substitute_generic_params(
             .get(name)
             .cloned()
             .unwrap_or_else(|| ty.clone()),
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params
                 .iter()
                 .map(|param| substitute_generic_params(param, substitutions))
@@ -1529,7 +1647,7 @@ fn is_pipeline_source(expr: &Expr) -> bool {
 fn contains_numeric(ty: &InferType) -> bool {
     match ty {
         InferType::Numeric => true,
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_numeric) || contains_numeric(ret)
         }
         InferType::Array(inner)
@@ -1547,7 +1665,8 @@ fn contains_numeric(ty: &InferType) -> bool {
 fn replace_numeric(ty: &InferType, replacement: &InferType) -> InferType {
     match ty {
         InferType::Numeric => replacement.clone(),
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params
                 .iter()
                 .map(|param| replace_numeric(param, replacement))
@@ -1617,4 +1736,16 @@ fn is_method_callee(callee: &TypedExpr) -> bool {
         TypedExprKind::StructMethod { separator, .. }
             if *separator == aelys_syntax::MemberSeparator::Dot
     )
+}
+
+fn constant_int(expr: &TypedExpr) -> Option<i64> {
+    match &expr.kind {
+        TypedExprKind::Int(value) => Some(*value),
+        TypedExprKind::Grouping(inner) => constant_int(inner),
+        TypedExprKind::Unary {
+            op: aelys_syntax::UnaryOp::Neg,
+            operand,
+        } => constant_int(operand)?.checked_neg(),
+        _ => None,
+    }
 }

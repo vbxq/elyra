@@ -1,4 +1,4 @@
-use super::InferType;
+use super::{InferType, ParamMode, ParamModes};
 use crate::constraint::ItemNamespace;
 use aelys_syntax::{ModuleId, Span};
 use std::collections::HashMap;
@@ -467,6 +467,44 @@ impl TypeTable {
         }
     }
 
+    // an instance name is local to the unit that minted it, so a type leaving the unit is re-applied
+    pub fn deinstantiate(&self, ty: &InferType) -> InferType {
+        let each = |types: &[InferType]| types.iter().map(|t| self.deinstantiate(t)).collect();
+        match ty {
+            InferType::Struct(name) => match (
+                self.nominal_instance_origins.get(name),
+                self.nominal_instance_args.get(name),
+            ) {
+                (Some(origin), Some(args)) => InferType::Applied {
+                    name: origin.clone(),
+                    args: each(args),
+                },
+                _ => ty.clone(),
+            },
+            InferType::Applied { name, args } => InferType::Applied {
+                name: name.clone(),
+                args: each(args),
+            },
+            InferType::Function { params, modes, ret } => InferType::Function {
+                params: each(params),
+                modes: modes.clone(),
+                ret: Box::new(self.deinstantiate(ret)),
+            },
+            InferType::Option(inner) => InferType::Option(Box::new(self.deinstantiate(inner))),
+            InferType::Array(inner) => InferType::Array(Box::new(self.deinstantiate(inner))),
+            InferType::Vec(inner) => InferType::Vec(Box::new(self.deinstantiate(inner))),
+            InferType::FixedArray(inner, length) => {
+                InferType::FixedArray(Box::new(self.deinstantiate(inner)), *length)
+            }
+            InferType::Result(ok, err) => InferType::Result(
+                Box::new(self.deinstantiate(ok)),
+                Box::new(self.deinstantiate(err)),
+            ),
+            InferType::Tuple(elements) => InferType::Tuple(each(elements)),
+            _ => ty.clone(),
+        }
+    }
+
     pub fn nominal_instance_origin(&self, name: &str) -> Option<&str> {
         self.nominal_instance_origins.get(name).map(String::as_str)
     }
@@ -523,6 +561,32 @@ impl TypeTable {
         self.declaration_order
             .retain(|name| self.structs.contains_key(name));
         self.finalize_schema_indices();
+    }
+
+    // a tuple instance is local to the module that built it; an importer materializes its own
+    pub fn rewrite_field_types(&mut self, rewrite: impl Fn(&InferType) -> InferType) {
+        for definition in self.structs.values_mut() {
+            for field in &mut definition.fields {
+                field.ty = rewrite(&field.ty);
+            }
+        }
+        for definition in self.enums.values_mut() {
+            for variant in &mut definition.variants {
+                match &mut variant.fields {
+                    EnumVariantFieldsDef::Unit => {}
+                    EnumVariantFieldsDef::Tuple(fields) => {
+                        for field in fields {
+                            *field = rewrite(field);
+                        }
+                    }
+                    EnumVariantFieldsDef::Named(fields) => {
+                        for field in fields {
+                            field.ty = rewrite(&field.ty);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn field_offset(&self, structure: &str, field: &str) -> Option<u16> {
@@ -1734,7 +1798,7 @@ fn collect_applied_types(ty: &InferType, found: &mut Vec<InferType>) {
                 collect_applied_types(arg, found);
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_applied_types(param, found);
             }
@@ -1825,10 +1889,12 @@ fn bind_pattern_params(
             InferType::Function {
                 params: expected_params,
                 ret: expected_ret,
+                ..
             },
             InferType::Function {
                 params: found_params,
                 ret: found_ret,
+                ..
             },
         ) if expected_params.len() == found_params.len() => {
             for (expected, found) in expected_params.iter().zip(found_params) {
@@ -1900,14 +1966,17 @@ fn type_matches(pattern: &InferType, actual: &InferType) -> bool {
         (
             InferType::Function {
                 params: expected_params,
+                modes: expected_modes,
                 ret: expected_ret,
             },
             InferType::Function {
                 params: found_params,
+                modes: found_modes,
                 ret: found_ret,
             },
         ) => {
             expected_params.len() == found_params.len()
+                && modes_may_match(expected_modes, found_modes, found_params.len())
                 && expected_params
                     .iter()
                     .zip(found_params)
@@ -1916,6 +1985,13 @@ fn type_matches(pattern: &InferType, actual: &InferType) -> bool {
         }
         _ => pattern == actual,
     }
+}
+
+fn modes_may_match(left: &ParamModes, right: &ParamModes, len: usize) -> bool {
+    (0..len).all(|index| match (left.get(index), right.get(index)) {
+        (ParamMode::Var(_), _) | (_, ParamMode::Var(_)) => true,
+        (left, right) => left == right,
+    })
 }
 
 pub(crate) fn headers_unify(left: &InferType, right: &InferType) -> bool {
@@ -1979,7 +2055,8 @@ fn tag_params(ty: &InferType, prefix: &str) -> InferType {
         InferType::Tuple(elements) => {
             InferType::Tuple(elements.iter().map(|e| tag_params(e, prefix)).collect())
         }
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params.iter().map(|p| tag_params(p, prefix)).collect(),
             ret: Box::new(tag_params(ret, prefix)),
         },
@@ -2034,7 +2111,7 @@ fn occurs_in(
             occurs_in(name, &ok, bindings) || occurs_in(name, &err, bindings)
         }
         InferType::Tuple(elements) => elements.iter().any(|e| occurs_in(name, e, bindings)),
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(|p| occurs_in(name, p, bindings)) || occurs_in(name, &ret, bindings)
         }
         _ => false,
@@ -2099,14 +2176,17 @@ fn unify_headers(
         (
             InferType::Function {
                 params: left_params,
+                modes: left_modes,
                 ret: left_ret,
             },
             InferType::Function {
                 params: right_params,
+                modes: right_modes,
                 ret: right_ret,
             },
         ) => {
             left_params.len() == right_params.len()
+                && modes_may_match(left_modes, right_modes, right_params.len())
                 && left_params
                     .iter()
                     .zip(right_params)
@@ -2158,7 +2238,7 @@ fn receiver_positions(ty: &InferType, path: &mut Vec<usize>, out: &mut HashMap<S
             visit(0, ok, out);
             visit(1, err, out);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for (index, param) in params.iter().enumerate() {
                 visit(index, param, out);
             }

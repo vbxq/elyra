@@ -23,7 +23,7 @@ impl Compiler {
         let start = if count == 0 {
             dest
         } else {
-            self.alloc_consecutive_registers_for_call(usize::from(count), span)?
+            self.alloc_consecutive_registers(usize::from(count), span)?
         };
         for (offset, (_, field)) in fields.iter().enumerate() {
             let register = start
@@ -85,7 +85,7 @@ impl Compiler {
         let start = if count == 0 {
             dest
         } else {
-            self.alloc_consecutive_registers_for_call(usize::from(count), span)?
+            self.alloc_consecutive_registers(usize::from(count), span)?
         };
         for (field, offset) in fields.iter().zip(field_offsets.iter().copied()) {
             let register = start.checked_add(offset).ok_or_else(|| {

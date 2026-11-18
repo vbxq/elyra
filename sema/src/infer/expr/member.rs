@@ -529,14 +529,17 @@ impl TypeInference {
                 InferType::Poison,
                 object.span,
             );
+            let modes = self.declared_param_modes(&method.symbol, 0, &method.params);
+            let symbol = method.symbol;
             return (
                 TypedExprKind::StructMethod {
                     object: Box::new(typed_object),
-                    symbol: method.symbol,
+                    symbol,
                     method: member.to_string(),
                     separator,
                 },
                 InferType::Function {
+                    modes,
                     params: method.params,
                     ret: Box::new(method.return_type),
                 },
@@ -568,6 +571,7 @@ impl TypeInference {
                         },
                         InferType::Function {
                             params: method.params.clone(),
+                            modes: self.declared_param_modes(&method.symbol, 0, &method.params),
                             ret: Box::new(method.return_type.clone()),
                         },
                     );
@@ -616,10 +620,7 @@ impl TypeInference {
                     member: member.to_string(),
                     separator,
                 },
-                InferType::Function {
-                    params: Vec::new(),
-                    ret: Box::new(InferType::String),
-                },
+                InferType::function(Vec::new(), InferType::String),
             );
         }
 
@@ -1090,10 +1091,34 @@ impl TypeInference {
                     let mut names = Vec::new();
                     let mut seen = std::collections::HashSet::new();
                     super::call::collect_generic_params(header, &mut names, &mut seen);
-                    let fresh: HashMap<String, InferType> = names
+                    let mut fresh: HashMap<String, InferType> = names
                         .into_iter()
                         .map(|name| (name, self.type_gen.fresh()))
                         .collect();
+                    if let (
+                        InferType::Applied {
+                            name: header_name,
+                            args: header_args,
+                        },
+                        InferType::Applied {
+                            name: receiver_name,
+                            args: receiver_args,
+                        },
+                    ) = (header, &typed_object.ty)
+                        && header_name == receiver_name
+                        && header_args.len() == receiver_args.len()
+                    {
+                        for (header_arg, receiver_arg) in header_args.iter().zip(receiver_args) {
+                            let spelled = header_arg.substitute_params(&fresh);
+                            if let Some(name) = fresh
+                                .iter()
+                                .find(|(_, value)| **value == spelled)
+                                .map(|(name, _)| name.clone())
+                            {
+                                fresh.insert(name, receiver_arg.clone());
+                            }
+                        }
+                    }
                     self.constraints.push(Constraint::equal(
                         header.substitute_params(&fresh),
                         typed_object.ty.clone(),
@@ -1129,7 +1154,7 @@ impl TypeInference {
                 let reason = ConstraintReason::Return {
                     func_name: member.to_string(),
                 };
-                let params = method
+                let params: Vec<InferType> = method
                     .params
                     .into_iter()
                     .skip(1)
@@ -1137,15 +1162,18 @@ impl TypeInference {
                     .collect();
                 let return_type =
                     self.normalize_projection_types(&method.return_type, _span, &reason);
+                let modes = self.declared_param_modes(&method.symbol, 1, &params);
+                let symbol = method.symbol;
                 return (
                     TypedExprKind::StructMethod {
                         object: Box::new(typed_object),
-                        symbol: method.symbol,
+                        symbol,
                         method: member.to_string(),
                         separator,
                     },
                     InferType::Function {
                         params,
+                        modes,
                         ret: Box::new(return_type),
                     },
                 );
@@ -1188,6 +1216,16 @@ impl TypeInference {
                     } else if let Some(gated) = self.supertrait_gate_error(&name, member, _span) {
                         self.errors.push(gated);
                         InferType::Poison
+                    } else if aelys_syntax::tuple_arity(&name).is_some() {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::TupleFieldOutOfRange {
+                                tuple: typed_object.ty.clone(),
+                                field: member.to_string(),
+                            },
+                            span: _span,
+                            reason: ConstraintReason::Other("tuple field lookup".to_string()),
+                        });
+                        InferType::Poison
                     } else {
                         self.errors.push(TypeError {
                             kind: TypeErrorKind::UnknownField {
@@ -1223,6 +1261,7 @@ impl TypeInference {
         fields: &[StructFieldInit],
         _span: Span,
     ) -> (TypedExprKind, InferType) {
+        let expectation = self.nominal_expectation.take();
         if let Some(error) = self.private_nominal_error(name, _span) {
             self.errors.push(error);
             return (TypedExprKind::Null, InferType::Poison);
@@ -1242,10 +1281,13 @@ impl TypeInference {
                 },
             });
         }
-        let explicit_type_args = type_args
+        let mut explicit_type_args = type_args
             .iter()
             .map(|annotation| self.type_from_annotation(annotation))
             .collect::<Vec<_>>();
+        if explicit_type_args.is_empty() {
+            explicit_type_args = Self::expected_type_args(expectation, name);
+        }
         if let Some(definition) = &def
             && !explicit_type_args.is_empty()
             && explicit_type_args.len() != definition.type_params.len()
@@ -1279,6 +1321,27 @@ impl TypeInference {
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
+        let mut substitutions = substitutions;
+        let tuple_literal =
+            explicit_type_args.is_empty() && aelys_syntax::tuple_arity(name).is_some();
+        let mut typed_values: Vec<Option<TypedExpr>> = Vec::new();
+        if tuple_literal && let Some(definition) = &def {
+            for field in fields {
+                let typed_value = self.infer_expr(&field.value);
+                if let Some(field_def) = definition.fields.iter().find(|df| df.name == field.name)
+                    && let InferType::Param(param) = &field_def.ty
+                    && !matches!(
+                        typed_value.ty,
+                        InferType::Never | InferType::Dynamic | InferType::Poison
+                    )
+                    && !typed_value.ty.contains_dynamic()
+                {
+                    substitutions.insert(param.clone(), typed_value.ty.clone());
+                }
+                typed_values.push(Some(typed_value));
+            }
+        }
+        let mut typed_values = typed_values.into_iter();
         let instance_type = if let Some(definition) = &def {
             if definition.type_params.is_empty() {
                 InferType::Struct(name.to_string())
@@ -1306,7 +1369,10 @@ impl TypeInference {
         let typed_fields: Vec<(String, Box<TypedExpr>)> = fields
             .iter()
             .filter_map(|f| {
-                let typed_value = self.infer_expr(&f.value);
+                let mut typed_value = match typed_values.next().flatten() {
+                    Some(typed_value) => typed_value,
+                    None => self.infer_expr(&f.value),
+                };
 
                 if !seen.insert(f.name.clone()) {
                     self.errors.push(TypeError {
@@ -1336,6 +1402,7 @@ impl TypeInference {
                         }
                         field_offsets.push(field_def.ordinal);
                         let field_ty = field_def.ty.substitute_params(&substitutions);
+                        self.fit_int_literal(&mut typed_value, &field_ty);
                         let reason = ConstraintReason::TypeAnnotation {
                             var_name: format!("{}.{}", name, f.name),
                         };
@@ -1442,10 +1509,21 @@ impl TypeInference {
         object: &Expr,
         typed_object: TypedExpr,
         member: &str,
-        typed_value: TypedExpr,
+        mut typed_value: TypedExpr,
         span: Span,
     ) -> (TypedExprKind, InferType) {
         let value_span = typed_value.span;
+        if let InferType::Applied { name, .. } = &typed_object.ty
+            && aelys_syntax::tuple_arity(name).is_some()
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::TupleFieldAssignment {
+                    field: member.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("tuple field assignment".to_string()),
+            });
+        }
         let Some(root) = root_binding_name(object) else {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {
@@ -1534,6 +1612,7 @@ impl TypeInference {
                 }
                 _ => (0, 0, InferType::Poison),
             };
+        self.fit_int_literal(&mut typed_value, &field_ty);
         if !self.reject_dynamic(
             &typed_value.ty,
             &field_ty,
@@ -1570,6 +1649,7 @@ impl TypeInference {
         fields: &[StructFieldInit],
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        let expectation = self.nominal_expectation.take();
         let enum_name = path.first().cloned().unwrap_or_default();
         let variant_name = path.last().cloned().unwrap_or_default();
         let Some(def) = self.type_table.get_enum(&enum_name).cloned() else {
@@ -1614,10 +1694,13 @@ impl TypeInference {
                 InferType::Poison,
             );
         }
-        let explicit_types = type_args
+        let mut explicit_types = type_args
             .iter()
             .map(|annotation| self.type_from_annotation(annotation))
             .collect::<Vec<_>>();
+        if explicit_types.is_empty() {
+            explicit_types = Self::expected_type_args(expectation, &enum_name);
+        }
         if explicit_types.len() != def.type_params.len() {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::GenericArityMismatch {
@@ -1710,7 +1793,7 @@ impl TypeInference {
         let mut field_visibility_error = false;
         let mut typed_by_name = std::collections::HashMap::new();
         for field in fields {
-            let typed_value = self.infer_expr(&field.value);
+            let mut typed_value = self.infer_expr(&field.value);
             if !seen.insert(field.name.clone()) {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::DuplicateStructField {
@@ -1739,6 +1822,7 @@ impl TypeInference {
                     var_name: format!("{}::{}.{}", enum_name, variant_name, field.name),
                 };
                 let expected_ty = expected.ty.substitute_params(&substitutions);
+                self.fit_int_literal(&mut typed_value, &expected_ty);
                 if !self.reject_dynamic(&typed_value.ty, &expected_ty, field.span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,
@@ -2002,10 +2086,7 @@ impl TypeInference {
                 method: member.to_string(),
                 separator,
             },
-            InferType::Function {
-                params,
-                ret: Box::new(return_type),
-            },
+            InferType::function(params, return_type),
         )
     }
 }
@@ -2159,10 +2240,10 @@ fn own_params_in_call_order(
     has_self: bool,
     own: &[String],
 ) -> Vec<String> {
-    let callee = InferType::Function {
-        params: params.iter().skip(usize::from(has_self)).cloned().collect(),
-        ret: Box::new(ret.clone()),
-    };
+    let callee = InferType::function(
+        params.iter().skip(usize::from(has_self)).cloned().collect(),
+        ret.clone(),
+    );
     let mut names = Vec::new();
     let mut seen = std::collections::HashSet::new();
     super::call::collect_generic_params(&callee, &mut names, &mut seen);

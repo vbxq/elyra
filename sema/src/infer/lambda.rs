@@ -28,16 +28,18 @@ impl TypeInference {
             });
         }
 
+        let unit_body = return_type_ann.is_none() && !super::functions::body_yields_value(body);
         let return_type = match return_type_ann {
             Some(ann) => {
                 self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
             }
-            None if body.is_empty() => InferType::Unit,
+            None if unit_body => InferType::Unit,
             None => self.type_gen.fresh(),
         };
 
         let saved_env = std::mem::replace(&mut self.env, closure_env);
         let saved_forwarded_borrows = std::mem::take(&mut self.forwarded_mutable_borrows);
+        let saved_loop_frames = std::mem::take(&mut self.loop_frames);
 
         for (param, syntax_param) in typed_params.iter().zip(params) {
             if param.ty.contains_dynamic() {
@@ -64,15 +66,36 @@ impl TypeInference {
             }
 
             let last_stmt = &body[body.len() - 1];
-            stmts.extend(self.infer_body_tail(last_stmt, &return_type, return_type_ann.is_some()));
+            if unit_body {
+                stmts.push(self.infer_stmt(last_stmt));
+            } else {
+                stmts.extend(self.infer_body_tail(
+                    last_stmt,
+                    &return_type,
+                    return_type_ann.is_some(),
+                ));
+            }
 
             stmts
         };
 
-        if return_type_ann.is_some()
-            && !matches!(return_type, InferType::Unit)
+        let missing = match return_type_ann {
+            Some(_) => {
+                !matches!(return_type, InferType::Unit)
+                    && !super::functions::body_always_returns(body, true)
+            }
+            None => super::functions::falls_through_without_value(body),
+        };
+        if return_type_ann.is_none()
+            && !missing
+            && super::functions::body_yields_value(body)
             && !super::functions::body_always_returns(body, true)
         {
+            self.fall_through_residuals
+                .push((return_type.clone(), span, "<lambda>".to_string()));
+        }
+
+        if missing {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MissingReturnValue {
                     expected: return_type.clone(),
@@ -89,9 +112,14 @@ impl TypeInference {
         self.pop_return_type();
         self.env = saved_env;
         self.forwarded_mutable_borrows = saved_forwarded_borrows;
+        self.loop_frames = saved_loop_frames;
 
         let param_types: Vec<InferType> = typed_params.iter().map(|p| p.ty.clone()).collect();
         let fn_type = InferType::Function {
+            modes: crate::types::ParamModes::declared(
+                &param_types,
+                params.iter().map(|param| param.mutable),
+            ),
             params: param_types,
             ret: Box::new(return_type.clone()),
         };

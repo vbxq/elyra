@@ -9,6 +9,7 @@ pub(crate) struct AliasResidual {
     place: String,
     root: String,
     site: AliasSite,
+    through: Option<(InferType, usize)>,
 }
 
 pub(crate) fn place_root(expr: &Expr) -> Option<&str> {
@@ -25,10 +26,33 @@ pub(crate) fn place_root(expr: &Expr) -> Option<&str> {
     }
 }
 
+fn is_path_place(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Grouping(inner) => is_path_place(inner),
+        ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Dot,
+            ..
+        }
+        | ExprKind::Index { object, .. } => is_path_place(object),
+        ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Path,
+            ..
+        } => matches!(object.kind, ExprKind::Identifier(_)),
+        _ => false,
+    }
+}
+
 pub(crate) fn render_place(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Identifier(name) => name.clone(),
         ExprKind::Grouping(inner) => render_place(inner),
+        ExprKind::Member {
+            object,
+            member,
+            separator: aelys_syntax::MemberSeparator::Path,
+        } => format!("{}::{member}", render_place(object)),
         ExprKind::Member { object, member, .. } => format!("{}.{member}", render_place(object)),
         ExprKind::Index { object, index } => {
             let index = match &index.kind {
@@ -43,10 +67,105 @@ pub(crate) fn render_place(expr: &Expr) -> String {
     }
 }
 
-fn tail_expr(stmts: &[Stmt]) -> Option<&Expr> {
-    match stmts.last().map(|stmt| &stmt.kind) {
-        Some(StmtKind::Expression(expr)) => Some(expr),
-        _ => None,
+fn tail_places<'a>(stmts: &'a [Stmt], places: &mut Vec<&'a Expr>) {
+    if let Some(stmt) = stmts.last() {
+        stmt_tail_places(stmt, places);
+    }
+}
+
+fn stmt_tail_places<'a>(stmt: &'a Stmt, places: &mut Vec<&'a Expr>) {
+    match &stmt.kind {
+        StmtKind::Expression(expr) => source_places(expr, places),
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            stmt_tail_places(then_branch, places);
+            stmt_tail_places(else_branch, places);
+        }
+        StmtKind::Block(stmts) => tail_places(stmts, places),
+        _ => {}
+    }
+}
+
+// depth counts the loops between a break and the loop whose value it gives
+fn break_places<'a>(stmt: &'a Stmt, label: Option<&str>, depth: usize, places: &mut Vec<&'a Expr>) {
+    match &stmt.kind {
+        StmtKind::Break {
+            label: target,
+            value: Some(value),
+        } if match target {
+            Some(target) => Some(target.as_str()) == label,
+            None => depth == 0,
+        } =>
+        {
+            source_places(value, places)
+        }
+        StmtKind::Expression(expr) => expr_break_places(expr, label, depth, places),
+        StmtKind::Block(stmts) => {
+            for stmt in stmts {
+                break_places(stmt, label, depth, places);
+            }
+        }
+        StmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            break_places(then_branch, label, depth, places);
+            if let Some(else_branch) = else_branch {
+                break_places(else_branch, label, depth, places);
+            }
+        }
+        StmtKind::While { body, .. }
+        | StmtKind::For { body, .. }
+        | StmtKind::ForEach { body, .. } => break_places(body, label, depth + 1, places),
+        _ => {}
+    }
+}
+
+fn expr_break_places<'a>(
+    expr: &'a Expr,
+    label: Option<&str>,
+    depth: usize,
+    places: &mut Vec<&'a Expr>,
+) {
+    match &expr.kind {
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                break_places(stmt, label, depth, places);
+            }
+        }
+        ExprKind::Loop { body, .. } => {
+            for stmt in body {
+                break_places(stmt, label, depth + 1, places);
+            }
+        }
+        ExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            expr_break_places(then_branch, label, depth, places);
+            expr_break_places(else_branch, label, depth, places);
+        }
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                match &arm.body {
+                    aelys_syntax::MatchArmBody::Expr(body) => {
+                        expr_break_places(body, label, depth, places)
+                    }
+                    aelys_syntax::MatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            break_places(stmt, label, depth, places);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::Grouping(inner) => expr_break_places(inner, label, depth, places),
+        _ => {}
     }
 }
 
@@ -65,15 +184,17 @@ fn source_places<'a>(expr: &'a Expr, places: &mut Vec<&'a Expr>) {
             for arm in arms {
                 match &arm.body {
                     aelys_syntax::MatchArmBody::Expr(body) => source_places(body, places),
-                    aelys_syntax::MatchArmBody::Block(stmts) => {
-                        if let Some(tail) = tail_expr(stmts) {
-                            source_places(tail, places);
-                        }
-                    }
+                    aelys_syntax::MatchArmBody::Block(stmts) => tail_places(stmts, places),
                 }
             }
         }
-        _ if place_root(expr).is_some() => places.push(expr),
+        ExprKind::Block(stmts) => tail_places(stmts, places),
+        ExprKind::Loop { body, label } => {
+            for stmt in body {
+                break_places(stmt, label.as_deref(), 0, places);
+            }
+        }
+        _ if place_root(expr).is_some() || is_path_place(expr) => places.push(expr),
         _ => {}
     }
 }
@@ -126,10 +247,45 @@ impl TypeInference {
     }
 
     pub(crate) fn record_mutable_alias(&mut self, source: &Expr, ty: &InferType, site: AliasSite) {
+        self.record_alias(source, ty, site, None);
+    }
+
+    // the callee type is read once solved: only a position it marks `mut` aliases the argument
+    pub(crate) fn record_function_value_alias(
+        &mut self,
+        source: &Expr,
+        ty: &InferType,
+        callee: &InferType,
+        position: usize,
+    ) {
+        let site = AliasSite::FunctionValue {
+            position: position + 1,
+            ty: String::new(),
+        };
+        self.record_alias(source, ty, site, Some((callee.clone(), position)));
+    }
+
+    fn record_alias(
+        &mut self,
+        source: &Expr,
+        ty: &InferType,
+        site: AliasSite,
+        through: Option<(InferType, usize)>,
+    ) {
         let mut places = Vec::new();
         source_places(source, &mut places);
         for place in places {
             let Some(written) = place_root(place) else {
+                if let Some(root) = self.imported_immutable_root(place) {
+                    self.alias_residuals.push(AliasResidual {
+                        ty: ty.clone(),
+                        span: place.span,
+                        place: render_place(place),
+                        root,
+                        site: site.clone(),
+                        through: through.clone(),
+                    });
+                }
                 continue;
             };
             let (root, root_mutable) = self.alias_root(written);
@@ -146,6 +302,7 @@ impl TypeInference {
                 place: render_place(place),
                 root: root.to_string(),
                 site: site.clone(),
+                through: through.clone(),
             });
         }
     }
@@ -172,16 +329,27 @@ impl TypeInference {
         let residuals = std::mem::take(&mut self.alias_residuals);
         for residual in residuals {
             let ty = subst.apply(&residual.ty);
-            let generic =
-                residual.site == AliasSite::FunctionValue && matches!(ty, InferType::Param(_));
-            if !generic && !self.is_mutable_aggregate(&ty) {
+            if !self.is_mutable_aggregate(&ty) {
                 continue;
+            }
+            let mut site = residual.site;
+            if let Some((callee, position)) = &residual.through {
+                let callee = subst.apply(callee);
+                let InferType::Function { modes, .. } = &callee else {
+                    continue;
+                };
+                if subst.apply_mode(modes.get(*position)) != crate::types::ParamMode::Mut {
+                    continue;
+                }
+                if let AliasSite::FunctionValue { ty, .. } = &mut site {
+                    *ty = callee.source_spelling();
+                }
             }
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MutableCollectionAlias {
                     place: residual.place,
                     root: residual.root,
-                    site: residual.site,
+                    site,
                 },
                 span: residual.span,
                 reason: ConstraintReason::Other("mutable alias".to_string()),

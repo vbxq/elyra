@@ -14,34 +14,19 @@ impl TypeInference {
         initializer: &Expr,
         is_pub: bool,
     ) -> TypedStmtKind {
-        let mut typed_init = self.infer_expr(initializer);
-        let read_only_alias = collection_binding_name(initializer)
-            .is_some_and(|source| self.env.is_read_only(source));
-
         let declared_type = type_annotation
             .as_ref()
             .map(|ann| self.type_from_annotation(ann));
+        let mut typed_init = match &declared_type {
+            Some(declared) => self.infer_expr_expecting(initializer, declared),
+            None => self.infer_expr(initializer),
+        };
+        let read_only_alias = collection_binding_name(initializer)
+            .is_some_and(|source| self.env.is_read_only(source));
 
         let var_type = if let Some(decl) = &declared_type {
-            if let TypedExprKind::Int(value) = &typed_init.kind
-                && decl.is_integer()
-                && *decl != InferType::I64
-            {
-                if InferType::int_fits(*value, decl) {
-                    typed_init.ty = decl.clone();
-                } else {
-                    self.errors.push(TypeError {
-                        kind: TypeErrorKind::Mismatch {
-                            expected: decl.clone(),
-                            found: InferType::I64,
-                        },
-                        span: typed_init.span,
-                        reason: ConstraintReason::IntLiteralOverflow {
-                            value: *value,
-                            target: decl.clone(),
-                        },
-                    });
-                }
+            self.fit_int_literal(&mut typed_init, decl);
+            if typed_init.ty == *decl && matches!(typed_init.kind, TypedExprKind::Int(_)) {
             } else if let TypedExprKind::Float(value) = &typed_init.kind
                 && *decl == InferType::F32
             {
@@ -104,12 +89,9 @@ impl TypeInference {
         if name != "_" {
             let explicit_dynamic_annotation =
                 type_annotation.is_some() && var_type.contains_dynamic();
-            let known_length = self.constant_collection_length(initializer).filter(|_| {
-                matches!(
-                    &var_type,
-                    InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_)
-                )
-            });
+            let known_length = self
+                .constant_collection_length(initializer)
+                .filter(|_| crate::infer::length_is_fixed(&var_type, mutable));
             if let Some(length) = known_length
                 && !explicit_dynamic_annotation
                 && !self.is_explicit_dynamic_expr(&typed_init)
@@ -126,9 +108,6 @@ impl TypeInference {
                 self.env.define_local(name.to_string(), var_type.clone());
             }
             self.env.set_mutable(name, mutable);
-            if !mutable && let Some(params) = self.function_value_mutable_params(initializer) {
-                self.env.define_function_value(name, params);
-            }
             if read_only_alias {
                 self.env.mark_read_only(name);
             }

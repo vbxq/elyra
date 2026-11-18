@@ -20,19 +20,13 @@ impl Compiler {
             None => return self.compile_typed_call_generic(name, args, dest, span),
         };
 
-        for i in 0..args.len() {
-            let arg_reg = match arg_start
-                .checked_add(u16::try_from(i).expect("register offset was range checked"))
-            {
-                Some(r) => r,
-                None => return self.compile_typed_call_generic(name, args, dest, span),
-            };
-            if (arg_reg as usize) >= self.register_pool.len() {
-                return self.compile_typed_call_generic(name, args, dest, span);
-            }
-            if self.register_pool[arg_reg as usize] {
-                return self.compile_typed_call_generic(name, args, dest, span);
-            }
+        if !crate::compiler::call::util::call_window_available(
+            &self.register_pool,
+            self.next_register,
+            arg_start,
+            args.len(),
+        ) {
+            return self.compile_typed_call_generic(name, args, dest, span);
         }
 
         for i in 0..args.len() {
@@ -68,7 +62,7 @@ impl Compiler {
     ) -> Result<()> {
         let nargs = self.checked_call_arity(args.len(), span)?;
         let register_count = args.len().saturating_add(1);
-        let callee_reg = self.alloc_consecutive_registers_for_call(register_count, span)?;
+        let callee_reg = self.alloc_call_window(register_count, span)?;
 
         for i in 0..register_count {
             let reg = callee_reg + u16::try_from(i).expect("argument count was range checked");

@@ -3,7 +3,7 @@ use crate::types::{InferType, TypeVarId};
 pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
     match ty {
         InferType::Var(id) => *id == var,
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(|p| occurs_check(var, p)) || occurs_check(var, ret)
         }
         InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {

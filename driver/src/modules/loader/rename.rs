@@ -130,7 +130,8 @@ fn rename_pattern(pattern: &mut Pattern, renames: &BTreeMap<String, String>) {
         | PatternKind::Int(_)
         | PatternKind::String(_)
         | PatternKind::Char(_)
-        | PatternKind::Bool(_) => {}
+        | PatternKind::Bool(_)
+        | PatternKind::Range { .. } => {}
     }
 }
 
@@ -200,6 +201,7 @@ fn rename_expr(expr: &mut Expr, renames: &BTreeMap<String, String>) {
                 }
             }
         }
+        ExprKind::Block(body) | ExprKind::Loop { body, .. } => rename_stmts(body, renames),
         ExprKind::Lambda {
             params,
             return_type,
@@ -376,7 +378,9 @@ fn rename_stmt(stmt: &mut Stmt, renames: &BTreeMap<String, String>) {
                 rename_stmt(other.as_mut(), renames);
             }
         }
-        StmtKind::While { condition, body } => {
+        StmtKind::While {
+            condition, body, ..
+        } => {
             rename_expr(condition, renames);
             rename_stmt(body.as_mut(), renames);
         }
@@ -503,7 +507,12 @@ fn rename_stmt(stmt: &mut Stmt, renames: &BTreeMap<String, String>) {
                 rename_annotation(&mut def.type_annotation, renames);
             }
         }
-        StmtKind::Break | StmtKind::Continue | StmtKind::Needs(_) => {}
+        StmtKind::Break { value, .. } => {
+            if let Some(value) = value {
+                rename_expr(value, renames);
+            }
+        }
+        StmtKind::Continue { .. } | StmtKind::Needs(_) => {}
     }
 }
 
@@ -534,7 +543,7 @@ pub fn collect_infer_names(ty: &aelys_sema::InferType, out: &mut HashSet<String>
                 collect_infer_names(element, out);
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_infer_names(param, out);
             }

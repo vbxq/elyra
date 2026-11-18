@@ -158,6 +158,13 @@ impl TypeInference {
                 trait_name: trait_name.clone(),
                 item: item.clone(),
             },
+            TypedExprKind::Block(stmts) => {
+                TypedExprKind::Block(self.apply_substitution_stmts(stmts, subst))
+            }
+            TypedExprKind::Loop { body, label } => TypedExprKind::Loop {
+                body: self.apply_substitution_stmts(body, subst),
+                label: label.clone(),
+            },
         }
     }
 
@@ -724,6 +731,10 @@ impl TypeInference {
                     .map(|alternative| self.apply_substitution_pattern(alternative, subst))
                     .collect(),
             ),
+            TypedPatternKind::Range { start, end } => TypedPatternKind::Range {
+                start: *start,
+                end: *end,
+            },
         };
         TypedPattern {
             kind,

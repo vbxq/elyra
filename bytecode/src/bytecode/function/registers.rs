@@ -457,6 +457,39 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                     update_max_reg(&mut max_reg, &mut used, last, None, None);
                 }
             }
+            crate::sized_binary_opcodes!() => {
+                update_max_reg(
+                    &mut max_reg,
+                    &mut used,
+                    a as usize,
+                    Some(b as usize),
+                    Some(c as usize),
+                );
+            }
+            OpCode::NegW | OpCode::NotW => {
+                update_max_reg(&mut max_reg, &mut used, a as usize, Some(b as usize), None);
+            }
+            OpCode::MulShr | OpCode::ShlDiv => {
+                let Some(first) = bytecode.get(ip + 1) else {
+                    break;
+                };
+                let Some(second) = bytecode.get(ip + 2) else {
+                    break;
+                };
+                let wide_a = (first >> 16) as usize;
+                let wide_b = (first & 0xffff) as usize;
+                let wide_c = (second >> 16) as usize;
+                update_max_reg(&mut max_reg, &mut used, wide_a, Some(wide_b), Some(wide_c));
+                if b != 0 {
+                    update_max_reg(
+                        &mut max_reg,
+                        &mut used,
+                        (second & 0xffff) as usize,
+                        None,
+                        None,
+                    );
+                }
+            }
         }
         ip += 1 + op.extension_words();
     }

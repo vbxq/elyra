@@ -4,9 +4,13 @@ use aelys_sema::{
     TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedPattern, TypedPatternKind,
     TypedProgram, TypedStmt, TypedStmtKind,
 };
+use std::collections::HashSet;
 
 pub struct LocalConstantPropagator {
     scopes: ScopeStack,
+    // top-level constants bound after top-level code first ran: a hoisted function may run before them
+    late: HashSet<String>,
+    function_depth: usize,
     folder: ConstantFolder,
     stats: OptimizationStats,
 }
@@ -15,6 +19,8 @@ impl LocalConstantPropagator {
     pub fn new() -> Self {
         Self {
             scopes: ScopeStack::new(),
+            late: HashSet::new(),
+            function_depth: 0,
             folder: ConstantFolder::new(),
             stats: OptimizationStats::new(),
         }
@@ -77,7 +83,9 @@ impl LocalConstantPropagator {
                 }
             }
 
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+                condition, body, ..
+            } => {
                 let mut assigned = Vec::new();
                 Self::collect_assigned_vars(body, &mut assigned);
                 for name in &assigned {
@@ -131,7 +139,10 @@ impl LocalConstantPropagator {
                 self.scopes.pop();
             }
 
-            TypedStmtKind::Return(Some(expr)) => {
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => {
                 self.propagate_expr(expr);
             }
 
@@ -146,8 +157,8 @@ impl LocalConstantPropagator {
             }
 
             TypedStmtKind::Return(None)
-            | TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
@@ -174,13 +185,18 @@ impl LocalConstantPropagator {
                     Self::collect_assigned_vars(e, out);
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+                condition, body, ..
+            } => {
                 Self::collect_assigned_vars_expr(condition, out);
                 Self::collect_assigned_vars(body, out);
             }
             TypedStmtKind::For { body, .. } => Self::collect_assigned_vars(body, out),
             TypedStmtKind::ForEach { body, .. } => Self::collect_assigned_vars(body, out),
-            TypedStmtKind::Return(Some(expr)) => Self::collect_assigned_vars_expr(expr, out),
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => Self::collect_assigned_vars_expr(expr, out),
             _ => {}
         }
     }
@@ -290,16 +306,38 @@ impl LocalConstantPropagator {
                     }
                 }
             }
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { body, .. }
+            | TypedExprKind::Block(body)
+            | TypedExprKind::Loop { body, .. } => {
                 for s in body {
                     Self::collect_assigned_vars(s, out);
                 }
             }
+            TypedExprKind::Match { scrutinee, arms } => {
+                Self::collect_assigned_vars_expr(scrutinee, out);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        Self::collect_assigned_vars_expr(guard, out);
+                    }
+                    match &arm.body {
+                        aelys_sema::TypedMatchArmBody::Expr(expr) => {
+                            Self::collect_assigned_vars_expr(expr, out)
+                        }
+                        aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                            for stmt in stmts {
+                                Self::collect_assigned_vars(stmt, out);
+                            }
+                        }
+                    }
+                }
+            }
+            TypedExprKind::Try { operand, .. } => Self::collect_assigned_vars_expr(operand, out),
             _ => {}
         }
     }
 
     fn propagate_function(&mut self, func: &mut TypedFunction) {
+        self.function_depth += 1;
         self.scopes.push();
         for param in &func.params {
             self.scopes.shadow(param.name.clone());
@@ -308,6 +346,7 @@ impl LocalConstantPropagator {
             self.propagate_stmt(stmt);
         }
         self.scopes.pop();
+        self.function_depth -= 1;
     }
 
     fn shadow_pattern(&mut self, pattern: &TypedPattern) {
@@ -327,14 +366,18 @@ impl LocalConstantPropagator {
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
             | TypedPatternKind::Char(_)
-            | TypedPatternKind::Bool(_) => {}
+            | TypedPatternKind::Bool(_)
+            | TypedPatternKind::Range { .. } => {}
         }
     }
 
     fn propagate_expr(&mut self, expr: &mut TypedExpr) {
         match &mut expr.kind {
             TypedExprKind::Identifier(name) => {
-                if let Some(const_val) = self.scopes.get(name) {
+                let visible = self.scopes.get_with_depth(name).filter(|(depth, _)| {
+                    *depth > 0 || self.function_depth == 0 || !self.late.contains(name)
+                });
+                if let Some((_, const_val)) = visible {
                     let ty = if expr.ty.is_integer() && const_val.ty.is_integer() {
                         expr.ty.clone()
                     } else {
@@ -503,6 +546,27 @@ impl LocalConstantPropagator {
                     self.scopes.pop();
                 }
             }
+            TypedExprKind::Block(stmts) => {
+                self.scopes.push();
+                for stmt in stmts.iter_mut() {
+                    self.propagate_stmt(stmt);
+                }
+                self.scopes.pop();
+            }
+            TypedExprKind::Loop { body, .. } => {
+                let mut assigned = Vec::new();
+                for stmt in body.iter() {
+                    Self::collect_assigned_vars(stmt, &mut assigned);
+                }
+                for name in &assigned {
+                    self.scopes.invalidate(name);
+                }
+                self.scopes.push();
+                for stmt in body.iter_mut() {
+                    self.propagate_stmt(stmt);
+                }
+                self.scopes.pop();
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
@@ -528,10 +592,27 @@ impl OptimizationPass for LocalConstantPropagator {
 
     fn run(&mut self, program: &mut TypedProgram) -> OptimizationStats {
         self.scopes = ScopeStack::new();
+        self.late.clear();
+        self.function_depth = 0;
         self.stats = OptimizationStats::new();
 
+        let mut code_ran = false;
         for stmt in program.stmts.iter_mut() {
             self.propagate_stmt(stmt);
+            match &stmt.kind {
+                TypedStmtKind::Let { name, .. } if self.scopes.get(name).is_some() => {
+                    if code_ran {
+                        self.late.insert(name.clone());
+                    }
+                }
+                TypedStmtKind::Function(_)
+                | TypedStmtKind::ImplDecl { .. }
+                | TypedStmtKind::StructDecl { .. }
+                | TypedStmtKind::TraitDecl { .. }
+                | TypedStmtKind::EnumDecl { .. }
+                | TypedStmtKind::Needs(_) => {}
+                _ => code_ran = true,
+            }
         }
 
         self.stats.clone()

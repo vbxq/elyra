@@ -324,7 +324,8 @@ impl TypeInference {
             );
         }
 
-        if !self.reject_dynamic(
+        if typed_index.ty.is_integer() {
+        } else if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
             index.span,
@@ -432,7 +433,7 @@ impl TypeInference {
         if let InferType::Map(key, map_value) = &typed_object.ty {
             let map_value = map_value.as_ref().clone();
             self.constrain_map_key_argument(key, &mut typed_index);
-            narrow_int_literal(&mut typed_value, &map_value);
+            self.fit_int_literal(&mut typed_value, &map_value);
             let reason = ConstraintReason::ArrayElement;
             if !self.reject_dynamic(&typed_value.ty, &map_value, value_span, reason.clone()) {
                 self.constraints.push(Constraint::equal(
@@ -451,8 +452,15 @@ impl TypeInference {
                 InferType::Unit,
             );
         }
+        if let InferType::Array(inner) | InferType::FixedArray(inner, _) | InferType::Vec(inner) =
+            &typed_object.ty
+        {
+            let inner = inner.as_ref().clone();
+            self.fit_int_literal(&mut typed_value, &inner);
+        }
 
-        if !self.reject_dynamic(
+        if typed_index.ty.is_integer() {
+        } else if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
             index_span,
@@ -565,7 +573,7 @@ impl TypeInference {
     }
 
     fn constrain_map_key_argument(&mut self, key: &InferType, index: &mut TypedExpr) {
-        narrow_int_literal(index, key);
+        self.fit_int_literal(index, key);
         let reason = ConstraintReason::Other("map key".to_string());
         if !self.reject_dynamic(&index.ty, key, index.span, reason.clone()) {
             self.constraints.push(Constraint::equal(
@@ -808,15 +816,5 @@ fn constant_collection_length_with(
         ExprKind::String(value) => Some(value.chars().count()),
         ExprKind::Grouping(inner) => constant_collection_length_with(inner, resolve),
         _ => None,
-    }
-}
-
-fn narrow_int_literal(expr: &mut TypedExpr, expected: &InferType) {
-    if let TypedExprKind::Int(value) = &expr.kind
-        && expected.is_integer()
-        && *expected != InferType::I64
-        && InferType::int_fits(*value, expected)
-    {
-        expr.ty = expected.clone();
     }
 }

@@ -50,7 +50,12 @@ impl Parser {
                     span,
                 );
             } else if self.match_token(&TokenKind::Dot) {
-                let member = self.consume_identifier("member name")?;
+                let member = if let TokenKind::Int(index) = self.peek().kind {
+                    self.advance();
+                    index.to_string()
+                } else {
+                    self.consume_identifier("member name")?
+                };
                 let span = expr.span.merge(self.previous().span);
 
                 expr = Expr::new(

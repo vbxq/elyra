@@ -43,6 +43,21 @@ impl TypeInference {
             );
         }
 
+        if let Some(modules) = self.ambiguous_imports.get(name) {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::AmbiguousImport {
+                    name: name.to_string(),
+                    modules: modules.clone(),
+                },
+                span,
+                reason: ConstraintReason::Other("variable lookup".to_string()),
+            });
+            return (
+                TypedExprKind::Identifier(name.to_string()),
+                InferType::Poison,
+            );
+        }
+
         if let Some(ty) = crate::native::builtin_signature(name) {
             return (TypedExprKind::Identifier(name.to_string()), ty);
         }

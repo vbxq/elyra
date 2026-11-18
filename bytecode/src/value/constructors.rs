@@ -59,6 +59,11 @@ impl Value {
         Self(QNAN | TAG_UNIT)
     }
 
+    // a global slot whose initializer has not run yet; it never leaves the global tables
+    pub const fn uninit() -> Self {
+        Self(QNAN | TAG_NULL | 1)
+    }
+
     pub fn none() -> Self {
         Self(QNAN | TAG_NONE)
     }

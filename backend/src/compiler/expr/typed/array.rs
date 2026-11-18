@@ -40,7 +40,7 @@ impl Compiler {
 
         let value_reg = self.alloc_register()?;
         self.compile_typed_expr(value, value_reg)?;
-        let loop_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_reg = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_reg, 3)?;
         let end_reg = loop_reg + 1;
         let step_reg = loop_reg + 2;
@@ -112,7 +112,7 @@ impl Compiler {
 
         let value_reg = self.alloc_register()?;
         self.compile_typed_expr(value, value_reg)?;
-        let loop_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_reg = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_reg, 3)?;
         let end_reg = loop_reg + 1;
         let step_reg = loop_reg + 2;
@@ -167,7 +167,7 @@ impl Compiler {
     }
 
     fn emit_deep_clone(&mut self, source: u16, span: Span) -> Result<u16> {
-        let callee = self.alloc_consecutive_registers_for_call(2, span)?;
+        let callee = self.alloc_call_window(2, span)?;
         self.alloc_consecutive_from(callee, 2)?;
         let global = self.get_or_create_global_index("__clone");
         self.accessed_globals.insert("__clone".to_string());
@@ -231,7 +231,7 @@ impl Compiler {
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
-        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
+        let start_reg = self.alloc_consecutive_registers(count, span)?;
 
         for i in 0..count {
             let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
@@ -289,7 +289,7 @@ impl Compiler {
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
-        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
+        let start_reg = self.alloc_consecutive_registers(count, span)?;
 
         for i in 0..count {
             let reg = start_reg + u16::try_from(i).expect("register offset was range checked");

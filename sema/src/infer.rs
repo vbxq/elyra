@@ -3,6 +3,7 @@ mod captures;
 pub(crate) mod constants;
 mod constraints;
 pub mod entry;
+mod exhaustive;
 mod expr;
 mod expr_sum;
 mod finalize;
@@ -44,6 +45,15 @@ pub fn is_mangled_symbol(symbol: &str) -> bool {
 pub use aelys_common::naming::{
     MODULE_GLOBAL_PREFIX, is_module_scoped_global, module_scoped_global, unscoped_global_name,
 };
+
+// a vec grows through push and through any `mut` parameter it is handed, and a mutable array binding can be replaced from another function or closure
+pub(crate) fn length_is_fixed(ty: &InferType, mutable: bool) -> bool {
+    match ty {
+        InferType::FixedArray(_, _) => true,
+        InferType::Array(_) => !mutable,
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 mod mangled_symbol_tests {
@@ -199,6 +209,8 @@ pub struct TypeInference {
     must_use_values: Vec<expr_sum::MustUseResidual>,
     sum_method_residuals: Vec<expr_sum::SumMethodResidual>,
     match_exhaustivity_residuals: Vec<expr_sum::MatchExhaustivityResidual>,
+    loop_frames: Vec<stmt::LoopFrame>,
+    match_unit_residuals: Vec<(InferType, Vec<aelys_syntax::Span>)>,
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
     alias_residuals: Vec<places::AliasResidual>,
@@ -206,7 +218,13 @@ pub struct TypeInference {
     global_constants: HashMap<String, constants::ConstValue>,
     exported_constants: std::collections::BTreeMap<String, constants::ConstValue>,
     function_mutable_params: HashMap<String, Vec<Option<String>>>,
+    fall_through_residuals: Vec<(InferType, aelys_syntax::Span, String)>,
+    statement_match: bool,
+    script_tail: bool,
     surface_dynamic_spans: HashSet<(usize, usize)>,
+    pending_int_literals: Vec<(InferType, Vec<(i64, aelys_syntax::Span)>)>,
+    nominal_expectation: Option<InferType>,
+    constructor_expectation: Option<InferType>,
     sum_type_residuals: Vec<expr_sum::SumTypeResidual>,
     explicit_dynamic_functions: HashSet<String>,
     module_aliases: HashSet<String>,
@@ -223,6 +241,9 @@ pub struct TypeInference {
     module_globals:
         std::collections::BTreeMap<String, std::collections::BTreeMap<String, InferType>>,
     module_scoped_globals: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    module_scopes: std::collections::BTreeMap<String, imports::ModuleScope>,
+    ambiguous_imports: std::collections::BTreeMap<String, Vec<String>>,
+    immutable_imports: std::collections::BTreeSet<String>,
     scope_own_globals: bool,
     pub(crate) monomorphization_active: Vec<(String, Vec<InferType>)>,
     current_trait_name: Option<String>,
@@ -298,6 +319,16 @@ pub(crate) struct BoundResidual {
     pub(crate) span: aelys_syntax::Span,
     pub(crate) reason: ConstraintReason,
     pub(crate) nominal_only: bool,
+}
+
+impl TypeInference {
+    pub(crate) fn fresh_param_modes(&mut self, count: usize) -> crate::types::ParamModes {
+        crate::types::ParamModes::from_modes(
+            (0..count)
+                .map(|_| crate::types::ParamMode::Var(self.type_gen.fresh_id()))
+                .collect(),
+        )
+    }
 }
 
 impl TypeInference {
@@ -382,10 +413,12 @@ fn dynamic_target(found: &InferType, expected: &InferType) -> Option<InferType> 
             InferType::Function {
                 params: found_params,
                 ret: found_ret,
+                ..
             },
             InferType::Function {
                 params: expected_params,
                 ret: expected_ret,
+                ..
             },
         ) => found_params
             .iter()
@@ -411,6 +444,25 @@ impl TypeInference {
                 kind: TypeErrorKind::Mismatch { expected, found },
                 span: residual.span,
                 reason: residual.reason.clone(),
+            });
+        }
+    }
+
+    pub(super) fn validate_fall_through_residuals(&mut self, subst: &crate::unify::Substitution) {
+        for (ty, span, func_name) in std::mem::take(&mut self.fall_through_residuals) {
+            let expected = subst.apply(&ty);
+            if !expected.is_concrete()
+                || matches!(
+                    expected,
+                    InferType::Unit | InferType::Never | InferType::Dynamic
+                )
+            {
+                continue;
+            }
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MissingReturnValue { expected },
+                span,
+                reason: ConstraintReason::Return { func_name },
             });
         }
     }
@@ -483,10 +535,12 @@ fn contains_concrete_dynamic(found: &InferType, expected: &InferType) -> bool {
             InferType::Function {
                 params: found_params,
                 ret: found_ret,
+                ..
             },
             InferType::Function {
                 params: expected_params,
                 ret: expected_ret,
+                ..
             },
         ) => {
             found_params

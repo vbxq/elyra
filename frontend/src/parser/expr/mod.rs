@@ -130,6 +130,7 @@ impl Parser {
                         guard: None,
                         span: result.span,
                         body: MatchArmBody::Expr(Box::new(result)),
+                        synthetic: true,
                     }],
                 },
                 span,
@@ -244,7 +245,6 @@ impl Parser {
                 | TokenKind::RBrace
                 | TokenKind::Comma
                 | TokenKind::Eof
-                | TokenKind::Step
         ) {
             None
         } else {

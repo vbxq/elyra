@@ -1,5 +1,6 @@
 use super::TypeInference;
 use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
+use crate::types::InferType;
 use aelys_syntax::{BinaryOp, Expr, ExprKind, MemberSeparator, Stmt, StmtKind, UnaryOp};
 
 const INT_MIN: i64 = -(1 << 47);
@@ -19,83 +20,191 @@ fn int(value: Option<i64>) -> Option<ConstValue> {
         .map(ConstValue::Int)
 }
 
+fn int_in(ty: &InferType, exact: i128) -> Option<ConstValue> {
+    if ty.is_sized_integer() {
+        return Some(ConstValue::Int(ty.wrap_int(exact as i64)));
+    }
+    int(i64::try_from(exact).ok())
+}
+
+pub(crate) type LeafValue<'a> = &'a dyn Fn(&Expr) -> Option<ConstValue>;
+pub(crate) type LeafType<'a> = &'a dyn Fn(&Expr) -> Option<InferType>;
+
+fn is_shift(op: BinaryOp) -> bool {
+    matches!(op, BinaryOp::Shl | BinaryOp::Shr)
+}
+
+fn is_comparison(op: BinaryOp) -> bool {
+    matches!(
+        op,
+        BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+    )
+}
+
+fn int_type_named(name: &str) -> Option<InferType> {
+    Some(InferType::from_name(name)).filter(InferType::is_integer)
+}
+
+fn written_int_type(expr: &Expr, leaf_type: LeafType<'_>) -> Option<InferType> {
+    let written = |expr: &Expr| written_int_type(expr, leaf_type);
+    match &expr.kind {
+        ExprKind::Int(_) => None,
+        ExprKind::Grouping(inner) => written(inner),
+        ExprKind::Unary {
+            op: UnaryOp::Neg | UnaryOp::BitNot,
+            operand,
+        } => written(operand),
+        ExprKind::Binary { left, op, .. } if is_shift(*op) => written(left),
+        ExprKind::Binary { op, .. } if is_comparison(*op) => None,
+        ExprKind::Binary { left, right, .. } => written(left).or_else(|| written(right)),
+        ExprKind::Cast { target, .. } => int_type_named(&target.name),
+        ExprKind::Identifier(_) | ExprKind::Member { .. } => {
+            leaf_type(expr).filter(InferType::is_integer)
+        }
+        _ => None,
+    }
+}
+
+fn operand_types(
+    left: &Expr,
+    op: BinaryOp,
+    right: &Expr,
+    leaf_type: LeafType<'_>,
+    context: &InferType,
+) -> (InferType, InferType) {
+    let written = |expr: &Expr| written_int_type(expr, leaf_type);
+    if is_shift(op) {
+        return (
+            written(left).unwrap_or_else(|| context.clone()),
+            written(right).unwrap_or(InferType::I64),
+        );
+    }
+    let fallback = if is_comparison(op) {
+        InferType::I64
+    } else {
+        context.clone()
+    };
+    let shared = written(left).or_else(|| written(right)).unwrap_or(fallback);
+    (shared.clone(), shared)
+}
+
 pub(crate) fn fold_const(
     expr: &Expr,
-    leaf: &dyn Fn(&Expr) -> Option<ConstValue>,
+    leaf: LeafValue<'_>,
+    leaf_type: LeafType<'_>,
+    context: &InferType,
 ) -> Option<ConstValue> {
-    let fold = |expr: &Expr| fold_const(expr, leaf);
+    let fold = |expr: &Expr, context: &InferType| fold_const(expr, leaf, leaf_type, context);
     match &expr.kind {
-        ExprKind::Int(value) => int(Some(*value)),
+        ExprKind::Int(value) => int_in(context, i128::from(*value)),
         ExprKind::Float(value) => Some(ConstValue::Float(*value)),
         ExprKind::Bool(value) => Some(ConstValue::Bool(*value)),
         ExprKind::String(value) => Some(ConstValue::Str(value.clone())),
-        ExprKind::Grouping(inner) => fold(inner),
-        ExprKind::Unary { op, operand } => match (op, fold(operand)?) {
-            (UnaryOp::Neg, ConstValue::Int(value)) => int(value.checked_neg()),
+        ExprKind::Grouping(inner) => fold(inner, context),
+        ExprKind::Unary { op, operand } => match (op, fold(operand, context)?) {
+            (UnaryOp::Neg, ConstValue::Int(value)) => int_in(context, -i128::from(value)),
             (UnaryOp::Neg, ConstValue::Float(value)) => Some(ConstValue::Float(-value)),
-            (UnaryOp::BitNot, ConstValue::Int(value)) => int(Some(!value)),
+            (UnaryOp::BitNot, ConstValue::Int(value)) => int_in(context, i128::from(!value)),
             (UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
             _ => None,
         },
-        ExprKind::And { left, right } => match (fold(left)?, fold(right)?) {
+        ExprKind::And { left, right } => match (
+            fold(left, &InferType::Bool)?,
+            fold(right, &InferType::Bool)?,
+        ) {
             (ConstValue::Bool(left), ConstValue::Bool(right)) => {
                 Some(ConstValue::Bool(left && right))
             }
             _ => None,
         },
-        ExprKind::Or { left, right } => match (fold(left)?, fold(right)?) {
+        ExprKind::Or { left, right } => match (
+            fold(left, &InferType::Bool)?,
+            fold(right, &InferType::Bool)?,
+        ) {
             (ConstValue::Bool(left), ConstValue::Bool(right)) => {
                 Some(ConstValue::Bool(left || right))
             }
             _ => None,
         },
-        ExprKind::Binary { left, op, right } => fold_binary(fold(left)?, *op, fold(right)?),
-        ExprKind::Cast { expr, target } => match (fold(expr)?, target.name.as_str()) {
-            (ConstValue::Int(value), "int") => Some(ConstValue::Int(value)),
-            (ConstValue::Int(value), "float") => Some(ConstValue::Float(value as f64)),
-            (ConstValue::Float(value), "float") => Some(ConstValue::Float(value)),
-            (ConstValue::Float(value), "int") if value.is_finite() => {
-                let truncated = value.trunc();
-                (truncated >= INT_MIN as f64 && truncated <= INT_MAX as f64)
-                    .then_some(ConstValue::Int(truncated as i64))
-            }
-            _ => None,
-        },
+        ExprKind::Binary { left, op, right } => {
+            let (left_ty, right_ty) = operand_types(left, *op, right, leaf_type, context);
+            fold_binary(
+                fold(left, &left_ty)?,
+                *op,
+                fold(right, &right_ty)?,
+                &left_ty,
+            )
+        }
+        ExprKind::Cast {
+            expr: inner,
+            target,
+        } => {
+            let source = written_int_type(inner, leaf_type).unwrap_or(InferType::I64);
+            fold_cast(fold(inner, &source)?, &InferType::from_name(&target.name))
+        }
         _ => leaf(expr),
+    }
+}
+
+fn fold_cast(value: ConstValue, target: &InferType) -> Option<ConstValue> {
+    match (value, target) {
+        (ConstValue::Int(value), InferType::I64) => Some(ConstValue::Int(value)),
+        (ConstValue::Int(value), target) if target.is_sized_integer() => {
+            Some(ConstValue::Int(target.wrap_int(value)))
+        }
+        (ConstValue::Int(value), InferType::F64) => Some(ConstValue::Float(value as f64)),
+        (ConstValue::Float(value), InferType::F64) => Some(ConstValue::Float(value)),
+        (ConstValue::Float(value), InferType::I64) if value.is_finite() => {
+            let truncated = value.trunc();
+            (truncated >= INT_MIN as f64 && truncated <= INT_MAX as f64)
+                .then_some(ConstValue::Int(truncated as i64))
+        }
+        (ConstValue::Float(value), target) if target.is_sized_integer() && value.is_finite() => {
+            let modulus = (1u64 << target.int_bits()?) as f64;
+            Some(ConstValue::Int(
+                target.wrap_int((value.trunc() % modulus) as i64),
+            ))
+        }
+        _ => None,
     }
 }
 
 pub(crate) fn fold_failure(
     expr: &Expr,
-    leaf: &dyn Fn(&Expr) -> Option<ConstValue>,
+    leaf: LeafValue<'_>,
+    leaf_type: LeafType<'_>,
+    context: &InferType,
 ) -> Option<String> {
-    let fold = |expr: &Expr| fold_const(expr, leaf);
-    let failure = |expr: &Expr| fold_failure(expr, leaf);
+    let fold = |expr: &Expr, context: &InferType| fold_const(expr, leaf, leaf_type, context);
+    let failure = |expr: &Expr, context: &InferType| fold_failure(expr, leaf, leaf_type, context);
     match &expr.kind {
-        ExprKind::Int(value) if int(Some(*value)).is_none() => {
+        ExprKind::Int(value) if int_in(context, i128::from(*value)).is_none() => {
             Some(format!("{value} is outside the 48-bit int range"))
         }
-        ExprKind::Grouping(inner) => failure(inner),
+        ExprKind::Grouping(inner) => failure(inner, context),
         ExprKind::Unary { op, operand } => {
-            if let Some(cause) = failure(operand) {
+            if let Some(cause) = failure(operand, context) {
                 return Some(cause);
             }
-            match (op, fold(operand)?) {
-                (UnaryOp::Neg, ConstValue::Int(value)) if int(value.checked_neg()).is_none() => {
+            match (op, fold(operand, context)?) {
+                (UnaryOp::Neg, ConstValue::Int(value))
+                    if int_in(context, -i128::from(value)).is_none() =>
+                {
                     Some(format!("-({value}) overflows the 48-bit int range"))
                 }
                 _ => None,
             }
         }
         ExprKind::And { left, right } | ExprKind::Or { left, right } => {
-            failure(left).or_else(|| failure(right))
+            failure(left, &InferType::Bool).or_else(|| failure(right, &InferType::Bool))
         }
         ExprKind::Binary { left, op, right } => {
-            if let Some(cause) = failure(left).or_else(|| failure(right)) {
+            let (left_ty, right_ty) = operand_types(left, *op, right, leaf_type, context);
+            if let Some(cause) = failure(left, &left_ty).or_else(|| failure(right, &right_ty)) {
                 return Some(cause);
             }
-            let (left, right) = (fold(left)?, fold(right)?);
-            if fold_binary(left.clone(), *op, right.clone()).is_some() {
+            let (left, right) = (fold(left, &left_ty)?, fold(right, &right_ty)?);
+            if fold_binary(left.clone(), *op, right.clone(), &left_ty).is_some() {
                 return None;
             }
             let (ConstValue::Int(left), ConstValue::Int(right)) = (left, right) else {
@@ -104,22 +213,27 @@ pub(crate) fn fold_failure(
             match op {
                 BinaryOp::Div if right == 0 => Some("division by zero".to_string()),
                 BinaryOp::Mod if right == 0 => Some("remainder by zero".to_string()),
-                BinaryOp::Shl if !(0..48).contains(&right) => {
-                    Some(format!("shift count {right} is outside 0..48"))
-                }
-                BinaryOp::Shr if right < 0 => Some(format!("shift count {right} is negative")),
                 _ => Some(format!(
                     "{left} {op} {right} overflows the 48-bit int range"
                 )),
             }
         }
-        ExprKind::Cast { expr: inner, .. } => {
-            if let Some(cause) = failure(inner) {
+        ExprKind::Cast {
+            expr: inner,
+            target,
+        } => {
+            let source = written_int_type(inner, leaf_type).unwrap_or(InferType::I64);
+            if let Some(cause) = failure(inner, &source) {
                 return Some(cause);
             }
-            match fold(inner)? {
-                ConstValue::Float(value) if fold(expr).is_none() => {
-                    Some(format!("{value} does not fit in an int"))
+            match fold(inner, &source)? {
+                ConstValue::Float(value) if fold(expr, context).is_none() => {
+                    let target = InferType::from_name(&target.name);
+                    if target.is_sized_integer() {
+                        Some(format!("{value} cannot be converted to {target}"))
+                    } else {
+                        Some(format!("{value} does not fit in an int"))
+                    }
                 }
                 _ => None,
             }
@@ -128,30 +242,36 @@ pub(crate) fn fold_failure(
     }
 }
 
-fn fold_binary(left: ConstValue, op: BinaryOp, right: ConstValue) -> Option<ConstValue> {
+fn fold_binary(
+    left: ConstValue,
+    op: BinaryOp,
+    right: ConstValue,
+    ty: &InferType,
+) -> Option<ConstValue> {
     use ConstValue::{Bool, Float, Int, Str};
     match (left, right) {
-        (Int(left), Int(right)) => match op {
-            BinaryOp::Add => int(left.checked_add(right)),
-            BinaryOp::Sub => int(left.checked_sub(right)),
-            BinaryOp::Mul => int(left.checked_mul(right)),
-            BinaryOp::Div => int(left.checked_div(right)),
-            BinaryOp::Mod => int(left.checked_rem(right)),
-            BinaryOp::Shl => int(u32::try_from(right)
-                .ok()
-                .filter(|shift| *shift < 48)
-                .and_then(|shift| left.checked_mul(1i64 << shift))),
-            BinaryOp::Shr => int(u32::try_from(right).ok().map(|shift| left >> shift.min(63))),
-            BinaryOp::BitAnd => int(Some(left & right)),
-            BinaryOp::BitOr => int(Some(left | right)),
-            BinaryOp::BitXor => int(Some(left ^ right)),
-            BinaryOp::Eq => Some(Bool(left == right)),
-            BinaryOp::Ne => Some(Bool(left != right)),
-            BinaryOp::Lt => Some(Bool(left < right)),
-            BinaryOp::Le => Some(Bool(left <= right)),
-            BinaryOp::Gt => Some(Bool(left > right)),
-            BinaryOp::Ge => Some(Bool(left >= right)),
-        },
+        (Int(left), Int(right)) => {
+            let (wide_left, wide_right) = (i128::from(left), i128::from(right));
+            match op {
+                BinaryOp::Add => int_in(ty, wide_left + wide_right),
+                BinaryOp::Sub => int_in(ty, wide_left - wide_right),
+                BinaryOp::Mul => int_in(ty, wide_left * wide_right),
+                BinaryOp::Div if right != 0 => int_in(ty, wide_left / wide_right),
+                BinaryOp::Mod if right != 0 => int_in(ty, wide_left % wide_right),
+                BinaryOp::Div | BinaryOp::Mod => None,
+                BinaryOp::Shl => int_in(ty, wide_left << (right & shift_mask(ty))),
+                BinaryOp::Shr => int_in(ty, wide_left >> (right & shift_mask(ty))),
+                BinaryOp::BitAnd => int_in(ty, wide_left & wide_right),
+                BinaryOp::BitOr => int_in(ty, wide_left | wide_right),
+                BinaryOp::BitXor => int_in(ty, wide_left ^ wide_right),
+                BinaryOp::Eq => Some(Bool(left == right)),
+                BinaryOp::Ne => Some(Bool(left != right)),
+                BinaryOp::Lt => Some(Bool(left < right)),
+                BinaryOp::Le => Some(Bool(left <= right)),
+                BinaryOp::Gt => Some(Bool(left > right)),
+                BinaryOp::Ge => Some(Bool(left >= right)),
+            }
+        }
         (Float(left), Float(right)) => match op {
             BinaryOp::Add => Some(Float(left + right)),
             BinaryOp::Sub => Some(Float(left - right)),
@@ -179,6 +299,10 @@ fn fold_binary(left: ConstValue, op: BinaryOp, right: ConstValue) -> Option<Cons
         },
         _ => None,
     }
+}
+
+fn shift_mask(ty: &InferType) -> i64 {
+    ty.int_bits().map_or(63, |bits| i64::from(bits) - 1)
 }
 
 fn path_name(expr: &Expr) -> Option<String> {
@@ -223,14 +347,47 @@ impl TypeInference {
         }
     }
 
-    pub(crate) fn fold_constant(&self, expr: &Expr) -> Option<ConstValue> {
-        fold_const(expr, &|leaf| self.constant_leaf(leaf))
+    fn constant_leaf_type(&self, expr: &Expr) -> Option<InferType> {
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return None;
+        };
+        let constant = self.env.lookup_constant(name).is_some()
+            || (!self.env.binds_value(name)
+                && (self.global_constants.contains_key(name)
+                    || self.imported_constants.contains_key(name)));
+        constant
+            .then(|| self.env.lookup(name).cloned())
+            .flatten()
+            .filter(InferType::is_integer)
+    }
+
+    pub(crate) fn constant_context(
+        &self,
+        name: &str,
+        annotation: Option<&aelys_syntax::TypeAnnotation>,
+    ) -> InferType {
+        annotation
+            .filter(|_| name != "_")
+            .and_then(|_| self.env.lookup(name).cloned())
+            .filter(InferType::is_integer)
+            .or_else(|| annotation.and_then(|annotation| int_type_named(&annotation.name)))
+            .unwrap_or(InferType::I64)
+    }
+
+    pub(crate) fn fold_constant(&self, expr: &Expr, context: &InferType) -> Option<ConstValue> {
+        fold_const(
+            expr,
+            &|leaf| self.constant_leaf(leaf),
+            &|leaf| self.constant_leaf_type(leaf),
+            context,
+        )
     }
 
     pub(crate) fn declare_constant(
         &mut self,
         name: &str,
         initializer: &Expr,
+        context: &InferType,
         span: aelys_syntax::Span,
     ) -> Option<ConstValue> {
         if name != "_" && !self.env.first_constant_declaration(name) {
@@ -242,7 +399,7 @@ impl TypeInference {
                 reason: ConstraintReason::Other("constant declaration".to_string()),
             });
         }
-        match self.fold_constant(initializer) {
+        match self.fold_constant(initializer, context) {
             Some(value) => {
                 if name != "_" {
                     self.env.define_constant(name, value.clone());
@@ -250,7 +407,12 @@ impl TypeInference {
                 Some(value)
             }
             None => {
-                let cause = fold_failure(initializer, &|leaf| self.constant_leaf(leaf));
+                let cause = fold_failure(
+                    initializer,
+                    &|leaf| self.constant_leaf(leaf),
+                    &|leaf| self.constant_leaf_type(leaf),
+                    context,
+                );
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::NonConstantInitializer {
                         name: name.to_string(),
@@ -265,22 +427,24 @@ impl TypeInference {
     }
 
     pub(crate) fn predeclare_constants(&mut self, stmts: &[Stmt], bind: bool) {
-        let mut pending: Vec<(&str, &Expr)> = stmts
+        let mut pending: Vec<(&str, &Expr, Option<&aelys_syntax::TypeAnnotation>)> = stmts
             .iter()
             .filter_map(|stmt| match &stmt.kind {
                 StmtKind::Let {
                     name,
                     initializer,
+                    type_annotation,
                     is_const: true,
                     ..
-                } => Some((name.as_str(), initializer)),
+                } => Some((name.as_str(), initializer, type_annotation.as_ref())),
                 _ => None,
             })
             .collect();
         loop {
             let before = pending.len();
-            pending.retain(
-                |(name, initializer)| match self.fold_constant(initializer) {
+            pending.retain(|(name, initializer, annotation)| {
+                let context = self.constant_context(name, *annotation);
+                match self.fold_constant(initializer, &context) {
                     Some(value) => {
                         if bind {
                             self.env.define_constant(name, value.clone());
@@ -291,8 +455,8 @@ impl TypeInference {
                         false
                     }
                     None => true,
-                },
-            );
+                }
+            });
             if pending.is_empty() || pending.len() == before {
                 break;
             }

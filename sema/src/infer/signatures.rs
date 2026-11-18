@@ -365,7 +365,14 @@ impl TypeInference {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Function(func) => {
+                    let saved = stmt
+                        .definition_module
+                        .clone()
+                        .map(|module| std::mem::replace(&mut self.current_module, module));
                     self.collect_function_signature(func, prefix);
+                    if let Some(saved) = saved {
+                        self.current_module = saved;
+                    }
                 }
                 StmtKind::ImplDecl { .. } => {}
                 StmtKind::TraitDecl { .. } => {}
@@ -390,6 +397,16 @@ impl TypeInference {
                 }
                 StmtKind::ForEach { body, .. } => {
                     self.walk_signatures_in_stmt(body, prefix);
+                }
+                StmtKind::Expression(aelys_syntax::Expr {
+                    kind:
+                        aelys_syntax::ExprKind::Block(inner_stmts)
+                        | aelys_syntax::ExprKind::Loop {
+                            body: inner_stmts, ..
+                        },
+                    ..
+                }) => {
+                    self.walk_signatures(inner_stmts, prefix);
                 }
                 _ => {}
             }
@@ -629,6 +646,10 @@ impl TypeInference {
         self.current_function_bindings = saved_bindings;
 
         let fn_type = Rc::new(InferType::Function {
+            modes: crate::types::ParamModes::declared(
+                &param_types,
+                func.params.iter().map(|param| param.mutable),
+            ),
             params: param_types,
             ret: Box::new(ret_type),
         });
@@ -2157,6 +2178,10 @@ impl TypeInference {
                 symbol.clone(),
                 Rc::new(InferType::Function {
                     params: params.clone(),
+                    modes: crate::types::ParamModes::declared(
+                        &params,
+                        method.params.iter().map(|param| param.mutable),
+                    ),
                     ret: Box::new(ret.clone()),
                 }),
             );
@@ -2469,7 +2494,8 @@ impl TypeInference {
                     )),
                 }
             }
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
+                modes: modes.clone(),
                 params: params
                     .iter()
                     .map(|param| {
@@ -2884,7 +2910,7 @@ fn collect_projections(ty: &InferType, out: &mut Vec<InferType>) {
             out.push(ty.clone());
             collect_projections(self_ty, out);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_projections(param, out);
             }
@@ -3105,10 +3131,11 @@ fn own_params_conform(
                     .all(|(expected, actual)| conform(expected, actual, pairing))
         }
         (
-            InferType::Function { params, ret },
+            InferType::Function { params, ret, .. },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) => {
             params.len() == actual_params.len()

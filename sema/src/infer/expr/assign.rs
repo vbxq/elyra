@@ -12,9 +12,20 @@ impl TypeInference {
         span: Span,
     ) -> (TypedExprKind, InferType) {
         self.check_write_binding(name, span, "assignment");
-        let typed_value = self.infer_expr(value);
+        if self.immutable_imports.contains(name) && self.env.is_imported_binding(name) {
+            self.errors.push(TypeError {
+                kind: crate::constraint::TypeErrorKind::AssignToImmutableImport {
+                    name: name.to_string(),
+                    function: matches!(self.env.lookup(name), Some(InferType::Function { .. })),
+                },
+                span,
+                reason: ConstraintReason::Other("assignment".to_string()),
+            });
+        }
+        let mut typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {
+            self.fit_int_literal(&mut typed_value, &var_type);
             self.env.invalidate_collection_length(name);
             self.record_mutable_alias(
                 value,
@@ -40,6 +51,22 @@ impl TypeInference {
                     value: Box::new(typed_value),
                 },
                 var_type,
+            )
+        } else if let Some(modules) = self.ambiguous_imports.get(name) {
+            self.errors.push(TypeError {
+                kind: crate::constraint::TypeErrorKind::AmbiguousImport {
+                    name: name.to_string(),
+                    modules: modules.clone(),
+                },
+                span,
+                reason: ConstraintReason::Other("assignment".to_string()),
+            });
+            (
+                TypedExprKind::Assign {
+                    name: name.to_string(),
+                    value: Box::new(typed_value),
+                },
+                InferType::Poison,
             )
         } else {
             self.errors

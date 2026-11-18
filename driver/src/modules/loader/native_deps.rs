@@ -35,7 +35,10 @@ impl ModuleLoader {
             self.load_module(&dep_needs, vm)?;
 
             if let Some(version_req) = &dep.version_req {
-                let dep_path_str = path.join(".");
+                let dep_path_str = self
+                    .resolved_needs(&dep_needs)
+                    .map(|resolved| resolved.key.clone())
+                    .unwrap_or_else(|| path.join("."));
                 let dep_info = self.loaded_modules.get(&dep_path_str).ok_or_else(|| {
                     AelysError::Compile(CompileError::new(
                         CompileErrorKind::InvalidNativeModule {

@@ -125,17 +125,6 @@ fn compile_to_avbc_gated(
     .map(|result| result.program)
     .map_err(|errors| {
         if let Some(err) = errors.first() {
-            if let aelys_sema::constraint::TypeErrorKind::UntypedNativeBoundary { name } = &err.kind
-                && let Some(owners) = imports.ambiguous_globals.get(name)
-            {
-                return aelys_driver::modules::ambiguous_use_error(
-                    name,
-                    owners,
-                    err.span,
-                    src.clone(),
-                )
-                .to_string();
-            }
             CompileError::new(
                 CompileErrorKind::NamedTypeError {
                     code: err.diagnostic_code(),
@@ -182,6 +171,7 @@ fn compile_to_avbc_gated(
         resolved.symbol_origins,
     )
     .with_module_sources(imports.module_sources.clone())
+    .with_module_scopes(imports.imported_types.module_scopes.clone())
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;
 

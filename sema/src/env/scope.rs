@@ -15,8 +15,6 @@ impl TypeEnv {
         self.explicit_dynamic_locals
             .push(std::collections::HashSet::new());
         self.constant_values.push(std::collections::HashMap::new());
-        self.function_value_params
-            .push(std::collections::HashMap::new());
         self.binding_origins.push(std::collections::HashMap::new());
         self.declared_constants
             .push(std::collections::HashSet::new());
@@ -32,7 +30,6 @@ impl TypeEnv {
             self.known_collection_lengths.pop();
             self.explicit_dynamic_locals.pop();
             self.constant_values.pop();
-            self.function_value_params.pop();
             self.binding_origins.pop();
             self.declared_constants.pop();
         }
@@ -98,7 +95,18 @@ impl TypeEnv {
                 return mutability.get(name).copied().unwrap_or(false);
             }
         }
-        self.capture_mutability.get(name).copied().unwrap_or(false)
+        if let Some(mutable) = self.capture_mutability.get(name) {
+            return *mutable;
+        }
+        self.mutable_imports.contains(name) && self.functions.contains_key(name)
+    }
+
+    pub fn set_mutable_imports(&mut self, names: impl IntoIterator<Item = String>) {
+        self.mutable_imports = names.into_iter().collect();
+    }
+
+    pub fn forget_mutable_import(&mut self, name: &str) {
+        self.mutable_imports.remove(name);
     }
 
     pub fn define_borrow_binding(&mut self, name: String, kind: ReferenceKind) {
@@ -161,29 +169,6 @@ impl TypeEnv {
         }
         if self.captures.contains_key(name) {
             return self.capture_constants.get(name).cloned();
-        }
-        None
-    }
-
-    pub fn define_function_value(&mut self, name: &str, mutable_params: Vec<Option<String>>) {
-        if let Some(params) = self.function_value_params.last_mut() {
-            params.insert(name.to_string(), mutable_params);
-        }
-    }
-
-    pub fn lookup_function_value(&self, name: &str) -> Option<&Vec<Option<String>>> {
-        for (scope, params) in self
-            .locals
-            .iter()
-            .rev()
-            .zip(self.function_value_params.iter().rev())
-        {
-            if scope.contains_key(name) {
-                return params.get(name);
-            }
-        }
-        if self.captures.contains_key(name) {
-            return self.capture_function_value_params.get(name);
         }
         None
     }
@@ -251,9 +236,6 @@ impl TypeEnv {
             if let Some(constants) = self.constant_values.last_mut() {
                 constants.remove(&name);
             }
-            if let Some(params) = self.function_value_params.last_mut() {
-                params.remove(&name);
-            }
             if let Some(origins) = self.binding_origins.last_mut() {
                 origins.remove(&name);
             }
@@ -301,6 +283,12 @@ impl TypeEnv {
 
     pub fn binds_value(&self, name: &str) -> bool {
         self.locals.iter().any(|scope| scope.contains_key(name)) || self.captures.contains_key(name)
+    }
+
+    pub fn is_imported_binding(&self, name: &str) -> bool {
+        !self.locals.iter().any(|scope| scope.contains_key(name))
+            && !self.captures.contains_key(name)
+            && self.functions.contains_key(name)
     }
 
     pub fn contains(&self, name: &str) -> bool {

@@ -38,11 +38,28 @@ pub struct ModuleImports {
     pub known_native_globals: HashSet<String>, // native funcs for codegen opt
     pub native_signatures: HashMap<String, InferType>,
     pub symbol_origins: HashMap<String, String>, // symbol -> module_path
-    pub ambiguous_globals: HashMap<String, Vec<String>>,
     pub imported_types: aelys_sema::infer::imports::ImportedTypes,
     pub imported_impl_stmts: Vec<aelys_syntax::Stmt>,
     pub impl_body_globals: HashSet<String>,
     pub module_sources: HashMap<String, Arc<Source>>,
+    pub global_renames: HashMap<String, String>,
+    pub generic_targets: HashMap<String, String>,
+}
+
+impl ModuleImports {
+    // the entry file's spellings of an imported generic function name the carried copy
+    pub fn program_stmts(&self, stmts: Vec<aelys_syntax::Stmt>) -> Vec<aelys_syntax::Stmt> {
+        let mut own: Vec<_> = stmts
+            .into_iter()
+            .filter(|stmt| !matches!(stmt.kind, aelys_syntax::StmtKind::Needs(_)))
+            .collect();
+        super::rewrite_generic_references(&mut own, &self.generic_targets);
+        self.imported_impl_stmts
+            .iter()
+            .cloned()
+            .chain(own)
+            .collect()
+    }
 }
 
 pub enum LoadResult {
@@ -60,6 +77,15 @@ pub struct ModuleLoader {
     pub(crate) manifest: Option<Manifest>,
     pub(crate) loaded_native_modules: HashMap<String, LoadedNativeInfo>,
     pub(crate) host_modules: HashSet<String>,
+    pub(crate) project_dir: PathBuf,
+    pub(crate) file_keys: HashMap<PathBuf, String>,
+    pub(crate) resolved_needs: HashMap<(PathBuf, String), ResolvedNeeds>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedNeeds {
+    pub(crate) key: String,
+    pub(crate) symbol: Option<String>,
 }
 
 pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
@@ -115,5 +141,48 @@ impl ModuleInfo {
                 into.insert(format!("{module_alias}::{name}"), value.clone());
             }
         }
+    }
+}
+
+// a bare name two whole-module imports share is refused only at a use; a named import wins
+#[derive(Debug, Default)]
+pub struct BareImports {
+    bare: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    explicit: HashMap<String, String>,
+}
+
+impl BareImports {
+    pub fn note_bare(&mut self, name: &str, module: &str, alias: &str) {
+        self.bare
+            .entry(name.to_string())
+            .or_default()
+            .insert(module.to_string(), alias.to_string());
+    }
+
+    pub fn is_explicit(&self, name: &str) -> bool {
+        self.explicit.contains_key(name)
+    }
+
+    pub fn note_explicit(&mut self, name: &str, module: &str) -> Option<String> {
+        match self.explicit.get(name) {
+            Some(previous) if previous != module => Some(previous.clone()),
+            Some(_) => None,
+            None => {
+                self.explicit.insert(name.to_string(), module.to_string());
+                None
+            }
+        }
+    }
+
+    pub fn ambiguous(&self) -> std::collections::BTreeMap<String, Vec<String>> {
+        self.bare
+            .iter()
+            .filter(|(name, modules)| modules.len() > 1 && !self.explicit.contains_key(*name))
+            .map(|(name, modules)| {
+                let aliases: std::collections::BTreeSet<String> =
+                    modules.values().cloned().collect();
+                (name.clone(), aliases.into_iter().collect())
+            })
+            .collect()
     }
 }

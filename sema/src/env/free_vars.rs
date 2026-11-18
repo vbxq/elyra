@@ -11,7 +11,7 @@ impl TypeEnv {
                 InferType::Var(id) => {
                     vars.insert(*id);
                 }
-                InferType::Function { params, ret } => {
+                InferType::Function { params, ret, .. } => {
                     for p in params {
                         collect_vars(p, vars);
                     }

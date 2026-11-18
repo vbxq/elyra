@@ -34,7 +34,7 @@ fn type_node_count(ty: &InferType) -> usize {
                     walk(arg, count);
                 }
             }
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 for param in params {
                     walk(param, count);
                 }
@@ -143,7 +143,8 @@ impl TypeInference {
                 state.cache.insert(ty.clone(), normalized.clone());
                 normalized
             }
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
+                modes: modes.clone(),
                 params: params
                     .iter()
                     .map(|param| self.normalize_projection_types_bounded(param, state))
@@ -325,7 +326,7 @@ impl TypeInference {
             InferType::Var(id) => {
                 subst.bind(*id, InferType::Poison);
             }
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 for p in params {
                     self.poison(p, subst);
                 }
@@ -359,7 +360,7 @@ fn contains_open_projection(ty: &InferType) -> bool {
         }
         InferType::Tuple(elements) => elements.iter().any(contains_open_projection),
         InferType::Applied { args, .. } => args.iter().any(contains_open_projection),
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_open_projection) || contains_open_projection(ret)
         }
         _ => false,
@@ -370,10 +371,12 @@ fn decompose_for_deferral(left: &InferType, right: &InferType) -> Vec<(InferType
     let (
         InferType::Function {
             params: left_params,
+            modes: left_modes,
             ret: left_ret,
         },
         InferType::Function {
             params: right_params,
+            modes: right_modes,
             ret: right_ret,
         },
     ) = (left, right)
@@ -389,5 +392,13 @@ fn decompose_for_deferral(left: &InferType, right: &InferType) -> Vec<(InferType
         .zip(right_params.iter().cloned())
         .collect();
     components.push((left_ret.as_ref().clone(), right_ret.as_ref().clone()));
+    if left_modes != right_modes {
+        let with_modes = |modes: &crate::types::ParamModes| InferType::Function {
+            params: left_params.clone(),
+            modes: modes.clone(),
+            ret: left_ret.clone(),
+        };
+        components.push((with_modes(left_modes), with_modes(right_modes)));
+    }
     components
 }

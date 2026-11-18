@@ -163,7 +163,9 @@ fn collect_calls_in_stmt(stmt: &TypedStmt, calls: &mut HashSet<String>) {
                 collect_calls_in_stmt(eb, calls);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_calls_in_expr(condition, calls);
             collect_calls_in_stmt(body, calls);
         }
@@ -185,7 +187,9 @@ fn collect_calls_in_stmt(stmt: &TypedStmt, calls: &mut HashSet<String>) {
             collect_calls_in_expr(iterable, calls);
             collect_calls_in_stmt(body, calls);
         }
-        TypedStmtKind::Return(Some(e)) => collect_calls_in_expr(e, calls),
+        TypedStmtKind::Return(Some(e)) | TypedStmtKind::Break { value: Some(e), .. } => {
+            collect_calls_in_expr(e, calls)
+        }
         TypedStmtKind::Function(f) => {
             for s in &f.body {
                 collect_calls_in_stmt(s, calls);
@@ -227,7 +231,9 @@ fn collect_calls_in_expr(expr: &TypedExpr, calls: &mut HashSet<String>) {
         TypedExprKind::Grouping(inner) | TypedExprKind::Lambda(inner) => {
             collect_calls_in_expr(inner, calls);
         }
-        TypedExprKind::LambdaInner { body, .. } => {
+        TypedExprKind::LambdaInner { body, .. }
+        | TypedExprKind::Block(body)
+        | TypedExprKind::Loop { body, .. } => {
             for s in body {
                 collect_calls_in_stmt(s, calls);
             }
@@ -297,7 +303,9 @@ fn count_calls_in_stmt(stmt: &TypedStmt, counts: &mut HashMap<String, usize>) {
                 count_calls_in_stmt(eb, counts);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             count_calls_in_expr(condition, counts);
             count_calls_in_stmt(body, counts);
         }
@@ -319,7 +327,9 @@ fn count_calls_in_stmt(stmt: &TypedStmt, counts: &mut HashMap<String, usize>) {
             count_calls_in_expr(iterable, counts);
             count_calls_in_stmt(body, counts);
         }
-        TypedStmtKind::Return(Some(e)) => count_calls_in_expr(e, counts),
+        TypedStmtKind::Return(Some(e)) | TypedStmtKind::Break { value: Some(e), .. } => {
+            count_calls_in_expr(e, counts)
+        }
         TypedStmtKind::Function(f) => {
             for s in &f.body {
                 count_calls_in_stmt(s, counts);
@@ -361,7 +371,9 @@ fn count_calls_in_expr(expr: &TypedExpr, counts: &mut HashMap<String, usize>) {
         TypedExprKind::Grouping(inner) | TypedExprKind::Lambda(inner) => {
             count_calls_in_expr(inner, counts);
         }
-        TypedExprKind::LambdaInner { body, .. } => {
+        TypedExprKind::LambdaInner { body, .. }
+        | TypedExprKind::Block(body)
+        | TypedExprKind::Loop { body, .. } => {
             for s in body {
                 count_calls_in_stmt(s, counts);
             }

@@ -10,6 +10,26 @@ pub const FROM_SOURCE_PARAM: &str = "Source";
 pub const STRING_TO_ERROR_SYMBOL: &str = "__aelys_from::string_to_error";
 
 pub fn register(table: &mut TypeTable) {
+    for arity in 2..=aelys_syntax::MAX_TUPLE_ARITY {
+        let type_params: Vec<String> = (0..arity).map(|index| format!("T{index}")).collect();
+        table.register_struct(crate::types::StructDef {
+            name: aelys_syntax::tuple_struct_name(arity),
+            fields: type_params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| crate::types::StructField {
+                    name: index.to_string(),
+                    ty: InferType::Param(param.clone()),
+                    is_pub: true,
+                    ordinal: u16::try_from(index).unwrap_or(u16::MAX),
+                    span: aelys_syntax::Span::dummy(),
+                })
+                .collect(),
+            type_params,
+            owner: aelys_syntax::ModuleId::new("<prelude>"),
+            is_pub: true,
+        });
+    }
     table.register_trait(TraitDef {
         owner: aelys_syntax::ModuleId::new("<prelude>"),
         name: DISPLAY_TRAIT.to_string(),

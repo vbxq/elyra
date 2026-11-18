@@ -1,7 +1,7 @@
 use super::error::UnifyResult;
 use super::occurs::occurs_check;
 use super::{Substitution, UnifyError};
-use crate::types::InferType;
+use crate::types::{InferType, ParamMode};
 
 pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyResult<()> {
     let t1 = subst.apply(t1);
@@ -87,10 +87,12 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         (
             InferType::Function {
                 params: p1,
+                modes: m1,
                 ret: r1,
             },
             InferType::Function {
                 params: p2,
+                modes: m2,
                 ret: r2,
             },
         ) => {
@@ -102,7 +104,13 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
                 unify(param1, param2, subst)?;
             }
 
-            unify(r1, r2, subst)
+            unify(r1, r2, subst)?;
+
+            if (0..p1.len()).all(|index| unify_mode(m1.get(index), m2.get(index), subst)) {
+                Ok(())
+            } else {
+                Err(UnifyError::Mismatch(subst.apply(&t1), subst.apply(&t2)))
+            }
         }
 
         (InferType::Array(inner1), InferType::Array(inner2)) => unify(inner1, inner2, subst),
@@ -156,5 +164,16 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         }
 
         _ => Err(UnifyError::Mismatch(t1.clone(), t2.clone())),
+    }
+}
+
+fn unify_mode(left: ParamMode, right: ParamMode, subst: &mut Substitution) -> bool {
+    match (subst.apply_mode(left), subst.apply_mode(right)) {
+        (ParamMode::Var(a), ParamMode::Var(b)) if a == b => true,
+        (ParamMode::Var(var), mode) | (mode, ParamMode::Var(var)) => {
+            subst.bind_mode(var, mode);
+            true
+        }
+        (left, right) => left == right,
     }
 }

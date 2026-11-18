@@ -1,7 +1,7 @@
 use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind, TypedStmt};
-use crate::types::InferType;
+use crate::types::{InferType, ParamModes};
 use aelys_syntax::{
     Expr, ExprKind, MatchArm, MatchArmBody, MemberSeparator, Pattern, PatternKind, Span,
 };
@@ -89,7 +89,7 @@ fn invalid_map_key(ty: &InferType) -> Option<&InferType> {
         InferType::Tuple(elements) | InferType::Applied { args: elements, .. } => {
             elements.iter().find_map(invalid_map_key)
         }
-        InferType::Function { params, ret } => params
+        InferType::Function { params, ret, .. } => params
             .iter()
             .find_map(invalid_map_key)
             .or_else(|| invalid_map_key(ret)),
@@ -254,7 +254,7 @@ impl TypeInference {
             }
         }
         for (index, (arg, expected)) in typed_args.iter_mut().zip(params.iter()).enumerate() {
-            narrow_literal(arg, expected);
+            self.fit_int_literal(arg, expected);
             let reason = ConstraintReason::Argument {
                 func_name: format!("{}::{member}", receiver_family(&receiver)),
                 arg_index: index,
@@ -279,6 +279,7 @@ impl TypeInference {
             },
             InferType::Function {
                 params,
+                modes: ParamModes::plain(),
                 ret: Box::new(output.clone()),
             },
             callee.span,
@@ -342,6 +343,7 @@ impl TypeInference {
             ("sort_by", 1) => MethodShape::new(
                 vec![InferType::Function {
                     params: vec![t.clone(), t],
+                    modes: self.fresh_param_modes(2),
                     ret: Box::new(InferType::I64),
                 }],
                 InferType::Unit,
@@ -437,6 +439,7 @@ impl TypeInference {
             },
             InferType::Function {
                 params: Vec::new(),
+                modes: ParamModes::plain(),
                 ret: Box::new(map.clone()),
             },
             callee.span,
@@ -489,6 +492,7 @@ impl TypeInference {
                     },
                     InferType::Function {
                         params: vec![InferType::Char],
+                        modes: ParamModes::plain(),
                         ret: Box::new(InferType::String),
                     },
                     span,
@@ -572,6 +576,7 @@ impl TypeInference {
             },
             InferType::Function {
                 params: vec![InferType::Poison; typed_args.len()],
+                modes: ParamModes::plain(),
                 ret: Box::new(InferType::Poison),
             },
             callee.span,
@@ -645,16 +650,6 @@ fn unborrowed(arg: &Expr) -> &Expr {
     }
 }
 
-fn narrow_literal(arg: &mut TypedExpr, expected: &InferType) {
-    if let TypedExprKind::Int(value) = &arg.kind
-        && expected.is_integer()
-        && *expected != InferType::I64
-        && InferType::int_fits(*value, expected)
-    {
-        arg.ty = expected.clone();
-    }
-}
-
 fn hoist_impure_place_operands(place: &Expr, arg: &Expr, span: Span) -> Option<Expr> {
     if matches!(place.kind, ExprKind::Identifier(_)) || is_duplicable(place) {
         return None;
@@ -692,6 +687,7 @@ fn hoist_impure_place_operands(place: &Expr, arg: &Expr, span: Span) -> Option<E
                     guard: None,
                     span,
                     body: MatchArmBody::Expr(Box::new(result)),
+                    synthetic: true,
                 }],
             },
             span,

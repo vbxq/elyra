@@ -12,10 +12,7 @@ pub enum NativeObligation {
 }
 
 fn function(arity: usize, ret: InferType) -> InferType {
-    InferType::Function {
-        params: (0..arity).map(open_param).collect(),
-        ret: Box::new(ret),
-    }
+    InferType::function((0..arity).map(open_param).collect(), ret)
 }
 
 fn open_param(index: usize) -> InferType {
@@ -30,10 +27,7 @@ fn scalar_conversion_sources() -> Vec<InferType> {
 }
 
 fn function_with(params: Vec<InferType>, ret: InferType) -> InferType {
-    InferType::Function {
-        params,
-        ret: Box::new(ret),
-    }
+    InferType::function(params, ret)
 }
 
 fn numeric_function(arity: usize, ret: InferType) -> InferType {
@@ -150,6 +144,22 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             result(InferType::I64, InferType::String),
         ),
         ("sys", "random_state") => function(0, InferType::I64),
+        (
+            "sys",
+            "gc_max_pause_us"
+            | "gc_window_max_pause_us"
+            | "gc_p99_pause_us"
+            | "gc_max_pause_cpu_us"
+            | "gc_total_pause_us"
+            | "gc_pause_count"
+            | "gc_minor_collections"
+            | "gc_major_collections"
+            | "gc_heap_bytes"
+            | "gc_live_objects"
+            | "gc_allocations",
+        ) => function(0, InferType::I64),
+        ("sys", "gc_stats") => function(0, InferType::String),
+        ("sys", "gc_collect") => function(0, InferType::Unit),
 
         ("time", "now" | "now_us" | "now_ns") => function(0, InferType::F64),
         ("time", "elapsed") => function_with(vec![InferType::I64], InferType::F64),
@@ -194,6 +204,14 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ("fs", "write" | "write_bytes" | "write_line") => function_with(
             vec![InferType::I64, InferType::String],
             result(InferType::I64, InferType::String),
+        ),
+        ("fs", "write_buffer") => function_with(
+            vec![InferType::I64, InferType::I64],
+            result(InferType::I64, InferType::String),
+        ),
+        ("fs", "write_file_bytes") => function_with(
+            vec![InferType::String, InferType::I64],
+            result(InferType::Unit, InferType::String),
         ),
         ("fs", "read_text") => function_with(
             vec![InferType::String],

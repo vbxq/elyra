@@ -33,8 +33,8 @@ pub(super) fn build_cfg(stmts: &[TypedStmt]) -> ControlFlowGraph {
         let is_terminator = matches!(
             stmt.kind,
             TypedStmtKind::Return(_)
-                | TypedStmtKind::Break
-                | TypedStmtKind::Continue
+                | TypedStmtKind::Break { .. }
+                | TypedStmtKind::Continue { .. }
                 | TypedStmtKind::If { .. }
                 | TypedStmtKind::While { .. }
                 | TypedStmtKind::For { .. }
@@ -56,7 +56,9 @@ pub(super) fn build_cfg(stmts: &[TypedStmt]) -> ControlFlowGraph {
 
                 if !matches!(
                     stmt.kind,
-                    TypedStmtKind::Return(_) | TypedStmtKind::Break | TypedStmtKind::Continue
+                    TypedStmtKind::Return(_)
+                        | TypedStmtKind::Break { .. }
+                        | TypedStmtKind::Continue { .. }
                 ) {
                     cfg.blocks[block_id].successors.push(block_id + 1);
                     current_block_predecessors.push(block_id);

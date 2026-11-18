@@ -7,6 +7,7 @@ pub struct FunctionSchemas {
     pub structs: Vec<StructSchema>,
     pub enums: Vec<EnumSchema>,
     pub runtime_ids: Vec<SchemaId>,
+    pub enum_runtime_ids: Vec<u16>,
 }
 
 /// a wrapped bytecode function for the gc heap.
@@ -39,6 +40,7 @@ impl AelysFunction {
                 structs: self.function.struct_schemas.clone(),
                 enums: self.function.enum_schemas.clone(),
                 runtime_ids: self.function.schema_ids.clone(),
+                enum_runtime_ids: self.function.enum_ids.clone(),
             })
         }))
     }

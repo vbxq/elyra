@@ -24,6 +24,9 @@ pub struct ExportedTypes {
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
     pub renamed_privates: BTreeMap<String, String>,
     pub renamed_private_traits: BTreeSet<String>,
+    pub scope: aelys_sema::infer::imports::ModuleScope,
+    pub generic_fns: Vec<Stmt>,
+    pub pub_generic_fns: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -122,18 +125,26 @@ fn field_types(def: &aelys_sema::types::EnumVariantFieldsDef) -> Vec<String> {
     }
 }
 
-fn names_the_impls_reach(exported: &ExportedTypes, impls: &[Stmt]) -> HashSet<String> {
-    let mut reached = HashSet::new();
-    let Some(source) = exported.source.as_ref() else {
-        return reached;
-    };
-    for stmt in impls {
-        if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
-            collect_identifiers(text, &mut reached);
+fn names_the_impls_reach(
+    exported: &ExportedTypes,
+    impls: &[Stmt],
+    mut reached: HashSet<String>,
+) -> HashSet<String> {
+    if let Some(source) = exported.source.as_ref() {
+        for stmt in impls {
+            if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
+                collect_identifiers(text, &mut reached);
+            }
         }
     }
     loop {
         let mut grew = false;
+        for (name, ty) in &exported.globals {
+            let bare = name.rsplit("::").next().unwrap_or(name);
+            if reached.contains(name) || reached.contains(bare) {
+                grew |= collect_identifiers(&ty.to_string(), &mut reached);
+            }
+        }
         for def in &exported.types.structs {
             if !reached.contains(&def.name) {
                 continue;
@@ -170,19 +181,39 @@ pub fn select_exported_nominals(
     let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
     let exported_names: HashSet<String> = exported.types.nominal_names().into_iter().collect();
 
+    // a type an imported signature reaches is usable though never named, methods included
+    let mut signature_seed = HashSet::new();
+    if let Some(source) = exported.source.as_ref() {
+        for stmt in exported
+            .generic_fns
+            .iter()
+            .filter(|stmt| stmt.definition_module.is_none())
+        {
+            if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
+                collect_identifiers(text, &mut signature_seed);
+            }
+        }
+    }
+    for name in &wanted {
+        if let Some(ty) = exported.globals.get(*name) {
+            collect_identifiers(&ty.to_string(), &mut signature_seed);
+        }
+    }
+    let signature_reached = names_the_impls_reach(exported, &[], signature_seed);
     let in_scope = |name: &String| !exported_names.contains(name) || wanted.contains(name.as_str());
     let impls: Vec<Stmt> = exported
         .impl_stmts
         .iter()
         .filter(|stmt| match impl_ends(stmt) {
             Some((target, trait_name)) => {
-                in_scope(&target) && trait_name.as_ref().is_none_or(in_scope)
+                (in_scope(&target) || signature_reached.contains(&target))
+                    && trait_name.as_ref().is_none_or(in_scope)
             }
             None => false,
         })
         .cloned()
         .collect();
-    let reached = names_the_impls_reach(exported, &impls);
+    let reached = names_the_impls_reach(exported, &impls, signature_reached);
 
     let mut selected = ImportedTypes::default();
     let surface_path = module_path.replace('.', "::");
@@ -347,16 +378,29 @@ pub fn module_private_nominal_renames(
     renames
 }
 
+pub struct GenericSurface<'a> {
+    pub structs: &'a [aelys_sema::types::StructDef],
+    pub enums: &'a [aelys_sema::types::EnumDef],
+    pub global_types: &'a BTreeMap<String, aelys_sema::types::InferType>,
+    pub functions: Vec<Stmt>,
+}
+
 pub fn collect_exported_types(
     stmts: &[Stmt],
     type_table: &TypeTable,
-    generic_structs: &[aelys_sema::types::StructDef],
-    generic_enums: &[aelys_sema::types::EnumDef],
+    generics: GenericSurface<'_>,
     module_path: &str,
     source: Arc<Source>,
     applied_renames: &BTreeMap<String, String>,
 ) -> Result<ExportedTypes> {
+    let GenericSurface {
+        structs: generic_structs,
+        enums: generic_enums,
+        global_types,
+        functions: generic_fns,
+    } = generics;
     let mut exported = ExportedTypes {
+        generic_fns,
         renamed_privates: applied_renames.clone(),
         // a needs line spells the bare name, so a refusal still has to recognise it
         private_names: applied_renames.keys().cloned().collect(),
@@ -420,13 +464,27 @@ pub fn collect_exported_types(
             continue;
         }
         if !type_params.is_empty() {
-            return Err(not_exportable(
-                module_path,
-                name,
-                GENERIC_REASON,
-                stmt.span,
-                source,
-            ));
+            let template = match kind {
+                NominalKind::Struct => generic_structs
+                    .iter()
+                    .find(|def| &def.name == name)
+                    .map(|def| exported.types.structs.push(def.clone())),
+                NominalKind::Enum => generic_enums
+                    .iter()
+                    .find(|def| &def.name == name)
+                    .map(|def| exported.types.enums.push(def.clone())),
+                NominalKind::Trait => None,
+            };
+            if template.is_none() {
+                return Err(not_exportable(
+                    module_path,
+                    name,
+                    GENERIC_REASON,
+                    stmt.span,
+                    source,
+                ));
+            }
+            continue;
         }
 
         let found = match &stmt.kind {
@@ -484,9 +542,42 @@ pub fn collect_exported_types(
             .impl_stmts
             .iter()
             .chain(&exported.own_private_impls)
+            .chain(
+                exported
+                    .generic_fns
+                    .iter()
+                    .filter(|stmt| stmt.definition_module.is_none()),
+            )
         {
             if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
                 collect_identifiers(text, &mut named);
+            }
+        }
+        loop {
+            let mut grew = false;
+            for (name, ty) in global_types {
+                if named.contains(name) {
+                    grew |= collect_identifiers(&ty.to_string(), &mut named);
+                }
+            }
+            for def in generic_structs {
+                if named.contains(&def.name) {
+                    for field in &def.fields {
+                        grew |= collect_identifiers(&field.ty.to_string(), &mut named);
+                    }
+                }
+            }
+            for def in generic_enums {
+                if named.contains(&def.name) {
+                    for variant in &def.variants {
+                        for ty in field_types(&variant.fields) {
+                            grew |= collect_identifiers(&ty, &mut named);
+                        }
+                    }
+                }
+            }
+            if !grew {
+                break;
             }
         }
         let mut header_named = HashSet::new();
@@ -614,6 +705,12 @@ fn rename_body_only_privates(
             .impl_stmts
             .iter_mut()
             .chain(&mut exported.own_private_impls)
+            .chain(
+                exported
+                    .generic_fns
+                    .iter_mut()
+                    .filter(|stmt| stmt.definition_module.is_none()),
+            )
         {
             super::rename::rename_stmts(std::slice::from_mut(stmt), &renames);
         }
@@ -699,7 +796,7 @@ fn mentions_nominal(ty: &aelys_sema::InferType, type_table: &TypeTable) -> Optio
         InferType::Tuple(elements) => elements
             .iter()
             .find_map(|element| mentions_nominal(element, type_table)),
-        InferType::Function { params, ret } => params
+        InferType::Function { params, ret, .. } => params
             .iter()
             .find_map(|param| mentions_nominal(param, type_table))
             .or_else(|| mentions_nominal(ret, type_table)),
@@ -741,4 +838,71 @@ pub fn reject_nominal_boundary_signatures(
         }
     }
     Ok(())
+}
+
+pub fn deinstantiate_exports(
+    exported: &mut ExportedTypes,
+    signatures: &mut std::collections::HashMap<String, aelys_sema::InferType>,
+    type_table: &TypeTable,
+) {
+    let renames = exported.renamed_privates.clone();
+    for ty in exported.globals.values_mut().chain(signatures.values_mut()) {
+        *ty = rename_nominals(&type_table.deinstantiate(ty), &renames);
+    }
+    for types in [&mut exported.types, &mut exported.own_private_types] {
+        for def in &mut types.structs {
+            for field in &mut def.fields {
+                field.ty = type_table.deinstantiate(&field.ty);
+            }
+        }
+        for def in &mut types.enums {
+            for variant in &mut def.variants {
+                match &mut variant.fields {
+                    aelys_sema::types::EnumVariantFieldsDef::Unit => {}
+                    aelys_sema::types::EnumVariantFieldsDef::Tuple(fields) => {
+                        for field in fields {
+                            *field = type_table.deinstantiate(field);
+                        }
+                    }
+                    aelys_sema::types::EnumVariantFieldsDef::Named(fields) => {
+                        for field in fields {
+                            field.ty = type_table.deinstantiate(&field.ty);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn rename_nominals(
+    ty: &aelys_sema::InferType,
+    renames: &BTreeMap<String, String>,
+) -> aelys_sema::InferType {
+    use aelys_sema::InferType;
+    let each = |types: &[InferType]| types.iter().map(|t| rename_nominals(t, renames)).collect();
+    match ty {
+        InferType::Struct(name) => InferType::Struct(renames.get(name).unwrap_or(name).clone()),
+        InferType::Applied { name, args } => InferType::Applied {
+            name: renames.get(name).unwrap_or(name).clone(),
+            args: each(args),
+        },
+        InferType::Function { params, modes, ret } => InferType::Function {
+            params: each(params),
+            modes: modes.clone(),
+            ret: Box::new(rename_nominals(ret, renames)),
+        },
+        InferType::Option(inner) => InferType::Option(Box::new(rename_nominals(inner, renames))),
+        InferType::Array(inner) => InferType::Array(Box::new(rename_nominals(inner, renames))),
+        InferType::Vec(inner) => InferType::Vec(Box::new(rename_nominals(inner, renames))),
+        InferType::FixedArray(inner, length) => {
+            InferType::FixedArray(Box::new(rename_nominals(inner, renames)), *length)
+        }
+        InferType::Result(ok, err) => InferType::Result(
+            Box::new(rename_nominals(ok, renames)),
+            Box::new(rename_nominals(err, renames)),
+        ),
+        InferType::Tuple(elements) => InferType::Tuple(each(elements)),
+        _ => ty.clone(),
+    }
 }

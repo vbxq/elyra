@@ -30,10 +30,6 @@ pub struct TypeEnv {
 
     capture_constants: HashMap<String, ConstValue>,
 
-    function_value_params: Vec<HashMap<String, Vec<Option<String>>>>,
-
-    capture_function_value_params: HashMap<String, Vec<Option<String>>>,
-
     binding_origins: Vec<HashMap<String, (String, bool)>>,
 
     declared_constants: Vec<HashSet<String>>,
@@ -56,6 +52,8 @@ pub struct TypeEnv {
 
     // a namespace name is legal only as the root of a path, so it never gets a type
     namespaces: HashSet<String>,
+
+    mutable_imports: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -70,8 +68,6 @@ impl TypeEnv {
             explicit_dynamic_locals: vec![HashSet::new()],
             constant_values: vec![HashMap::new()],
             capture_constants: HashMap::new(),
-            function_value_params: vec![HashMap::new()],
-            capture_function_value_params: HashMap::new(),
             binding_origins: vec![HashMap::new()],
             declared_constants: vec![HashSet::new()],
             capture_binding_origins: HashMap::new(),
@@ -83,6 +79,7 @@ impl TypeEnv {
             functions: HashMap::new(),
             current_function: None,
             namespaces: HashSet::new(),
+            mutable_imports: HashSet::new(),
         }
     }
 

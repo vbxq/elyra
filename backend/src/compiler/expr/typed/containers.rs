@@ -164,15 +164,23 @@ impl Compiler {
         &mut self,
         inner: &TypedExpr,
         target: &InferType,
+        sized: Option<aelys_bytecode::CastTarget>,
         dest: u16,
         span: Span,
     ) -> Result<bool> {
-        let native = match (&inner.ty, target) {
-            (InferType::Char, InferType::Char) => {
+        let native = match (&inner.ty, target, sized) {
+            (InferType::Char, InferType::Char, _) => {
                 return self.compile_typed_expr(inner, dest).map(|()| true);
             }
-            (InferType::Char, _) => "__char_to_int",
-            (_, InferType::Char) => "__char_from_int",
+            (InferType::Char, _, Some(sized)) => {
+                let source = self.alloc_register()?;
+                self.call_native("__char_to_int", &[Operand::Expr(inner)], source, span)?;
+                self.emit_a(OpCode::Cast, dest, source, u16::from(sized as u8), span);
+                self.free_register(source);
+                return Ok(true);
+            }
+            (InferType::Char, _, None) => "__char_to_int",
+            (_, InferType::Char, _) => "__char_from_int",
             _ => return Ok(false),
         };
         self.call_native(native, &[Operand::Expr(inner)], dest, span)?;
@@ -187,7 +195,7 @@ impl Compiler {
         span: Span,
     ) -> Result<()> {
         let count = operands.len() + 1;
-        let base = self.alloc_consecutive_registers_for_call(count, span)?;
+        let base = self.alloc_call_window(count, span)?;
         self.alloc_consecutive_from(base, count)?;
         for (offset, operand) in operands.iter().enumerate() {
             let register = base
@@ -230,14 +238,14 @@ impl Compiler {
             state,
             span,
         )?;
-        let call_base = self.alloc_consecutive_registers_for_call(4, span)?;
+        let more = self.alloc_register()?;
+        let slot = self.alloc_register()?;
+        let call_base = self.alloc_call_window(4, span)?;
         self.alloc_consecutive_from(call_base, 4)?;
         let result = call_base + 1;
         let left = call_base + 2;
         let right = call_base + 3;
         self.compile_typed_expr(comparator, call_base)?;
-        let more = self.alloc_register()?;
-        let slot = self.alloc_register()?;
         self.emit_b(OpCode::LoadI, result, 0, span);
         let load = match &object.ty {
             InferType::Vec(_) => Self::element_load(

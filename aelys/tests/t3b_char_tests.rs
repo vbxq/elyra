@@ -170,18 +170,13 @@ fn char_and_string_do_not_mix() {
 
 #[test]
 fn a_quote_before_a_longer_name_lexes_as_a_label_not_a_char() {
-    for program in [
-        "'outer: while true { break 'outer }\n0",
-        "let mut i = 0\n'scan: for j in 0..3 { i += j }\ni",
-        "while true { break 'done }\n0",
-        "let c = 'a\n0",
-        "let c = '_x\n0",
-    ] {
+    assert_aelys_int("'outer: while true { break 'outer }\n0", 0);
+    assert_aelys_int("let mut i = 0\n'scan: for j in 0..3 { i += j }\ni", 3);
+    let err = run_aelys_err("while true { break 'done }\n0");
+    assert!(err.contains("E0390"), "{err}");
+    for program in ["let c = 'a\n0", "let c = '_x\n0"] {
         let err = run_aelys_err(program);
-        assert!(
-            err.contains("E0008") && err.contains("loop label"),
-            "{program}: {err}"
-        );
+        assert!(err.contains("E0102"), "{program}: {err}");
     }
     let err = run_aelys_err("let c = 'ab'\n0");
     assert!(err.contains("exactly one character"), "{err}");

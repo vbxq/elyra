@@ -78,7 +78,7 @@ fn forbidden_surface_type(ty: &InferType, declared: &HashSet<String>) -> Option<
 fn binds_param(ty: &InferType, declared: &HashSet<String>) -> bool {
     match ty {
         InferType::Param(name) => declared.contains(name),
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(|param| binds_param(param, declared)) || binds_param(ret, declared)
         }
         InferType::Array(inner)
@@ -135,8 +135,8 @@ fn collect_declared_type_params(stmt: &TypedStmt, declared: &mut HashSet<String>
         TypedStmtKind::Expression(_)
         | TypedStmtKind::Let { .. }
         | TypedStmtKind::Return(_)
-        | TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        | TypedStmtKind::Break { .. }
+        | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_) => {}
     }
 }

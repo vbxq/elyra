@@ -45,7 +45,7 @@ impl Compiler {
 
         // Allocate 3 consecutive registers for iter, end, step.
         // ForLoopI requires these to be adjacent in the register window.
-        let iter_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let iter_reg = self.alloc_consecutive_registers(3, span)?;
         let end_reg = iter_reg + 1;
         let step_reg = iter_reg + 2;
 
@@ -95,16 +95,13 @@ impl Compiler {
 
         let body_start = self.current_offset();
 
-        self.loop_stack.push(LoopContext {
-            start: body_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        self.loop_stack
+            .push(LoopContext::new(body_start, true, self.locals.len()));
 
         self.compile_stmt(body)?;
 
         let forloop_pos = self.current_offset();
+        self.close_captured_iteration_variable(iter_reg, span);
 
         self.patch_jump(jump_to_forloop);
 

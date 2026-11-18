@@ -1,6 +1,6 @@
 use crate::bytecode::{
-    Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth, Function,
-    GlobalLayout, IntWidth, OpCode, StructFieldSchema, StructSchema, TypeDescriptor,
+    CastTarget, Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth,
+    Function, GlobalLayout, IntWidth, OpCode, StructFieldSchema, StructSchema, TypeDescriptor,
     UpvalueDescriptor,
 };
 use std::collections::{HashMap, HashSet};
@@ -11,6 +11,7 @@ pub const MAGIC: &[u8; 4] = b"VBXQ";
 
 pub const VERSION: u16 = 4;
 const LEGACY_VERSION: u16 = 3;
+pub const SIZED_INT_VERSION: u16 = 5;
 
 const MAX_BYTECODE_LEN: usize = 1_000_000;
 const MAX_CONSTANTS: usize = 1_000_000;
@@ -84,6 +85,9 @@ pub enum BinaryError {
 
     #[error("Invalid enum schema: {0}")]
     InvalidEnumSchema(String),
+
+    #[error("version {0} cannot contain sized integer instructions")]
+    SizedIntBeforeVersion5(u16),
 
     #[error("Invalid struct schema: {0}")]
     InvalidStructSchema(String),
@@ -613,7 +617,9 @@ impl BinaryWriter {
 }
 
 fn format_version(func: &Function) -> u16 {
-    if requires_v4(func) {
+    if requires_v5(func) {
+        SIZED_INT_VERSION
+    } else if requires_v4(func) {
         VERSION
     } else {
         LEGACY_VERSION
@@ -625,6 +631,35 @@ fn requires_v4(func: &Function) -> bool {
         || !func.struct_schemas.is_empty()
         || bytecode_has_enum_opcode(func.bytecode.as_slice())
         || func.nested_functions.iter().any(requires_v4)
+}
+
+fn requires_v5(func: &Function) -> bool {
+    bytecode_has_sized_opcode(func.bytecode.as_slice())
+        || func.nested_functions.iter().any(requires_v5)
+}
+
+fn bytecode_has_sized_opcode(bytecode: &[u32]) -> bool {
+    let mut ip = 0;
+    while let Some(&instruction) = bytecode.get(ip) {
+        let opcode = OpCode::from_u8((instruction >> 24) as u8);
+        let inner = if opcode == Some(OpCode::Wide) {
+            OpCode::from_u8(((instruction >> 16) & 0xff) as u8)
+        } else {
+            opcode
+        };
+        let sized_cast = match (opcode, inner) {
+            (Some(OpCode::Cast), _) => instruction & 0xff > u32::from(CastTarget::Bool as u8),
+            (Some(OpCode::Wide), Some(OpCode::Cast)) => bytecode
+                .get(ip + 2)
+                .is_some_and(|word| word >> 16 > u32::from(CastTarget::Bool as u8)),
+            _ => false,
+        };
+        if sized_cast || inner.is_some_and(|op| op as u8 >= OpCode::AddWI8 as u8) {
+            return true;
+        }
+        ip = ip.saturating_add(1 + opcode.map_or(0, OpCode::extension_words));
+    }
+    false
 }
 
 fn bytecode_has_enum_opcode(bytecode: &[u32]) -> bool {
@@ -890,7 +925,7 @@ impl<'a> BinaryReader<'a> {
         }
 
         let version = self.read_u16()?;
-        if version != LEGACY_VERSION && version != VERSION {
+        if version != LEGACY_VERSION && version != VERSION && version != SIZED_INT_VERSION {
             return Err(BinaryError::UnsupportedVersion(version));
         }
 
@@ -912,7 +947,7 @@ impl<'a> BinaryReader<'a> {
         }
 
         let version = self.read_u16()?;
-        if version != LEGACY_VERSION && version != VERSION {
+        if version != LEGACY_VERSION && version != VERSION && version != SIZED_INT_VERSION {
             return Err(BinaryError::UnsupportedVersion(version));
         }
 
@@ -1013,6 +1048,9 @@ impl<'a> BinaryReader<'a> {
             return Err(BinaryError::InvalidEnumSchema(
                 "version 3 cannot contain enum opcode".to_string(),
             ));
+        }
+        if version < SIZED_INT_VERSION && bytecode_has_sized_opcode(&bytecode) {
+            return Err(BinaryError::SizedIntBeforeVersion5(version));
         }
 
         let nested_count = self.read_u16()? as usize;

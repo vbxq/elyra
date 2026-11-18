@@ -144,7 +144,7 @@ impl ResolvedType {
             InferType::Never => ResolvedType::Never,
             InferType::Numeric => ResolvedType::I64,
             InferType::UntypedNative(name) => ResolvedType::UntypedNative(name.clone()),
-            InferType::Function { params, ret } => ResolvedType::Function {
+            InferType::Function { params, ret, .. } => ResolvedType::Function {
                 params: params.iter().map(ResolvedType::from_infer_type).collect(),
                 ret: Box::new(ResolvedType::from_infer_type(ret)),
             },

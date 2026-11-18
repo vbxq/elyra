@@ -119,7 +119,7 @@ pub enum AliasSite {
     Binding,
     Parameter(String),
     Assignment(String),
-    FunctionValue,
+    FunctionValue { position: usize, ty: String },
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +150,14 @@ pub enum TypeErrorKind {
     /// undefined function
     UndefinedFunction {
         name: String,
+    },
+    AmbiguousImport {
+        name: String,
+        modules: Vec<String>,
+    },
+    AssignToImmutableImport {
+        name: String,
+        function: bool,
     },
     RecursionLimit,
     NonExhaustiveMatch {
@@ -214,6 +222,27 @@ pub enum TypeErrorKind {
         expected: InferType,
     },
     MatchArmValueRequired,
+    UndefinedLabel {
+        label: String,
+    },
+    BreakValueOutsideLoop {
+        label: Option<String>,
+    },
+    CapitalizedBindingPattern {
+        name: String,
+        suggestion: Option<String>,
+    },
+    TupleFieldOutOfRange {
+        tuple: InferType,
+        field: String,
+    },
+    TuplePatternArity {
+        expected: usize,
+        found: usize,
+    },
+    TupleFieldAssignment {
+        field: String,
+    },
     GenericArityMismatch {
         name: String,
         expected: usize,
@@ -545,6 +574,19 @@ pub enum TypeErrorKind {
     IntegerLiteralOutOfRange {
         value: i64,
     },
+    MixedIntegerOperands {
+        op: String,
+        left: InferType,
+        right: InferType,
+        operand: String,
+    },
+    WideIntegerUnavailable {
+        name: String,
+    },
+    FixedPointShiftOutOfRange {
+        method: String,
+        count: i64,
+    },
     EnumLayoutTooLarge {
         enum_name: String,
         item: String,
@@ -632,6 +674,12 @@ impl TypeError {
                 if let Some(help) = sum_wrapping_help(expected, found, &self.reason) {
                     write!(f, "\n   = help: {help}")?;
                 }
+                if differs_only_by_mut(expected, found) {
+                    write!(
+                        f,
+                        "\n   = help: a `mut` parameter is part of a function's type: declare the parameter `mut` on both sides or on neither"
+                    )?;
+                }
                 Ok(())
             }
             TypeErrorKind::InfiniteType { var, ty } => {
@@ -691,6 +739,31 @@ impl TypeError {
                     f,
                     "undefined variable: {}",
                     crate::unscoped_global_name(name)
+                )
+            }
+            TypeErrorKind::AssignToImmutableImport { name, function } => write!(
+                f,
+                "cannot assign to '{}': it is {} of the module that declares it",
+                name,
+                if *function {
+                    "a function"
+                } else {
+                    "an immutable variable"
+                }
+            ),
+            TypeErrorKind::AmbiguousImport { name, modules } => {
+                let qualified = modules
+                    .iter()
+                    .map(|module| format!("'{module}::{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                write!(
+                    f,
+                    "symbol '{}' is exported by multiple modules: {}\n   = hint: qualify it as {}, or import it by name with a 'needs {} from ...' line",
+                    name,
+                    modules.join(", "),
+                    qualified,
+                    name
                 )
             }
             TypeErrorKind::UndefinedFunction { name } => {
@@ -1027,8 +1100,8 @@ impl TypeError {
                     AliasSite::Assignment(target) => {
                         format!("assign `{place}` to the mutable binding `{target}`")
                     }
-                    AliasSite::FunctionValue => format!(
-                        "pass `{place}` to a call through a function value, whose parameter may be `mut`"
+                    AliasSite::FunctionValue { position, ty } => format!(
+                        "pass `{place}` to the `mut` parameter {position} of a function value of type `{ty}`"
                     ),
                 };
                 write!(
@@ -1573,6 +1646,28 @@ impl TypeError {
             TypeErrorKind::MangledSymbolCollision { name } => {
                 write!(f, "two instances of '{}' mangle to one symbol", name)
             }
+            TypeErrorKind::MixedIntegerOperands {
+                op,
+                left,
+                right,
+                operand,
+            } => write!(
+                f,
+                "mismatched integer types in '{}': {} and {}\n   = help: convert with `as`, e.g. `{} as {}`",
+                op,
+                left.source_spelling(),
+                right.source_spelling(),
+                operand,
+                left.source_spelling()
+            ),
+            TypeErrorKind::FixedPointShiftOutOfRange { method, count } => {
+                write!(f, "shift count {} of '{}' is outside 0..=63", count, method)
+            }
+            TypeErrorKind::WideIntegerUnavailable { name } => write!(
+                f,
+                "{} is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping arithmetic",
+                name
+            ),
             TypeErrorKind::IntegerLiteralOutOfRange { value } => write!(
                 f,
                 "integer literal '{}' exceeds 48-bit signed range ({} to {})",
@@ -1594,6 +1689,47 @@ impl TypeError {
                 f,
                 "non-exhaustive struct match for {}; add '_' or an irrefutable field pattern",
                 structure
+            ),
+            TypeErrorKind::UndefinedLabel { label } => write!(
+                f,
+                "use of undeclared label '{}\n   = help: a label names an enclosing `for`, `while`, or `loop`, written `'{}: loop {{ .. }}`",
+                label, label
+            ),
+            TypeErrorKind::BreakValueOutsideLoop { label } => write!(
+                f,
+                "`break` with a value targets {}, which is not a `loop`\n   = help: only `loop` produces a value; `while` and `for` always produce unit",
+                label
+                    .as_ref()
+                    .map(|label| format!("'{label}"))
+                    .unwrap_or_else(|| "the innermost loop".to_string())
+            ),
+            TypeErrorKind::CapitalizedBindingPattern { name, suggestion } => match suggestion {
+                Some(suggestion) => write!(
+                    f,
+                    "pattern `{}` is not a variant: a bare name binds a new variable that matches every value\n   = help: did you mean {}?",
+                    name, suggestion
+                ),
+                None => write!(
+                    f,
+                    "pattern `{}` is not a variant: a bare name binds a new variable that matches every value\n   = help: write the variant with its enum path, or a lowercase name to bind the value",
+                    name
+                ),
+            },
+            TypeErrorKind::TupleFieldOutOfRange { tuple, field } => write!(
+                f,
+                "tuple {} has no field {}",
+                tuple.source_spelling(),
+                field
+            ),
+            TypeErrorKind::TuplePatternArity { expected, found } => write!(
+                f,
+                "tuple pattern has {} elements, but the value is a tuple of {} elements",
+                found, expected
+            ),
+            TypeErrorKind::TupleFieldAssignment { field } => write!(
+                f,
+                "cannot assign to field .{} of a tuple: tuples are immutable\n   = help: build a new tuple, or use a struct for a record with mutable fields",
+                field
             ),
             TypeErrorKind::UnreachablePattern { pattern } => write!(
                 f,
@@ -1849,6 +1985,9 @@ impl TypeErrorKind {
             Self::MonomorphizationLimit { .. } => 345,
             Self::MangledSymbolCollision { .. } => 355,
             Self::IntegerLiteralOutOfRange { .. } => 209,
+            Self::MixedIntegerOperands { .. } => 460,
+            Self::WideIntegerUnavailable { .. } => 461,
+            Self::FixedPointShiftOutOfRange { .. } => 462,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,
             Self::GenericArityMismatch { .. } => 357,
@@ -1857,6 +1996,8 @@ impl TypeErrorKind {
             Self::NotCallable { .. } => 360,
             Self::InfiniteType { .. } => 361,
             Self::UndefinedFunction { .. } => 362,
+            Self::AmbiguousImport { .. } => 445,
+            Self::AssignToImmutableImport { .. } => 446,
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,
@@ -1877,6 +2018,12 @@ impl TypeErrorKind {
             Self::ReservedIdentityConversion { .. } => 375,
             Self::UnknownVariant { .. } => 109,
             Self::MatchArmValueRequired => 110,
+            Self::UndefinedLabel { .. } => 390,
+            Self::BreakValueOutsideLoop { .. } => 391,
+            Self::CapitalizedBindingPattern { .. } => 392,
+            Self::TupleFieldAssignment { .. } => 393,
+            Self::TupleFieldOutOfRange { .. } => 363,
+            Self::TuplePatternArity { .. } => 301,
             Self::MissingReturnValue { .. } => 215,
             // an undefined name keeps 301 because the surface pins that code for it
             Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,
@@ -1952,5 +2099,31 @@ fn alike_side(ty: &InferType, text: &str) -> String {
         }
         InferType::Param(_) => format!("'{text}' of its impl or type is another parameter"),
         _ => format!("'{text}' is the type of that name"),
+    }
+}
+
+fn differs_only_by_mut(expected: &InferType, found: &InferType) -> bool {
+    match (expected, found) {
+        (
+            InferType::Function {
+                params: expected_params,
+                modes: expected_modes,
+                ret: expected_ret,
+            },
+            InferType::Function {
+                params: found_params,
+                modes: found_modes,
+                ret: found_ret,
+            },
+        ) => {
+            expected_modes != found_modes
+                && expected_params.len() == found_params.len()
+                && expected_params
+                    .iter()
+                    .zip(found_params)
+                    .all(|(expected, found)| expected.source_spelling() == found.source_spelling())
+                && expected_ret.source_spelling() == found_ret.source_spelling()
+        }
+        _ => false,
     }
 }

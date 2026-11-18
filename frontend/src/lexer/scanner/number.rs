@@ -24,8 +24,12 @@ impl Lexer {
         }
 
         let mut is_float = false;
+        let tuple_index = matches!(
+            self.tokens.last().map(|token| &token.kind),
+            Some(TokenKind::Dot)
+        );
 
-        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
+        if !tuple_index && self.peek() == '.' && self.peek_next().is_ascii_digit() {
             is_float = true;
             self.advance();
             while self.peek().is_ascii_digit() || self.peek() == '_' {
@@ -33,7 +37,7 @@ impl Lexer {
             }
         }
 
-        if self.peek() == 'e' || self.peek() == 'E' {
+        if !tuple_index && (self.peek() == 'e' || self.peek() == 'E') {
             is_float = true;
             self.advance();
             if self.peek() == '+' || self.peek() == '-' {

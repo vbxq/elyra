@@ -38,8 +38,7 @@ impl Compiler {
         self.register_search_start = self.register_search_start.min(index);
     }
 
-    // contiguous block for call args
-    pub fn alloc_consecutive_registers_for_call(&self, n: usize, span: Span) -> Result<u16> {
+    pub fn alloc_consecutive_registers(&self, n: usize, span: Span) -> Result<u16> {
         let pool_len = self.register_pool.len();
 
         'outer: for start in 0..pool_len {
@@ -51,14 +50,7 @@ impl Compiler {
                     continue 'outer;
                 }
             }
-            return u16::try_from(start).map_err(|_| {
-                CompileError::new(
-                    CompileErrorKind::TooManyRegisters,
-                    span,
-                    self.source.clone(),
-                )
-                .into()
-            });
+            return self.window_register(start, span);
         }
 
         Err(CompileError::new(
@@ -67,6 +59,67 @@ impl Compiler {
             self.source.clone(),
         )
         .into())
+    }
+
+    pub(crate) fn live_register_top(&self) -> usize {
+        let scan_end = usize::try_from(self.next_register)
+            .unwrap_or(usize::MAX)
+            .min(self.register_pool.len());
+        self.register_pool[..scan_end]
+            .iter()
+            .rposition(|used| *used)
+            .map_or(0, |index| index + 1)
+    }
+
+    // the callee frame covers every register from the window base upward, so a window never sits below a live register
+    pub fn alloc_call_window(&self, n: usize, span: Span) -> Result<u16> {
+        let start = self.live_register_top();
+        if start.saturating_add(n) > self.register_pool.len() {
+            return Err(CompileError::new(
+                CompileErrorKind::TooManyRegisters,
+                span,
+                self.source.clone(),
+            )
+            .into());
+        }
+        self.window_register(start, span)
+    }
+
+    fn window_register(&self, start: usize, span: Span) -> Result<u16> {
+        u16::try_from(start).map_err(|_| {
+            CompileError::new(
+                CompileErrorKind::TooManyRegisters,
+                span,
+                self.source.clone(),
+            )
+            .into()
+        })
+    }
+
+    pub fn finish_registers(&mut self) -> Result<()> {
+        self.current.num_registers = self.next_register;
+        if let Some((register, window_base, span)) = self.call_window_fault.take() {
+            return Err(CompileError::new(
+                CompileErrorKind::CallWindowOverlap {
+                    register,
+                    window_base,
+                },
+                span,
+                self.source.clone(),
+            )
+            .into());
+        }
+        if let Some((_, line)) = self.current.own_wide_operand_fault() {
+            let start = self.source.get_line_start_offset(line);
+            let end = start + self.source.get_line(line).len();
+            return Err(CompileError::new(
+                CompileErrorKind::TooManyRegisters,
+                Span::new(start, end, line, 1),
+                self.source.clone(),
+            )
+            .into());
+        }
+        Ok(())
     }
 
     pub fn alloc_consecutive_from(&mut self, start: u16, count: usize) -> Result<u16> {

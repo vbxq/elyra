@@ -402,9 +402,9 @@ fn a_third_and_fourth_whole_user_module_keep_their_qualified_names() {
         1234
     );
     let message = run_file_error(dir.path(), "needs ma\nneeds mb\nneeds mc\nval()\n");
-    assert!(message.contains("E0410"), "{message}");
+    assert!(message.contains("E0445"), "{message}");
     assert!(
-        message.contains("ma::val or mb::val or mc::val"),
+        message.contains("'ma::val' or 'mb::val' or 'mc::val'"),
         "{message}"
     );
 }
@@ -490,8 +490,8 @@ fn a_native_module_imported_after_fs_and_bytes_keeps_its_typed_qualified_names()
         dir.path(),
         "needs std::fs\nneeds std::bytes\nneeds sizer\nsize(bytes::alloc(1))\n",
     );
-    assert!(message.contains("E0410"), "{message}");
-    assert!(message.contains("sizer::size"), "{message}");
+    assert!(message.contains("E0445"), "{message}");
+    assert!(message.contains("'sizer::size'"), "{message}");
 }
 
 #[cfg(target_os = "linux")]

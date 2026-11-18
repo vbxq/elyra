@@ -8,7 +8,10 @@ impl GlobalConstantPropagator {
     pub(super) fn substitute_constants(&mut self, expr: &mut TypedExpr) {
         match &mut expr.kind {
             TypedExprKind::Identifier(name) => {
-                let known = if self.shadows.is_shadowed(name) {
+                let known = if self.shadows.is_shadowed(name)
+                    || (self.late.contains(name)
+                        && (self.function_depth > 0 || !self.late_bound.contains(name)))
+                {
                     None
                 } else {
                     self.constants.get(name)
@@ -52,6 +55,7 @@ impl GlobalConstantPropagator {
             }
             TypedExprKind::Lambda(inner) => self.substitute_constants(inner),
             TypedExprKind::LambdaInner { params, body, .. } => {
+                self.function_depth += 1;
                 self.shadows.push();
                 for param in params.iter() {
                     self.shadows.shadow(param.name.clone());
@@ -60,6 +64,7 @@ impl GlobalConstantPropagator {
                     self.substitute_in_stmt(stmt);
                 }
                 self.shadows.pop();
+                self.function_depth -= 1;
             }
             TypedExprKind::Member { object, .. } => self.substitute_constants(object),
             TypedExprKind::StructField { object, .. }
@@ -151,6 +156,13 @@ impl GlobalConstantPropagator {
                     self.shadows.pop();
                 }
             }
+            TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+                self.shadows.push();
+                for stmt in stmts {
+                    self.substitute_in_stmt(stmt);
+                }
+                self.shadows.pop();
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
@@ -193,7 +205,9 @@ impl GlobalConstantPropagator {
                     self.shadows.pop();
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+                condition, body, ..
+            } => {
                 self.substitute_constants(condition);
                 self.shadows.push();
                 self.substitute_in_stmt(body);
@@ -229,7 +243,10 @@ impl GlobalConstantPropagator {
                 self.substitute_in_stmt(body);
                 self.shadows.pop();
             }
-            TypedStmtKind::Return(Some(expr)) => self.substitute_constants(expr),
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => self.substitute_constants(expr),
             TypedStmtKind::Function(func) => self.substitute_in_function(func),
             TypedStmtKind::ImplDecl { methods, .. } => {
                 for method in methods {
@@ -237,8 +254,8 @@ impl GlobalConstantPropagator {
                 }
             }
             TypedStmtKind::Return(None)
-            | TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
@@ -247,6 +264,7 @@ impl GlobalConstantPropagator {
     }
 
     fn substitute_in_function(&mut self, func: &mut TypedFunction) {
+        self.function_depth += 1;
         self.shadows.push();
         for param in &func.params {
             self.shadows.shadow(param.name.clone());
@@ -255,6 +273,7 @@ impl GlobalConstantPropagator {
             self.substitute_in_stmt(stmt);
         }
         self.shadows.pop();
+        self.function_depth -= 1;
     }
 
     fn shadow_pattern(&mut self, pattern: &TypedPattern) {
@@ -274,7 +293,8 @@ impl GlobalConstantPropagator {
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
             | TypedPatternKind::Char(_)
-            | TypedPatternKind::Bool(_) => {}
+            | TypedPatternKind::Bool(_)
+            | TypedPatternKind::Range { .. } => {}
         }
     }
 }

@@ -216,7 +216,7 @@ fn two_whole_standard_modules_sharing_a_name_resolve_qualified_uses() {
 }
 
 #[test]
-fn a_bare_use_of_a_name_two_whole_modules_export_is_e0410() {
+fn a_bare_use_of_a_name_two_whole_modules_export_is_e0445() {
     let dir = tempfile::tempdir().unwrap();
     for (body, name) in [
         (
@@ -238,14 +238,13 @@ fn a_bare_use_of_a_name_two_whole_modules_export_is_e0410() {
         ("needs std::fs\nneeds std::bytes\nlet s = size\n0\n", "size"),
     ] {
         let message = run_error(dir.path(), body);
-        assert!(message.contains("E0410"), "{body}\n{message}");
+        assert!(message.contains("E0445"), "{body}\n{message}");
         assert!(
             message.contains(&format!("symbol '{name}' is exported by multiple modules")),
             "{message}"
         );
         assert!(
-            message.contains(&format!("fs::{name} or bytes::{name}"))
-                || message.contains(&format!("bytes::{name} or fs::{name}")),
+            message.contains(&format!("'bytes::{name}' or 'fs::{name}'")),
             "{message}"
         );
     }
@@ -279,6 +278,6 @@ fn two_whole_user_modules_sharing_a_function_name_resolve_qualified_uses() {
         100_501
     );
     let message = run_error(dir.path(), "needs alpha\nneeds beta\nget()\n");
-    assert!(message.contains("E0410"), "{message}");
-    assert!(message.contains("alpha::get or beta::get"), "{message}");
+    assert!(message.contains("E0445"), "{message}");
+    assert!(message.contains("'alpha::get' or 'beta::get'"), "{message}");
 }

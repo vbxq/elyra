@@ -419,6 +419,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -471,6 +472,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -523,6 +525,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -575,6 +578,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -1149,6 +1153,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1201,6 +1206,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1253,6 +1259,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1303,6 +1310,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     Some((false, len)) => {
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
@@ -1315,6 +1323,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {

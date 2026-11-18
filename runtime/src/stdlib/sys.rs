@@ -47,6 +47,19 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("random_seed", 1, native_random_seed);
     reg_fn!("random_state", 0, native_random_state);
     reg_fn!("random_set_state", 1, native_random_set_state);
+    reg_fn!("gc_max_pause_us", 0, native_gc_max_pause_us);
+    reg_fn!("gc_window_max_pause_us", 0, native_gc_window_max_pause_us);
+    reg_fn!("gc_p99_pause_us", 0, native_gc_p99_pause_us);
+    reg_fn!("gc_max_pause_cpu_us", 0, native_gc_max_pause_cpu_us);
+    reg_fn!("gc_total_pause_us", 0, native_gc_total_pause_us);
+    reg_fn!("gc_pause_count", 0, native_gc_pause_count);
+    reg_fn!("gc_minor_collections", 0, native_gc_minor_collections);
+    reg_fn!("gc_major_collections", 0, native_gc_major_collections);
+    reg_fn!("gc_heap_bytes", 0, native_gc_heap_bytes);
+    reg_fn!("gc_live_objects", 0, native_gc_live_objects);
+    reg_fn!("gc_allocations", 0, native_gc_allocations);
+    reg_fn!("gc_stats", 0, native_gc_stats);
+    reg_fn!("gc_collect", 0, native_gc_collect);
 
     Ok(StdModuleExports {
         all_exports,
@@ -458,5 +471,68 @@ fn native_random_state(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeErr
 fn native_random_set_state(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let state = get_int(vm, args[0], "sys.random_set_state")?;
     vm.set_random_state(state as u64);
+    Ok(Value::unit())
+}
+
+fn gc_int(value: u64) -> Value {
+    Value::int(i64::try_from(value.min(1 << 46)).unwrap_or(1 << 46))
+}
+
+fn native_gc_max_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.gc_pause_stats().max_nanos() / 1000))
+}
+
+fn native_gc_window_max_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.take_gc_window_max_pause_nanos() / 1000))
+}
+
+fn native_gc_p99_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.gc_pause_stats().percentile_nanos(99.0) / 1000))
+}
+
+fn native_gc_max_pause_cpu_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.gc_pause_stats().max_cpu_nanos() / 1000))
+}
+
+fn native_gc_total_pause_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.gc_pause_stats().total_nanos() / 1000))
+}
+
+fn native_gc_pause_count(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.gc_pause_stats().count()))
+}
+
+fn native_gc_minor_collections(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.heap().minor_collection_count()))
+}
+
+fn native_gc_major_collections(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.heap().major_collection_count()))
+}
+
+fn native_gc_heap_bytes(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(
+        u64::try_from(vm.heap().bytes_allocated()).unwrap_or(u64::MAX),
+    ))
+}
+
+fn native_gc_live_objects(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(
+        u64::try_from(vm.heap().object_count()).unwrap_or(u64::MAX),
+    ))
+}
+
+fn native_gc_allocations(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    Ok(gc_int(vm.heap().allocation_count()))
+}
+
+fn native_gc_stats(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    let report = vm.gc_stats_report();
+    let line = report.lines().next().unwrap_or_default().to_string();
+    make_string(vm, line.trim_start_matches("gc-stats: "))
+}
+
+fn native_gc_collect(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+    vm.collect();
     Ok(Value::unit())
 }
