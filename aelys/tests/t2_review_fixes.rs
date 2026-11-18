@@ -160,3 +160,39 @@ fn nested_destructuring_let_resolves_every_binding() {
         (1 + 2 + 2 + 3) * 100 + 3 + 6,
     );
 }
+
+#[test]
+fn internal_tuple_names_are_neither_visible_nor_writable() {
+    for (access, message) in [
+        ("t.2", "tuple (int, int) has no field 2"),
+        ("t.3 + 1", "tuple (int, int) has no field 3"),
+        ("t.x", "tuple (int, int) has no field x"),
+    ] {
+        let error = rejected_with(&format!("let t = (1, 2)\n{access}"), "E0363");
+        assert!(error.contains(message), "{error}");
+    }
+    let nested = rejected_with("let t = ((1, \"a\"), 2)\nt.0.5", "E0363");
+    assert!(nested.contains("tuple (int, string) has no field 5"), "{nested}");
+    for source in [
+        "let x: AelysTuple2<int, int> = (1, 2)\nx.1",
+        "struct AelysTuple2 { a: int }\nlet t = (1, 2)\nt.0",
+        "let t = (1, 2)\nmatch t { AelysTuple2 { .. } => 1 }",
+        "let AelysTuple3 = 4\nAelysTuple3",
+        "fn f(t: AelysTuple2<int, int>) -> int { t.0 }\nf((1, 2))",
+        "enum AelysTupleKind { A }\n1",
+    ] {
+        let error = rejected(source);
+        assert!(
+            error.contains("E0394") && error.contains("reserved name") && !error.contains("<prelude>"),
+            "{error}\nfor:\n{source}"
+        );
+    }
+    for source in [
+        "let t = (1, 2)\nmatch t { (a, b, c) => a }",
+        "let (a, b, c) = (1, 2)\na",
+        "fn f(t: (int, int, int)) -> int { match t { (a, b) => a } }\nf((1, 2, 3))",
+    ] {
+        let error = rejected_with(source, "E0301");
+        assert!(error.contains("tuple pattern has"), "{error}\nfor:\n{source}");
+    }
+}

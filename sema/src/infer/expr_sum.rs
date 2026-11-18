@@ -2053,7 +2053,30 @@ impl TypeInference {
                                     name: name.clone(),
                                     args: fresh.clone(),
                                 };
-                                if let InferType::Var(_) = ty {
+                                let arities = match ty {
+                                    InferType::Applied { name: actual, .. } => {
+                                        aelys_syntax::tuple_arity(actual)
+                                            .zip(aelys_syntax::tuple_arity(&name))
+                                    }
+                                    _ => None,
+                                };
+                                if let Some((expected, found)) = arities {
+                                    self.errors.push(TypeError {
+                                        kind: TypeErrorKind::TuplePatternArity { expected, found },
+                                        span: pattern.span,
+                                        reason: ConstraintReason::Other(
+                                            "tuple pattern".to_string(),
+                                        ),
+                                    });
+                                    let poisoned = vec![InferType::Poison; fresh.len()];
+                                    return self.infer_pattern(
+                                        pattern,
+                                        &InferType::Applied {
+                                            name: name.clone(),
+                                            args: poisoned,
+                                        },
+                                    );
+                                } else if let InferType::Var(_) = ty {
                                     self.constraints.push(Constraint::equal(
                                         ty.clone(),
                                         expected,

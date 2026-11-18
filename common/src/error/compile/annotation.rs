@@ -20,6 +20,7 @@ impl CompileErrorKind {
             Self::BorrowingReceiverDeferred { .. } => "borrowing receivers arrive in Stage 3",
             Self::TraitObjectDeferred { .. } => "trait objects arrive in Stage 3",
             Self::InvalidDefaultMethod => "'default' is not allowed here",
+            Self::ReservedName { .. } => "reserved name",
             Self::ReturnOutsideFunction => "not inside a function",
             Self::MissingReturnValue { .. } => "a reachable path has no value",
             Self::IntegerOverflow { .. } => "value exceeds range",

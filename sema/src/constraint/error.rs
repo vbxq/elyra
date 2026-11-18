@@ -214,6 +214,14 @@ pub enum TypeErrorKind {
         name: String,
         suggestion: Option<String>,
     },
+    TupleFieldOutOfRange {
+        tuple: InferType,
+        field: String,
+    },
+    TuplePatternArity {
+        expected: usize,
+        found: usize,
+    },
     TupleFieldAssignment {
         field: String,
     },
@@ -1524,6 +1532,17 @@ impl TypeError {
                     name
                 ),
             },
+            TypeErrorKind::TupleFieldOutOfRange { tuple, field } => write!(
+                f,
+                "tuple {} has no field {}",
+                tuple.source_spelling(),
+                field
+            ),
+            TypeErrorKind::TuplePatternArity { expected, found } => write!(
+                f,
+                "tuple pattern has {} elements, but the value is a tuple of {} elements",
+                found, expected
+            ),
             TypeErrorKind::TupleFieldAssignment { field } => write!(
                 f,
                 "cannot assign to field .{} of a tuple: tuples are immutable\n   = help: build a new tuple, or use a struct for a record with mutable fields",
@@ -1811,6 +1830,8 @@ impl TypeErrorKind {
             Self::BreakValueOutsideLoop { .. } => 391,
             Self::CapitalizedBindingPattern { .. } => 392,
             Self::TupleFieldAssignment { .. } => 393,
+            Self::TupleFieldOutOfRange { .. } => 363,
+            Self::TuplePatternArity { .. } => 301,
             Self::MissingReturnValue { .. } => 215,
             // an undefined name keeps 301 because the surface pins that code for it
             Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,

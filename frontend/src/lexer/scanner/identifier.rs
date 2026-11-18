@@ -1,8 +1,10 @@
 use super::Lexer;
+use aelys_common::Result;
+use aelys_common::error::{AelysError, CompileErrorKind};
 use aelys_syntax::TokenKind;
 
 impl Lexer {
-    pub(super) fn identifier(&mut self) {
+    pub(super) fn identifier(&mut self) -> Result<()> {
         while self.peek().is_alphanumeric() || self.peek() == '_' {
             self.advance();
         }
@@ -37,9 +39,15 @@ impl Lexer {
             "trait" => TokenKind::Trait,
             "impl" => TokenKind::Impl,
             "match" => TokenKind::Match,
+            _ if text.starts_with(aelys_syntax::TUPLE_STRUCT_PREFIX) => {
+                return Err(AelysError::Compile(
+                    self.error(CompileErrorKind::ReservedName { name: text }),
+                ));
+            }
             _ => TokenKind::Identifier(text),
         };
 
         self.add_token(kind);
+        Ok(())
     }
 }

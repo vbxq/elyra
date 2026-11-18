@@ -1188,6 +1188,16 @@ impl TypeInference {
                     } else if let Some(gated) = self.supertrait_gate_error(&name, member, _span) {
                         self.errors.push(gated);
                         InferType::Poison
+                    } else if aelys_syntax::tuple_arity(&name).is_some() {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::TupleFieldOutOfRange {
+                                tuple: typed_object.ty.clone(),
+                                field: member.to_string(),
+                            },
+                            span: _span,
+                            reason: ConstraintReason::Other("tuple field lookup".to_string()),
+                        });
+                        InferType::Poison
                     } else {
                         self.errors.push(TypeError {
                             kind: TypeErrorKind::UnknownField {

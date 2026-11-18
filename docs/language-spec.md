@@ -835,7 +835,10 @@ are aggregate values shared by reference (like structs, see
 [Structs](#structs)), which is never observable because no element can change.
 `==` compares them element by element. Tuples can be returned, passed, stored in
 `Vec`, arrays, struct fields and enum payloads, used in generic functions, and
-returned from a module. A tuple has no `Display`; print its elements.
+returned from a module. A tuple has no `Display`; print its elements. Reading an
+element past the arity, `t.2` on a pair, is E0363 `tuple (int, int) has no field
+2`. Names starting with `AelysTuple` are reserved for the compiler's tuple types:
+writing one anywhere (a type, a struct, a variable) is E0394.
 
 ### Destructuring let
 
@@ -844,7 +847,8 @@ must be irrefutable: it may contain only names, `_`, tuple patterns and struct
 patterns (`..` allowed). `let mut` makes every name it binds mutable. A literal,
 range, variant or alternation is E0108 `refutable pattern in let`; use `match` or
 `if let` for those. A type that does not fit the pattern (wrong tuple arity, wrong
-struct) is E0301.
+struct) is E0301; a wrong arity says `tuple pattern has 3 elements, but the value
+is a tuple of 2 elements`, in `let` and in `match`.
 
 ```rust
 struct Point { x: int, y: int }
@@ -2665,6 +2669,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0391 | BreakValueOutsideLoop | `break` with a value targets a `while` or `for` |
 | E0392 | CapitalizedBindingPattern | a bare capitalised name in a pattern on an enum, which would bind instead of matching a variant |
 | E0393 | TupleFieldAssignment | a write to a tuple field; tuples are immutable |
+| E0394 | ReservedName | a name starting with `AelysTuple`, which is reserved for the tuple types |
 
 ### E04xx, modules, visibility, borrows, and associated items
 

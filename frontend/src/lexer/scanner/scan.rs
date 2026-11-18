@@ -176,7 +176,7 @@ impl Lexer {
 
             c if c.is_ascii_digit() => self.number()?,
 
-            c if c.is_alphabetic() || c == '_' => self.identifier(),
+            c if c.is_alphabetic() || c == '_' => self.identifier()?,
 
             _ => {
                 return Err(AelysError::Compile(

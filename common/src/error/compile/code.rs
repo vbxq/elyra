@@ -24,6 +24,7 @@ impl CompileErrorKind {
             Self::BorrowingReceiverDeferred { .. } => 111,
             Self::TraitObjectDeferred { .. } => 113,
             Self::InvalidDefaultMethod => 441,
+            Self::ReservedName { .. } => 394,
             Self::UndefinedVariable(_) => 201,
             Self::VariableAlreadyDefined(_) => 202,
             Self::AssignToImmutable(_) => 203,

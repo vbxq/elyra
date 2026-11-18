@@ -41,6 +41,9 @@ pub enum CompileErrorKind {
         trait_name: String,
     },
     InvalidDefaultMethod,
+    ReservedName {
+        name: String,
+    },
 
     UndefinedVariable(String),
     VariableAlreadyDefined(String),
