@@ -5,6 +5,8 @@ use aelys_common::error::RuntimeError;
 pub fn register_builtins(vm: &mut VM) -> Result<(), RuntimeError> {
     let tostring_fn = vm.alloc_native("__tostring", 1, builtin_tostring)?;
     vm.set_global("__tostring".to_string(), Value::ptr(tostring_fn.index()));
+    let clone_fn = vm.alloc_native("__clone", 1, builtin_clone)?;
+    vm.set_global("__clone".to_string(), Value::ptr(clone_fn.index()));
 
     Ok(())
 }
@@ -20,4 +22,8 @@ pub fn builtin_tostring(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
     let s = vm.value_to_string(args[0]);
     let str_ref = vm.alloc_string(&s)?;
     Ok(Value::ptr(str_ref.index()))
+}
+
+pub fn builtin_clone(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    vm.deep_clone_value(args[0])
 }
