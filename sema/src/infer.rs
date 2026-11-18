@@ -23,7 +23,7 @@ use aelys_common::Warning;
 use aelys_syntax::{ModuleId, ReferenceKind};
 use std::collections::{HashMap, HashSet};
 
-const MAX_INFERENCE_DEPTH: usize = 200;
+const MAX_INFERENCE_DEPTH: usize = 1024;
 
 pub const GENERATED_SYMBOL_PREFIX: &str = "__aelys_";
 

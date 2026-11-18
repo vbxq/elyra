@@ -218,6 +218,10 @@ impl Parser {
     }
 
     pub(crate) fn block_statements(&mut self) -> Result<Vec<Stmt>> {
+        self.nested(|parser| parser.block_statements_unguarded())
+    }
+
+    fn block_statements_unguarded(&mut self) -> Result<Vec<Stmt>> {
         self.with_brace_construction(true, |parser| {
             let mut stmts = Vec::new();
 

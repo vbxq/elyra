@@ -7,7 +7,7 @@ impl Parser {
         if self.match_token(&TokenKind::Ampersand) {
             let start = self.previous().span;
             let mutable = self.match_token(&TokenKind::Mut);
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = start.merge(operand.span);
             return Ok(Expr::new(
                 ExprKind::Borrow {
@@ -20,7 +20,7 @@ impl Parser {
 
         if self.match_token(&TokenKind::Minus) {
             let start = self.previous().span;
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = start.merge(operand.span);
 
             match operand.kind {
@@ -44,7 +44,7 @@ impl Parser {
 
         if self.match_token(&TokenKind::Not) {
             let start = self.previous().span;
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = start.merge(operand.span);
             return Ok(Expr::new(
                 ExprKind::Unary {
@@ -57,7 +57,7 @@ impl Parser {
 
         if self.match_token(&TokenKind::Tilde) {
             let start = self.previous().span;
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = start.merge(operand.span);
             return Ok(Expr::new(
                 ExprKind::Unary {

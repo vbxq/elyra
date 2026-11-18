@@ -11,10 +11,7 @@ use std::sync::Arc;
 
 impl Parser {
     pub fn expression(&mut self) -> Result<Expr> {
-        self.enter_recursion()?;
-        let result = self.assignment();
-        self.exit_recursion();
-        result
+        self.nested(Self::assignment)
     }
 
     fn assignment(&mut self) -> Result<Expr> {
@@ -29,7 +26,7 @@ impl Parser {
         }
 
         if self.match_token(&TokenKind::Eq) {
-            let value = self.assignment()?;
+            let value = self.nested(Self::assignment)?;
 
             if let ExprKind::Identifier(name) = expr.kind {
                 let span = expr.span.merge(value.span);
@@ -80,7 +77,7 @@ impl Parser {
         }
 
         if let Some(op) = self.match_compound_assign() {
-            let rhs = self.assignment()?;
+            let rhs = self.nested(Self::assignment)?;
 
             if let ExprKind::Identifier(ref name) = expr.kind {
                 let binary = Expr::new(
