@@ -885,13 +885,71 @@ pub unsafe extern "C" fn aelys_frame_struct(
     1
 }
 
+impl VM {
+    // the only write barrier machine code reaches: element stores and pushes into an existing Vec or Array slot
+    fn frame_element_barrier(&mut self, owner: GcRef, index: usize, value: Value) {
+        let _ = index;
+        self.heap.write_barrier_value(owner, value);
+        let _ = self.heap.get_mut(owner);
+    }
+
+    fn frame_vec_push(&mut self, reference: GcRef, value: Value) -> bool {
+        let bytes = u64::try_from(self.heap.bytes_allocated()).unwrap_or(u64::MAX);
+        if bytes > self.config.max_heap_bytes
+            || self.heap.major_collection_active()
+            || self.heap.should_collect()
+        {
+            return false;
+        }
+        let Some(ObjectKind::Vec(vector)) = self.heap.get(reference).map(|object| &object.kind)
+        else {
+            return false;
+        };
+        if !vector.accepts(value) {
+            return false;
+        }
+        let index = vector.len();
+        let object_storage = matches!(vector.type_tag(), aelys_bytecode::object::TypeTag::Object);
+        let Some(previous) = vector.try_size_bytes() else {
+            return false;
+        };
+        let Some(needed) = index.checked_add(1).and_then(|len| {
+            aelys_bytecode::object::AelysVec::size_bytes_for(vector.type_tag(), len)
+        }) else {
+            return false;
+        };
+        let growth = u64::try_from(needed.saturating_sub(previous)).unwrap_or(u64::MAX);
+        if self.ensure_heap_capacity(growth).is_err() {
+            return false;
+        }
+        let current = match self.heap.get_mut(reference).map(|object| &mut object.kind) {
+            Some(ObjectKind::Vec(vector)) => {
+                if !vector.try_reserve_exact(1) || !vector.push(value) {
+                    return false;
+                }
+                vector.try_size_bytes()
+            }
+            _ => return false,
+        };
+        let Some(current) = current else {
+            return false;
+        };
+        self.heap.account_reallocation(previous, current);
+        if object_storage {
+            self.frame_element_barrier(reference, index, value);
+        }
+        true
+    }
+}
+
 /// # Safety
-/// called only by frame machine code to store an object reference with the write barrier
+/// called only by frame machine code to store an object reference into element `index` of `owner`
 pub unsafe extern "C" fn aelys_frame_store_reference(
     context: *mut FrameJitContext,
     owner: u64,
     slot: *mut u64,
     value: u64,
+    index: u64,
 ) -> u64 {
     // safety: see aelys_frame_global
     let context = unsafe { &mut *context };
@@ -899,16 +957,17 @@ pub unsafe extern "C" fn aelys_frame_store_reference(
     let Some(pointer) = Value::from_raw(owner).as_ptr() else {
         return 0;
     };
-    let owner = GcRef::new(pointer);
-    vm.heap.write_barrier_value(owner, Value::from_raw(value));
-    let _ = vm.heap.get_mut(owner);
+    let Ok(index) = usize::try_from(index) else {
+        return 0;
+    };
     // safety: slot was derived from the owner's storage by a resolve helper during this invocation
     unsafe { *slot = value };
+    vm.frame_element_barrier(GcRef::new(pointer), index, Value::from_raw(value));
     1
 }
 
 /// # Safety
-/// called only by frame machine code; succeeds only when the push cannot start a collection
+/// called only by frame machine code; fails, leaving the vector unchanged, whenever the push could start a collection
 pub unsafe extern "C" fn aelys_frame_vec_push(
     context: *mut FrameJitContext,
     vector: u64,
@@ -917,32 +976,10 @@ pub unsafe extern "C" fn aelys_frame_vec_push(
     // safety: see aelys_frame_global
     let context = unsafe { &mut *context };
     let vm = unsafe { &mut *context.vm.cast::<VM>() };
-    let bytes = u64::try_from(vm.heap.bytes_allocated()).unwrap_or(u64::MAX);
-    if bytes > vm.config.max_heap_bytes
-        || vm.heap.major_collection_active()
-        || vm.heap.should_collect()
-    {
-        return 0;
-    }
     let Some(pointer) = Value::from_raw(vector).as_ptr() else {
         return 0;
     };
-    let reference = GcRef::new(pointer);
-    let value = Value::from_raw(value);
-    let Some(ObjectKind::Vec(vector)) = vm.heap.get(reference).map(|object| &object.kind) else {
-        return 0;
-    };
-    let within_reservation = vector.len() < vector.capacity()
-        && aelys_bytecode::object::AelysVec::size_bytes_for(vector.type_tag(), vector.len() + 1)
-            .zip(vector.try_size_bytes())
-            .is_some_and(|(needed, reserved)| needed <= reserved);
-    if within_reservation && vector.accepts(value) {
-        return match vm.heap.get_mut(reference).map(|object| &mut object.kind) {
-            Some(ObjectKind::Vec(vector)) => u64::from(vector.push(value)),
-            _ => 0,
-        };
-    }
-    u64::from(vm.push_vec_value(reference, value).is_ok())
+    u64::from(vm.frame_vec_push(GcRef::new(pointer), Value::from_raw(value)))
 }
 
 pub extern "C" fn aelys_frame_fmod(left: f64, right: f64) -> f64 {

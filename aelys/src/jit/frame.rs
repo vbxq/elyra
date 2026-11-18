@@ -1480,7 +1480,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                                 let owner = self.get(inst.a);
                                 let call = self.builder.ins().call(
                                     self.helpers.store_reference,
-                                    &[self.context, owner, address, value],
+                                    &[self.context, owner, address, value, index],
                                 );
                                 let stored = self.builder.inst_results(call)[0];
                                 self.guard(stored, exit);
@@ -2087,7 +2087,7 @@ pub(crate) fn compile_frame(
             &mut module,
             &mut context.func,
             "aelys_frame_store_reference",
-            &[pointer, i64t, pointer, i64t],
+            &[pointer, i64t, pointer, i64t, i64t],
             &[i64t],
         )?,
         vec_push: declare(
