@@ -37,7 +37,7 @@ Console input/output. Auto-registered -- no `needs` required.
 | Function | Description |
 |----------|-------------|
 | `print(value)` | Print value without newline |
-| `println(value)` | Print value with newline |
+| `println(value)` | Print value with newline; a `Vec`, array, `Map`, tuple, `Option` or `Result` prints as `[1, 2]`, `{"k": 1}`, `(1, "x")`, `Some(3)` |
 | `eprint(value)` | Print to stderr, no newline |
 | `eprintln(value)` | Print to stderr with newline |
 | `flush()` | Flush stdout buffer |
@@ -348,7 +348,7 @@ match convert::parse_int("42") {
 
 | Function | Description |
 |----------|-------------|
-| `to_string(x)` | Convert anything to string |
+| `to_string(x)` | Render a `Display` value as a string, aggregates in the form described under Display in the language spec |
 | `to_int(x)` | Convert to int |
 | `to_float(x)` | Convert to float |
 | `to_bool(x)` | Convert to bool (truthiness) |
@@ -358,12 +358,14 @@ match convert::parse_int("42") {
 under the `parse_int` rules, otherwise `to_int` is a runtime error (`to_int("3.9")`
 is an error, not `3`).
 
-`.to_string()` can be called as a method on any value:
+`.to_string()` can be called as a method on a scalar, a `string` or a built-in
+aggregate; an aggregate holding a struct, an enum or a closure is E0338, as for `println`:
 
 ```rust
 (42).to_string()      // "42"
 true.to_string()      // "true"
 (3.14).to_string()    // "3.14"
+vec!["a"].to_string() // "[\"a\"]"
 ```
 
 ### Numeric Formatting
@@ -710,6 +712,9 @@ needs std::sys
 
 | Function | Description |
 |----------|-------------|
+| `arg_count()` | Number of program arguments, as `int` |
+| `arg(index)` | Program argument `index` (0-based) as `Option<string>`; `None` when `index` is negative or past the end |
+| `args()` | Every program argument joined with `"\n"`, as one `string` (`""` when there is none) |
 | `platform()` | OS name ("linux", "macos", "windows") |
 | `arch()` | CPU architecture ("x86_64", "aarch64", etc.) |
 | `cwd()` | Current directory as `Result<string, string>` |
@@ -736,6 +741,25 @@ needs std::sys
 | `gc_allocations()` | Objects allocated since the VM started |
 | `gc_stats()` | One-line summary of the figures above, as a string |
 | `gc_collect()` | Run a full collection now (minor, then a complete major); its pause grows with the heap |
+
+The program arguments are the command-line words after the script path:
+`aelys script.aelys a "b c"` gives `arg_count()` 2, `arg(0)` `Some("a")` and
+`arg(1)` `Some("b c")`. The script path itself is not an argument. The CLI reads its
+own flags (`-O<level>`, `-ae.<k>=<v>`, `-h`, the warning flags and the others listed by
+`aelys --help`) anywhere on the line, also after the script path, so those words never
+reach the program; any other word, `--` and words starting with `-` included, is passed
+through in order. A program run through the embedding API sees the arguments its host
+set, and none by default.
+
+```rust
+needs std::sys
+
+if sys::arg_count() == 0 {
+    println("usage: tool <file>")
+} else {
+    println("first argument: {sys::arg(0).unwrap_or("")}")
+}
+```
 
 The command and directory functions return `Err(message)` when the operating
 system operation cannot be started or completed. A nonzero child exit status is

@@ -1127,7 +1127,7 @@ are aggregate values shared by reference (like structs, see
 `==` compares them element by element. Tuples can be returned, passed, stored in
 `Vec`, arrays, struct fields and enum payloads, used in generic functions, and
 returned from a module; the tuple fields and payloads of a type imported from
-another module read and match like local ones. A tuple has no `Display`; print its elements. Reading an
+another module read and match like local ones. A tuple of displayable elements renders as `(1, "x")`; see [Display](#display). Reading an
 element past the arity, `t.2` on a pair, is E0363 `tuple (int, int) has no field
 2`. Names starting with `AelysTuple` are reserved for the compiler's tuple types:
 writing one anywhere (a type, a struct, a variable) is E0394.
@@ -1805,7 +1805,8 @@ goes last, overwriting a key keeps its place, and removing a key does not
 reorder the others. A map is not iterable directly (E0365 points at `keys()` and
 `values()`). `==` on two maps is structural and ignores order: same key set and
 `==` values. A map whose key and value types are both scalars, `char` or
-`string` implements `Display`, rendering `{k: v, k: v}` in insertion order.
+`string` implements `Display`, rendering `{"k": v, "k": v}` in insertion order, keys and
+values in the aggregate form of [Display](#display); a value may itself be an aggregate.
 Lookups, inserts and removals are O(1) on average.
 
 ### Characters
@@ -1903,7 +1904,9 @@ Integer matches are checked over the value range of the scrutinee's type
 (`int`, `i8` to `u32`): they need `_` unless their literals and
 [range patterns](#range-patterns) cover the whole range, and the message names
 the first uncovered interval, for example `missing 128` or `missing ..=-1`.
-String matches always need `_` (or a binding).
+`char` matches are checked the same way over the Unicode scalar values (`'\0'` to
+`'\u{10FFFF}'` without the surrogates), and an uncovered `char` is reported as
+`missing _`. String matches always need `_` (or a binding).
 
 A bare name in a pattern binds a new variable and matches everything. When the
 value at that position is an enum (including `Option` and `Result`) and the name
@@ -1938,12 +1941,34 @@ fn score(kind: BulletKind) -> int {
 println(score(BulletKind::Directed { damage: 2, speed: 1.5 }))
 ```
 
+An arm body may be `return`, `return value`, `break`, `break value`, `break 'label`,
+`continue` or `continue 'label` without braces; it ends at the arm's `,`, `;` or `}`
+and behaves exactly as the same jump written inside `{ ... }`. Such an arm, like an arm
+calling `panic(..)`, never produces a value, so it does not constrain the match's type:
+`let v = match o { Some(x) => x, None => return -1 }` gives `v` the type `int`.
+
+```rust
+fn first_or(o: Option<int>) -> int {
+    let v = match o { Some(x) => x, None => return -1 }
+    v * 2
+}
+
+for x in vec![Some(1), Some(2), None, Some(4)] {
+    match x { Some(n) => println(n), None => break }
+}
+```
+
 A `match` used as a statement (not as a value and not as the last statement of a
 block that gives a value) discards its arm values, so its arms need not agree:
 `match o { Ok(v) => total = v, Err(_) => {} }` and arms that all `return` are
 accepted. A discarded `Result` or `Option` arm value is still E0303/E0304. The
 last statement of a script is its value, so a `match` there keeps its arm values.
-An assignment (`r = Some(3)`) is never a discarded value, whatever its type.
+An assignment (`r = Some(3)`) is never a discarded value, whatever its type. A script
+whose last statement is an assignment (`a = 5`, `a += 2`, `v[i] = x`, `s.f *= 2`, or an
+`if`, block or `match` ending in one) has the value unit, like a function without a
+declared return type. The CLI prints a script's value after it runs only when that value
+is neither unit nor null, so such a script prints nothing extra; the REPL follows the
+same rule for each line.
 
 A bare name in a pattern that names a `const` in scope matches the constant's value, as
 a literal would; it does not bind a new variable, and E0392 never applies to it. A local
@@ -1998,17 +2023,24 @@ println(classify(Kind::A(-5)))   // 2
 
 ### Range patterns
 
-An integer pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
-excluded), `..=hi` and `lo..` (open). Bounds are integer literals, possibly
-negative. A range applies to `int` and to the sized integers, whose bounds must
-fit the type: a bound outside it is E0301 `integer literal 256 does not fit in u8`, and on
-any other type a range is E0301. Exhaustiveness covers a sized integer by its own bounds
+An integer or `char` pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
+excluded), `..=hi`, `..hi` and `lo..` (open). Bounds are integer literals, possibly
+negative, or `char` literals (`'0'..='9'`, `'a'..'g'`, `'\u{80}'..`); both bounds of
+one range are of the same kind. An integer range applies to `int` and to the sized
+integers, whose bounds must fit the type: a bound outside it is E0301 `integer literal 256
+does not fit in u8`. A `char` range applies to `char`. A range on any other scrutinee type
+(an integer range on a `char`, a `char` range on an `int`) is E0301. A range whose bound is
+a string or float literal, or whose bounds mix an integer and a `char`, is E0108.
+Exhaustiveness covers a sized integer by its own bounds
 (`u8` is covered by `0..=255`, `i8` by `-128..=127`), which is sound because sized
 arithmetic wraps, so a sized value never leaves its range. `int` is covered only by ranges
-reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character; the
-`char` domain is open, so a `match` on a `char` needs a `_` arm. A range that matches nothing
-(`9..=1`) or an inclusive range with no end is E0108. Ranges combine with `|`
-and nest inside variants and tuples.
+reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character and a
+`char` range the scalar values between its bounds; a `char` match is exhaustive only when its
+literals and ranges cover every Unicode scalar value (`..='m'` with `'n'..`, or
+`'\0'..='\u{D7FF}'` with `'\u{E000}'..='\u{10FFFF}'`), otherwise it is E0302
+`missing _`. An arm covered by the earlier arms, such as `'c'` after `'a'..='z'`, is E0356.
+A range that matches nothing (`9..=1`, `'z'..='a'`, `'a'..'a'`) or an inclusive range with
+no end is E0108. Ranges combine with `|` and nest inside variants and tuples.
 
 ```rust
 fn class(n: int) -> int {
@@ -2022,6 +2054,15 @@ fn class(n: int) -> int {
 
 fn half(b: u8) -> int { match b { 0..=127 => 0, 128..=255 => 1 } }
 println(class(42) + half(200))   // 4
+
+fn kind(c: char) -> int {
+    match c {
+        '0'..='9' => 1,
+        'a'..='z' | 'A'..='Z' => 2,
+        _ => 0,
+    }
+}
+println(kind('7') + kind('q'))   // 3
 ```
 
 Enum values are heap objects traced through every payload slot. A malformed
@@ -2046,6 +2087,23 @@ fn move_bullet() -> float {
 Struct names start with an uppercase letter. Fields are checked against their
 declared types at compile time. A field place is resolved to its declared
 offset, not looked up by a runtime string key.
+
+A field initialiser written as a bare name is shorthand for `name: name`: `P { x, y }`
+reads the variables `x` and `y`, and shorthand mixes with explicit fields in any order
+(`P { x, y: 2 }`). It works in every literal form: a plain or generic struct
+(`W { inner, tag }`, `W::<int> { inner, tag }`), an enum struct variant
+(`E::V { x, y: 9 }`) and a nested literal, on one line or several. A shorthand naming no
+variable in scope is E0301 `undefined variable: y`, reported at the field name. Struct
+patterns accept the same shorthand: `P { x, y } => x + y` binds `x` and `y`.
+
+```rust
+struct P { x: int, y: int }
+
+fn mk(x: int, y: int) -> P { P { x, y } }
+let x = 3
+let p = P { x, y: 4 }
+println(match p { P { x, y } => x * 10 + y })   // 34
+```
 
 ### Reference semantics
 
@@ -2336,7 +2394,10 @@ fn to_display(self) -> string
 
 The built-in scalars satisfy it by a compiler rule rather than by a registered
 impl: the signed and unsigned integer types, the floating point types, `bool`,
-and `string`. For every other type you write the impl yourself, and the impl is
+`char` and `string`. The same rule covers the built-in aggregates whose elements
+all satisfy it structurally: `Vec<T>`, arrays, `Map<K, V>`, tuples, `Option<T>` and
+`Result<T, E>` built from scalars, `char`, `string` and such aggregates, nested to
+any depth. For every other type you write the impl yourself, and the impl is
 an ordinary coherent trait impl held to the same rules as any other.
 
 ```rust
@@ -2373,12 +2434,34 @@ path that renders the value reports it: the direct argument of `println`,
 `convert::to_string` and `__tostring`, the argument behind a `{}` placeholder,
 and an interpolated `{p}` inside a format string.
 
-The built-in aggregates are not nominal types and cannot carry an impl, so a
-format string still renders an array, an `Option` or a `Result` structurally:
+An aggregate renders in a form modelled on Rust's `Debug`, everywhere a `Display`
+value is accepted (`println` and the other print functions, a `{}` placeholder, an
+interpolated `{v}`, `convert::to_string`, `__tostring` and a `T: Display` bound):
+
+| Value | Rendering |
+|-------|-----------|
+| `vec![1, 2, 3]`, `[1, 2, 3]` | `[1, 2, 3]` (a `Vec` and an array look alike; empty is `[]`) |
+| `Map` | `{"a": 1, "b": 2}`, in the map's insertion order; empty is `{}` |
+| `(1, "x")` | `(1, "x")` |
+| `Some(3)`, `None`, `Ok(2)`, `Err("bad")` | the same text |
+
+Inside an aggregate a `string` is quoted and escaped and a `char` is quoted, as Rust's
+`Debug` writes them (`["a", "b\"q"]`, `['a', '\n']`); a `string` or `char` at the top
+level renders as its text. Numbers and `bool` render as they do alone (`[1.5, 2.0]`).
+Nested aggregates nest: `Some([(1, "a")])`.
+
+The built-in aggregates are not nominal types and cannot carry an impl, and their
+rendering does not call a user impl: an aggregate holding a struct, an enum (even one
+that implements `Display`), a closure or unit is E0338 `trait 'Display' is not
+implemented for Vec<P>; a built-in aggregate renders only scalars, strings, chars and
+aggregates of them, so render each element`, in every position listed above.
 
 ```rust
 let arr = [1, 2, 3]
-println("arr = {arr}")   // arr = [1, 2, 3]
+println("arr = {arr}")              // arr = [1, 2, 3]
+println(vec!["a", "b"])             // ["a", "b"]
+println((1, 'c'))                   // (1, 'c')
+println(Some(vec![1]))              // Some([1])
 ```
 
 ## Associated Types and Constants
