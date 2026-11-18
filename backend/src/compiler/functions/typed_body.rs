@@ -34,7 +34,13 @@ pub(super) fn compile_typed_body(
 
     let last_stmt = &func.body[last_idx];
 
+    let unit_return = matches!(func.return_type, aelys_sema::InferType::Unit);
     let implicit_return_reg = match &last_stmt.kind {
+        _ if unit_return => {
+            nested_compiler.compile_typed_stmt(last_stmt)?;
+            nested_compiler.free_dead_locals(last_idx, &liveness, &mut already_freed);
+            None
+        }
         TypedStmtKind::Expression(expr) => {
             let result_reg = nested_compiler.alloc_register()?;
             nested_compiler.compile_typed_expr(expr, result_reg)?;

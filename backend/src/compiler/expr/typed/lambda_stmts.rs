@@ -8,6 +8,7 @@ impl Compiler {
     pub(super) fn compile_typed_lambda_with_stmts(
         &mut self,
         params: &[aelys_sema::TypedParam],
+        unit_return: bool,
         body: &[aelys_sema::TypedStmt],
         captures: &[(String, aelys_sema::InferType)],
         dest: u16,
@@ -96,7 +97,7 @@ impl Compiler {
 
             let last_stmt = &body[body.len() - 1];
             match &last_stmt.kind {
-                aelys_sema::TypedStmtKind::Expression(expr) => {
+                aelys_sema::TypedStmtKind::Expression(expr) if !unit_return => {
                     let result_reg = nested_compiler.alloc_register()?;
                     nested_compiler.compile_typed_expr(expr, result_reg)?;
                     nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
