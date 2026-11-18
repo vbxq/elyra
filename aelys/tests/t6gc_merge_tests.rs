@@ -601,13 +601,13 @@ total
         let mb = r * 9;
         held += 1;
         let mut s = mb + held;
-        for j in 0..4 {
-            s += top[j] * (j as i64 + 1);
+        for (j, x) in top.iter().enumerate() {
+            s += x * (j as i64 + 1);
         }
-        for i in 0..20 {
+        for (i, row) in a.iter().enumerate() {
             s += b[i] * (i as i64 + 1);
-            for j in 0..4 {
-                s += a[i][j] * (j as i64 + 2);
+            for (j, x) in row.iter().enumerate() {
+                s += x * (j as i64 + 2);
             }
         }
         total = (total + s) % M;
