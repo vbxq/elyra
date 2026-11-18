@@ -111,7 +111,7 @@ pub enum RuntimeErrorKind {
     },
     ByteValueOutOfRange {
         operation: &'static str,
-        value: i128,
+        value: String,
         target: &'static str,
     },
 }
@@ -256,7 +256,7 @@ impl RuntimeErrorKind {
                 length,
             } => format!(
                 "{operation}: bytes {offset}..{} are out of bounds for length {length}",
-                i128::from(*offset) + *width as i128
+                offset.saturating_add_unsigned(*width as u64)
             ),
             Self::ByteValueOutOfRange {
                 operation,

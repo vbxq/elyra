@@ -268,7 +268,7 @@ fn int_value(vm: &VM, value: i128, operation: &'static str) -> Result<Value, Run
         .ok_or_else(|| {
             vm.runtime_error(RuntimeErrorKind::ByteValueOutOfRange {
                 operation,
-                value,
+                value: value.to_string(),
                 target: "int",
             })
         })
@@ -355,7 +355,7 @@ fn write_int(
     if !(min..=max).contains(&value) {
         return Err(vm.runtime_error(RuntimeErrorKind::ByteValueOutOfRange {
             operation,
-            value,
+            value: value.to_string(),
             target,
         }));
     }

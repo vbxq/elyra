@@ -324,7 +324,9 @@ const READS: &[(&str, usize, &str)] = &[
         "16744575,-8356095,-2139160066,2130837010,33428020,-32361386,305419896,878082202,1450744508,2023406814,-1698898192,-1126240256,-554696576",
     ),
 ];
-const WRITES: &[(&str, &[(usize, i64, &str)])] = &[
+type WriteRow = (usize, i64, &'static str);
+
+const WRITES: &[(&str, &[WriteRow])] = &[
     (
         "write_u8",
         &[
