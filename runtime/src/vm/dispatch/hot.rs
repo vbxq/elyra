@@ -166,6 +166,7 @@ impl VM {
     }
 
     // returns the ip of the first instruction it does not finish, before any of its effects, for the general loop to run
+    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(super) fn run_hot<const JIT: bool>(
         &mut self,
