@@ -3,7 +3,7 @@ use aelys::{
 };
 use aelys_backend::Compiler;
 use aelys_bytecode::OpCode;
-use aelys_bytecode::asm::disassemble;
+use aelys_bytecode::asm::{deserialize, disassemble};
 use aelys_frontend::lexer::Lexer;
 use aelys_frontend::parser::Parser;
 use aelys_opt::{OptimizationLevel, Optimizer};
@@ -553,6 +553,132 @@ top(0) + top(3)
 "#,
         Expected::Int(3011),
     ),
+    (
+        "deep_clone",
+        r#"
+struct P { v: Vec<int> }
+fn cl(n: int) -> int {
+    let a = n + 1
+    let keep = n * 7
+    let src = vec![n, n + 1, n + 2]
+    let mut c = src.clone()
+    c[0] = hog(keep)
+    let p = P { v: vec![a] }
+    let mut q = p.clone()
+    q.v.push(hog(a))
+    let grid = vec![vec![hog(n), keep]; 3]
+    c[0] + c[2] + keep + q.v[1] + p.v.len() + src[0] + grid[2][1]
+}
+cl(1) + cl(5)
+"#,
+        Expected::Int(152),
+    ),
+    (
+        "collection_natives",
+        r#"
+fn vs(n: int) -> int {
+    let keep = n * 11
+    let mut v = vec![n + 3, n + 1, n + 2]
+    v.sort()
+    let has = if v.contains(hog(n + 2)) { 1 } else { 0 }
+    let mut m: Map<int, int> = Map::new()
+    m[hog(n)] = keep
+    let _ = m.insert(hog(n + 1), hog(keep) + 1)
+    let got = match m.get(hog(n + 1)) { Some(x) => x, None => 0 }
+    let s = "ab,cd,{hog(n)}"
+    let parts = s.split(",")
+    let mut w = vec![0; 2]
+    w.resize(hog(4), keep)
+    v[0] * 100000 + has * 10000 + got + m[n] + parts.len() * 1000 + w[3] + keep
+}
+vs(1) + vs(2)
+"#,
+        Expected::Int(526134),
+    ),
+    (
+        "sort_by_comparator",
+        r#"
+fn sb(n: int) -> int {
+    let keep = n * 13
+    let bias = n + 1
+    let mut v = vec![3, 1, 2, n + 10]
+    v.sort_by(fn(a: int, b: int) -> int { hog(b) - a + bias - bias })
+    let after = hog(keep)
+    v[0] * 1000 + v[3] * 10 + keep + after
+}
+sb(1) + sb(4)
+"#,
+        Expected::Int(25150),
+    ),
+    (
+        "assert_expect_unwrap",
+        r#"
+fn ck(n: int) -> int {
+    let a = n + 1
+    let keep = n * 17
+    assert(hog(a) == n + 1, "bad {hog(keep)}")
+    let o: Option<int> = Some(hog(keep))
+    let r: Result<int, string> = Ok(hog(a))
+    let x = o.expect("none {keep}")
+    let y = r.unwrap()
+    if n > 1000 { panic("big {hog(n)} {keep}") }
+    a + keep + x + y
+}
+ck(1) + ck(3)
+"#,
+        Expected::Int(148),
+    ),
+    (
+        "tuples_breaks_blocks",
+        r#"
+fn tb(n: int) -> int {
+    let keep = n * 19
+    let t = (hog(n), hog(keep), n + 2)
+    let found = loop {
+        if hog(n) > -1 { break hog(keep) + 1 }
+    }
+    let blk = {
+        let z = hog(n + 5)
+        z + keep
+    }
+    let ok = if let Some(v) = Some(hog(n)) { v + keep } else { 0 }
+    let (p, q, r) = t
+    p + q + r + found + blk + ok + keep
+}
+tb(1) + tb(2)
+"#,
+        Expected::Int(313),
+    ),
+    (
+        "fixed_point_sized",
+        r#"
+fn fx(n: int) -> int {
+    let keep = n * 23
+    let a: i32 = 3 << 16
+    let b: i32 = (hog(n) as i32) << 16
+    let c = a.mul_shr(b, 16)
+    let d: u8 = (hog(keep) as u8) + 250
+    let e = (hog(n) + 2).shl_div(hog(2), 1)
+    (c >> 16) as int * 1000 + d as int + e + keep
+}
+fx(1) + fx(2)
+"#,
+        Expected::Int(9133),
+    ),
+    (
+        "std_module_calls",
+        r#"
+needs std::math
+fn sm(n: int) -> int {
+    let keep = n * 29
+    let a = math::abs(hog(-n)) + keep
+    let b = math::max(hog(n), hog(keep))
+    a + b + keep
+}
+sm(1) + sm(3)
+"#,
+        Expected::Int(352),
+    ),
 ];
 
 fn program(body: &str) -> String {
@@ -581,6 +707,9 @@ fn run(source: &str, mode: JitMode, level: OptimizationLevel) -> StructuredValue
 }
 
 fn assembly_at(source: &str, level: OptimizationLevel) -> String {
+    if source.contains("\nneeds ") {
+        return linked_assembly_at(source, level);
+    }
     let src = Source::new("<t8>", source);
     let tokens = Lexer::with_source(src.clone()).scan().expect("lexes");
     let ast = Parser::new_rust_collections(tokens, src.clone())
@@ -591,6 +720,21 @@ fn assembly_at(source: &str, level: OptimizationLevel) -> String {
     let (function, _globals) = Compiler::new(None, src)
         .compile_typed(&optimized)
         .expect("compiles");
+    disassemble(&function)
+}
+
+// the bare compiler cannot resolve imports, so a program with `needs` goes through the runtime and is read back from its avbc
+fn linked_assembly_at(source: &str, level: OptimizationLevel) -> String {
+    let module = Runtime::with_jit_mode(JitMode::Off)
+        .compile(
+            source,
+            CompileOptions {
+                optimization_level: level,
+                ..CompileOptions::default()
+            },
+        )
+        .expect("compiles");
+    let function = deserialize(module.avbc()).expect("avbc reads back");
     disassemble(&function)
 }
 
