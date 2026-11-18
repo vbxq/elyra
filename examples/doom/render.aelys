@@ -161,6 +161,18 @@ fn fmul(a: int, b: int) -> int {
     (a >> 16) * b + (a & 0xFFFF) * (b >> 16) + (((a & 0xFFFF) * (b & 0xFFFF)) >> 16)
 }
 
+@inline_always
+fn ang(a: int) -> int { a & 0xFFFFFFFF }
+
+@inline_always
+fn ang_add(a: int, b: int) -> int { (a + b) & 0xFFFFFFFF }
+
+@inline_always
+fn ang_sub(a: int, b: int) -> int { (a - b) & 0xFFFFFFFF }
+
+@inline_always
+fn fine_index(a: int) -> int { (a & 0xFFFFFFFF) >> 19 }
+
 fn fdiv(a: int, b: int) -> int {
     let aa = if a < 0 { -a } else { a }
     let ab = if b < 0 { -b } else { b }
@@ -621,7 +633,7 @@ pub fn setup(w: Wad, g: Graphics, lv: Level) {
             y1: v1.y << 16,
             x2: v2.x << 16,
             y2: v2.y << 16,
-            angle: (s.angle << 16) & 0xFFFFFFFF,
+            angle: ang(s.angle << 16),
             offset: s.offset << 16,
             side: sdi,
             flags: ld.flags,
@@ -669,7 +681,7 @@ pub fn setup(w: Wad, g: Graphics, lv: Level) {
         let hang = hang_height(t.kind)
         let z = if hang > 0 { room.ceil - (hang << 16) } else { room.floor }
         let k = thing_kind(t.kind)
-        actors.push(Actor { x: x, y: y, z: z, angle: (0x20000000 * (t.angle / 45)) & 0xFFFFFFFF, def: def, bright: k.bright, sector: sector })
+        actors.push(Actor { x: x, y: y, z: z, angle: ang(0x20000000 * (t.angle / 45)), def: def, bright: k.bright, sector: sector })
         push_int(sector_actors[sector], actors.len() - 1)
     }
     println("render setup: {ntex} textures, {nflat} flats, {actors.len()} things ({skipped_things} unknown), {sprite_pics.len()} sprite patches, {time::elapsed(t0) * 1000.0} ms")
@@ -739,7 +751,7 @@ fn point_to_angle(px: int, py: int) -> int {
         slope = (num << 3) / (den >> 8)
         if slope > 2048 { slope = 2048 }
     }
-    if neg { (base - fixed::tantoangle[slope]) & 0xFFFFFFFF } else { base + fixed::tantoangle[slope] }
+    if neg { ang_sub(base, fixed::tantoangle[slope]) } else { base + fixed::tantoangle[slope] }
 }
 
 fn point_to_dist(px: int, py: int) -> int {
@@ -760,8 +772,8 @@ fn point_to_dist(px: int, py: int) -> int {
 }
 
 fn scale_from_angle(visangle: int, normalangle: int, distance: int) -> int {
-    let anglea = (0x40000000 + visangle - viewangle) & 0xFFFFFFFF
-    let angleb = (0x40000000 + visangle - normalangle) & 0xFFFFFFFF
+    let anglea = ang_sub(visangle + 0x40000000, viewangle)
+    let angleb = ang_sub(visangle + 0x40000000, normalangle)
     let sinea = fixed::finesine[anglea >> 19]
     let sineb = fixed::finesine[angleb >> 19]
     let num = 160 * sineb
@@ -885,20 +897,20 @@ fn draw_masked_column(pic: Picture, c: int, x: int, topscreen0: int, yscale: int
 }
 
 fn wall_angles(seg: WallSeg, start: int, stop: int) {
-    let normalangle = (seg.angle + 0x40000000) & 0xFFFFFFFF
+    let normalangle = ang_add(seg.angle, 0x40000000)
     w_normal = normalangle
-    let mut offsetangle = (normalangle - rw_angle1) & 0xFFFFFFFF
+    let mut offsetangle = ang_sub(normalangle, rw_angle1)
     if offsetangle >= 0x80000000 { offsetangle = 0x100000000 - offsetangle }
     if offsetangle > 0x40000000 { offsetangle = 0x40000000 }
     let distangle = 0x40000000 - offsetangle
     w_hyp = point_to_dist(seg.x1, seg.y1)
     w_distance = fmul(w_hyp, fixed::finesine[distangle >> 19])
     let xtov = fixed::xtoviewangle
-    w_scale1 = scale_from_angle((viewangle + xtov[start]) & 0xFFFFFFFF, normalangle, w_distance)
+    w_scale1 = scale_from_angle(ang_add(viewangle, xtov[start]), normalangle, w_distance)
     w_scale2 = w_scale1
     w_scalestep = 0
     if stop > start {
-        w_scale2 = scale_from_angle((viewangle + xtov[stop]) & 0xFFFFFFFF, normalangle, w_distance)
+        w_scale2 = scale_from_angle(ang_add(viewangle, xtov[stop]), normalangle, w_distance)
         w_scalestep = (w_scale2 - w_scale1) / (stop - start)
     }
 }
@@ -981,14 +993,14 @@ fn wall_two_sided(seg: WallSeg, side: WallSide, front: Room, back: Room, start: 
 }
 
 fn wall_texturing(seg: WallSeg, side: WallSide, front: Room) {
-    let delta = (w_normal - rw_angle1) & 0xFFFFFFFF
+    let delta = ang_sub(w_normal, rw_angle1)
     let mut oa = delta
     if oa > 0x80000000 { oa = 0x100000000 - oa }
     if oa > 0x40000000 { oa = 0x40000000 }
     let mut off = fmul(w_hyp, fixed::finesine[oa >> 19])
     if delta < 0x80000000 { off = -off }
     w_offset = off + side.xoff + seg.offset
-    w_centerangle = (0x40000000 + viewangle - w_normal) & 0xFFFFFFFF
+    w_centerangle = ang_sub(viewangle + 0x40000000, w_normal)
     let mut lightnum = front.light >> 4
     if seg.y1 == seg.y2 {
         lightnum--
@@ -1320,27 +1332,27 @@ fn add_line(si: int) {
     let seg = segs[si]
     let mut angle1 = point_to_angle(seg.x1, seg.y1)
     let mut angle2 = point_to_angle(seg.x2, seg.y2)
-    let span = (angle1 - angle2) & 0xFFFFFFFF
+    let span = ang_sub(angle1, angle2)
     if span >= 0x80000000 { return () }
     rw_angle1 = angle1
-    angle1 = (angle1 - viewangle) & 0xFFFFFFFF
-    angle2 = (angle2 - viewangle) & 0xFFFFFFFF
+    angle1 = ang_sub(angle1, viewangle)
+    angle2 = ang_sub(angle2, viewangle)
     let clip = fixed::clipangle
-    let mut tspan = (angle1 + clip) & 0xFFFFFFFF
+    let mut tspan = ang_add(angle1, clip)
     if tspan > 2 * clip {
         tspan -= 2 * clip
         if tspan >= span { return () }
         angle1 = clip
     }
-    tspan = (clip - angle2) & 0xFFFFFFFF
+    tspan = ang_sub(clip, angle2)
     if tspan > 2 * clip {
         tspan -= 2 * clip
         if tspan >= span { return () }
-        angle2 = (0x100000000 - clip) & 0xFFFFFFFF
+        angle2 = ang_sub(0, clip)
     }
     let vatx = fixed::viewangletox
-    let x1 = vatx[((angle1 + 0x40000000) & 0xFFFFFFFF) >> 19]
-    let x2 = vatx[((angle2 + 0x40000000) & 0xFFFFFFFF) >> 19]
+    let x1 = vatx[fine_index(angle1 + 0x40000000)]
+    let x2 = vatx[fine_index(angle2 + 0x40000000)]
     if x1 == x2 { return () }
     cur_seg = si
     cur_back = seg.back
@@ -1388,26 +1400,26 @@ fn check_bbox(bbox: [int; 4]) -> bool {
     let y1 = bbox[checkcoord[cc + 1]] << 16
     let x2 = bbox[checkcoord[cc + 2]] << 16
     let y2 = bbox[checkcoord[cc + 3]] << 16
-    let mut angle1 = (point_to_angle(x1, y1) - viewangle) & 0xFFFFFFFF
-    let mut angle2 = (point_to_angle(x2, y2) - viewangle) & 0xFFFFFFFF
-    let span = (angle1 - angle2) & 0xFFFFFFFF
+    let mut angle1 = ang_sub(point_to_angle(x1, y1), viewangle)
+    let mut angle2 = ang_sub(point_to_angle(x2, y2), viewangle)
+    let span = ang_sub(angle1, angle2)
     if span >= 0x80000000 { return true }
     let clip = fixed::clipangle
-    let mut tspan = (angle1 + clip) & 0xFFFFFFFF
+    let mut tspan = ang_add(angle1, clip)
     if tspan > 2 * clip {
         tspan -= 2 * clip
         if tspan >= span { return false }
         angle1 = clip
     }
-    tspan = (clip - angle2) & 0xFFFFFFFF
+    tspan = ang_sub(clip, angle2)
     if tspan > 2 * clip {
         tspan -= 2 * clip
         if tspan >= span { return false }
-        angle2 = (0x100000000 - clip) & 0xFFFFFFFF
+        angle2 = ang_sub(0, clip)
     }
     let vatx = fixed::viewangletox
-    let sx1 = vatx[((angle1 + 0x40000000) & 0xFFFFFFFF) >> 19]
-    let mut sx2 = vatx[((angle2 + 0x40000000) & 0xFFFFFFFF) >> 19]
+    let sx1 = vatx[fine_index(angle1 + 0x40000000)]
+    let mut sx2 = vatx[fine_index(angle2 + 0x40000000)]
     if sx1 == sx2 { return false }
     sx2--
     let mut start = 0
@@ -1433,7 +1445,7 @@ fn project_sprite(a: Actor, lightrow: int) {
     let mut rot = 0
     if def.rotate {
         let an = point_to_angle(a.x, a.y)
-        rot = (((an - a.angle + 0x90000000) & 0xFFFFFFFF) >> 29)
+        rot = ang_sub(an + 0x90000000, a.angle) >> 29
     }
     let pi = def.pics[rot]
     let flip = def.flips[rot] != 0
@@ -1543,7 +1555,7 @@ fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: i
         ystep = cachedystep[y]
     }
     let length = fmul(distance, distscale[x1])
-    let angle = ((viewangle + fixed::xtoviewangle[x1]) & 0xFFFFFFFF) >> 19
+    let angle = fine_index(viewangle + fixed::xtoviewangle[x1])
     let xfrac = viewx + fmul(fixed::finesine[angle + 2048], length)
     let yfrac = -viewy - fmul(fixed::finesine[angle], length)
     let mut index = distance >> 20
@@ -1573,7 +1585,7 @@ fn draw_planes() {
                 let yl = pl_top[base + x]
                 let yh = pl_bottom[base + x]
                 if yl <= yh {
-                    let angle = ((viewangle + xtov[x]) & 0xFFFFFFFF) >> 22
+                    let angle = ang_add(viewangle, xtov[x]) >> 22
                     draw_column(fb, sky_row, sky.cols[angle & sky.widthmask], x, yl, yh, 6553600, 65536, sky.heightmask, sky.height)
                 }
             }
@@ -1797,7 +1809,7 @@ fn clear_frame() {
     num_vs = 0
     lastopening = 640
     frame_no++
-    let angle = ((viewangle - 0x40000000) & 0xFFFFFFFF) >> 19
+    let angle = fine_index(viewangle - 0x40000000)
     basexscale = fdiv(fixed::finesine[angle + 2048], 10485760)
     baseyscale = -fdiv(fixed::finesine[angle], 10485760)
 }
@@ -1806,7 +1818,7 @@ pub fn render_frame(view_x: int, view_y: int, view_z: int, angle: int) {
     viewx = view_x
     viewy = view_y
     viewz = view_z
-    viewangle = angle & 0xFFFFFFFF
+    viewangle = ang(angle)
     let fi = viewangle >> 19
     viewsin = fixed::finesine[fi]
     viewcos = fixed::finesine[fi + 2048]
