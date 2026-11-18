@@ -931,7 +931,7 @@ impl VM {
                 if needs_switch {
                     self.sync_current_function_globals();
                 }
-                self.pop_frame_with_jit_metadata();
+                self.frames.pop();
                 if self.frames.is_empty() {
                     return Ok(DispatchControl::Returned(result));
                 }

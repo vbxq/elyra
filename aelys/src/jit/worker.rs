@@ -49,10 +49,10 @@ impl FrameCompiler {
         })
     }
 
-    fn quick_len(&self) -> usize {
+    fn len(&self) -> usize {
         self.cache
             .lock()
-            .map(|cache| cache.codes.keys().filter(|key| !key.3).count())
+            .map(|cache| cache.codes.len())
             .unwrap_or(0)
     }
 
@@ -200,7 +200,6 @@ fn snapshot(function: &Function) -> Function {
     copy.enum_schemas = function.enum_schemas.clone();
     copy.schema_ids = function.schema_ids.clone();
     copy.enum_ids = function.enum_ids.clone();
-    copy.jit_unsupported_struct = function.jit_unsupported_struct;
     copy.nested_functions = function
         .nested_functions
         .iter()
@@ -268,8 +267,8 @@ impl FrameJit {
         })
     }
 
-    pub(crate) fn quick_len(&self) -> usize {
-        self.compiler.quick_len()
+    pub(crate) fn len(&self) -> usize {
+        self.compiler.len()
     }
 
     pub(crate) fn submit(&self, request: FrameRequest<'_>) -> FrameSubmission {

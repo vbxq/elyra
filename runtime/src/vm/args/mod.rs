@@ -11,7 +11,6 @@ pub struct VmArgsParsed {
     pub program_args: Vec<String>,
     pub max_instructions: Option<u64>,
     pub timeout_ms: Option<u64>,
-    /// off unless asked for: the compiler turns down any function that calls an Elyra function, divides, takes a modulus or touches a struct
     pub jit: bool,
     pub jit_sync: bool,
 }

@@ -1,4 +1,4 @@
-use crate::{Function, Value};
+use crate::Function;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -13,15 +13,6 @@ static NEXT_JIT_MODULE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// the module half of a function key
 pub fn next_jit_module_id() -> u64 {
     NEXT_JIT_MODULE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// per-invocation state passed to JIT code that runs under execution control
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct JitExecutionContext {
-    pub data: *mut c_void,
-    pub poll: unsafe extern "C" fn(*mut c_void) -> i64,
-    pub controlled: bool,
 }
 
 // keys are never attacker chosen, so a weak hash is safe
@@ -96,13 +87,6 @@ impl<K: Eq + Hash, V> InlineMap<K, V> {
         self.inline
             .iter_mut()
             .find_map(|(candidate, value)| (candidate == key).then_some(value))
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.inline.clear();
-        if let Some(heap) = &mut self.heap {
-            heap.clear();
-        }
     }
 
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &V) -> bool) {
@@ -345,97 +329,12 @@ pub enum FrameSubmission {
 
 pub type FrameEntry = unsafe extern "C" fn(*mut FrameJitContext, *mut u64, *mut u64) -> u64;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum JitCallResult {
-    Unsupported,
-    Returned(Value),
-    Aborted,
-    Deoptimized {
-        bytecode_ip: u32,
-        registers: Vec<(u16, JitDeoptValue)>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum JitDeoptValue {
-    Value(Value),
-    Argument(usize),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum JitArgument<'a> {
-    Integer(i64),
-    Float(f64),
-    Boolean(bool),
-    IntegerArray(&'a [i64]),
-    IntegerVec(&'a [i64]),
-    Unused,
-}
-
 pub trait JitExecutor: Send + Sync {
-    fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
+    fn submit_frame(&self, request: FrameRequest<'_>) -> FrameSubmission;
 
-    fn submit_frame(&self, request: FrameRequest<'_>) -> FrameSubmission {
-        let _ = request;
-        FrameSubmission::Refused
-    }
-
-    fn frame_call_threshold(&self) -> u64 {
-        u64::MAX
-    }
+    fn frame_call_threshold(&self) -> u64;
 
     fn record_frame_osr_return(&self) {}
 
     fn record_frame_exit(&self) {}
-
-    /// true when no later call can compile this function, so the VM can stop asking
-    fn refuses_forever(&self, key: &JitFunctionKey) -> bool {
-        let _ = key;
-        false
-    }
-
-    fn observe_backedge(&self, key: &JitFunctionKey, function: &Function, backedges: u64);
-
-    fn try_execute(
-        &self,
-        key: &JitFunctionKey,
-        function: &Function,
-        arguments: &[JitArgument<'_>],
-        calls: u64,
-    ) -> JitCallResult;
-
-    /// execute with an isolate-local control context. providers that do not support controlled machine code retain the old fallback behavior.
-    fn try_execute_with_context(
-        &self,
-        key: &JitFunctionKey,
-        function: &Function,
-        arguments: &[JitArgument<'_>],
-        calls: u64,
-        context: Option<&JitExecutionContext>,
-    ) -> JitCallResult {
-        let _ = context;
-        self.try_execute(key, function, arguments, calls)
-    }
-
-    fn try_execute_osr(
-        &self,
-        _key: &JitFunctionKey,
-        _function: &Function,
-        _bytecode_ip: u32,
-        _registers: &[JitArgument<'_>],
-    ) -> JitCallResult {
-        JitCallResult::Unsupported
-    }
-
-    fn try_execute_osr_with_context(
-        &self,
-        key: &JitFunctionKey,
-        function: &Function,
-        bytecode_ip: u32,
-        registers: &[JitArgument<'_>],
-        context: Option<&JitExecutionContext>,
-    ) -> JitCallResult {
-        let _ = context;
-        self.try_execute_osr(key, function, bytecode_ip, registers)
-    }
 }

@@ -37,7 +37,6 @@ struct Waiting {
     slot: usize,
     function: GcRef,
     optimized: bool,
-    seed_legacy: bool,
 }
 
 #[derive(Default)]
@@ -99,7 +98,6 @@ impl FrameSlot {
                     state: EntryState::Pending,
                     optimized: false,
                     opt_installed: false,
-                    legacy_tried: false,
                     budget: ExitBudget::default(),
                 });
                 self.osr.len() - 1
@@ -113,7 +111,6 @@ struct OsrEntry {
     state: EntryState,
     optimized: bool,
     opt_installed: bool,
-    legacy_tried: bool,
     budget: ExitBudget,
 }
 
@@ -128,8 +125,6 @@ pub(crate) struct FrameSlot {
     codes: SmallVec<[Arc<dyn FrameCode>; 2]>,
     blocks: SmallVec<[Box<[u64]>; 2]>,
     live: bool,
-    legacy_refused: bool,
-    legacy_safe: Option<bool>,
 }
 
 struct PendingFrame {
@@ -210,7 +205,6 @@ pub(crate) enum FrameOutcome {
     Returned(Value),
     Exited(u32),
     Interpret,
-    Legacy,
 }
 
 enum EntryKind {
@@ -228,7 +222,7 @@ impl VM {
         self.frame_jit_usable()
     }
 
-    // true once neither the frame compiler nor the older pipeline will take a call to this function
+    // true once the frame compiler refused this function, so its calls stay on the interpreter hot path
     pub(crate) fn frame_jit_interprets(&self, function: GcRef) -> bool {
         let Some(ObjectKind::Function(object)) = self.heap.get(function).map(|object| &object.kind)
         else {
@@ -244,7 +238,6 @@ impl VM {
                     entry.live
                         && entry.function == function
                         && matches!(entry.call, EntryState::Refused)
-                        && entry.legacy_refused
                 })
     }
 
@@ -305,8 +298,6 @@ impl VM {
             codes: SmallVec::new(),
             blocks: SmallVec::new(),
             live: true,
-            legacy_refused: false,
-            legacy_safe: None,
         };
         let index = if let Some(free) = self.frame_jit.free.pop() {
             let index = usize::try_from(free).ok()?;
@@ -384,7 +375,6 @@ impl VM {
         index: usize,
         target: FrameTarget,
         optimized: bool,
-        seed_legacy: bool,
     ) -> Submitted {
         let token = self.frame_jit.next_token;
         self.frame_jit.next_token = token.wrapping_add(1);
@@ -417,13 +407,12 @@ impl VM {
                         slot: index,
                         function,
                         optimized,
-                        seed_legacy,
                     },
                 );
                 return Submitted::Queued;
             }
         };
-        self.apply_frame_code(index, target, optimized, seed_legacy, code);
+        self.apply_frame_code(index, target, optimized, code);
         Submitted::Applied
     }
 
@@ -449,13 +438,7 @@ impl VM {
             if !current || self.frame_jit.disabled {
                 continue;
             }
-            self.apply_frame_code(
-                waiting.slot,
-                done.target,
-                waiting.optimized,
-                waiting.seed_legacy,
-                done.code,
-            );
+            self.apply_frame_code(waiting.slot, done.target, waiting.optimized, done.code);
         }
     }
 
@@ -464,7 +447,6 @@ impl VM {
         index: usize,
         target: FrameTarget,
         optimized: bool,
-        seed_legacy: bool,
         code: Option<Arc<dyn FrameCode>>,
     ) {
         let entries = code
@@ -476,7 +458,7 @@ impl VM {
             self.frame_jit.installs = self.frame_jit.installs.wrapping_add(1);
         }
         match target {
-            FrameTarget::Call => self.apply_call_code(index, optimized, seed_legacy, install),
+            FrameTarget::Call => self.apply_call_code(index, optimized, install),
             FrameTarget::Loop(ip) => {
                 let slot = &mut self.frame_jit.slots[index];
                 if let Some(install) = install {
@@ -500,20 +482,13 @@ impl VM {
                     let entry = &mut slot.osr[position];
                     if matches!(entry.state, EntryState::Pending | EntryState::Compiling) {
                         entry.state = EntryState::Refused;
-                        entry.legacy_tried = false;
                     }
                 }
             }
         }
     }
 
-    fn apply_call_code(
-        &mut self,
-        index: usize,
-        optimized: bool,
-        seed_legacy: bool,
-        install: Option<FrameInstall>,
-    ) {
+    fn apply_call_code(&mut self, index: usize, optimized: bool, install: Option<FrameInstall>) {
         let slot = &mut self.frame_jit.slots[index];
         if optimized {
             let (Some(install), EntryState::Ready(old)) = (install, &slot.call) else {
@@ -540,13 +515,7 @@ impl VM {
         }
         match install {
             Some(install) => slot.call = EntryState::Ready(install),
-            None => {
-                slot.call = EntryState::Refused;
-                if seed_legacy && let Some(key) = slot.key.clone() {
-                    let calls = self.frame_jit.counters[slot.counters].calls;
-                    self.jit_call_counts.insert(key, calls.saturating_sub(1));
-                }
-            }
+            None => slot.call = EntryState::Refused,
         }
     }
 
@@ -556,18 +525,15 @@ impl VM {
         argument_start: usize,
     ) -> FrameOutcome {
         if !self.frame_jit_usable() {
-            return FrameOutcome::Legacy;
+            return FrameOutcome::Interpret;
         }
         self.poll_frame_jobs();
         let Some(index) = self.frame_slot(function) else {
-            return FrameOutcome::Legacy;
+            return FrameOutcome::Interpret;
         };
         let install = match self.frame_jit.slots[index].call {
             EntryState::Ready(install) => install,
-            EntryState::Refused if self.frame_jit.slots[index].legacy_refused => {
-                return FrameOutcome::Interpret;
-            }
-            EntryState::Refused => return FrameOutcome::Legacy,
+            EntryState::Refused => return FrameOutcome::Interpret,
             EntryState::Compiling => return FrameOutcome::Interpret,
             EntryState::Pending => {
                 let threshold = self
@@ -579,7 +545,7 @@ impl VM {
                 if counters.calls < threshold {
                     return FrameOutcome::Interpret;
                 }
-                match self.request_frame_code(index, FrameTarget::Call, false, true) {
+                match self.request_frame_code(index, FrameTarget::Call, false) {
                     Submitted::Queued => {
                         self.frame_jit.slots[index].call = EntryState::Compiling;
                         return FrameOutcome::Interpret;
@@ -589,7 +555,7 @@ impl VM {
                 }
                 match self.frame_jit.slots[index].call {
                     EntryState::Ready(install) => install,
-                    EntryState::Refused => return FrameOutcome::Legacy,
+                    EntryState::Refused => return FrameOutcome::Interpret,
                     EntryState::Pending | EntryState::Compiling => {
                         return FrameOutcome::Interpret;
                     }
@@ -616,6 +582,14 @@ impl VM {
             slot.call = EntryState::Refused;
         }
         outcome
+    }
+
+    // a host call starts at register 0 with no frame below it; a call back from a native inside machine code would overwrite the entry state of the code that called it
+    pub(crate) fn frame_jit_host_call(&mut self, function: GcRef) -> FrameOutcome {
+        if !self.frames.is_empty() || self.frame_jit.native_depth > 0 {
+            return FrameOutcome::Interpret;
+        }
+        self.frame_jit_call(function, 0)
     }
 
     fn enter_frame_code(
@@ -771,7 +745,7 @@ impl VM {
                 return Some(Ok(None));
             }
             let position = slot.osr_position(ip);
-            match self.request_frame_code(index, FrameTarget::Loop(ip), false, false) {
+            match self.request_frame_code(index, FrameTarget::Loop(ip), false) {
                 Submitted::Queued => {
                     let entry = &mut self.frame_jit.slots[index].osr[position];
                     if matches!(entry.state, EntryState::Pending) {
@@ -792,20 +766,10 @@ impl VM {
             EntryState::Ready(install) => install,
             EntryState::Pending | EntryState::Compiling => return Some(Ok(None)),
             EntryState::Refused => {
-                let entry = &mut slot.osr[position];
-                if entry.legacy_tried {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.jit_quiet_ip = bytecode_ip;
-                    }
-                    return Some(Ok(None));
-                }
-                entry.legacy_tried = true;
                 if let Some(frame) = self.frames.last_mut() {
-                    frame.jit_backedges_initialized = true;
-                    frame.jit_backedge_base = threshold.saturating_sub(1);
-                    frame.jit_backedges = 0;
+                    frame.jit_quiet_ip = bytecode_ip;
                 }
-                return None;
+                return Some(Ok(None));
             }
         };
         let frame = self.frames.last()?;
@@ -831,7 +795,7 @@ impl VM {
             }
         }
         if promote {
-            self.request_frame_code(index, FrameTarget::Loop(ip), true, false);
+            self.request_frame_code(index, FrameTarget::Loop(ip), true);
         }
         match outcome {
             FrameOutcome::Returned(value) => {
@@ -853,75 +817,7 @@ impl VM {
                 self.frame_jit.osr_resume = true;
                 Some(Ok(Some(Value::null())))
             }
-            FrameOutcome::Interpret | FrameOutcome::Legacy => Some(Ok(None)),
-        }
-    }
-
-    // the older pipeline runs every qualified global through call_value, which restarts the interpreter at register 0
-    pub(crate) fn legacy_jit_is_safe(&mut self, function: GcRef) -> bool {
-        let Some(index) = self.frame_slot(function) else {
-            return false;
-        };
-        if let Some(safe) = self.frame_jit.slots[index].legacy_safe {
-            return safe;
-        }
-        let names = match self.heap.get(function).map(|object| &object.kind) {
-            Some(ObjectKind::Function(object)) => {
-                let layout = &object.function.global_layout;
-                let words = object.function.bytecode.as_slice();
-                let mut names = Vec::new();
-                let mut ip = 0usize;
-                while ip < words.len() {
-                    let word = words[ip];
-                    let Some(opcode) = u8::try_from(word >> 24)
-                        .ok()
-                        .and_then(aelys_bytecode::OpCode::from_u8)
-                    else {
-                        break;
-                    };
-                    let index = match opcode {
-                        aelys_bytecode::OpCode::CallGlobal => Some(((word >> 8) & 0xff) as usize),
-                        aelys_bytecode::OpCode::GetGlobalIdx => Some((word & 0xffff) as usize),
-                        aelys_bytecode::OpCode::GetGlobalIdxWide => {
-                            words.get(ip + 1).map(|index| *index as usize)
-                        }
-                        _ => None,
-                    };
-                    if let Some(name) = index.and_then(|index| layout.names().get(index))
-                        && name.contains("::")
-                    {
-                        names.push(name.clone());
-                    }
-                    ip += opcode.extension_words() + 1;
-                }
-                names
-            }
-            _ => return false,
-        };
-        let safe = names.iter().all(|name| {
-            let value = self.global_by_name(name);
-            value
-                .as_ptr()
-                .and_then(|pointer| self.heap.get(GcRef::new(pointer)))
-                .is_some_and(|object| matches!(object.kind, ObjectKind::Native(_)))
-        });
-        self.frame_jit.slots[index].legacy_safe = Some(safe);
-        safe
-    }
-
-    pub(crate) fn mark_frame_legacy_refused(&mut self, function: GcRef) {
-        let Some(ObjectKind::Function(object)) = self.heap.get(function).map(|object| &object.kind)
-        else {
-            return;
-        };
-        let slot = object.jit_slot();
-        if let Some(entry) = usize::try_from(slot)
-            .ok()
-            .and_then(|slot| slot.checked_sub(1))
-            .and_then(|index| self.frame_jit.slots.get_mut(index))
-            && entry.function == function
-        {
-            entry.legacy_refused = true;
+            FrameOutcome::Interpret => Some(Ok(None)),
         }
     }
 
@@ -972,14 +868,6 @@ impl VM {
         self.frame_jit.prepared_generation = prepared + 1;
     }
 
-    fn global_by_name(&mut self, name: &str) -> Value {
-        if name.is_empty() {
-            return Value::null();
-        }
-        self.sync_current_function_globals();
-        self.globals.get(name).copied().unwrap_or_else(Value::null)
-    }
-
     fn promote_loop(&mut self, function: GcRef, ip: u32) -> bool {
         self.poll_frame_jobs();
         let Some(index) = self.frame_slot(function) else {
@@ -992,7 +880,7 @@ impl VM {
             return entry.opt_installed && matches!(entry.state, EntryState::Ready(_));
         }
         entry.optimized = true;
-        self.request_frame_code(index, FrameTarget::Loop(ip), true, false);
+        self.request_frame_code(index, FrameTarget::Loop(ip), true);
         let entry = &self.frame_jit.slots[index].osr[position];
         entry.opt_installed && matches!(entry.state, EntryState::Ready(_))
     }
@@ -1006,7 +894,7 @@ impl VM {
             return;
         }
         slot.call_optimized = true;
-        self.request_frame_code(index, FrameTarget::Call, true, false);
+        self.request_frame_code(index, FrameTarget::Call, true);
     }
 
     fn refresh_frame_context(&mut self) {
@@ -1188,7 +1076,7 @@ pub unsafe extern "C" fn aelys_frame_call(
         interpret(context)
     };
     if let EntryState::Pending = vm.frame_jit.slots[index].call {
-        match vm.request_frame_code(index, FrameTarget::Call, false, false) {
+        match vm.request_frame_code(index, FrameTarget::Call, false) {
             Submitted::Queued => {
                 vm.frame_jit.slots[index].call = EntryState::Compiling;
                 return excuse(context_ref, vm);
