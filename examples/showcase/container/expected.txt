@@ -1,0 +1,9 @@
+sorted ints: len 8, smallest -3
+drained ints: [-3, 0, 7, 7, 19, 42, 56, 100]
+after drain: empty = true
+tasks queued: 7, next up call vendor(p5)
+handled call vendor, 6 left
+remaining by priority: [fix outage(p5), update status page(p5), deploy(p4), review patch(p3), write report(p2), water plants(p1)]
+ring keeps 3 of 5, dropped 2, oldest 3
+ring drained: [3, 4, 5]
+log drained: [panic(p9), reboot(p2)], empty = true
