@@ -2,7 +2,7 @@ use super::ops::sized::{fixed_value, sized_unary_value, wrap_binary};
 use super::ops::structs::integer_fits;
 use super::ops::sums::NONE_TAG;
 use crate::vm::{CallFrame, GcObject, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
-use aelys_bytecode::object::{SumTag, UpvalueLocation, VecData};
+use aelys_bytecode::object::{SumTag, UpvalueLocation};
 use aelys_bytecode::{FixedKind, FunctionSchemas, OpCode, SizedInt, TypeDescriptor};
 use std::sync::Arc;
 
@@ -1120,12 +1120,12 @@ impl VM {
                     else {
                         leave!();
                     };
-                    let value = if let VecData::Ints(items) = &vector.data {
-                        Value::int_wrapping(*or_leave!(items.get(index)))
-                    } else if let VecData::Bytes(items) = &vector.data {
-                        Value::int(i64::from(*or_leave!(items.get(index))))
-                    } else {
-                        leave!();
+                    let value = match vector.data.as_ints() {
+                        Some(items) => Value::int_wrapping(*or_leave!(items.get(index))),
+                        None => {
+                            let items = or_leave!(vector.data.as_bytes());
+                            Value::int(i64::from(*or_leave!(items.get(index))))
+                        }
                     };
                     set!(a, value);
                     next
@@ -1198,12 +1198,12 @@ impl VM {
                     else {
                         leave!();
                     };
-                    if let VecData::Ints(items) = &mut vector.data {
-                        *or_leave!(items.get_mut(index)) = value;
-                    } else if let VecData::Bytes(items) = &mut vector.data {
-                        *or_leave!(items.get_mut(index)) = or_leave!(u8::try_from(value).ok());
-                    } else {
-                        leave!();
+                    match vector.data.as_ints_mut() {
+                        Some(items) => *or_leave!(items.get_mut(index)) = value,
+                        None => {
+                            let items = or_leave!(vector.data.as_bytes_mut());
+                            *or_leave!(items.get_mut(index)) = or_leave!(u8::try_from(value).ok());
+                        }
                     }
                     next
                 }
