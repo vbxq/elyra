@@ -5,11 +5,10 @@ use super::{
 use aelys_bytecode::object::{
     AelysArray, AelysEnum, AelysStruct, AelysSum, AelysVec, SumTag, TypeTag,
 };
-use aelys_bytecode::{DefId, SchemaId, StructFieldSchema, StructSchema, TypeDescriptor};
+use aelys_bytecode::{EnumSchema, SchemaId, StructSchema, TypeDescriptor};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use aelys_native::{AelysNativeFn, AelysNativeType};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::fmt::Write;
 
 impl VM {
     pub(crate) fn ensure_array_capacity(
@@ -252,7 +251,8 @@ impl VM {
     fn materialize_schema_ids(&mut self, function: &mut super::Function) {
         let mut ids = Vec::with_capacity(function.struct_schemas.len());
         for schema in &function.struct_schemas {
-            ids.push(self.intern_schema(schema));
+            let key = schema_key(schema, &function.struct_schemas, &function.enum_schemas);
+            ids.push(self.intern_schema(schema, key));
         }
         function.schema_ids = ids;
         for nested in &mut function.nested_functions {
@@ -260,15 +260,8 @@ impl VM {
         }
     }
 
-    fn intern_schema(&mut self, schema: &StructSchema) -> SchemaId {
-        let hash = schema_hash(schema);
-        if let Some(bucket) = self.schema_index.get(&hash)
-            && let Some(id) = bucket.iter().find(|id| {
-                self.schema_registry
-                    .get(id)
-                    .is_some_and(|existing| same_schema(existing, schema))
-            })
-        {
+    fn intern_schema(&mut self, schema: &StructSchema, key: String) -> SchemaId {
+        if let Some(id) = self.schema_index.get(&key) {
             return *id;
         }
         let mut id = SchemaId(self.next_schema_id);
@@ -278,7 +271,7 @@ impl VM {
             self.next_schema_id = self.next_schema_id.saturating_add(1).max(1);
         }
         self.schema_registry.insert(id, schema.clone());
-        self.schema_index.entry(hash).or_default().push(id);
+        self.schema_index.insert(key, id);
         id
     }
 
@@ -412,20 +405,112 @@ impl VM {
     }
 }
 
-type SchemaKey<'a> = (&'a DefId, &'a [TypeDescriptor], &'a [StructFieldSchema]);
-
-fn schema_key(schema: &StructSchema) -> SchemaKey<'_> {
-    (&schema.ctor, &schema.type_args, &schema.fields)
+// a nested struct or enum descriptor holds a module-local index, so identity is spelled through it
+fn schema_key(schema: &StructSchema, structs: &[StructSchema], enums: &[EnumSchema]) -> String {
+    let mut key = String::new();
+    let mut visiting = vec![schema.schema_id];
+    write_schema_identity(schema, structs, enums, &mut visiting, &mut key);
+    for field in &schema.fields {
+        let _ = write!(key, "|{}@{}:", field.name, field.offset);
+        write_descriptor_identity(&field.ty, structs, enums, &mut visiting, &mut key);
+    }
+    key
 }
 
-fn same_schema(left: &StructSchema, right: &StructSchema) -> bool {
-    schema_key(left) == schema_key(right)
+fn write_schema_identity(
+    schema: &StructSchema,
+    structs: &[StructSchema],
+    enums: &[EnumSchema],
+    visiting: &mut Vec<u32>,
+    key: &mut String,
+) {
+    let _ = write!(key, "{:?}<", schema.ctor);
+    for arg in &schema.type_args {
+        write_descriptor_identity(arg, structs, enums, visiting, key);
+        key.push(',');
+    }
+    key.push('>');
 }
 
-fn schema_hash(schema: &StructSchema) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    schema_key(schema).hash(&mut hasher);
-    hasher.finish()
+fn write_descriptor_identity(
+    descriptor: &TypeDescriptor,
+    structs: &[StructSchema],
+    enums: &[EnumSchema],
+    visiting: &mut Vec<u32>,
+    key: &mut String,
+) {
+    match descriptor {
+        TypeDescriptor::Struct(index) => {
+            match structs.iter().find(|schema| schema.schema_id == *index) {
+                Some(schema) if !visiting.contains(index) => {
+                    visiting.push(*index);
+                    key.push_str("struct ");
+                    write_schema_identity(schema, structs, enums, visiting, key);
+                    visiting.pop();
+                }
+                Some(schema) => {
+                    let _ = write!(key, "struct {:?}", schema.ctor);
+                }
+                None => {
+                    let _ = write!(key, "{descriptor}");
+                }
+            }
+        }
+        TypeDescriptor::Enum(index) => {
+            match enums.iter().find(|schema| schema.schema_id == *index) {
+                Some(schema) => {
+                    let _ = write!(key, "enum {:?}<", schema.def_id);
+                    for arg in &schema.type_args {
+                        write_descriptor_identity(arg, structs, enums, visiting, key);
+                        key.push(',');
+                    }
+                    key.push('>');
+                }
+                None => {
+                    let _ = write!(key, "{descriptor}");
+                }
+            }
+        }
+        TypeDescriptor::Option(inner) => {
+            key.push_str("option(");
+            write_descriptor_identity(inner, structs, enums, visiting, key);
+            key.push(')');
+        }
+        TypeDescriptor::Result(ok, err) => {
+            key.push_str("result(");
+            write_descriptor_identity(ok, structs, enums, visiting, key);
+            key.push(',');
+            write_descriptor_identity(err, structs, enums, visiting, key);
+            key.push(')');
+        }
+        TypeDescriptor::Array(inner) => {
+            key.push_str("array(");
+            write_descriptor_identity(inner, structs, enums, visiting, key);
+            key.push(')');
+        }
+        TypeDescriptor::FixedArray(inner, length) => {
+            key.push_str("fixed(");
+            write_descriptor_identity(inner, structs, enums, visiting, key);
+            let _ = write!(key, ";{length})");
+        }
+        TypeDescriptor::Vec(inner) => {
+            key.push_str("vec(");
+            write_descriptor_identity(inner, structs, enums, visiting, key);
+            key.push(')');
+        }
+        TypeDescriptor::Function { params, ret } => {
+            key.push_str("fn(");
+            for param in params {
+                write_descriptor_identity(param, structs, enums, visiting, key);
+                key.push(',');
+            }
+            key.push_str(")->");
+            write_descriptor_identity(ret, structs, enums, visiting, key);
+        }
+        _ => {
+            let _ = write!(key, "{descriptor}");
+        }
+    }
 }
 
 #[cfg(test)]

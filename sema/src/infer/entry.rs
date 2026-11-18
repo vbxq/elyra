@@ -1884,6 +1884,7 @@ fn error_priority(kind: &TypeErrorKind) -> u8 {
         // a mangling collision is a symptom: a coherence verdict, a duplicate
         TypeErrorKind::MangledSymbolCollision { .. } => 3,
         TypeErrorKind::PoisonedType
+        | TypeErrorKind::UnresolvedTypeVariable
         | TypeErrorKind::UnmaterializedAppliedType { .. }
         | TypeErrorKind::IgnoredResult
         | TypeErrorKind::IgnoredOption => 2,

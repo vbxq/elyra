@@ -462,3 +462,63 @@ fn a_quote_name_quote_is_not_a_label() {
         3,
     );
 }
+
+const GEO_MODULE: &str = r#"
+pub struct Seg { pub a: (int, int), pub b: ((int, string), bool) }
+pub enum Shape { Pt((int, int)), Box { pub corner: (int, int), pub size: int }, Nothing }
+pub fn seg() -> Seg { Seg { a: (1, 2), b: ((3, "x"), true) } }
+pub fn mk(k: int) -> Shape {
+    if k == 0 { Shape::Pt((4, 5)) } else if k == 1 { Shape::Box { corner: (6, 7), size: 8 } } else { Shape::Nothing }
+}
+pub fn find(n: int) -> Option<(int, string)> { if n > 0 { Some((n, "f")) } else { None } }
+pub fn segs() -> Vec<Seg> { vec![seg(), Seg { a: (9, 9), b: ((0, ""), false) }] }
+pub fn one() -> int { 1 }
+"#;
+
+fn run_with_geo(main: &str) -> Result<aelys::Value, String> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(&dir, "geo.aelys", GEO_MODULE);
+    let path = write(&dir, "main.aelys", main);
+    aelys_driver::run_file(&path).map_err(|error| error.to_string())
+}
+
+#[test]
+fn tuples_cross_module_boundaries_in_fields_and_payloads() {
+    let value = run_with_geo(
+        r#"
+needs geo
+let s = geo::seg()
+let v = geo::segs()
+let a = match geo::mk(0) { Shape::Pt((x, y)) => x * 10 + y, _ => 0 }
+let b = match geo::mk(1) { Shape::Box { corner, size } => corner.0 + corner.1 + size, _ => 0 }
+let c = match geo::mk(0) { Shape::Pt(t) => t.0, Shape::Box { corner: (p, q), .. } => p, Shape::Nothing => 0 }
+let d = match geo::find(3) { Some((n, w)) => n, None => 0 }
+let (p, (q, r)) = (s.a.1, s.b.0)
+s.a.0 + s.a.1 + s.b.0.0 + a + b + c + d + v[1].a.0 + p + q
+"#,
+    )
+    .expect("imported tuple fields and payloads");
+    assert_eq!(value.as_int(), Some(3 + 3 + 45 + 21 + 4 + 3 + 9 + 2 + 3));
+
+    let untouched = run_with_geo("needs geo\ngeo::one() + 41\n").expect("a module with tuple fields loads");
+    assert_eq!(untouched.as_int(), Some(42));
+
+    for (main, expected) in [
+        ("needs geo\nlet s = geo::seg()\ns.a.5\n", "tuple (int, int) has no field 5"),
+        ("needs geo\nlet s = geo::seg()\nlet y: int = s.b\ny\n", "found ((int, string), bool)"),
+        (
+            "needs geo\nmatch geo::mk(0) { Shape::Pt((a, b, c)) => 1, _ => 0 }\n",
+            "tuple pattern has 3 elements",
+        ),
+    ] {
+        let error = run_with_geo(main).expect_err("rejected");
+        assert!(error.contains(expected), "{error}\nfor:\n{main}");
+        assert!(!error.contains("__aelys") && !error.contains("AelysTuple"), "{error}");
+    }
+}
+
+#[test]
+fn an_undefined_name_in_a_destructured_tuple_is_reported_first() {
+    let error = rejected("let (p, (q, r)) = (1, zz.b)\np");
+    assert!(error.contains("undefined variable: zz"), "{error}");
+}

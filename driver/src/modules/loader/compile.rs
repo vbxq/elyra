@@ -508,6 +508,10 @@ impl ModuleLoader {
         for ty in exported_types.globals.values_mut() {
             *ty = inference_result.type_table.reapply_tuple_instances(ty);
         }
+        let reapply = |ty: &InferType| inference_result.type_table.reapply_tuple_instances(ty);
+        exported_types.types.rewrite_types(reapply);
+        exported_types.private_types.rewrite_types(reapply);
+        exported_types.own_private_types.rewrite_types(reapply);
         for ty in inferred_export_signatures.values_mut() {
             *ty = inference_result.type_table.reapply_tuple_instances(ty);
         }

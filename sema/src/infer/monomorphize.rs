@@ -1827,6 +1827,32 @@ impl TypeInference {
         for (ty, _) in types {
             collect_nominal_applications(&ty, &self.type_table, &mut applications);
         }
+        // an imported definition carries its tuple fields unmaterialized
+        let mut field_types = Vec::new();
+        for definition in self.type_table.structs_in_declaration_order() {
+            if definition.type_params.is_empty() {
+                field_types.extend(definition.fields.iter().map(|field| field.ty.clone()));
+            }
+        }
+        for definition in self.type_table.enums_in_declaration_order() {
+            if !definition.type_params.is_empty() {
+                continue;
+            }
+            for variant in &definition.variants {
+                match &variant.fields {
+                    crate::types::EnumVariantFieldsDef::Unit => {}
+                    crate::types::EnumVariantFieldsDef::Tuple(fields) => {
+                        field_types.extend(fields.iter().cloned())
+                    }
+                    crate::types::EnumVariantFieldsDef::Named(fields) => {
+                        field_types.extend(fields.iter().map(|field| field.ty.clone()))
+                    }
+                }
+            }
+        }
+        for ty in field_types.iter().filter(|ty| applies_only_tuples(ty)) {
+            collect_nominal_applications(ty, &self.type_table, &mut applications);
+        }
         loop {
             let before = applications.len();
             let discovered = applications.values().cloned().collect::<Vec<_>>();

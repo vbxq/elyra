@@ -19,6 +19,44 @@ pub struct ImportedTypes {
 }
 
 impl ImportedTypes {
+    pub fn rewrite_types(&mut self, rewrite: impl Fn(&InferType) -> InferType) {
+        for definition in &mut self.structs {
+            for field in &mut definition.fields {
+                field.ty = rewrite(&field.ty);
+            }
+        }
+        for definition in &mut self.enums {
+            for variant in &mut definition.variants {
+                match &mut variant.fields {
+                    crate::types::EnumVariantFieldsDef::Unit => {}
+                    crate::types::EnumVariantFieldsDef::Tuple(fields) => {
+                        for field in fields {
+                            *field = rewrite(field);
+                        }
+                    }
+                    crate::types::EnumVariantFieldsDef::Named(fields) => {
+                        for field in fields {
+                            field.ty = rewrite(&field.ty);
+                        }
+                    }
+                }
+            }
+        }
+        for definition in &mut self.traits {
+            for method in &mut definition.methods {
+                for param in &mut method.params {
+                    *param = rewrite(param);
+                }
+                method.return_type = rewrite(&method.return_type);
+            }
+        }
+        for globals in self.module_globals.values_mut() {
+            for ty in globals.values_mut() {
+                *ty = rewrite(ty);
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.enums.is_empty() && self.structs.is_empty() && self.traits.is_empty()
     }

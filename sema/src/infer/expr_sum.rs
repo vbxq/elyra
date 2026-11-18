@@ -113,7 +113,7 @@ impl TypeInference {
         let checker = super::exhaustive::Checker::new(&self.type_table);
         for residual in &self.match_exhaustivity_residuals {
             let ty = subst.apply(&residual.ty);
-            if matches!(ty, InferType::Poison) {
+            if ty.contains_poison() {
                 continue;
             }
             let mut capitalized = Vec::new();
