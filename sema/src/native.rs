@@ -189,6 +189,14 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             vec![InferType::I64, InferType::String],
             result(InferType::I64, InferType::String),
         ),
+        ("fs", "write_buffer") => function_with(
+            vec![InferType::I64, InferType::I64],
+            result(InferType::I64, InferType::String),
+        ),
+        ("fs", "write_file_bytes") => function_with(
+            vec![InferType::String, InferType::I64],
+            result(InferType::Unit, InferType::String),
+        ),
         ("fs", "read_text") => function_with(
             vec![InferType::String],
             result(InferType::String, InferType::String),
