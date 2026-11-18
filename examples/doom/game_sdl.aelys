@@ -1,26 +1,15 @@
-// needs the t4 native abi: run with a t4 aelys-cli and the sdl module copied here as sdl.so
+// needs modules/sdl built per docs/native-modules.md and copied next to this file as sdl.so
 needs std::bytes as bytes
 needs std::sys
 needs println from std::io
 needs sdl
-needs wad
 needs render
 needs engine
 
-fn upload(pixels: int) {
-    let fb = render::framebuffer()
-    let mut i = 0
-    while i < 64000 {
-        let _ = bytes::write_u32(pixels, i, fb[i] | (fb[i + 1] << 8) | (fb[i + 2] << 16) | (fb[i + 3] << 24))
-        i += 4
-    }
-}
-
 fn present_frame(pixels: int, palette: int) -> bool {
-    upload(pixels)
-    let ok = match sdl::present_indexed(pixels, palette) {
-        Ok(_) => true,
-        Err(e) => false,
+    let uploaded = match bytes::copy_from_vec(pixels, 0, render::framebuffer()) {
+        Ok(_) => sdl::present_indexed(pixels, palette),
+        Err(e) => Err(e),
     }
     let mut quit = false
     let mut ev = sdl::poll()
@@ -28,24 +17,20 @@ fn present_frame(pixels: int, palette: int) -> bool {
         if ev == 1 { quit = true }
         ev = sdl::poll()
     }
-    ok and not quit
+    uploaded.is_ok() and not quit
 }
 
 let wad_path = engine::flag_value("--wad", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
 let g = engine::load(wad_path)
-let opened = match sdl::open("Elyra E1M1", 320, 200, 3) {
-    Ok(_) => true,
-    Err(e) => false,
-}
-if not opened {
+if sdl::open("Elyra E1M1", 320, 200, 3).is_err() {
     println("sdl::open failed")
     sys::exit(1)
 }
 let pixels = bytes::alloc(64000)
 let palette = bytes::alloc(768)
-for i in 0..768 {
-    let _ = bytes::write_u8(palette, i, g.playpal[i])
-}
+let mut first_palette: Vec<int> = vec![0; 768]
+for i in 0..768 { first_palette[i] = g.playpal[i] }
+let _ = bytes::copy_from_vec(palette, 0, first_palette)
 let present = fn() -> bool { present_frame(pixels, palette) }
 if engine::has_flag("--timedemo") {
     engine::run_timedemo(present)
