@@ -128,6 +128,12 @@ let mut clipbot: Vec<int> = vec![0; 320]
 let mut cliptop: Vec<int> = vec![0; 320]
 let mut sector_stamp: Vec<int> = vec![]
 let mut frame_no = 0
+let mut vx_stamp: Vec<int> = vec![]
+let mut vx_angle: Vec<int> = vec![]
+let mut sg_v1: Vec<int> = vec![]
+let mut sg_v2: Vec<int> = vec![]
+let mut hp_stamp: Vec<int> = vec![0; 256]
+let mut hp_plane: Vec<int> = vec![0; 256]
 
 
 
@@ -650,6 +656,10 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
     sg_mid = vec![]
     sg_bottom = vec![]
     sg_light = vec![]
+    sg_v1 = vec![]
+    sg_v2 = vec![]
+    vx_stamp = vec![0; lv.vertexes.len()]
+    vx_angle = vec![0; lv.vertexes.len()]
     for s in lv.segs {
         let ld = lv.linedefs[s.linedef]
         let sdi = if s.direction == 0 { ld.front } else { ld.back }
@@ -659,6 +669,8 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
         let v1 = lv.vertexes[s.v1]
         let v2 = lv.vertexes[s.v2]
         let side = sides[sdi]
+        sg_v1.push(s.v1)
+        sg_v2.push(s.v2)
         sg_x1.push(v1.x << 16)
         sg_y1.push(v1.y << 16)
         sg_x2.push(v2.x << 16)
@@ -865,12 +877,20 @@ fn find_plane(height: int, pic: int, light: int) -> int {
     let ph = pl_height
     let pp = pl_pic
     let pli = pl_light
-    for i in 0..num_planes {
+    let mut hs = hp_stamp
+    let mut hpl = hp_plane
+    let fno = frame_no
+    let mut slot = ((h >> 16) * 7 + pic * 13 + l * 3) & 255
+    while hs[slot] == fno {
+        let i = hpl[slot]
         if ph[i] == h and pp[i] == pic and pli[i] == l { return i }
+        slot = (slot + 1) & 255
     }
     if num_planes >= 128 { return -1 }
     let p = num_planes
     num_planes++
+    hs[slot] = fno
+    hpl[slot] = p
     pl_height[p] = h
     pl_pic[p] = pic
     pl_light[p] = l
@@ -1244,13 +1264,15 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
         bottomfrac += bottomstep
     }
     if phases_on { ph_walls += time::elapsed_us(phase_clock) - tw }
+    let shift = start - lastop
     if ((sil & 2) != 0 or masked) and topclip == -1000000 {
-        for x in start..stopx { opn[lastop + x - start] = cclip[x] }
+        for o in lastop..(lastop + stopx - start) { opn[o] = cclip[o + shift] }
         topclip = lastop - start
         lastop += stopx - start
     }
     if ((sil & 1) != 0 or masked) and botclip == -1000000 {
-        for x in start..stopx { opn[lastop + x - start] = fclip[x] }
+        let shift2 = start - lastop
+        for o in lastop..(lastop + stopx - start) { opn[o] = fclip[o + shift2] }
         botclip = lastop - start
         lastop += stopx - start
     }
@@ -1348,8 +1370,27 @@ fn clip_pass(si: int, front: int, rw: int, first: int, last: int) {
 }
 
 fn add_line(si: int, front: int) {
-    let mut angle1 = point_to_angle(sg_x1[si], sg_y1[si])
-    let mut angle2 = point_to_angle(sg_x2[si], sg_y2[si])
+    let mut vst = vx_stamp
+    let mut vang = vx_angle
+    let fno = frame_no
+    let v1 = sg_v1[si]
+    let v2 = sg_v2[si]
+    let mut angle1 = 0
+    if vst[v1] == fno {
+        angle1 = vang[v1]
+    } else {
+        angle1 = point_to_angle(sg_x1[si], sg_y1[si])
+        vang[v1] = angle1
+        vst[v1] = fno
+    }
+    let mut angle2 = 0
+    if vst[v2] == fno {
+        angle2 = vang[v2]
+    } else {
+        angle2 = point_to_angle(sg_x2[si], sg_y2[si])
+        vang[v2] = angle2
+        vst[v2] = fno
+    }
     let span = ang_sub(angle1, angle2)
     if span >= 0x80000000 { return () }
     let rw = angle1
