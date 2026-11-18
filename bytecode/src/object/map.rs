@@ -78,6 +78,22 @@ impl AelysMap {
         self.index.contains_key(key)
     }
 
+    pub fn insert_growth(&self, key: &MapKey) -> usize {
+        if self.index.contains_key(key) {
+            return 0;
+        }
+        let mut growth = key.heap_bytes();
+        if self.entries.len() == self.entries.capacity() {
+            let added = self.entries.capacity().max(4);
+            growth += added * std::mem::size_of::<Option<(Value, Value)>>();
+        }
+        if self.index.len() == self.index.capacity() {
+            let added = (self.index.capacity() + 1).max(4);
+            growth += added * (std::mem::size_of::<MapKey>() + 16);
+        }
+        growth
+    }
+
     pub fn insert(&mut self, key: MapKey, key_value: Value, value: Value) -> Option<Value> {
         if let Some(&position) = self.index.get(&key) {
             let slot = self.entries[position]

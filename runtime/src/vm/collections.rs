@@ -664,6 +664,15 @@ fn map_new(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
 fn map_insert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let map = map_ref(vm, args[0], "map insert")?;
     let key = key_of(vm, args[1], "map insert")?;
+    let growth = |vm: &VM| {
+        let bytes = read_map(vm, map, |inner| inner.insert_growth(&key));
+        u64::try_from(bytes).unwrap_or(u64::MAX)
+    };
+    let predicted = growth(vm);
+    if predicted > 0 {
+        vm.maybe_collect_for(predicted);
+        vm.ensure_heap_capacity(growth(vm))?;
+    }
     match write_map(vm, map, |inner| inner.insert(key, args[1], args[2])) {
         Some(previous) => some(vm, previous),
         None => Ok(Value::none()),
