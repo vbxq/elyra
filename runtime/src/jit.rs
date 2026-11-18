@@ -3,7 +3,8 @@ use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 pub const JIT_TIER1_BACKEDGE_THRESHOLD: u64 = 10_000;
 
@@ -278,12 +279,68 @@ pub struct FrameCodeInfo {
     pub address: usize,
     pub num_registers: u32,
     pub arity: u16,
-    pub osr_ip: Option<u32>,
+    pub osr_entries: Vec<u32>,
     pub sites: Vec<FrameSiteKind>,
 }
 
 pub trait FrameCode: Send + Sync {
     fn info(&self) -> &FrameCodeInfo;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FrameTarget {
+    Call,
+    Loop(u32),
+}
+
+pub struct FrameJobDone {
+    pub token: u64,
+    pub target: FrameTarget,
+    pub code: Option<Arc<dyn FrameCode>>,
+}
+
+#[derive(Default)]
+pub struct FrameJobSink {
+    ready: AtomicBool,
+    done: Mutex<Vec<FrameJobDone>>,
+}
+
+impl FrameJobSink {
+    pub fn deliver(&self, done: FrameJobDone) {
+        if let Ok(mut queue) = self.done.lock() {
+            queue.push(done);
+        }
+        self.ready.store(true, Ordering::Release);
+    }
+
+    #[inline(always)]
+    pub fn has_results(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
+
+    pub fn take(&self) -> Vec<FrameJobDone> {
+        self.ready.store(false, Ordering::Release);
+        self.done
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default()
+    }
+}
+
+pub struct FrameRequest<'a> {
+    pub key: &'a JitFunctionKey,
+    pub function: &'a Function,
+    pub target: FrameTarget,
+    pub optimized: bool,
+    pub token: u64,
+    pub sink: &'a Arc<FrameJobSink>,
+}
+
+pub enum FrameSubmission {
+    Ready(Arc<dyn FrameCode>),
+    Queued,
+    Busy,
+    Refused,
 }
 
 pub type FrameEntry = unsafe extern "C" fn(*mut FrameJitContext, *mut u64, *mut u64) -> u64;
@@ -318,24 +375,9 @@ pub enum JitArgument<'a> {
 pub trait JitExecutor: Send + Sync {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
 
-    fn compile_frame(
-        &self,
-        key: &JitFunctionKey,
-        function: &Function,
-        osr_ip: Option<u32>,
-    ) -> Option<Arc<dyn FrameCode>> {
-        let _ = (key, function, osr_ip);
-        None
-    }
-
-    fn compile_frame_optimized(
-        &self,
-        key: &JitFunctionKey,
-        function: &Function,
-        osr_ip: Option<u32>,
-    ) -> Option<Arc<dyn FrameCode>> {
-        let _ = (key, function, osr_ip);
-        None
+    fn submit_frame(&self, request: FrameRequest<'_>) -> FrameSubmission {
+        let _ = request;
+        FrameSubmission::Refused
     }
 
     fn frame_call_threshold(&self) -> u64 {

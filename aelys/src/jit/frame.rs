@@ -22,6 +22,8 @@ const MAX_FRAME_REGISTERS: usize = 256;
 // a call counts as this many loop iterations towards the optimizing recompile
 const CALL_WEIGHT: i64 = 16;
 const LOOP_TIER_UP: i64 = 1 << 20;
+// optimized code is compiled in the background, so a long quick-tier loop keeps asking whether it is ready
+const LOOP_POLL: i64 = 1 << 14;
 const PAYLOAD: u64 = 0x0000_FFFF_FFFF_FFFF;
 const TAG_BITS: u64 = 0x7FFF_0000_0000_0000;
 const QNAN: u64 = 0x7FF8_0000_0000_0000;
@@ -29,7 +31,16 @@ const CHAR_FLAG: u64 = 0x0000_8000_0000_0000;
 
 pub(crate) struct FrameCompiled {
     info: FrameCodeInfo,
-    _module: Mutex<JITModule>,
+    module: Mutex<Option<JITModule>>,
+}
+
+impl Drop for FrameCompiled {
+    fn drop(&mut self) {
+        if let Some(module) = self.module.get_mut().ok().and_then(Option::take) {
+            // the provider cache holds every code until the provider itself drops, after the last vm that could run it
+            unsafe { module.free_memory() };
+        }
+    }
 }
 
 impl FrameCode for FrameCompiled {
@@ -564,11 +575,12 @@ fn integer_registers(
     let mut candidate = Live::all(analysis.registers);
     let mut wanted = Live::default();
     let mut counters = Live::default();
-    let entry = region
-        .live_in
-        .get(&region.entry)
-        .copied()
-        .unwrap_or_default();
+    let mut entry = Live::default();
+    for ip in &region.entries {
+        if let Some(live) = region.live_in.get(ip) {
+            entry.union(live);
+        }
+    }
     for inst in &insts {
         let loop_registers: &[usize] = match inst.op {
             ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
@@ -696,8 +708,10 @@ fn dirty_registers(
 ) -> HashMap<usize, Live> {
     use OpCode::*;
     let mut dirty: HashMap<usize, Live> = HashMap::new();
-    dirty.insert(region.entry, initial);
-    let mut work = vec![region.entry];
+    for ip in &region.entries {
+        dirty.insert(*ip, initial);
+    }
+    let mut work = region.entries.clone();
     while let Some(ip) = work.pop() {
         let Some(Some(effect)) = region.effects.get(&ip) else {
             continue;
@@ -826,7 +840,7 @@ fn constant_index(inst: &Inst) -> Option<usize> {
 }
 
 struct Region {
-    entry: usize,
+    entries: Vec<usize>,
     dirty: HashMap<usize, Live>,
     order: Vec<usize>,
     effects: HashMap<usize, Option<Effect>>,
@@ -839,11 +853,11 @@ fn region(
     analysis: &Analysis<'_>,
     instructions: &[Inst],
     by_ip: &HashMap<usize, usize>,
-    entry: usize,
+    entries: &[usize],
 ) -> Option<Region> {
     let mut effects = HashMap::new();
-    let mut stack = vec![entry];
-    let mut leaders = BTreeSet::from([entry]);
+    let mut stack = entries.to_vec();
+    let mut leaders = entries.iter().copied().collect::<BTreeSet<_>>();
     while let Some(ip) = stack.pop() {
         if effects.contains_key(&ip) {
             continue;
@@ -882,7 +896,7 @@ fn region(
     leaders.retain(|ip| effects.contains_key(ip));
     let (live_in, live_out) = function_liveness(analysis, instructions, by_ip);
     Some(Region {
-        entry,
+        entries: entries.to_vec(),
         dirty: HashMap::new(),
         order,
         effects,
@@ -1115,15 +1129,22 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             return;
         }
         let progress = self.builder.use_var(self.progress);
-        let hot = self
-            .builder
-            .ins()
-            .icmp_imm_s(IntCC::Equal, progress, LOOP_TIER_UP);
+        let masked = self.builder.ins().band_imm_s(progress, LOOP_POLL - 1);
+        let tick = self.builder.ins().icmp_imm_s(IntCC::Equal, masked, 0);
+        let check = self.builder.create_block();
         let promote = self.builder.create_block();
         let leave = self.builder.create_block();
         let stay = self.builder.create_block();
+        self.builder.set_cold_block(check);
         self.builder.set_cold_block(promote);
         self.builder.set_cold_block(leave);
+        self.builder.ins().brif(tick, check, &[], stay, &[]);
+        self.builder.seal_block(check);
+        self.builder.switch_to_block(check);
+        let hot =
+            self.builder
+                .ins()
+                .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, progress, LOOP_TIER_UP);
         self.builder.ins().brif(hot, promote, &[], stay, &[]);
         self.builder.seal_block(promote);
         self.builder.switch_to_block(promote);
@@ -1251,6 +1272,54 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             let raw = self.builder.ins().sshr_imm_s(shifted, 16);
             self.builder.def_var(self.variables[register], raw);
         }
+    }
+
+    // an osr entry compiled for several loop headers starts at the one the vm stored in resume_ip
+    fn dispatch_entries(&mut self, entries: &[usize], loaded: &Live) {
+        if let [entry] = entries {
+            self.enter_at(*entry, loaded);
+            return;
+        }
+        let selected = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.context,
+            FrameJitContext::RESUME_IP,
+        );
+        for entry in entries {
+            let start = self.builder.create_block();
+            let next = self.builder.create_block();
+            let ip = i64::try_from(*entry).unwrap_or(i64::MAX);
+            let hit = self.builder.ins().icmp_imm_s(IntCC::Equal, selected, ip);
+            self.builder.ins().brif(hit, start, &[], next, &[]);
+            self.builder.seal_block(start);
+            self.builder.switch_to_block(start);
+            self.enter_at(*entry, loaded);
+            self.builder.seal_block(next);
+            self.builder.switch_to_block(next);
+            if Some(entry) == entries.last() {
+                self.builder.set_cold_block(next);
+            }
+        }
+        let status = self
+            .builder
+            .ins()
+            .iconst(types::I64, i64::try_from(FRAME_STATUS_EXIT).unwrap_or(1));
+        self.builder.ins().store(
+            Self::trusted(),
+            status,
+            self.context,
+            FrameJitContext::STATUS,
+        );
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().return_(&[zero]);
+    }
+
+    fn enter_at(&mut self, entry: usize, loaded: &Live) {
+        let live = self.region.live_in.get(&entry).copied().unwrap_or_default();
+        self.unbox_entry(&live, loaded, entry);
+        let target = self.blocks[&entry];
+        self.builder.ins().jump(target, &[]);
     }
 
     // the view holds every name of this function once its generation matches the one recorded in the data block
@@ -2717,12 +2786,35 @@ fn cache_kind_of(inst: &Inst) -> Option<(usize, CacheKind)> {
     }
 }
 
-fn entry_name(function: &Function, osr_ip: Option<u32>) -> String {
+fn entry_name(function: &Function, shape: FrameShape<'_>) -> String {
     let name = function.name.as_deref().unwrap_or("<script>");
-    match osr_ip {
-        Some(ip) => format!("aelys:{name}@{ip}"),
-        None => format!("aelys:{name}"),
+    match shape {
+        FrameShape::Loops(ips) => format!("aelys:{name}@{ips:?}"),
+        FrameShape::Call => format!("aelys:{name}"),
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FrameShape<'a> {
+    Call,
+    Loops(&'a [u32]),
+}
+
+// backward branch targets: the headers the interpreter offers for an osr entry
+pub(crate) fn loop_entries(function: &Function) -> Vec<u32> {
+    let Some(instructions) = decode(function) else {
+        return Vec::new();
+    };
+    let mut headers = BTreeSet::new();
+    for inst in &instructions {
+        if let Some(target) = inst.target
+            && target <= inst.ip
+            && let Ok(target) = u32::try_from(target)
+        {
+            headers.insert(target);
+        }
+    }
+    headers.into_iter().collect()
 }
 
 // the quick tier trades code quality for compile time, hot code is compiled again with the full allocator
@@ -2751,7 +2843,7 @@ pub(crate) fn frame_isa(quick: bool) -> Result<OwnedTargetIsa, String> {
 pub(crate) fn compile_frame(
     isa: &OwnedTargetIsa,
     function: &Function,
-    osr_ip: Option<u32>,
+    shape: FrameShape<'_>,
     counting: bool,
 ) -> Result<FrameCompiled, FrameRefusal> {
     let registers = usize::try_from(function.num_registers).map_err(|_| FrameRefusal::Registers)?;
@@ -2767,36 +2859,52 @@ pub(crate) fn compile_frame(
         .enumerate()
         .map(|(index, inst)| (inst.ip, index))
         .collect::<HashMap<_, _>>();
-    let entry_ip = match osr_ip {
-        Some(ip) => usize::try_from(ip).map_err(|_| FrameRefusal::NoEntry)?,
-        None => 0,
+    let osr = matches!(shape, FrameShape::Loops(_));
+    let mut entries = match shape {
+        FrameShape::Call => vec![0],
+        FrameShape::Loops(ips) => ips
+            .iter()
+            .filter_map(|ip| usize::try_from(*ip).ok())
+            .filter(|ip| by_ip.contains_key(ip))
+            .collect(),
     };
-    if !by_ip.contains_key(&entry_ip) {
-        return Err(FrameRefusal::NoEntry);
-    }
     let analysis = Analysis {
         function,
         registers,
     };
-    let region = region(&analysis, &instructions, &by_ip, entry_ip).ok_or(FrameRefusal::Decode)?;
-    if region.effects.get(&entry_ip).is_none_or(Option::is_none) {
-        return Err(FrameRefusal::EmptyEntry);
-    }
-    if region.effects.keys().any(|ip| !by_ip.contains_key(ip)) {
-        return Err(FrameRefusal::NoEntry);
-    }
-    let completes = region
-        .effects
-        .values()
-        .flatten()
-        .any(|effect| match effect.flow {
-            Flow::Return => osr_ip.is_none(),
-            Flow::Jump(target) | Flow::Branch(target) => osr_ip.is_some() && target == entry_ip,
-            Flow::Next => false,
-        });
-    if !completes {
-        return Err(FrameRefusal::EmptyEntry);
-    }
+    let region = loop {
+        if entries.is_empty() {
+            return Err(FrameRefusal::NoEntry);
+        }
+        let region =
+            region(&analysis, &instructions, &by_ip, &entries).ok_or(FrameRefusal::Decode)?;
+        if region.effects.keys().any(|ip| !by_ip.contains_key(ip)) {
+            return Err(FrameRefusal::NoEntry);
+        }
+        let kept = entries
+            .iter()
+            .copied()
+            .filter(|entry| {
+                region.effects.get(entry).is_some_and(Option::is_some)
+                    && region
+                        .effects
+                        .values()
+                        .flatten()
+                        .any(|effect| match effect.flow {
+                            Flow::Return => !osr,
+                            Flow::Jump(target) | Flow::Branch(target) => osr && target == *entry,
+                            Flow::Next => false,
+                        })
+            })
+            .collect::<Vec<_>>();
+        if kept.len() == entries.len() {
+            break region;
+        }
+        if kept.is_empty() {
+            return Err(FrameRefusal::EmptyEntry);
+        }
+        entries = kept;
+    };
     for (ip, effect) in &region.effects {
         let Some(effect) = effect else { continue };
         let Some(&index) = by_ip.get(ip) else {
@@ -2895,7 +3003,7 @@ pub(crate) fn compile_frame(
     context.func.name = UserFuncName::user(0, 0);
     let function_id = module
         .declare_function(
-            &entry_name(function, osr_ip),
+            &entry_name(function, shape),
             Linkage::Local,
             &entry_signature,
         )
@@ -3076,7 +3184,7 @@ pub(crate) fn compile_frame(
         i64::from_ne_bytes(Value::null().raw().to_ne_bytes()),
     );
     for (register, variable) in variables.iter().enumerate() {
-        let loaded = osr_ip.is_some() || register < usize::from(function.arity);
+        let loaded = osr || register < usize::from(function.arity);
         let value = if loaded {
             let offset = i32::try_from(register * 8).map_err(|_| FrameRefusal::Registers)?;
             builder
@@ -3089,7 +3197,7 @@ pub(crate) fn compile_frame(
     }
     let ints = integer_registers(&analysis, &region, &instructions, &by_ip);
     let mut initial = Live::default();
-    if osr_ip.is_none() {
+    if !osr {
         for register in usize::from(function.arity)..registers {
             initial.insert(register);
         }
@@ -3109,7 +3217,6 @@ pub(crate) fn compile_frame(
     for leader in &region.leaders {
         blocks.insert(*leader, builder.create_block());
     }
-    let first = blocks[&entry_ip];
     let mut lowerer = Lowerer {
         builder,
         analysis: &analysis,
@@ -3132,22 +3239,20 @@ pub(crate) fn compile_frame(
         progress,
         uses_globals,
         ints: Live::default(),
-        counting: counting && osr_ip.is_none(),
+        counting: counting && !osr,
         quick: counting,
         headers: loop_headers(&region, &instructions, &by_ip),
     };
     lowerer.ints = ints;
-    let entry_live = region.live_in.get(&entry_ip).copied().unwrap_or_default();
     let mut loaded = Live::default();
     for register in 0..registers {
-        if osr_ip.is_some() || register < usize::from(function.arity) {
+        if osr || register < usize::from(function.arity) {
             loaded.insert(register);
         }
     }
-    lowerer.unbox_entry(&entry_live, &loaded, entry_ip);
     lowerer.count_entry();
     lowerer.ensure_view();
-    lowerer.builder.ins().jump(first, &[]);
+    lowerer.dispatch_entries(&entries, &loaded);
     let leaders = region.leaders.iter().copied().collect::<Vec<_>>();
     for leader in leaders {
         lowerer.lower_block(leader)?;
@@ -3170,9 +3275,16 @@ pub(crate) fn compile_frame(
             address,
             num_registers: function.num_registers,
             arity: function.arity,
-            osr_ip,
+            osr_entries: if osr {
+                entries
+                    .iter()
+                    .filter_map(|entry| u32::try_from(*entry).ok())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             sites,
         },
-        _module: Mutex::new(module),
+        module: Mutex::new(Some(module)),
     })
 }

@@ -85,7 +85,7 @@ fn sum_bytecode_never_enters_the_jit_cache() {
             assert!(translate_integer_osr(&function, 0).is_none());
             assert!(translate_controlled_integer_osr(&function, 0).is_none());
 
-            let provider = super::provider::JitProvider::new(2, 1, None).unwrap();
+            let provider = super::provider::JitProvider::new(2, 1, None, false, None).unwrap();
             let key = JitFunctionKey::root(17 + u64::try_from(index).unwrap());
             assert_eq!(
                 provider.try_execute(&key, &function, &[], 1),
@@ -249,7 +249,7 @@ fn optimized_translation_inlines_bounded_structural_leaf_calls() {
         .unwrap();
     assert_eq!(compiled.execute_i64(&[41]).unwrap(), 61);
 
-    let provider = super::provider::JitProvider::new(2, 1, Some(1)).unwrap();
+    let provider = super::provider::JitProvider::new(2, 1, Some(1), false, None).unwrap();
     let key = JitFunctionKey::root(9);
     assert_eq!(
         provider.try_execute(&key, &caller, &[JitArgument::Integer(41)], 1),
@@ -265,7 +265,7 @@ fn optimized_translation_inlines_bounded_structural_leaf_calls() {
             )],
         }
     );
-    let overflow_provider = super::provider::JitProvider::new(2, 1, Some(1)).unwrap();
+    let overflow_provider = super::provider::JitProvider::new(2, 1, Some(1), false, None).unwrap();
     assert_eq!(
         overflow_provider.try_execute(
             &JitFunctionKey::root(10),

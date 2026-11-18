@@ -53,6 +53,8 @@ impl Default for JitMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JitConfig {
     max_cache_entries: usize,
+    asynchronous: bool,
+    compile_fault: Option<String>,
 }
 
 impl JitConfig {
@@ -70,12 +72,29 @@ impl JitConfig {
     pub fn max_cache_entries(&self) -> usize {
         self.max_cache_entries
     }
+
+    pub fn with_async_compilation(mut self, asynchronous: bool) -> Self {
+        self.asynchronous = asynchronous;
+        self
+    }
+
+    pub fn async_compilation(&self) -> bool {
+        self.asynchronous
+    }
+
+    #[doc(hidden)]
+    pub fn with_compile_panic_for(mut self, function: &str) -> Self {
+        self.compile_fault = Some(function.to_string());
+        self
+    }
 }
 
 impl Default for JitConfig {
     fn default() -> Self {
         Self {
             max_cache_entries: 256,
+            asynchronous: false,
+            compile_fault: None,
         }
     }
 }
@@ -313,6 +332,8 @@ fn build_jit_provider(
             config.max_cache_entries,
             call_threshold,
             tier2_call_threshold,
+            config.asynchronous,
+            config.compile_fault.clone(),
         )
         .map_err(JitConfigError::Initialization)?,
     )))
