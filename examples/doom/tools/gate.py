@@ -58,8 +58,9 @@ def parse(stdout):
     return res
 
 
-def run_one(aelys, config, jit, sdl_display, timeout):
+def run_one(aelys, config, jit, sdl_display, timeout, monsters, extra):
     script, flags = CONFIGS[config]
+    flags = flags + (["--monsters"] if monsters else []) + extra
     cmd = [aelys, "run", "-ae.gc-stats=on"]
     if jit:
         cmd.append("-ae.jit=on")
@@ -116,6 +117,8 @@ def main():
     ap.add_argument("--display", default=":99")
     ap.add_argument("--json", help="write every run's parsed figures here")
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--nomonsters", action="store_true", help="leave the monsters out (they are spawned by default)")
+    ap.add_argument("--phases", action="store_true", help="record per-phase render time")
     args = ap.parse_args()
 
     configs = args.configs.split(",")
@@ -135,7 +138,8 @@ def main():
                 name = f"{config} jit={'on' if jit else 'off'}"
                 runs = []
                 for i in range(args.runs):
-                    r = run_one(args.aelys, config, jit, args.display, args.timeout)
+                    r = run_one(args.aelys, config, jit, args.display, args.timeout, not args.nomonsters,
+                                ["--phases"] if args.phases else [])
                     runs.append(r)
                     fm = r.get("frame_ms", {})
                     print(f"{name} run {i + 1}: p50 {fm.get('p50')} p99 {fm.get('p99')} max {fm.get('max')} "
