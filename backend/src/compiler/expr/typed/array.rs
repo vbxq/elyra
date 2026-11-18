@@ -332,12 +332,12 @@ impl Compiler {
         Ok(())
     }
 
-    pub(super) fn compile_typed_index_assign(
+    pub(crate) fn compile_typed_index_assign(
         &mut self,
         object: &TypedExpr,
         index: &TypedExpr,
         value: &TypedExpr,
-        dest: u16,
+        dest: Option<u16>,
         span: Span,
     ) -> Result<()> {
         let (obj_reg, obj_owned) = self.operand_register(object)?;
@@ -365,7 +365,9 @@ impl Compiler {
 
         self.emit_a(opcode, obj_reg, idx_reg, val_reg, span);
 
-        if dest != val_reg {
+        if let Some(dest) = dest
+            && dest != val_reg
+        {
             self.emit_a(OpCode::Move, dest, val_reg, 0, span);
         }
 

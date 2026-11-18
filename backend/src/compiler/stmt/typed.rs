@@ -8,7 +8,17 @@ impl Compiler {
         match &stmt.kind {
             TypedStmtKind::Expression(expr) => {
                 let reg = self.alloc_register()?;
-                self.compile_typed_expr(expr, reg)?;
+                match &expr.kind {
+                    aelys_sema::TypedExprKind::IndexAssign {
+                        object,
+                        index,
+                        value,
+                    } => self.compile_typed_index_assign(object, index, value, None, expr.span)?,
+                    aelys_sema::TypedExprKind::Assign { name, value } => {
+                        self.compile_typed_assign_statement(name, value, reg, expr.span)?
+                    }
+                    _ => self.compile_typed_expr(expr, reg)?,
+                }
                 self.free_register(reg);
                 Ok(())
             }
