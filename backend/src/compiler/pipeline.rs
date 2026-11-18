@@ -198,7 +198,7 @@ impl Compiler {
 
             let last_stmt = ordered[last_idx];
             let restore_last = self.enter_definition_module(last_stmt);
-            if Compiler::typed_stmt_yields_value(last_stmt) {
+            if Compiler::typed_stmt_yields_value(last_stmt) && !stmt_ends_in_assignment(last_stmt) {
                 let result_reg = self.alloc_register()?;
                 self.compile_typed_stmt_value(last_stmt, result_reg)?;
                 self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
@@ -552,5 +552,34 @@ mod definition_module_tests {
             rendered.contains("mid.aelys"),
             "the report belongs to the file that owns the statement: {rendered}"
         );
+    }
+}
+
+fn stmt_ends_in_assignment(stmt: &aelys_sema::TypedStmt) -> bool {
+    match &stmt.kind {
+        TypedStmtKind::Expression(expr) => expr_ends_in_assignment(expr),
+        TypedStmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => stmt_ends_in_assignment(then_branch) || stmt_ends_in_assignment(else_branch),
+        TypedStmtKind::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
+        _ => false,
+    }
+}
+
+fn expr_ends_in_assignment(expr: &aelys_sema::TypedExpr) -> bool {
+    use aelys_sema::{TypedExprKind, TypedMatchArmBody};
+    match &expr.kind {
+        TypedExprKind::Assign { .. }
+        | TypedExprKind::MemberAssign { .. }
+        | TypedExprKind::IndexAssign { .. } => true,
+        TypedExprKind::Grouping(inner) => expr_ends_in_assignment(inner),
+        TypedExprKind::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
+        TypedExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
+            TypedMatchArmBody::Expr(body) => expr_ends_in_assignment(body),
+            TypedMatchArmBody::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
+        }),
+        _ => false,
     }
 }

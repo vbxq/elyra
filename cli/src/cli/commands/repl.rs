@@ -60,7 +60,7 @@ fn run_repl_core<R: BufRead, W: Write>(
 
         match run_with_vm_and_opt(&mut vm, trimmed, "<repl>", opt_level) {
             Ok(value) => {
-                if !value.is_null() {
+                if !value.is_null() && !value.is_unit() {
                     writeln!(output, "{}", value).map_err(|err| err.to_string())?;
                 }
             }
