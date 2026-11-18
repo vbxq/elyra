@@ -67,6 +67,30 @@ f(1)
         Expected::Int(1001),
     ),
     (
+        "native_methods_beside_live_locals",
+        r#"
+fn tail_trim(s: string) -> int {
+    let a = s.substr(1, 4)
+    let b = a.find(" ")
+    if b > 0 {
+        return 100
+    }
+    a.trim().len() + b * 10
+}
+
+fn sm(n: int) -> int {
+    let s = "  abc  "
+    let keep = n * 100
+    let t = s.trim()
+    let after = "x y"
+    after.trim().len() + t.len() + keep
+}
+
+tail_trim("x ab ") + sm(1)
+"#,
+        Expected::Int(108),
+    ),
+    (
         "hot_loop",
         r#"
 fn f(n: int) -> int {
