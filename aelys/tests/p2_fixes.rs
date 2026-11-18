@@ -615,3 +615,20 @@ fn a_trait_impl_for_a_built_in_type_is_a_named_diagnostic() {
         );
     }
 }
+
+#[test]
+fn a_generic_argument_at_a_mut_position_needs_a_mutable_root() {
+    for source in [
+        "struct S { n: int }\nfn touch(mut s: S) -> int { s.n = 99; 0 }\nfn apply<T>(f: fn(mut T) -> int, x: T) -> int { f(x) }\nlet s = S { n: 1 }\napply(touch, s)\ns.n",
+        "struct S { n: int }\nfn touch(mut s: S) -> int { s.n = 99; 0 }\nfn apply<T>(f: fn(mut T) -> int, x: T) -> int { let g = f\n g(x) }\nlet s = S { n: 1 }\napply(touch, s)\ns.n",
+        "fn bump<T>(mut x: T) -> int { 0 }\nfn pass<T>(x: T) -> int { bump(x) }\npass(vec![1])",
+        "struct S { n: int }\nfn touch(mut s: S) -> int { s.n = 99; 0 }\nfn apply<T>(f: fn(mut T) -> int, mut x: T) -> int { f(x) }\nlet s = S { n: 1 }\napply(touch, s)\ns.n",
+    ] {
+        let message = rejected(source, "E0323");
+        assert!(message.contains("mut"), "{message}");
+    }
+    int_everywhere(
+        "struct S { n: int }\nfn touch(mut s: S) -> int { s.n = 99; 0 }\nfn apply<T>(f: fn(mut T) -> int, mut x: T) -> int { f(x) }\nfn bump<T>(mut x: T) -> int { 1 }\nfn pass<T>(mut x: T) -> int { bump(x) }\nlet mut s = S { n: 1 }\napply(touch, s)\ns.n * 100 + pass(3) * 10 + pass(S { n: 1 })",
+        9_911,
+    );
+}

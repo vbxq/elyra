@@ -552,6 +552,12 @@ let h = grow
 h(fixed)                                                               // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
 ```
 
+An argument whose type is a type parameter `T` counts as an aggregate at a `mut`
+position, direct or through a function value, because an instance may give `T` a
+struct or a `Vec`: in `fn apply<T>(f: fn(mut T) -> int, x: T) -> int { f(x) }` the
+call `f(x)` is E0323; declare the parameter `mut x: T` so that callers must pass a
+mutable root.
+
 The callbacks of the built-in collection, `Option` and `Result` methods (`map`,
 `filter`, `fold`, `and_then`, ...) accept either form.
 

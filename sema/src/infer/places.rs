@@ -329,7 +329,13 @@ impl TypeInference {
         let residuals = std::mem::take(&mut self.alias_residuals);
         for residual in residuals {
             let ty = subst.apply(&residual.ty);
-            if !self.is_mutable_aggregate(&ty) {
+            // a type parameter may be instantiated with an aggregate, so a `mut` position takes it as one
+            let generic_at_mut_parameter = matches!(ty, InferType::Param(_))
+                && matches!(
+                    residual.site,
+                    AliasSite::FunctionValue { .. } | AliasSite::Parameter(_)
+                );
+            if !self.is_mutable_aggregate(&ty) && !generic_at_mut_parameter {
                 continue;
             }
             let mut site = residual.site;
