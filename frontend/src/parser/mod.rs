@@ -170,6 +170,10 @@ impl Parser {
         }
     }
 
+    fn skip_line_ends(&mut self) {
+        while self.match_token(&TokenKind::Semicolon) {}
+    }
+
     fn match_token(&mut self, kind: &TokenKind) -> bool {
         if self.check(kind) {
             self.advance();
