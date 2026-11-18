@@ -324,6 +324,11 @@ impl ModuleLoader {
                 nominal_origins.insert(name.clone(), origin.clone());
                 inherited_nominals.insert(name.clone());
             }
+            for (module, names) in &inherited_types.module_scoped_globals {
+                for name in names {
+                    scoped_globals.insert(aelys_sema::module_scoped_global(module, name));
+                }
+            }
             imported_types.extend(inherited_types);
             imported_impl_stmts.extend(inherited_impls);
             for name in selected.nominal_names() {
@@ -600,6 +605,18 @@ impl ModuleLoader {
         let mut optimizer = Optimizer::new(aelys_opt::OptimizationLevel::Standard);
         let typed_program = optimizer.optimize(typed_program);
 
+        let module_id = ModuleId::new(module_path_str).as_str().to_string();
+        let own_slots = typed_program
+            .stmts
+            .iter()
+            .filter_map(|stmt| match &stmt.kind {
+                TypedStmtKind::Function(function) => Some((
+                    function.name.clone(),
+                    aelys_sema::module_scoped_global(&module_id, &function.name),
+                )),
+                _ => None,
+            })
+            .collect();
         let mut codegen_globals = known_globals.clone();
         codegen_globals.extend(scoped_globals.iter().cloned());
         let compiler = Compiler::with_modules(
@@ -611,7 +628,8 @@ impl ModuleLoader {
             global_renames,
         )
         .with_module_sources(module_sources.clone())
-        .with_module_scopes(module_scopes);
+        .with_module_scopes(module_scopes)
+        .with_own_slots(own_slots);
         let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
         let global_layout = Arc::clone(&function.global_layout);
@@ -621,7 +639,6 @@ impl ModuleLoader {
 
         vm.sync_globals_to_hashmap(global_layout.names());
 
-        let module_id = ModuleId::new(module_path_str).as_str().to_string();
         let mut published = std::collections::BTreeSet::new();
         for name in &module_global_names {
             if name.contains("::") {

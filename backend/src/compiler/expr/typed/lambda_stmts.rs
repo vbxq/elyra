@@ -27,6 +27,7 @@ impl Compiler {
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
         );
+        nested_compiler.own_slots = self.own_slots.clone();
         nested_compiler.struct_schemas = self.struct_schemas.clone();
         nested_compiler.current.struct_schemas = nested_compiler.struct_schemas.as_ref().clone();
         nested_compiler.enum_schemas = self.enum_schemas.clone();

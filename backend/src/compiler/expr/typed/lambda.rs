@@ -35,6 +35,7 @@ impl Compiler {
             self.known_native_globals.clone(),
             self.symbol_origins.clone(),
         );
+        nested_compiler.own_slots = self.own_slots.clone();
         nested_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
             aelys_common::error::CompileError::new(
                 aelys_common::error::CompileErrorKind::TooManyArguments,

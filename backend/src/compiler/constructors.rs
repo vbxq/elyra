@@ -36,6 +36,7 @@ impl Compiler {
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
             module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -86,6 +87,7 @@ impl Compiler {
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
             module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -126,6 +128,7 @@ impl Compiler {
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
             module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -167,7 +170,13 @@ impl Compiler {
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
             module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
+    }
+
+    pub fn with_own_slots(mut self, slots: HashMap<String, String>) -> Self {
+        self.own_slots = Rc::new(slots);
+        self
     }
 
     pub fn with_module_sources(mut self, sources: HashMap<String, Arc<Source>>) -> Self {

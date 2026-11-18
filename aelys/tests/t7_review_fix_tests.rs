@@ -389,3 +389,81 @@ fn a_place_rooted_at_an_imported_mutable_variable_is_writable_live() {
         assert!(error.contains(code), "{file}: {error}");
     }
 }
+
+#[test]
+fn a_private_function_never_resolves_to_a_same_named_function_of_another_module() {
+    for (helper_a, helper_b, items_a, items_b) in [
+        ("helper", "helper", "items", "items"),
+        ("helper", "helper", "items_a", "items_b"),
+        ("helper_a", "helper_b", "items", "items"),
+    ] {
+        let dir = tree(&[
+            (
+                "a.aelys",
+                &format!(
+                    "let mut {items_a}: Vec<int> = vec![]\nfn {helper_a}(x: int) -> int {{ x + {items_a}.len() }}\npub fn fill_a() {{ {items_a} = vec![1, 2, 3] }}\npub fn from_a(x: int) -> int {{ {helper_a}(x) }}\npub fn via_closure(x: int) -> int {{ let f = fn(y: int) -> int {{ return {helper_a}(y) }}\n f(x) }}\n"
+                ),
+            ),
+            (
+                "b.aelys",
+                &format!(
+                    "needs a\nlet mut {items_b}: Vec<int> = vec![]\nfn {helper_b}(x: int) -> int {{ x * 100 + {items_b}.len() }}\npub fn fill_b() {{ {items_b} = vec![9] }}\npub fn from_b(x: int) -> int {{ {helper_b}(x) }}\n"
+                ),
+            ),
+        ]);
+        assert_eq!(
+            run_int(
+                &dir,
+                "main.aelys",
+                "needs a\nneeds b\na::fill_a()\nlet p = a::from_a(5) * 1000 + b::from_b(5)\nb::fill_b()\np * 1000000 + a::from_a(5) * 1000 + b::from_b(5) + a::via_closure(1) * 0\n"
+            ),
+            8_500 * 1_000_000 + 8_000 + 501,
+            "{helper_a}/{helper_b}"
+        );
+    }
+    let dir = tree(&[
+        (
+            "p.aelys",
+            "fn helper() -> int { 1 }\npub fn p() -> int { helper() }\n",
+        ),
+        (
+            "q.aelys",
+            "pub fn helper() -> int { 2 }\npub fn q() -> int { helper() }\n",
+        ),
+    ]);
+    assert_eq!(
+        run_int(
+            &dir,
+            "pq.aelys",
+            "needs p\nneeds q\nfn helper() -> int { 3 }\np::p() * 100 + q::q() * 10 + helper()\n"
+        ),
+        123,
+        "a private, a public and an entry-file function of one name stay three functions"
+    );
+}
+
+#[test]
+fn a_carried_impl_body_resolves_its_module_names_in_a_transitive_importer() {
+    let dir = tree(&[
+        (
+            "lib.aelys",
+            "pub struct Box { pub v: int }\nlet base = 100\nfn make_box(v: int) -> Box { Box { v: v } }\npub fn mk(v: int) -> Box { make_box(v) }\nimpl Box {\n    fn new(v: int) -> Box { make_box(v) }\n    fn bump(self) -> int { self.v + base }\n}\n",
+        ),
+        (
+            "mid.aelys",
+            "needs lib\npub fn twice(v: int) -> int { lib::mk(v).v * 2 }\npub fn boxed(v: int) -> Box { lib::mk(v) }\n",
+        ),
+        (
+            "top.aelys",
+            "needs mid\npub fn four(v: int) -> int { mid::twice(v) * 2 }\npub fn bumped(v: int) -> int { mid::boxed(v).bump() }\n",
+        ),
+    ]);
+    assert_eq!(
+        run_int(
+            &dir,
+            "main.aelys",
+            "needs top\ntop::four(3) * 1000 + top::bumped(5)\n"
+        ),
+        12_105,
+    );
+}

@@ -253,7 +253,7 @@ impl Compiler {
                     let Some(slot) = names.get_mut(index) else {
                         return Err(global_layout_error(&self.source));
                     };
-                    *slot = name.clone();
+                    *slot = self.own_slots.get(name).unwrap_or(name).clone();
                 }
             }
             Ok(GlobalLayout::new(names))
