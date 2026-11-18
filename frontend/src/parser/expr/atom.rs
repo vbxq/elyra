@@ -87,13 +87,16 @@ impl Parser {
         start_span: aelys_syntax::Span,
         else_required: bool,
     ) -> Result<Expr> {
+        if !else_required {
+            return self.if_let_chain(start_span).map(|(expr, _)| expr);
+        }
         self.consume(&TokenKind::Let, "let")?;
         let pattern = self.parse_pattern()?;
         self.consume(&TokenKind::Eq, "=")?;
         let scrutinee = self.with_brace_construction(false, Parser::expression)?;
         self.consume(&TokenKind::LBrace, "{")?;
         let then_start = self.previous().span;
-        let mut then_body = self.block_statements()?;
+        let then_body = self.block_statements()?;
         let then_span = then_start.merge(self.previous().span);
 
         let (else_body, else_span) = if self.match_token(&TokenKind::Else) {
@@ -105,20 +108,71 @@ impl Parser {
                 _ => vec![Stmt::new(StmtKind::Expression(else_expr), span)],
             };
             (body, span)
-        } else if else_required {
+        } else {
             return Err(self.error(CompileErrorKind::UnexpectedToken {
                 expected: "else".to_string(),
                 found: self.peek().kind.to_string(),
             }));
+        };
+        let span = start_span.merge(self.previous().span);
+        Ok(Self::if_let_match(
+            pattern, scrutinee, then_body, then_span, else_body, else_span, span,
+        ))
+    }
+
+    // the flag tells whether the chain ends with a plain else block
+    pub(crate) fn if_let_chain(&mut self, start_span: aelys_syntax::Span) -> Result<(Expr, bool)> {
+        self.consume(&TokenKind::Let, "let")?;
+        let pattern = self.parse_pattern()?;
+        self.consume(&TokenKind::Eq, "=")?;
+        let scrutinee = self.with_brace_construction(false, Parser::expression)?;
+        self.consume(&TokenKind::LBrace, "{")?;
+        let then_start = self.previous().span;
+        let mut then_body = self.block_statements()?;
+        let then_span = then_start.merge(self.previous().span);
+
+        let (mut else_body, else_span, complete) = if self.match_token(&TokenKind::Else) {
+            let else_start = self.peek().span;
+            let (stmt, complete) = self.else_statement_chain()?;
+            let span = else_start.merge(self.previous().span);
+            let body = match stmt.kind {
+                StmtKind::Block(stmts) => stmts,
+                _ => vec![stmt],
+            };
+            (body, span, complete)
         } else {
+            (Vec::new(), then_span, false)
+        };
+        if !complete {
             then_body.push(Stmt::new(
                 StmtKind::Expression(Expr::new(ExprKind::Unit, then_span)),
                 then_span,
             ));
-            (Vec::new(), then_span)
-        };
-
+            if !else_body.is_empty() {
+                else_body.push(Stmt::new(
+                    StmtKind::Expression(Expr::new(ExprKind::Unit, else_span)),
+                    else_span,
+                ));
+            }
+        }
         let span = start_span.merge(self.previous().span);
+        Ok((
+            Self::if_let_match(
+                pattern, scrutinee, then_body, then_span, else_body, else_span, span,
+            ),
+            complete,
+        ))
+    }
+
+    fn if_let_match(
+        pattern: Pattern,
+        scrutinee: Expr,
+        then_body: Vec<Stmt>,
+        then_span: aelys_syntax::Span,
+        else_body: Vec<Stmt>,
+        else_span: aelys_syntax::Span,
+        span: aelys_syntax::Span,
+    ) -> Expr {
         let arms = vec![
             MatchArm {
                 span: pattern.span.merge(then_span),
@@ -138,13 +192,13 @@ impl Parser {
                 synthetic: true,
             },
         ];
-        Ok(Expr::new(
+        Expr::new(
             ExprKind::Match {
                 scrutinee: Box::new(scrutinee),
                 arms,
             },
             span,
-        ))
+        )
     }
 
     pub(super) fn match_expression(&mut self, start_span: aelys_syntax::Span) -> Result<Expr> {

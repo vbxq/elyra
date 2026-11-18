@@ -99,3 +99,29 @@ fn a_value_return_that_can_fall_through_is_e0215() {
         9,
     );
 }
+
+#[test]
+fn else_if_let_chains_work_in_statement_position() {
+    let program = r#"
+        fn f(a: Option<int>, b: Option<int>, c: bool) -> int {
+            let mut r = 0
+            if let Some(x) = a { r = x } else if let Some(y) = b { r = y * 10 } else if c { r = 500 }
+            if let Some(x) = a { r += x } else if c { r += 1000 } else { r += 7 }
+            if c { r += 2 } else if let Some(y) = b { r += y }
+            if c { r += 0 } else if let Some(y) = b { r += y } else { r += 3 }
+            r
+        }
+        fn g(a: Option<int>, b: Option<int>, c: bool) -> int {
+            if c { 1 } else if let Some(x) = a { x } else if let Some(y) = b { y * 10 } else { 99 }
+        }
+        let k = fn(a: Option<int>, b: Option<int>) -> int {
+            if let Some(x) = a { x } else if let Some(y) = b { y + 100 } else { 0 }
+        }
+        let low = f(Some(1), None, false) + f(None, Some(2), false) * 10 + f(None, None, true) * 1000
+        low + g(None, Some(4), false) * 10000000 + g(None, None, false) * 1000000000 + k(None, Some(5)) * 100000000000
+        "#;
+    int_at_every_level(
+        program,
+        5 + 31 * 10 + 1502 * 1000 + 40 * 10_000_000 + 99 * 1_000_000_000 + 105 * 100_000_000_000,
+    );
+}

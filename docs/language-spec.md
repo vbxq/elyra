@@ -636,9 +636,11 @@ println(area + x)   // 201
 
 `if let PATTERN = value { ... } else { ... }` runs the first block when the
 pattern matches, with the pattern's bindings in scope only inside that block.
-`else` is optional, and `else if` / `else if let` chain as usual. It is an
-expression: with an `else` both blocks give its value and must have the same
-type; without `else` it is `unit`.
+`else` is optional, and `else if` / `else if let` chain as usual, after an `if`
+or an `if let`, in statement and expression position. It is an expression: when
+the chain ends with an `else` block every block gives its value and they must
+have the same type; a chain without a final `else` is `unit`, and is only
+allowed in statement position.
 
 ```rust
 let found: Option<int> = Some(7)

@@ -193,32 +193,50 @@ impl Parser {
     }
 
     fn if_statement(&mut self) -> Result<Stmt> {
+        self.if_statement_chain().map(|(stmt, _)| stmt)
+    }
+
+    // the flag tells whether the chain ends with a plain else block
+    pub(crate) fn if_statement_chain(&mut self) -> Result<(Stmt, bool)> {
         let start_span = self.previous().span;
         let condition = self.with_brace_construction(false, Parser::expression)?;
         self.consume(&TokenKind::LBrace, "{")?;
         let then_branch = self.block_statement()?;
 
-        let else_branch = if self.match_token(&TokenKind::Else) {
-            if self.match_token(&TokenKind::If) {
-                Some(Box::new(self.if_statement()?))
-            } else {
-                self.consume(&TokenKind::LBrace, "{")?;
-                Some(Box::new(self.block_statement()?))
-            }
+        let (else_branch, complete) = if self.match_token(&TokenKind::Else) {
+            let (stmt, complete) = self.else_statement_chain()?;
+            (Some(Box::new(stmt)), complete)
         } else {
-            None
+            (None, false)
         };
 
         let end_span = self.previous().span;
 
-        Ok(Stmt::new(
-            StmtKind::If {
-                condition,
-                then_branch: Box::new(then_branch),
-                else_branch,
-            },
-            start_span.merge(end_span),
+        Ok((
+            Stmt::new(
+                StmtKind::If {
+                    condition,
+                    then_branch: Box::new(then_branch),
+                    else_branch,
+                },
+                start_span.merge(end_span),
+            ),
+            complete,
         ))
+    }
+
+    pub(crate) fn else_statement_chain(&mut self) -> Result<(Stmt, bool)> {
+        if self.match_token(&TokenKind::If) {
+            if self.check(&TokenKind::Let) {
+                let span = self.previous().span;
+                let (expr, complete) = self.if_let_chain(span)?;
+                let span = expr.span;
+                return Ok((Stmt::new(StmtKind::Expression(expr), span), complete));
+            }
+            return self.if_statement_chain();
+        }
+        self.consume(&TokenKind::LBrace, "{")?;
+        Ok((self.block_statement()?, true))
     }
 
     fn while_statement(&mut self, label: Option<String>) -> Result<Stmt> {
