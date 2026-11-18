@@ -108,7 +108,8 @@ impl TypeInference {
                 }
             });
 
-        if func.return_type.is_none() && !body_yields_value(&func.body) {
+        let unit_body = func.return_type.is_none() && !body_yields_value(&func.body);
+        if unit_body {
             self.constraints.push(crate::constraint::Constraint::equal(
                 return_type.clone(),
                 InferType::Unit,
@@ -150,7 +151,11 @@ impl TypeInference {
                 .collect();
 
             let last_stmt = &func.body[func.body.len() - 1];
-            let typed_last = self.infer_stmt_with_implicit_return(last_stmt, &return_type);
+            let typed_last = if unit_body {
+                self.infer_stmt(last_stmt)
+            } else {
+                self.infer_stmt_with_implicit_return(last_stmt, &return_type)
+            };
             stmts.push(typed_last);
 
             stmts
@@ -333,13 +338,13 @@ pub(super) fn body_always_returns(stmts: &[Stmt], implicit_tail: bool) -> bool {
     stmt_always_returns(last, implicit_tail)
 }
 
-fn body_yields_value(stmts: &[Stmt]) -> bool {
+pub(super) fn body_yields_value(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_returns_value) || stmts.last().is_some_and(tail_yields_value)
 }
 
 fn stmt_returns_value(stmt: &Stmt) -> bool {
     match &stmt.kind {
-        StmtKind::Return(value) => value.is_some(),
+        StmtKind::Return(value) => value.as_ref().is_some_and(|value| !is_unit_literal(value)),
         StmtKind::Block(stmts) => stmts.iter().any(stmt_returns_value),
         StmtKind::If {
             then_branch,
@@ -358,9 +363,26 @@ fn stmt_returns_value(stmt: &Stmt) -> bool {
     }
 }
 
+fn is_unit_literal(expr: &aelys_syntax::Expr) -> bool {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Unit => true,
+        aelys_syntax::ExprKind::Grouping(inner) => is_unit_literal(inner),
+        _ => false,
+    }
+}
+
+fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
+    matches!(
+        expr.kind,
+        aelys_syntax::ExprKind::Assign { .. }
+            | aelys_syntax::ExprKind::MemberAssign { .. }
+            | aelys_syntax::ExprKind::IndexAssign { .. }
+    )
+}
+
 fn tail_yields_value(stmt: &Stmt) -> bool {
     match &stmt.kind {
-        StmtKind::Expression(_) => true,
+        StmtKind::Expression(expr) => !is_assignment(expr),
         StmtKind::If {
             then_branch,
             else_branch: Some(else_branch),

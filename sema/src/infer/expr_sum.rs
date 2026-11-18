@@ -971,6 +971,14 @@ impl TypeInference {
     }
 
     pub(super) fn record_must_use_value(&mut self, expr: &TypedExpr) {
+        if matches!(
+            expr.kind,
+            TypedExprKind::Assign { .. }
+                | TypedExprKind::MemberAssign { .. }
+                | TypedExprKind::IndexAssign { .. }
+        ) {
+            return;
+        }
         self.must_use_values.push(MustUseResidual {
             ty: expr.ty.clone(),
             span: expr.span,

@@ -28,11 +28,12 @@ impl TypeInference {
             });
         }
 
+        let unit_body = return_type_ann.is_none() && !super::functions::body_yields_value(body);
         let return_type = match return_type_ann {
             Some(ann) => {
                 self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
             }
-            None if body.is_empty() => InferType::Unit,
+            None if unit_body => InferType::Unit,
             None => self.type_gen.fresh(),
         };
 
@@ -64,7 +65,11 @@ impl TypeInference {
             }
 
             let last_stmt = &body[body.len() - 1];
-            let typed_last = self.infer_stmt_with_implicit_return(last_stmt, &return_type);
+            let typed_last = if unit_body {
+                self.infer_stmt(last_stmt)
+            } else {
+                self.infer_stmt_with_implicit_return(last_stmt, &return_type)
+            };
             stmts.push(typed_last);
 
             stmts
