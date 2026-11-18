@@ -105,6 +105,7 @@ impl Compiler {
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
+        self.close_captured_iteration_variable(iter_reg, span);
 
         self.patch_jump(jump_to_forloop);
 
@@ -190,6 +191,17 @@ impl Compiler {
         }
     }
 
+    // the loop variable is per iteration, so a closure keeps the value of its own iteration
+    pub(crate) fn close_captured_iteration_variable(&mut self, register: u16, span: Span) {
+        if self
+            .locals
+            .iter()
+            .any(|local| local.register == register && local.is_captured)
+        {
+            self.emit_a(OpCode::CloseUpvals, register, 0, 0, span);
+        }
+    }
+
     fn infer_to_resolved(ty: &InferType) -> aelys_sema::ResolvedType {
         aelys_sema::ResolvedType::from_infer_type(ty)
     }
@@ -234,6 +246,7 @@ impl Compiler {
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
+        self.close_captured_iteration_variable(elem_reg, span);
 
         self.patch_jump(jump_to_forloop);
 
@@ -306,6 +319,7 @@ impl Compiler {
         self.compile_typed_stmt(body)?;
 
         let continue_target = self.current_offset();
+        self.close_captured_iteration_variable(char_reg, span);
 
         self.patch_jump(jump_to_forloop);
 

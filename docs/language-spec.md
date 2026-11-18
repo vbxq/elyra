@@ -787,8 +787,10 @@ Work in `while`, `while let` and `loop` too.
 A loop may carry a label, `'name:`, written before `for`, `while` or `loop`.
 `break 'name` and `continue 'name` act on that loop from any depth of nested
 loops, and `break 'name value` gives a labeled `loop` its value. An unknown label
-is E0390. Closures created inside a loop body keep the values of their own
-iteration when the loop is left by `break` or `continue`.
+is E0390. A closure created inside a loop body keeps its own copy of the
+variables of its iteration, the loop variable and the names declared in the body,
+including when the iteration ends by `break` or `continue`; a variable declared
+outside the loop stays shared, so every closure sees its later writes.
 
 ```rust
 let mut pairs = 0

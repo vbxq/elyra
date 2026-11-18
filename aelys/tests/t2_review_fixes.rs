@@ -196,3 +196,97 @@ fn internal_tuple_names_are_neither_visible_nor_writable() {
         assert!(error.contains("tuple pattern has"), "{error}\nfor:\n{source}");
     }
 }
+
+#[test]
+fn closures_in_a_loop_share_outer_variables_and_keep_their_iteration_locals() {
+    let shared = r#"
+        fn shared_while() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            let mut x = 42
+            let mut j = 0
+            while j < 2 {
+                fs.push(fn() -> int { x })
+                x += 1
+                j += 1
+            }
+            x += 100
+            fs[0]() * 1000 + fs[1]()
+        }
+        fn shared_for_break() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            let mut x = 1
+            for i in 0..10 {
+                fs.push(fn() -> int { x })
+                if i == 2 { break }
+                if i == 0 { x += 1; continue }
+                x += 10
+            }
+            x += 100
+            fs[0]() + fs[1]() + fs[2]()
+        }
+        fn writer() -> int {
+            let mut total = 0
+            let mut adders: Vec<fn(int) -> int> = vec![]
+            let mut k = 0
+            loop {
+                if k == 3 { break }
+                adders.push(fn(v: int) -> int { total += v; total })
+                k += 1
+            }
+            adders[0](1)
+            adders[1](10)
+            adders[2](100)
+            total
+        }
+        fn nested() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            let mut x = 0
+            for a in 0..2 {
+                let mut b = 0
+                while b < 2 {
+                    fs.push(fn() -> int { x * 100 + a * 10 + b })
+                    b += 1
+                }
+                x += 1
+            }
+            fs[0]() + fs[3]()
+        }
+    "#;
+    for (tail, expected) in [
+        ("shared_while()", 144_144),
+        ("shared_for_break()", 336),
+        ("writer()", 111),
+        ("nested()", 202 + 212),
+    ] {
+        int_at_every_level(&format!("{shared}\n{tail}"), expected);
+    }
+    let per_iteration = r#"
+        fn ranges() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            for i in 0..4 {
+                let k = i * 10
+                if i == 1 { fs.push(fn() -> int { k + i }); continue }
+                fs.push(fn() -> int { k + i })
+            }
+            fs[0]() + fs[1]() * 100 + fs[2]() * 10000 + fs[3]() * 1000000
+        }
+        fn elements() -> int {
+            let mut fs: Vec<fn() -> int> = vec![]
+            for v in vec![3, 5, 7] {
+                fs.push(fn() -> int { v })
+            }
+            let mut n = 0
+            while n < 2 {
+                let m = n + 1
+                fs.push(fn() -> int { m })
+                n += 1
+            }
+            fs[0]() + fs[1]() * 10 + fs[2]() * 100 + fs[3]() * 1000 + fs[4]() * 10000
+        }
+        ranges() * 100000 + elements()
+    "#;
+    int_at_every_level(
+        per_iteration,
+        (11 * 100 + 22 * 10000 + 33 * 1_000_000) * 100_000 + 3 + 50 + 700 + 1000 + 20000,
+    );
+}

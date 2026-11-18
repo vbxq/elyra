@@ -101,6 +101,7 @@ impl Compiler {
         self.compile_stmt(body)?;
 
         let forloop_pos = self.current_offset();
+        self.close_captured_iteration_variable(iter_reg, span);
 
         self.patch_jump(jump_to_forloop);
 

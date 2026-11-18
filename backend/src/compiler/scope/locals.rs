@@ -35,14 +35,29 @@ impl Compiler {
     }
 
     pub fn mark_local_captured(&mut self, register: u16) {
-        for local in self.locals.iter_mut() {
-            if local.register == register {
-                local.is_captured = true;
-                break;
-            }
+        let owner = self
+            .locals
+            .iter()
+            .rposition(|local| local.register == register && !local.is_freed)
+            .or_else(|| {
+                self.locals
+                    .iter()
+                    .rposition(|local| local.register == register)
+            });
+        if let Some(index) = owner {
+            self.locals[index].is_captured = true;
         }
 
-        if let Some(scope) = self.scopes.last_mut()
+        // only the scope that declares the local closes it; an outer local stays shared
+        let scope = match owner {
+            Some(index) => self
+                .scopes
+                .iter_mut()
+                .rev()
+                .find(|scope| scope.start <= index),
+            None => self.scopes.last_mut(),
+        };
+        if let Some(scope) = scope
             && !scope.captured_registers.contains(&register)
         {
             scope.captured_registers.push(register);
