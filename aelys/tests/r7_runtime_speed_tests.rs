@@ -495,7 +495,7 @@ fn vec_and_array_element_access_in_hot_code_keeps_bounds_and_values() {
         let k = ((i * 37) % 257) as usize;
         v[k] = v[k] * 3 + i - 2000;
         let j = (i % 64) as usize;
-        arr[j] = arr[j] + v[k] % 1000;
+        arr[j] += v[k] % 1000;
         acc = (acc + v[k] % 1_000_003 + arr[j]) % 1_000_000_007;
     }
     assert_int_everywhere(
