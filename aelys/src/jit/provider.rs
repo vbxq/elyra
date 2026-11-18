@@ -67,6 +67,7 @@ pub(crate) struct JitProvider {
     deoptimizations: AtomicU64,
     osr_executions: AtomicU64,
     frame_isa: OwnedTargetIsa,
+    quick_frame_isa: OwnedTargetIsa,
     frames: Mutex<FrameCache>,
 }
 
@@ -75,6 +76,7 @@ type FrameKey = (u64, Arc<[u32]>, Option<u32>);
 #[derive(Default)]
 struct FrameCache {
     compiled: HashMap<FrameKey, Arc<FrameCompiled>>,
+    optimized: HashMap<FrameKey, Arc<FrameCompiled>>,
     refused: HashSet<FrameKey>,
 }
 
@@ -85,9 +87,11 @@ impl JitProvider {
         tier2_call_threshold: Option<u64>,
     ) -> Result<Self, String> {
         let engine = JitEngine::new(max_entries).map_err(|error| error.to_string())?;
-        let frame_isa = frame_isa()?;
+        let quick_frame_isa = frame_isa(true)?;
+        let frame_isa = frame_isa(false)?;
         Ok(Self {
             frame_isa,
+            quick_frame_isa,
             frames: Mutex::new(FrameCache::default()),
             engine,
             call_threshold,
@@ -244,7 +248,7 @@ impl JitExecutor for JitProvider {
         if frames.refused.contains(&cache_key) {
             return None;
         }
-        match compile_frame(&self.frame_isa, function, osr_ip) {
+        match compile_frame(&self.quick_frame_isa, function, osr_ip, true) {
             Ok(compiled) => {
                 let compiled = Arc::new(compiled);
                 frames.compiled.insert(cache_key, Arc::clone(&compiled));
@@ -255,6 +259,22 @@ impl JitExecutor for JitProvider {
                 None
             }
         }
+    }
+
+    fn compile_frame_optimized(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        osr_ip: Option<u32>,
+    ) -> Option<Arc<dyn FrameCode>> {
+        let cache_key: FrameKey = (key.module(), key.shared_path(), osr_ip);
+        let mut frames = self.frames.lock().ok()?;
+        if let Some(compiled) = frames.optimized.get(&cache_key) {
+            return Some(Arc::clone(compiled) as Arc<dyn FrameCode>);
+        }
+        let compiled = Arc::new(compile_frame(&self.frame_isa, function, osr_ip, false).ok()?);
+        frames.optimized.insert(cache_key, Arc::clone(&compiled));
+        Some(compiled as Arc<dyn FrameCode>)
     }
 
     fn frame_call_threshold(&self) -> u64 {

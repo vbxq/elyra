@@ -458,3 +458,32 @@ println("{s} {tally::total()} {mine}")
         format!("{s} {} 100000", hits + (99_999 & 7))
     );
 }
+
+#[test]
+fn code_hot_enough_for_the_optimizing_tier_keeps_its_results() {
+    let body = r#"
+let mut calls = 0
+fn mix(a: int, b: int) -> int { return (a * 31 + b) & 0xFFFFF }
+fn row(n: int, seed: int) -> int {
+    calls = calls + 1
+    let mut acc = seed
+    for i in 0..n { acc = mix(acc, i) }
+    return acc
+}
+fn drive(rows: int) -> int {
+    let mut total = 0
+    for r in 0..rows { total = (total + row(2000, r)) & 0xFFFFFFF }
+    return total * 10000 + calls % 10000
+}
+"#;
+    let mix = |a: i64, b: i64| (a * 31 + b) & 0xF_FFFF;
+    let mut total = 0i64;
+    for r in 0..2500i64 {
+        let mut acc = r;
+        for i in 0..2000i64 {
+            acc = mix(acc, i);
+        }
+        total = (total + acc) & 0xFFF_FFFF;
+    }
+    check(body, "drive(2500)", total * 10000 + 2500);
+}

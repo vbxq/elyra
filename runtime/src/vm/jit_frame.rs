@@ -49,6 +49,7 @@ impl ExitBudget {
 struct OsrEntry {
     ip: u32,
     state: EntryState,
+    optimized: bool,
     legacy_tried: bool,
     budget: ExitBudget,
 }
@@ -58,6 +59,7 @@ pub(crate) struct FrameSlot {
     key: Option<JitFunctionKey>,
     counters: usize,
     call: EntryState,
+    call_optimized: bool,
     call_budget: ExitBudget,
     osr: SmallVec<[OsrEntry; 2]>,
     codes: SmallVec<[Arc<dyn FrameCode>; 2]>,
@@ -223,6 +225,7 @@ impl VM {
             },
             key,
             counters,
+            call_optimized: false,
             call_budget: ExitBudget::default(),
             osr: SmallVec::new(),
             codes: SmallVec::new(),
@@ -246,7 +249,12 @@ impl VM {
         Some(index)
     }
 
-    fn install_frame_code(&mut self, index: usize, osr_ip: Option<u32>) -> Option<FrameInstall> {
+    fn install_frame_code(
+        &mut self,
+        index: usize,
+        osr_ip: Option<u32>,
+        optimized: bool,
+    ) -> Option<FrameInstall> {
         let executor = self.jit_executor.as_ref()?.clone();
         let slot = self.frame_jit.slots.get(index)?;
         let key = slot.key.clone()?;
@@ -255,7 +263,11 @@ impl VM {
         let ObjectKind::Function(bytecode_function) = &object.kind else {
             return None;
         };
-        let code = executor.compile_frame(&key, &bytecode_function.function, osr_ip)?;
+        let code = if optimized {
+            executor.compile_frame_optimized(&key, &bytecode_function.function, osr_ip)?
+        } else {
+            executor.compile_frame(&key, &bytecode_function.function, osr_ip)?
+        };
         let info = code.info();
         if info.num_registers != bytecode_function.function.num_registers
             || info.arity != bytecode_function.function.arity
@@ -323,7 +335,7 @@ impl VM {
                 if counters.calls < threshold {
                     return FrameOutcome::Interpret;
                 }
-                match self.install_frame_code(index, None) {
+                match self.install_frame_code(index, None, false) {
                     Some(install) => {
                         self.frame_jit.slots[index].call = EntryState::Ready(install);
                         install
@@ -511,7 +523,7 @@ impl VM {
                 if backedges < threshold {
                     return Some(Ok(None));
                 }
-                let install = self.install_frame_code(index, Some(ip));
+                let install = self.install_frame_code(index, Some(ip), false);
                 let slot = &mut self.frame_jit.slots[index];
                 let state = match install {
                     Some(install) => EntryState::Ready(install),
@@ -526,6 +538,7 @@ impl VM {
                         ip,
                         state,
                         legacy_tried: install.is_none(),
+                        optimized: false,
                         budget: ExitBudget::default(),
                     }),
                 }
@@ -543,12 +556,26 @@ impl VM {
         let base = frame.base;
         let (outcome, progress) = self.enter_frame_code(install, base, EntryKind::Osr);
         let slot = &mut self.frame_jit.slots[index];
-        if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip)
-            && entry
+        let mut promote = false;
+        if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip) {
+            if entry
                 .budget
                 .record(matches!(outcome, FrameOutcome::Exited(_)), progress)
-        {
-            entry.state = EntryState::Refused;
+            {
+                entry.state = EntryState::Refused;
+            } else if !entry.optimized
+                && entry.budget.progress >= FrameData::TIER_UP as u64
+                && matches!(entry.state, EntryState::Ready(_))
+            {
+                entry.optimized = true;
+                promote = true;
+            }
+        }
+        if promote && let Some(install) = self.install_frame_code(index, Some(ip), true) {
+            let slot = &mut self.frame_jit.slots[index];
+            if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip) {
+                entry.state = EntryState::Ready(install);
+            }
         }
         match outcome {
             FrameOutcome::Returned(value) => {
@@ -697,6 +724,36 @@ impl VM {
         self.globals.get(name).copied().unwrap_or_else(Value::null)
     }
 
+    fn promote_call(&mut self, function: GcRef) {
+        let Some(index) = self.frame_slot(function) else {
+            return;
+        };
+        let slot = &mut self.frame_jit.slots[index];
+        let EntryState::Ready(old) = slot.call else {
+            return;
+        };
+        if slot.call_optimized {
+            return;
+        }
+        slot.call_optimized = true;
+        let Some(install) = self.install_frame_code(index, None, true) else {
+            return;
+        };
+        self.frame_jit.slots[index].call = EntryState::Ready(install);
+        for slot in &mut self.frame_jit.slots {
+            for block in &mut slot.blocks {
+                let sites = (block[3] as usize).saturating_sub(FrameData::HEADER_WORDS)
+                    / FrameData::SITE_WORDS;
+                for site in 0..sites {
+                    let entry = FrameData::HEADER_WORDS + site * FrameData::SITE_WORDS + 2;
+                    if block.get(entry) == Some(&(old.entry as u64)) {
+                        block[entry] = 0;
+                    }
+                }
+            }
+        }
+    }
+
     fn refresh_frame_context(&mut self) {
         let context = &mut self.frame_jit.context;
         context.globals = self.globals_by_index.as_ptr() as u64;
@@ -763,6 +820,16 @@ pub unsafe extern "C" fn aelys_frame_view(context: *mut FrameJitContext, data: *
     }
     vm.refresh_frame_context();
     1
+}
+
+pub unsafe extern "C" fn aelys_frame_tier_up(context: *mut FrameJitContext, data: *mut u64) -> u64 {
+    let (_, vm) = context_vm(context);
+    unsafe {
+        *data.add(FrameData::ENTRY_COUNT as usize / 8) = i64::MIN as u64;
+    }
+    let function = GcRef::new(unsafe { *data.add(1) } as usize);
+    vm.promote_call(function);
+    0
 }
 
 pub unsafe extern "C" fn aelys_frame_set_global(
@@ -849,7 +916,7 @@ pub unsafe extern "C" fn aelys_frame_call(
     let install = match vm.frame_jit.slots[index].call {
         EntryState::Ready(install) => install,
         EntryState::Refused => return interpret(context_ref),
-        EntryState::Pending => match vm.install_frame_code(index, None) {
+        EntryState::Pending => match vm.install_frame_code(index, None, false) {
             Some(install) => {
                 vm.frame_jit.slots[index].call = EntryState::Ready(install);
                 install

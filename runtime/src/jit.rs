@@ -220,7 +220,9 @@ impl FrameData {
     pub const VIEW_VALUES: i32 = 40;
     pub const VIEW_LEN: i32 = 48;
     pub const MAPPING: i32 = 56;
-    pub const HEADER_WORDS: usize = 8;
+    pub const ENTRY_COUNT: i32 = 64;
+    pub const HEADER_WORDS: usize = 9;
+    pub const TIER_UP: i64 = 3_000_000;
     pub const SITE_WORDS: usize = 5;
     pub const SITE_EPOCH: i32 = 0;
     pub const SITE_VALUE: i32 = 8;
@@ -317,6 +319,16 @@ pub trait JitExecutor: Send + Sync {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
 
     fn compile_frame(
+        &self,
+        key: &JitFunctionKey,
+        function: &Function,
+        osr_ip: Option<u32>,
+    ) -> Option<Arc<dyn FrameCode>> {
+        let _ = (key, function, osr_ip);
+        None
+    }
+
+    fn compile_frame_optimized(
         &self,
         key: &JitFunctionKey,
         function: &Function,

@@ -19,6 +19,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 const MAX_FRAME_REGISTERS: usize = 256;
+// a call counts as this many loop iterations towards the optimizing recompile
+const CALL_WEIGHT: i64 = 16;
 const PAYLOAD: u64 = 0x0000_FFFF_FFFF_FFFF;
 const TAG_BITS: u64 = 0x7FFF_0000_0000_0000;
 const QNAN: u64 = 0x7FF8_0000_0000_0000;
@@ -871,6 +873,7 @@ fn region(
 }
 
 struct Helpers {
+    tier_up: FuncRef,
     shl_div: FuncRef,
     enumeration: FuncRef,
     element: FuncRef,
@@ -908,6 +911,7 @@ struct Lowerer<'a, 'b> {
     progress: Variable,
     uses_globals: bool,
     ints: Live,
+    counting: bool,
 }
 
 // a resolved storage address stays valid while the register still holds the object it was resolved for
@@ -1048,7 +1052,54 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         }
     }
 
+    // entries and loop iterations of quick-tier code, so a hot function asks once to be compiled again
+    fn count_entry(&mut self) {
+        if !self.counting {
+            return;
+        }
+        let count = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.data,
+            FrameData::ENTRY_COUNT,
+        );
+        let next = self.builder.ins().iadd_imm_s(count, CALL_WEIGHT);
+        self.builder
+            .ins()
+            .store(Self::trusted(), next, self.data, FrameData::ENTRY_COUNT);
+        let hot = self.builder.ins().icmp_imm_s(
+            IntCC::SignedGreaterThanOrEqual,
+            next,
+            FrameData::TIER_UP,
+        );
+        let promote = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.builder.set_cold_block(promote);
+        self.builder.ins().brif(hot, promote, &[], done, &[]);
+        self.builder.seal_block(promote);
+        self.builder.switch_to_block(promote);
+        self.builder
+            .ins()
+            .call(self.helpers.tier_up, &[self.context, self.data]);
+        self.builder.ins().jump(done, &[]);
+        self.builder.seal_block(done);
+        self.builder.switch_to_block(done);
+    }
+
     fn commit_progress(&mut self) {
+        if self.counting {
+            let progress = self.builder.use_var(self.progress);
+            let count = self.builder.ins().load(
+                types::I64,
+                Self::trusted(),
+                self.data,
+                FrameData::ENTRY_COUNT,
+            );
+            let total = self.builder.ins().iadd(count, progress);
+            self.builder
+                .ins()
+                .store(Self::trusted(), total, self.data, FrameData::ENTRY_COUNT);
+        }
         let progress = self.builder.use_var(self.progress);
         let previous = self.builder.ins().load(
             types::I64,
@@ -2616,12 +2667,19 @@ fn entry_name(function: &Function, osr_ip: Option<u32>) -> String {
     }
 }
 
-pub(crate) fn frame_isa() -> Result<OwnedTargetIsa, String> {
+// the quick tier trades code quality for compile time, hot code is compiled again with the full allocator
+pub(crate) fn frame_isa(quick: bool) -> Result<OwnedTargetIsa, String> {
     let mut flags = settings::builder();
+    let (opt_level, regalloc) = if quick {
+        ("none", "single_pass")
+    } else {
+        ("speed", "backtracking")
+    };
     for (name, value) in [
         ("use_colocated_libcalls", "false"),
         ("is_pic", "false"),
-        ("opt_level", "speed"),
+        ("opt_level", opt_level),
+        ("regalloc_algorithm", regalloc),
         ("enable_verifier", "false"),
     ] {
         flags.set(name, value).map_err(|error| error.to_string())?;
@@ -2636,6 +2694,7 @@ pub(crate) fn compile_frame(
     isa: &OwnedTargetIsa,
     function: &Function,
     osr_ip: Option<u32>,
+    counting: bool,
 ) -> Result<FrameCompiled, FrameRefusal> {
     let registers = usize::try_from(function.num_registers).map_err(|_| FrameRefusal::Registers)?;
     if registers > MAX_FRAME_REGISTERS || registers < usize::from(function.arity) {
@@ -2704,7 +2763,11 @@ pub(crate) fn compile_frame(
 
     let mut jit_builder =
         JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
-    let symbols: [(&str, *const u8); 12] = [
+    let symbols: [(&str, *const u8); 13] = [
+        (
+            "aelys_frame_tier_up",
+            aelys_runtime::aelys_frame_tier_up as *const u8,
+        ),
         (
             "aelys_frame_shl_div",
             aelys_runtime::aelys_frame_shl_div as *const u8,
@@ -2795,6 +2858,13 @@ pub(crate) fn compile_frame(
     };
     let i64t = types::I64;
     let helpers = Helpers {
+        tier_up: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_tier_up",
+            &[pointer, pointer],
+            &[i64t],
+        )?,
         shl_div: declare(
             &mut module,
             &mut context.func,
@@ -2993,6 +3063,7 @@ pub(crate) fn compile_frame(
         progress,
         uses_globals,
         ints: Live::default(),
+        counting: counting && osr_ip.is_none(),
     };
     lowerer.ints = ints;
     let entry_live = region.live_in.get(&entry_ip).copied().unwrap_or_default();
@@ -3003,6 +3074,7 @@ pub(crate) fn compile_frame(
         }
     }
     lowerer.unbox_entry(&entry_live, &loaded, entry_ip);
+    lowerer.count_entry();
     lowerer.ensure_view();
     lowerer.builder.ins().jump(first, &[]);
     let leaders = region.leaders.iter().copied().collect::<Vec<_>>();
