@@ -254,7 +254,7 @@ impl TypeInference {
             }
         }
         for (index, (arg, expected)) in typed_args.iter_mut().zip(params.iter()).enumerate() {
-            narrow_literal(arg, expected);
+            self.fit_int_literal(arg, expected);
             let reason = ConstraintReason::Argument {
                 func_name: format!("{}::{member}", receiver_family(&receiver)),
                 arg_index: index,
@@ -647,16 +647,6 @@ fn unborrowed(arg: &Expr) -> &Expr {
             operand,
         } => operand,
         _ => arg,
-    }
-}
-
-fn narrow_literal(arg: &mut TypedExpr, expected: &InferType) {
-    if let TypedExprKind::Int(value) = &arg.kind
-        && expected.is_integer()
-        && *expected != InferType::I64
-        && InferType::int_fits(*value, expected)
-    {
-        arg.ty = expected.clone();
     }
 }
 

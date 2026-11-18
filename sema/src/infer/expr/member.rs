@@ -1091,10 +1091,34 @@ impl TypeInference {
                     let mut names = Vec::new();
                     let mut seen = std::collections::HashSet::new();
                     super::call::collect_generic_params(header, &mut names, &mut seen);
-                    let fresh: HashMap<String, InferType> = names
+                    let mut fresh: HashMap<String, InferType> = names
                         .into_iter()
                         .map(|name| (name, self.type_gen.fresh()))
                         .collect();
+                    if let (
+                        InferType::Applied {
+                            name: header_name,
+                            args: header_args,
+                        },
+                        InferType::Applied {
+                            name: receiver_name,
+                            args: receiver_args,
+                        },
+                    ) = (header, &typed_object.ty)
+                        && header_name == receiver_name
+                        && header_args.len() == receiver_args.len()
+                    {
+                        for (header_arg, receiver_arg) in header_args.iter().zip(receiver_args) {
+                            let spelled = header_arg.substitute_params(&fresh);
+                            if let Some(name) = fresh
+                                .iter()
+                                .find(|(_, value)| **value == spelled)
+                                .map(|(name, _)| name.clone())
+                            {
+                                fresh.insert(name, receiver_arg.clone());
+                            }
+                        }
+                    }
                     self.constraints.push(Constraint::equal(
                         header.substitute_params(&fresh),
                         typed_object.ty.clone(),
