@@ -191,7 +191,10 @@ impl TypeInference {
 
     fn is_mutable_aggregate(&self, ty: &InferType) -> bool {
         match ty {
-            InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_) => true,
+            InferType::Array(_)
+            | InferType::FixedArray(_, _)
+            | InferType::Vec(_)
+            | InferType::Map(_, _) => true,
             InferType::Struct(name) | InferType::Applied { name, .. } => {
                 self.type_table.get_struct(name).is_some()
             }

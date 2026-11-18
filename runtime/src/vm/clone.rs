@@ -61,6 +61,7 @@ impl VM {
                 }
                 VecData::Objects(values) => AelysVec::from_objects(values.clone()),
             }),
+            ObjectKind::Map(map) => ObjectKind::Map(Box::new(map.duplicate())),
             _ => return Ok(original),
         };
         let copy = self.alloc_object(GcObject::new(kind))?;
@@ -74,6 +75,12 @@ impl VM {
         let Some(object) = self.heap.get(shell) else {
             return Vec::new();
         };
+        if let ObjectKind::Map(map) = &object.kind {
+            return map
+                .positioned_values()
+                .filter(|(_, value)| value.as_ptr().is_some())
+                .collect();
+        }
         let values: &[Value] = match &object.kind {
             ObjectKind::Struct(structure) => &structure.slots,
             ObjectKind::Enum(value) => &value.slots,
@@ -105,6 +112,10 @@ impl VM {
         let Some(object) = self.heap.get_mut(shell) else {
             return Err(self.runtime_error(RuntimeErrorKind::UseAfterFree));
         };
+        if let ObjectKind::Map(map) = &mut object.kind {
+            map.set_value_at(slot, replacement);
+            return Ok(());
+        }
         let target = match &mut object.kind {
             ObjectKind::Struct(structure) => structure.slots.get_mut(slot),
             ObjectKind::Enum(value) => value.slots.get_mut(slot),

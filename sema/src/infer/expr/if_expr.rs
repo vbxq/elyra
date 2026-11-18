@@ -96,5 +96,6 @@ fn known_aggregate(ty: &InferType) -> bool {
             | InferType::Array(_)
             | InferType::FixedArray(_, _)
             | InferType::Vec(_)
+            | InferType::Map(_, _)
     ) && ty.is_concrete()
 }

@@ -160,6 +160,7 @@ impl Compiler {
                 | InferType::Array(_)
                 | InferType::FixedArray(_, _)
                 | InferType::Vec(_)
+                | InferType::Map(_, _)
                 | InferType::Option(_)
                 | InferType::Result(_, _)
         )

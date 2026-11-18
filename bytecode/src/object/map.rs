@@ -127,6 +127,25 @@ impl AelysMap {
         self.entries.iter().flatten().copied()
     }
 
+    pub fn duplicate(&self) -> Self {
+        let mut copy = self.clone();
+        copy.accounted = copy.measure();
+        copy
+    }
+
+    pub fn positioned_values(&self) -> impl Iterator<Item = (usize, Value)> + '_ {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(position, entry)| entry.map(|(_, value)| (position, value)))
+    }
+
+    pub fn set_value_at(&mut self, position: usize, value: Value) {
+        if let Some(Some((_, slot))) = self.entries.get_mut(position) {
+            *slot = value;
+        }
+    }
+
     pub fn measure(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.entries.capacity() * std::mem::size_of::<Option<(Value, Value)>>()
