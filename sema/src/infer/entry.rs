@@ -1605,6 +1605,7 @@ impl TypeInference {
                 && stmt.definition_module.is_none()
             {
                 inf.immutable_imports.remove(&func.name);
+                inf.env.forget_mutable_import(&func.name);
             }
         }
         let declared_nominals = inf.declare_nominals(&stmts);

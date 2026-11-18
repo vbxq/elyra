@@ -93,7 +93,17 @@ impl TypeInference {
             typed_init.ty.clone()
         };
 
-        if mutable
+        let imported_root = mutable
+            .then(|| self.imported_immutable_root(initializer))
+            .flatten()
+            .filter(|_| self.is_shared_aggregate(&var_type));
+        if let Some(root) = imported_root {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MutableImportAlias { root },
+                span: initializer.span,
+                reason: ConstraintReason::Other("mutable alias of an import".to_string()),
+            });
+        } else if mutable
             && is_collection_type(&var_type)
             && collection_binding_name(initializer).is_some()
             && !read_only_alias

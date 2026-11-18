@@ -130,6 +130,7 @@ impl ModuleLoader {
             prelude.symbol_origins.clone();
         let mut bare_imports = super::types::BareImports::default();
         let mut immutable_imports = std::collections::BTreeSet::new();
+        let mut mutable_imports = std::collections::BTreeSet::new();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -169,8 +170,10 @@ impl ModuleLoader {
                         wanted,
                         nested_needs.span,
                     );
-                    immutable_imports
-                        .extend(self.immutable_imports(&effective_kind, &nested_module_path));
+                    let (immutable, mutable) =
+                        self.import_mutability(nested_needs, &effective_kind, &nested_module_path);
+                    immutable_imports.extend(immutable);
+                    mutable_imports.extend(mutable);
                     for (name, target) in
                         self.import_renames(nested_needs, &effective_kind, &nested_module_path)
                     {
@@ -418,6 +421,7 @@ impl ModuleLoader {
         let private_types = imported_types.clone();
         imported_types.ambiguous_imports = ambiguous_imports;
         imported_types.immutable_imports = immutable_imports;
+        imported_types.mutable_imports = mutable_imports;
         let private_impls = imported_impl_stmts.clone();
         let private_nominals: std::collections::BTreeMap<String, String> = inherited_nominals
             .iter()

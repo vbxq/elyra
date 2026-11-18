@@ -373,6 +373,7 @@ fn load_modules(
     let mut global_renames: HashMap<String, String> = HashMap::new();
     let mut bare_imports = crate::modules::loader::BareImports::default();
     let mut immutable_imports = std::collections::BTreeSet::new();
+    let mut mutable_imports = std::collections::BTreeSet::new();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
         .iter()
@@ -507,7 +508,10 @@ fn load_modules(
                     }
                 }
             }
-            immutable_imports.extend(loader.immutable_imports(&effective_kind, &module_path));
+            let (immutable, mutable) =
+                loader.import_mutability(needs, &effective_kind, &module_path);
+            immutable_imports.extend(immutable);
+            mutable_imports.extend(mutable);
             for (name, target) in loader.import_renames(needs, &effective_kind, &module_path) {
                 let explicit_elsewhere = !matches!(effective_kind, ImportKind::Symbols(_))
                     && !name.contains("::")
@@ -537,6 +541,7 @@ fn load_modules(
     }
     nominal_imports.types.ambiguous_imports = ambiguous_imports;
     nominal_imports.types.immutable_imports = immutable_imports;
+    nominal_imports.types.mutable_imports = mutable_imports;
 
     if let Some((clash, span)) = nominal_imports.first_clash() {
         return Err(clash.into_error(SymbolConflictRepair::NameOne, span, &source));

@@ -258,3 +258,134 @@ fn a_selective_import_clash_never_suggests_an_alias() {
         assert!(error.contains("from one module only"), "{file}: {error}");
     }
 }
+
+const LV: &str = "pub let v = vec![1, 2, 3]
+pub let vv = vec![vec![1], vec![2]]
+pub let mut mv = vec![1, 2, 3]
+pub struct P { pub x: int }
+pub struct H { pub p: P }
+pub let s = P { x: 1 }
+pub let h = H { p: P { x: 1 } }
+pub let mut ms = P { x: 1 }
+pub let mut mh = H { p: P { x: 1 } }
+pub let mut arr = [1, 2, 3]
+pub fn msx() -> int { ms.x }
+pub fn mhx() -> int { mh.p.x }
+pub fn mvs() -> int { let mut t = 0
+ for e in mv { t = t + e }
+ t }
+pub fn arr0() -> int { arr[0] }
+";
+
+#[test]
+fn a_mutable_alias_of_an_imported_immutable_aggregate_is_refused() {
+    let dir = tree(&[("lv.aelys", LV)]);
+    let sources = [
+        ("bare_vec.aelys", "needs lv\nlet mut w = v\n1\n", "v"),
+        (
+            "path_vec.aelys",
+            "needs lv\nlet mut w = lv::v\nw.push(9)\n1\n",
+            "lv::v",
+        ),
+        (
+            "bare_struct.aelys",
+            "needs lv\nlet mut z = s\nz.x = 5\n1\n",
+            "s",
+        ),
+        (
+            "path_struct.aelys",
+            "needs lv\nlet mut z = lv::s\n1\n",
+            "lv::s",
+        ),
+        (
+            "alias.aelys",
+            "needs lv as l\nlet mut z = l::s\n1\n",
+            "l::s",
+        ),
+        (
+            "selective.aelys",
+            "needs s from lv\nlet mut z = s\n1\n",
+            "s",
+        ),
+        ("paren.aelys", "needs lv\nlet mut z = (lv::s)\n1\n", "lv::s"),
+        ("field.aelys", "needs lv\nlet mut z = lv::h.p\n1\n", "lv::h"),
+        ("element.aelys", "needs lv\nlet mut z = vv[0]\n1\n", "vv"),
+        (
+            "infn.aelys",
+            "needs lv\nfn f() -> int { let mut z = s\n z.x }\nf()\n",
+            "s",
+        ),
+        (
+            "closure.aelys",
+            "needs lv\nlet c = fn() { let mut z = lv::v\n z.push(1) }\n1\n",
+            "lv::v",
+        ),
+    ];
+    for (file, source, root) in sources {
+        let error = run_err(&dir, file, source);
+        assert!(error.contains("E0323"), "{file}: {error}");
+        assert!(
+            error.contains(&format!("cannot bind `{root}` mutably")),
+            "{file}: {error}"
+        );
+    }
+    assert_eq!(
+        run_int(
+            &dir,
+            "read.aelys",
+            "needs lv\nlet z = lv::s\nlet mut q = lv::s.x\nq = 4\nlet mut w = lv::mv\nw.push(4)\nz.x * 100 + q * 10 + mvs()\n"
+        ),
+        100 + 40 + 10,
+        "an immutable binding, a scalar copy and an alias of a `pub let mut` stay legal"
+    );
+}
+
+#[test]
+fn a_place_rooted_at_an_imported_mutable_variable_is_writable_live() {
+    let dir = tree(&[("lv.aelys", LV)]);
+    let cases = [
+        ("field.aelys", "needs lv\nms.x = 3\nmsx()\n", 3),
+        ("compound.aelys", "needs lv\nms.x += 3\nmsx()\n", 4),
+        ("nested.aelys", "needs lv\nmh.p.x = 7\nmhx()\n", 7),
+        (
+            "infn.aelys",
+            "needs lv\nfn f() { ms.x = 9 }\nf()\nmsx()\n",
+            9,
+        ),
+        (
+            "closure.aelys",
+            "needs lv\nlet c = fn() { ms.x = 8 }\nc()\nmsx()\n",
+            8,
+        ),
+        (
+            "selective.aelys",
+            "needs ms, msx from lv\nms.x = 5\nmsx()\n",
+            5,
+        ),
+        ("index.aelys", "needs lv\nmv[0] = 10\nmvs()\n", 15),
+        ("push.aelys", "needs lv\nmv.push(10)\nmvs()\n", 16),
+        ("array.aelys", "needs lv\narr[0] = 10\narr0()\n", 10),
+        (
+            "alias.aelys",
+            "needs lv\nlet mut z = ms\nz.x = 4\nmsx()\n",
+            4,
+        ),
+    ];
+    for (file, source, expected) in cases {
+        assert_eq!(run_int(&dir, file, source), expected, "{file}");
+    }
+    for (file, source, code) in [
+        ("imm_field.aelys", "needs lv\ns.x = 3\n1\n", "E0330"),
+        ("imm_nested.aelys", "needs lv\nh.p.x = 3\n1\n", "E0330"),
+        ("imm_push.aelys", "needs lv\nv.push(3)\n1\n", "E0318"),
+        ("imm_index.aelys", "needs lv\nv[0] = 3\n1\n", "E0318"),
+        (
+            "own_imm.aelys",
+            "needs lv\nlet ms = P { x: 1 }\nfn g() { ms.x = 6 }\n1\n",
+            "E0330",
+        ),
+    ] {
+        let error = run_err(&dir, file, source);
+        assert!(error.contains(code), "{file}: {error}");
+    }
+}

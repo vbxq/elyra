@@ -19,6 +19,7 @@ impl TypeEnv {
             functions: self.functions.clone(),
             current_function: None,
             namespaces: self.namespaces.clone(),
+            mutable_imports: self.mutable_imports.clone(),
         }
     }
 
@@ -96,6 +97,7 @@ impl TypeEnv {
             functions: self.functions.clone(),
             current_function: None,
             namespaces: self.namespaces.clone(),
+            mutable_imports: self.mutable_imports.clone(),
         }
     }
 }

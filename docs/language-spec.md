@@ -781,6 +781,16 @@ the module that declares it`), unless the file declares its own function of that
 name, which shadows the import and keeps the local E0203. `module::v = ...` is
 not an assignment target.
 
+An imported variable's mutability carries to the places rooted at it. Through a
+bare imported `pub let mut`, field, index and `push` writes (`ms.x = 3`,
+`mh.p.x += 1`, `mv[0] = 10`, `mv.push(4)`) mutate the module's value, and the
+module sees them. Through an imported `pub let` they are refused (E0330, E0318).
+A struct, array or `Vec` is shared by reference, so binding one reached from an
+imported `pub let` mutably, bare or qualified (`let mut w = v`,
+`let mut w = cnt::v`, `let mut z = cnt::h.p`), is E0323 `cannot bind 'cnt::v'
+mutably: it is an immutable variable of the module that declares it`. A
+qualified place (`cnt::ms.x = 3`) is not writable; write through the bare import.
+
 A `pub fn` with type parameters cannot be exported: monomorphization specializes
 it inside its own module, so no single body crosses the boundary. Importing a
 module that declares one is E0407, reported at the declaration. A private generic
@@ -2431,6 +2441,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0321 | ConstantIndexOutOfBounds | a constant index leaves the collection |
 | E0322 | CollectionCollectRequiresPipeline | `collect` needs a pipeline |
 | E0323 | MutableCollectionAlias | a mutable collection is aliased |
+| E0323 | MutableImportAlias | a mutable binding aliases an aggregate reached from an imported `pub let` |
 | E0324 | NonExhaustiveStruct | a struct match needs `_` or an irrefutable field pattern |
 | E0325 | GenericStructDeferred | this generic struct form is not delivered |
 | E0326 | DuplicateNominal | two declarations share a name |

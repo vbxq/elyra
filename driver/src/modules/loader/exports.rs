@@ -220,28 +220,40 @@ impl ModuleLoader {
         renames
     }
 
-    pub(crate) fn immutable_imports(&self, kind: &ImportKind, module_key: &str) -> Vec<String> {
+    pub(crate) fn import_mutability(
+        &self,
+        needs: &aelys_syntax::NeedsStmt,
+        kind: &ImportKind,
+        module_key: &str,
+    ) -> (Vec<String>, Vec<String>) {
         let Some(module_info) = self.loaded_modules.get(module_key) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
-        let fixed = |name: &String| {
-            module_info
-                .exports
-                .get(name)
-                .is_some_and(|export| !export.is_mutable)
-        };
-        match kind {
-            ImportKind::Module { alias: None } | ImportKind::Wildcard => module_info
-                .exports
-                .keys()
-                .filter(|name| fixed(name))
-                .cloned()
-                .collect(),
+        let alias = self.get_module_alias(needs);
+        let mut immutable = Vec::new();
+        let mut mutable = Vec::new();
+        let bare: Vec<&String> = match kind {
+            ImportKind::Module { alias: None } | ImportKind::Wildcard => {
+                module_info.exports.keys().collect()
+            }
             ImportKind::Module { alias: Some(_) } => Vec::new(),
-            ImportKind::Symbols(symbols) => {
-                symbols.iter().filter(|name| fixed(name)).cloned().collect()
+            ImportKind::Symbols(symbols) => symbols.iter().collect(),
+        };
+        for name in bare {
+            match module_info.exports.get(name) {
+                Some(export) if export.is_mutable => mutable.push(name.clone()),
+                Some(_) => immutable.push(name.clone()),
+                None => {}
             }
         }
+        if !matches!(kind, ImportKind::Symbols(_)) {
+            for (name, export) in &module_info.exports {
+                if !export.is_mutable {
+                    immutable.push(format!("{alias}::{name}"));
+                }
+            }
+        }
+        (immutable, mutable)
     }
 
     pub fn get_module(&self, module_path: &str) -> Option<&ModuleInfo> {

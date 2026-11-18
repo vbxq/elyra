@@ -19,6 +19,7 @@ pub struct ImportedTypes {
     pub module_scopes: BTreeMap<String, ModuleScope>,
     pub ambiguous_imports: BTreeMap<String, Vec<String>>,
     pub immutable_imports: BTreeSet<String>,
+    pub mutable_imports: BTreeSet<String>,
 }
 
 // a body carried out of its module is checked and compiled against these, never the importer's
@@ -85,8 +86,49 @@ impl TypeInference {
         self.module_scopes = imported.module_scopes;
         self.ambiguous_imports = imported.ambiguous_imports;
         self.immutable_imports = imported.immutable_imports;
+        self.env.set_mutable_imports(imported.mutable_imports);
         self.private_nominals = imported.private_nominals;
         self.unexported_nominals = imported.unexported_nominals;
+    }
+
+    pub(crate) fn imported_immutable_root(&self, expr: &aelys_syntax::Expr) -> Option<String> {
+        use aelys_syntax::{ExprKind, MemberSeparator};
+        match &expr.kind {
+            ExprKind::Identifier(name) => (self.immutable_imports.contains(name)
+                && self.env.is_imported_binding(name))
+            .then(|| name.clone()),
+            ExprKind::Grouping(inner) => self.imported_immutable_root(inner),
+            ExprKind::Index { object, .. }
+            | ExprKind::Member {
+                object,
+                separator: MemberSeparator::Dot,
+                ..
+            } => self.imported_immutable_root(object),
+            ExprKind::Member {
+                object,
+                member,
+                separator: MemberSeparator::Path,
+            } => match &object.kind {
+                ExprKind::Identifier(alias) if self.env.is_namespace(alias) => {
+                    let qualified = format!("{alias}::{member}");
+                    self.immutable_imports
+                        .contains(&qualified)
+                        .then_some(qualified)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_shared_aggregate(&self, ty: &InferType) -> bool {
+        match ty {
+            InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_) => true,
+            InferType::Struct(name) | InferType::Applied { name, .. } => {
+                self.type_table.get_struct(name).is_some()
+            }
+            _ => false,
+        }
     }
 
     // an importer that never named it reads it as absent, though the table holds it for the
