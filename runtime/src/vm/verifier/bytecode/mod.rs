@@ -618,7 +618,8 @@ fn verify_enum_descriptor(
         | aelys_bytecode::TypeDescriptor::Vec(inner) => {
             verify_enum_descriptor(inner, enum_schemas, depth + 1)?;
         }
-        aelys_bytecode::TypeDescriptor::Result(ok, err) => {
+        aelys_bytecode::TypeDescriptor::Result(ok, err)
+        | aelys_bytecode::TypeDescriptor::Map(ok, err) => {
             verify_enum_descriptor(ok, enum_schemas, depth + 1)?;
             verify_enum_descriptor(err, enum_schemas, depth + 1)?;
         }
@@ -721,7 +722,8 @@ fn verify_descriptor_ids(
         | aelys_bytecode::TypeDescriptor::Vec(inner) => {
             verify_descriptor_ids(inner, struct_count, enum_schemas, depth + 1)?;
         }
-        aelys_bytecode::TypeDescriptor::Result(ok, err) => {
+        aelys_bytecode::TypeDescriptor::Result(ok, err)
+        | aelys_bytecode::TypeDescriptor::Map(ok, err) => {
             verify_descriptor_ids(ok, struct_count, enum_schemas, depth + 1)?;
             verify_descriptor_ids(err, struct_count, enum_schemas, depth + 1)?;
         }

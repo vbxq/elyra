@@ -132,6 +132,9 @@ impl VM {
         if value.is_bool() {
             return "bool";
         }
+        if value.is_char() {
+            return "char";
+        }
         if value.is_none() {
             return "Option::None";
         }
@@ -160,6 +163,7 @@ fn object_type_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Closure(_) => "closure",
         ObjectKind::Array(_) => "array",
         ObjectKind::Vec(_) => "vec",
+        ObjectKind::Map(_) => "map",
         ObjectKind::Range(_) => "range",
         ObjectKind::Sum(_) => "sum",
         ObjectKind::Enum(_) => "enum",
@@ -202,6 +206,15 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
                 .filter_map(|i| vec.get(i).map(|v| vm.value_to_string(v)))
                 .collect();
             format!("Vec[{}]", elements.join(", "))
+        }
+        ObjectKind::Map(map) => {
+            let entries: Vec<String> = map
+                .entries()
+                .map(|(key, value)| {
+                    format!("{}: {}", vm.value_to_string(key), vm.value_to_string(value))
+                })
+                .collect();
+            format!("{{{}}}", entries.join(", "))
         }
         ObjectKind::Range(range) => {
             let start = range

@@ -2,6 +2,7 @@ pub(super) mod array;
 mod assign;
 mod binary;
 mod call;
+mod collections;
 mod if_expr;
 mod lambda;
 pub(crate) mod member;
@@ -51,6 +52,7 @@ impl TypeInference {
             ExprKind::Float(f) => (TypedExprKind::Float(*f), InferType::F64),
             ExprKind::Bool(b) => (TypedExprKind::Bool(*b), InferType::Bool),
             ExprKind::String(s) => (TypedExprKind::String(s.clone()), InferType::String),
+            ExprKind::Char(c) => (TypedExprKind::Char(*c), InferType::Char),
             ExprKind::Unit => (TypedExprKind::Unit, InferType::Unit),
             ExprKind::FmtString(parts) => {
                 let typed_parts = parts
@@ -186,7 +188,11 @@ impl TypeInference {
                 let src = &typed_inner.ty;
                 let src_is_type_param = matches!(src, InferType::Var(_))
                     || matches!(src, InferType::Struct(name) if self.type_params_in_scope.contains(name));
+                let char_cast = (*src == InferType::Char
+                    && (target_ty == InferType::I64 || target_ty == InferType::Char))
+                    || (src.is_integer() && target_ty == InferType::Char);
                 let allowed = src_is_type_param
+                    || char_cast
                     || ((src.is_numeric()
                         || *src == InferType::Bool
                         || *src == InferType::Dynamic

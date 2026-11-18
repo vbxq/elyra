@@ -124,6 +124,8 @@ fn is_foreign_impl_target(ty: &InferType, type_table: &crate::types::TypeTable) 
         InferType::Struct(name) | InferType::Applied { name, .. } => !type_table.has_nominal(name),
         InferType::Option(_)
         | InferType::Result(_, _)
+        | InferType::Map(_, _)
+        | InferType::Char
         | InferType::Array(_)
         | InferType::FixedArray(_, _)
         | InferType::Vec(_)
@@ -2501,6 +2503,10 @@ impl TypeInference {
                 Box::new(self.normalize_projection_in_signature(ok, associated_types, target_ty)),
                 Box::new(self.normalize_projection_in_signature(err, associated_types, target_ty)),
             ),
+            InferType::Map(ok, err) => InferType::Map(
+                Box::new(self.normalize_projection_in_signature(ok, associated_types, target_ty)),
+                Box::new(self.normalize_projection_in_signature(err, associated_types, target_ty)),
+            ),
             InferType::Tuple(elements) => InferType::Tuple(
                 elements
                     .iter()
@@ -2888,7 +2894,7 @@ fn collect_projections(ty: &InferType, out: &mut Vec<InferType>) {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_projections(inner, out),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_projections(ok, out);
             collect_projections(err, out);
         }
@@ -3087,7 +3093,8 @@ fn own_params_conform(
         (InferType::FixedArray(expected, length), InferType::FixedArray(actual, actual_length)) => {
             length == actual_length && conform(expected, actual, pairing)
         }
-        (InferType::Result(expected_ok, expected_err), InferType::Result(ok, err)) => {
+        (InferType::Result(expected_ok, expected_err), InferType::Result(ok, err))
+        | (InferType::Map(expected_ok, expected_err), InferType::Map(ok, err)) => {
             conform(expected_ok, ok, pairing) && conform(expected_err, err, pairing)
         }
         (InferType::Tuple(expected), InferType::Tuple(actual)) => {

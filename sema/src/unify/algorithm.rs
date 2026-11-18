@@ -21,6 +21,7 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         | (InferType::F32, InferType::F32)
         | (InferType::F64, InferType::F64)
         | (InferType::Bool, InferType::Bool)
+        | (InferType::Char, InferType::Char)
         | (InferType::String, InferType::String)
         | (InferType::Unit, InferType::Unit)
         | (InferType::Null, InferType::Null) => Ok(()),
@@ -121,7 +122,8 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
 
         (InferType::Option(inner1), InferType::Option(inner2)) => unify(inner1, inner2, subst),
 
-        (InferType::Result(ok1, err1), InferType::Result(ok2, err2)) => {
+        (InferType::Result(ok1, err1), InferType::Result(ok2, err2))
+        | (InferType::Map(ok1, err1), InferType::Map(ok2, err2)) => {
             unify(ok1, ok2, subst)?;
             unify(err1, err2, subst)
         }

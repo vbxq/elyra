@@ -272,6 +272,7 @@ impl Parser {
                 PatternKind::Int(value)
             }
             TokenKind::String(value) => PatternKind::String(value),
+            TokenKind::Char(value) => PatternKind::Char(value),
             TokenKind::True => PatternKind::Bool(true),
             TokenKind::False => PatternKind::Bool(false),
             TokenKind::Null => return Err(self.error(CompileErrorKind::NullIsNotInSurface)),
@@ -321,6 +322,7 @@ impl Parser {
             TokenKind::Int(_)
                 | TokenKind::Float(_)
                 | TokenKind::String(_)
+                | TokenKind::Char(_)
                 | TokenKind::FmtString(_)
                 | TokenKind::True
                 | TokenKind::False
@@ -348,6 +350,7 @@ impl Parser {
             TokenKind::Int(n) => ExprKind::Int(n),
             TokenKind::Float(n) => ExprKind::Float(n),
             TokenKind::String(s) => ExprKind::String(s),
+            TokenKind::Char(c) => ExprKind::Char(c),
             TokenKind::FmtString(parts) => {
                 return self.parse_fmt_string(parts, span);
             }

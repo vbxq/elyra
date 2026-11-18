@@ -40,6 +40,12 @@ impl Compiler {
         Ok(())
     }
 
+    pub fn compile_literal_char(&mut self, c: char, dest: u16, span: Span) -> Result<()> {
+        let k = self.add_constant(Value::char(c), span)?;
+        self.emit_load_constant(dest, k, span);
+        Ok(())
+    }
+
     pub fn compile_literal_string(&mut self, s: &str, dest: u16, span: Span) -> Result<()> {
         let k = self.add_string_constant(s);
         self.emit_load_constant(dest, k, span);

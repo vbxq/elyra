@@ -140,6 +140,10 @@ impl TypeInference {
                 return result;
             }
 
+            if let Some(result) = self.infer_container_call(callee, args) {
+                return result;
+            }
+
             if let Some(result) = self.infer_string_method_call(callee, args) {
                 return result;
             }
@@ -1231,13 +1235,7 @@ impl TypeInference {
             _ => return None,
         };
         if matches!(member.as_str(), "push" | "pop" | "reserve") {
-            self.require_mutable_place(object, &typed_object.ty, member, false);
-            let binding = crate::infer::places::place_root(object);
-            if let Some(name) = binding
-                && matches!(&object.kind, ExprKind::Identifier(_))
-            {
-                self.env.invalidate_collection_length(name);
-            }
+            self.require_mutable_collection(object, member, &typed_object.ty);
         }
         let typed_args: Vec<TypedExpr> = args.iter().map(|arg| self.infer_expr(arg)).collect();
         let (output, expected_args) = match (member.as_str(), is_vec, args.len()) {
@@ -1337,6 +1335,18 @@ impl TypeInference {
         ))
     }
 
+    pub(super) fn require_mutable_collection(
+        &mut self,
+        object: &Expr,
+        member: &str,
+        receiver: &InferType,
+    ) {
+        self.require_mutable_place(object, receiver, member, false);
+        if let ExprKind::Identifier(name) = &object.kind {
+            self.env.invalidate_collection_length(name);
+        }
+    }
+
     fn invalid_collection_method(
         &mut self,
         typed_object: TypedExpr,
@@ -1404,7 +1414,7 @@ pub(super) fn collect_generic_params(
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_generic_params(inner, names, seen),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_generic_params(ok, names, seen);
             collect_generic_params(err, names, seen);
         }
@@ -1452,6 +1462,10 @@ fn substitute_generic_params(
             InferType::Option(Box::new(substitute_generic_params(inner, substitutions)))
         }
         InferType::Result(ok, err) => InferType::Result(
+            Box::new(substitute_generic_params(ok, substitutions)),
+            Box::new(substitute_generic_params(err, substitutions)),
+        ),
+        InferType::Map(ok, err) => InferType::Map(
             Box::new(substitute_generic_params(ok, substitutions)),
             Box::new(substitute_generic_params(err, substitutions)),
         ),
@@ -1521,7 +1535,9 @@ fn contains_numeric(ty: &InferType) -> bool {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => contains_numeric(inner),
-        InferType::Result(ok, err) => contains_numeric(ok) || contains_numeric(err),
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
+            contains_numeric(ok) || contains_numeric(err)
+        }
         InferType::Tuple(elements) => elements.iter().any(contains_numeric),
         _ => false,
     }
@@ -1546,6 +1562,10 @@ fn replace_numeric(ty: &InferType, replacement: &InferType) -> InferType {
             InferType::Option(Box::new(replace_numeric(inner, replacement)))
         }
         InferType::Result(ok, err) => InferType::Result(
+            Box::new(replace_numeric(ok, replacement)),
+            Box::new(replace_numeric(err, replacement)),
+        ),
+        InferType::Map(ok, err) => InferType::Map(
             Box::new(replace_numeric(ok, replacement)),
             Box::new(replace_numeric(err, replacement)),
         ),

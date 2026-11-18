@@ -7,9 +7,9 @@ fn string_index_first_char() {
     let code = r#"
 let s = "hello"
 let c = s[0]
-c.char_len()
+c as int
 "#;
-    assert_aelys_int(code, 1);
+    assert_aelys_int(code, 104);
 }
 
 #[test]
@@ -17,9 +17,9 @@ fn string_index_last_char() {
     let code = r#"
 let s = "abcde"
 let c = s[4]
-c.char_len()
+c as int
 "#;
-    assert_aelys_int(code, 1);
+    assert_aelys_int(code, 101);
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn string_index_returns_single_char_string() {
     let code = r#"
 let s = "abc"
 let c = s[1]
-c
+string::from_char(c)
 "#;
     assert_aelys_str(code, "b");
 }
@@ -50,16 +50,16 @@ c
 fn string_index_first() {
     let code = r#"
 let s = "xyz"
-s[0]
+s[0] == 'x'
 "#;
-    assert_aelys_str(code, "x");
+    assert_aelys_bool(code, true);
 }
 
 #[test]
 fn string_index_middle() {
     let code = r#"
 let s = "world"
-s[2]
+"{s[2]}"
 "#;
     assert_aelys_str(code, "r");
 }
@@ -122,7 +122,7 @@ fn string_foreach_first_char() {
     let code = r#"
 let mut result = ""
 for c in "hello" {
-    result = c
+    result = string::from_char(c)
     break
 }
 result
@@ -164,7 +164,7 @@ fn string_foreach_with_conditional() {
     let code = r#"
 let mut count = 0
 for c in "aAbBcC" {
-    if c == "a" or c == "b" or c == "c" {
+    if c == 'a' or c == 'b' or c == 'c' {
         count++
     }
 }
@@ -249,7 +249,7 @@ count
 #[test]
 fn string_literal_index() {
     let code = r#"
-"hello"[0]
+"{"hello"[0]}"
 "#;
     assert_aelys_str(code, "h");
 }
@@ -257,7 +257,7 @@ fn string_literal_index() {
 #[test]
 fn string_literal_index_last() {
     let code = r#"
-"world"[4]
+"{"world"[4]}"
 "#;
     assert_aelys_str(code, "d");
 }

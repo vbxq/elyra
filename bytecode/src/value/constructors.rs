@@ -1,6 +1,6 @@
 use super::{
-    CANONICAL_NAN, IntegerOverflowError, PAYLOAD_MASK, QNAN, TAG_BOOL, TAG_INT, TAG_NESTED_FN,
-    TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
+    CANONICAL_NAN, CHAR_FLAG, IntegerOverflowError, PAYLOAD_MASK, QNAN, TAG_BOOL, TAG_INT,
+    TAG_NESTED_FN, TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
 };
 
 impl Value {
@@ -45,6 +45,10 @@ impl Value {
 
     pub fn bool(b: bool) -> Self {
         Self(QNAN | TAG_BOOL | u64::from(b))
+    }
+
+    pub fn char(c: char) -> Self {
+        Self(QNAN | TAG_NULL | CHAR_FLAG | u64::from(u32::from(c)))
     }
 
     pub fn null() -> Self {

@@ -191,6 +191,7 @@ pub enum FmtStringPart {
 pub enum ExprKind {
     Int(i64),
     Float(f64),
+    Char(char),
     String(String),
     Bool(bool),
     Null,
@@ -351,6 +352,7 @@ pub enum PatternKind {
     Wildcard,
     Binding(String),
     Int(i64),
+    Char(char),
     String(String),
     Bool(bool),
     Variant {

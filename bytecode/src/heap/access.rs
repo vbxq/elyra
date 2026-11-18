@@ -86,6 +86,7 @@ impl Heap {
                 ObjectKind::Closure(_) => "Closure",
                 ObjectKind::Array(_) => "Array",
                 ObjectKind::Vec(_) => "Vec",
+                ObjectKind::Map(_) => "Map",
                 ObjectKind::Range(_) => "Range",
                 ObjectKind::Sum(_) => "Sum",
                 ObjectKind::Enum(_) => "Enum",

@@ -142,6 +142,7 @@ pub enum TypedExprKind {
     Int(i64),
     Float(f64),
     Bool(bool),
+    Char(char),
     String(String),
     FmtString(Vec<TypedFmtStringPart>),
     Unit,
@@ -331,6 +332,7 @@ pub enum TypedPatternKind {
     Wildcard,
     Binding(String),
     Int(i64),
+    Char(char),
     String(String),
     Bool(bool),
     Variant {

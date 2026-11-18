@@ -9,6 +9,7 @@ impl Compiler {
             TypedExprKind::Int(n) => self.compile_literal_int(*n, dest, expr.span),
             TypedExprKind::Float(f) => self.compile_literal_float(*f, dest, expr.span),
             TypedExprKind::String(s) => self.compile_literal_string(s, dest, expr.span),
+            TypedExprKind::Char(c) => self.compile_literal_char(*c, dest, expr.span),
             TypedExprKind::FmtString(parts) => {
                 self.compile_typed_fmt_string(parts, &[], dest, expr.span)
             }
@@ -264,6 +265,7 @@ impl Compiler {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Null
             | TypedExprKind::Identifier(_) => false,

@@ -1226,6 +1226,7 @@ impl<'a> DisasmContext<'a> {
                 }
             }
             Constant::String(value) => format!("string \"{}\"", escape_string(value)),
+            Constant::Char(scalar) => format!("char {scalar}"),
             Constant::NestedFunction(index) => {
                 let index = *index as usize;
                 let name = nested_functions

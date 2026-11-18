@@ -216,12 +216,21 @@ This distinction matters for non-ASCII text.
 | `s.char_at(i)` | Character at index (empty if out of bounds) |
 | `s.byte_at(i)` | Byte at index (-1 if out of bounds) |
 | `s.substr(start, len)` | Extract substring by character position |
+| `s.chars()` | `Vec<char>` of the characters |
+| `s.bytes()` | `Vec<int>` of the UTF-8 bytes |
+| `string::from_char(c)` | One-character string from a `char` |
+| `s.push(c)` | Append a `char` to a mutable string variable |
 
 ```rust
 "hello".char_at(0)    // "h"
 "hello".char_at(10)   // "" (out of bounds)
 "hello".substr(1, 3)  // "ell"
+"héllo".chars()       // vec!['h', 'é', 'l', 'l', 'o']
+"Aé".bytes()          // vec![65, 195, 169]
 ```
+
+`s[i]` and a for-each over a string yield `char` values; `char_at` keeps
+returning a one-character string.
 
 ### Case Conversion
 
@@ -273,19 +282,29 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 
 | Method | Description |
 |--------|-------------|
-| `s.split(sep)` | Split by separator |
-| `string::join(parts, sep)` | Join parts with separator |
-| `s.lines()` | Split into lines |
+| `s.split(sep)` | `Vec<string>` of the pieces between separators; an empty `sep` splits into characters |
+| `s.lines()` | `Vec<string>` of the lines, without `\n` or `\r\n` terminators |
+| `v.join(sep)` | Join a `Vec<string>` with `sep` (a Vec method) |
+| `string::join(text, sep)` | Join the lines of a newline-separated string with `sep` |
 | `s.line_count()` | Count lines |
 
-`split` and `join` use newline-separated strings for compatibility with this API. Arrays
-and `Vec` are first-class collections; use their collection methods when you need typed
-elements or collection pipelines.
-
 ```rust
-let parts = "a,b,c".split(",")       // "a\nb\nc"
-string::join(parts, "-")              // "a-b-c"
+let parts = "a,b,,c".split(",")      // vec!["a", "b", "", "c"]
+parts.join("-")                      // "a-b--c"
+"".split(",").len()                  // 1
 ```
+
+### Comparison and building
+
+Strings compare with `<`, `<=`, `>` and `>=` lexicographically by Unicode scalar
+value. `s += x` (and `s + x` where `s` is the most recent string built on its
+buffer) appends in place in amortised O(1): the result shares the left operand's
+buffer when nothing else has extended it, so a loop that appends n times costs
+O(n) overall, and every earlier string value keeps its own contents.
+A shared buffer counts against `-ae.max-heap` once, for its whole reserved
+capacity, for as long as any string that views it is alive: a short string that
+once had a long string appended to it keeps that long buffer alive. Appending
+past the budget is a clean `out of memory` error at the append.
 
 ### Predicates
 
@@ -779,6 +798,12 @@ All `_be` variants for network byte order:
 | `reverse(buf, offset, len)` | Reverse bytes in range. |
 | `swap(buf, i, j)` | Swap bytes at indices i and j. |
 | `find(buf, start, end, byte)` | Find first occurrence of byte. Returns -1 if not found. Use -1 for end to search to buffer end. |
+| `copy_from_vec(buf, offset, v)` | Write every element of `v: Vec<int>` as one byte at `offset`, `offset + 1`, ... in one call. Returns `Result<unit, string>`: `Err` names the first element outside 0..=255, or the range past the buffer end, and then nothing is written. |
+| `copy_to_vec(buf, offset, v)` | Overwrite every element of `v: Vec<int>` with the byte at `offset`, `offset + 1`, ...; `v` keeps its length. Returns `Result<unit, string>`: `Err` when the range passes the buffer end, and then `v` is unchanged. |
+
+`copy_from_vec` and `copy_to_vec` take a `Vec<int>`, not a fixed array. They
+move a whole frame in one native call: copying 64000 elements costs well under a
+millisecond, against one native call per byte for `write_u8`.
 
 ### String Operations
 

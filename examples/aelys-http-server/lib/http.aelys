@@ -67,25 +67,11 @@ pub fn parse_headers(client: int) {
 
     return fn(name: string) -> string {
         let search = name.to_lower() + ":"
-        let mut lines = header_data.split("\n")
-
-        let mut i = 0
-        while i < 100 {
-            let line_end = lines.find("\n")
-            if line_end < 0 {
-                break
-            }
-
-            let line = lines.substr(0, line_end)
-            let lower_line = line.to_lower()
-
-            if lower_line.starts_with(search) {
+        for line in header_data.split("\n") {
+            if line.to_lower().starts_with(search) {
                 let value_start = line.find(":") + 1
                 return line.substr(value_start, line.len() - value_start).trim()
             }
-
-            lines = lines.substr(line_end + 1, lines.len() - line_end - 1)
-            i = i + 1
         }
 
         return ""

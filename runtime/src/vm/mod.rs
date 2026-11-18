@@ -27,6 +27,7 @@ mod call_data;
 mod calls;
 mod clone;
 mod closures;
+pub(crate) mod collections;
 mod comparison;
 mod dispatch;
 mod helpers;

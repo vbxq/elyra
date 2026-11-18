@@ -241,6 +241,16 @@ pub enum TypeErrorKind {
     NotIterable {
         receiver: InferType,
     },
+    InvalidMapKey {
+        key: InferType,
+    },
+    UnorderedSortElement {
+        element: InferType,
+    },
+    SharedAggregateFill {
+        method: String,
+        element: InferType,
+    },
     UnknownField {
         structure: String,
         field: String,
@@ -863,8 +873,19 @@ impl TypeError {
                 )
             }
             TypeErrorKind::InvalidCollectionMethod { method, receiver } => {
+                if let InferType::Map(_, _) = receiver {
+                    return write!(
+                        f,
+                        "{} has no method '{}'",
+                        receiver.source_spelling(),
+                        method
+                    );
+                }
                 let required = match method.as_str() {
-                    "push" | "pop" | "capacity" | "reserve" => "a vector",
+                    "push" | "pop" | "capacity" | "reserve" | "insert" | "remove"
+                    | "swap_remove" | "clear" | "extend" | "append" | "truncate" | "resize" => {
+                        "a vector"
+                    }
                     "len" | "is_empty" | "get" => "a string, array, or vector",
                     _ => "an array or vector",
                 };
@@ -892,8 +913,28 @@ impl TypeError {
                     f,
                     "cannot iterate over a value of type {}",
                     receiver.source_spelling()
-                )
+                )?;
+                if matches!(receiver, InferType::Map(_, _)) {
+                    write!(f, "; iterate over its keys() or values() instead")?;
+                }
+                Ok(())
             }
+            TypeErrorKind::InvalidMapKey { key } => write!(
+                f,
+                "{} cannot be a Map key; a key must be int, a sized integer, string, char or bool",
+                key.source_spelling()
+            ),
+            TypeErrorKind::UnorderedSortElement { element } => write!(
+                f,
+                "sort needs elements with a built-in order (an integer, float, string, char or bool), found {}; use sort_by with a comparator",
+                element.source_spelling()
+            ),
+            TypeErrorKind::SharedAggregateFill { method, element } => write!(
+                f,
+                "'{}' would store the same {} object in every slot; push a fresh value per slot instead",
+                method,
+                element.source_spelling()
+            ),
             TypeErrorKind::UnknownField { structure, field } => {
                 write!(f, "unknown field '{}' on struct {}", field, structure)
             }
@@ -1829,6 +1870,9 @@ impl TypeErrorKind {
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,
+            Self::InvalidMapKey { .. } => 470,
+            Self::UnorderedSortElement { .. } => 471,
+            Self::SharedAggregateFill { .. } => 472,
             Self::InvalidIndex { .. } => 366,
             Self::UntypedNativeTypeMismatch { .. } => 367,
             Self::RecursionLimit => 368,

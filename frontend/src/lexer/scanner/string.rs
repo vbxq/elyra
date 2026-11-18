@@ -25,6 +25,11 @@ impl Lexer {
                         '"' => '"',
                         '0' => '\0',
                         '\'' => '\'',
+                        'u' => {
+                            let scalar = self.unicode_scalar()?;
+                            current_literal.push(scalar);
+                            continue;
+                        }
                         c => {
                             return Err(AelysError::Compile(
                                 self.error(CompileErrorKind::InvalidEscape(c)),
@@ -94,6 +99,105 @@ impl Lexer {
         }
 
         Ok(())
+    }
+
+    pub(super) fn char_literal(&mut self) -> Result<()> {
+        let invalid = |lexer: &Self, reason: &str| {
+            AelysError::Compile(lexer.error(CompileErrorKind::InvalidCharLiteral {
+                reason: reason.to_string(),
+            }))
+        };
+        if self.is_at_end() || self.peek() == '\n' {
+            return Err(invalid(self, "missing closing quote"));
+        }
+        if (self.peek().is_alphabetic() || self.peek() == '_') && self.peek_next() != '\'' {
+            return self.label();
+        }
+        let value = match self.peek() {
+            '\'' => return Err(invalid(self, "a char literal holds exactly one character")),
+            '\\' => {
+                self.advance();
+                match self.peek() {
+                    'n' => self.escaped('\n'),
+                    't' => self.escaped('\t'),
+                    'r' => self.escaped('\r'),
+                    '\\' => self.escaped('\\'),
+                    '"' => self.escaped('"'),
+                    '0' => self.escaped('\0'),
+                    '\'' => self.escaped('\''),
+                    'u' => self.unicode_scalar()?,
+                    c => {
+                        return Err(AelysError::Compile(
+                            self.error(CompileErrorKind::InvalidEscape(c)),
+                        ));
+                    }
+                }
+            }
+            _ => self.advance(),
+        };
+        if self.peek() != '\'' {
+            return Err(invalid(
+                self,
+                if self.is_at_end() || self.peek() == '\n' {
+                    "missing closing quote"
+                } else {
+                    "a char literal holds exactly one character; use \"...\" for a string"
+                },
+            ));
+        }
+        self.advance();
+        self.add_token(TokenKind::Char(value));
+        Ok(())
+    }
+
+    // a quote, one character and a quote is a char; a quote and a longer name with no closing quote is a label
+    fn label(&mut self) -> Result<()> {
+        while self.peek().is_alphanumeric() || self.peek() == '_' {
+            self.advance();
+        }
+        let reason = if self.peek() == '\'' {
+            "a char literal holds exactly one character; use \"...\" for a string".to_string()
+        } else {
+            let name: String = self.chars[self.start..self.current].iter().collect();
+            format!(
+                "`{name}` is a loop label, and loop labels are not supported; a char literal is one character between single quotes"
+            )
+        };
+        Err(AelysError::Compile(
+            self.error(CompileErrorKind::InvalidCharLiteral { reason }),
+        ))
+    }
+
+    fn escaped(&mut self, value: char) -> char {
+        self.advance();
+        value
+    }
+
+    fn unicode_scalar(&mut self) -> Result<char> {
+        self.advance();
+        let invalid =
+            |lexer: &Self| {
+                AelysError::Compile(lexer.error(CompileErrorKind::InvalidCharLiteral {
+                reason: "a unicode escape is \\u{...} with 1 to 6 hex digits naming a scalar value"
+                    .to_string(),
+            }))
+            };
+        if self.peek() != '{' {
+            return Err(invalid(self));
+        }
+        self.advance();
+        let mut digits = String::new();
+        while self.peek().is_ascii_hexdigit() && digits.len() < 6 {
+            digits.push(self.advance());
+        }
+        if self.peek() != '}' || digits.is_empty() {
+            return Err(invalid(self));
+        }
+        self.advance();
+        u32::from_str_radix(&digits, 16)
+            .ok()
+            .and_then(char::from_u32)
+            .ok_or_else(|| invalid(self))
     }
 
     fn scan_format_expr(&mut self) -> Result<String> {

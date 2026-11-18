@@ -362,6 +362,10 @@ impl BinaryWriter {
                 self.write_u8(5);
                 self.write_u32(*index);
             }
+            Constant::Char(scalar) => {
+                self.write_u8(6);
+                self.write_u32(*scalar);
+            }
         }
         Ok(())
     }
@@ -547,6 +551,12 @@ impl BinaryWriter {
             TypeDescriptor::Vec(inner) => {
                 self.write_u8(9);
                 self.write_descriptor(inner)?;
+            }
+            TypeDescriptor::Char => self.write_u8(16),
+            TypeDescriptor::Map(key, value) => {
+                self.write_u8(17);
+                self.write_descriptor(key)?;
+                self.write_descriptor(value)?;
             }
             TypeDescriptor::Struct(schema_id) => {
                 self.write_u8(10);
@@ -1145,6 +1155,11 @@ impl<'a> BinaryReader<'a> {
                 Ok(Constant::String(s))
             }
             5 => Ok(Constant::NestedFunction(self.read_u32()?)),
+            6 => {
+                let scalar = self.read_u32()?;
+                char::from_u32(scalar).ok_or(BinaryError::InvalidConstantType(tag))?;
+                Ok(Constant::Char(scalar))
+            }
             _ => Err(BinaryError::InvalidConstantType(tag)),
         }
     }
@@ -1471,6 +1486,11 @@ impl<'a> BinaryReader<'a> {
                 TypeDescriptor::FixedArray(Box::new(self.read_descriptor(depth + 1)?), len)
             }
             9 => TypeDescriptor::Vec(Box::new(self.read_descriptor(depth + 1)?)),
+            16 => TypeDescriptor::Char,
+            17 => TypeDescriptor::Map(
+                Box::new(self.read_descriptor(depth + 1)?),
+                Box::new(self.read_descriptor(depth + 1)?),
+            ),
             10 => TypeDescriptor::Struct(self.read_u32()?),
             11 => TypeDescriptor::Any,
             12 => TypeDescriptor::Error,
@@ -1836,7 +1856,7 @@ fn validate_descriptor_ids(
         | TypeDescriptor::Vec(inner) => {
             validate_descriptor_ids(inner, struct_count, enum_ids, depth + 1)
         }
-        TypeDescriptor::Result(ok, err) => {
+        TypeDescriptor::Result(ok, err) | TypeDescriptor::Map(ok, err) => {
             validate_descriptor_ids(ok, struct_count, enum_ids, depth + 1)?;
             validate_descriptor_ids(err, struct_count, enum_ids, depth + 1)
         }
@@ -1877,7 +1897,7 @@ fn validate_enum_descriptor(
         | TypeDescriptor::Array(inner)
         | TypeDescriptor::FixedArray(inner, _)
         | TypeDescriptor::Vec(inner) => validate_enum_descriptor(inner, ids, depth + 1),
-        TypeDescriptor::Result(ok, err) => {
+        TypeDescriptor::Result(ok, err) | TypeDescriptor::Map(ok, err) => {
             validate_enum_descriptor(ok, ids, depth + 1)?;
             validate_enum_descriptor(err, ids, depth + 1)
         }

@@ -326,6 +326,7 @@ impl LocalConstantPropagator {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
+            | TypedPatternKind::Char(_)
             | TypedPatternKind::Bool(_) => {}
         }
     }
@@ -506,6 +507,7 @@ impl LocalConstantPropagator {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::Unit
             | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Null => {}

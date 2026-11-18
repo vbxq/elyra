@@ -117,6 +117,11 @@ fn parameter_marked_spelling(ty: &InferType) -> String {
             parameter_marked_spelling(ok),
             parameter_marked_spelling(err)
         ),
+        InferType::Map(ok, err) => format!(
+            "Map<{},{}>",
+            parameter_marked_spelling(ok),
+            parameter_marked_spelling(err)
+        ),
         InferType::Tuple(elements) => {
             let rendered: Vec<String> = elements.iter().map(parameter_marked_spelling).collect();
             format!("({})", rendered.join(","))
@@ -1739,7 +1744,7 @@ fn collect_applied_types(ty: &InferType, found: &mut Vec<InferType>) {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_applied_types(inner, found),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_applied_types(ok, found);
             collect_applied_types(err, found);
         }
@@ -1806,7 +1811,8 @@ fn bind_pattern_params(
         (InferType::FixedArray(expected, _), InferType::FixedArray(found, _)) => {
             bind_pattern_params(expected, found, out);
         }
-        (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err)) => {
+        (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err))
+        | (InferType::Map(expected_ok, expected_err), InferType::Map(found_ok, found_err)) => {
             bind_pattern_params(expected_ok, found_ok, out);
             bind_pattern_params(expected_err, found_err, out);
         }
@@ -1876,7 +1882,8 @@ fn type_matches(pattern: &InferType, actual: &InferType) -> bool {
                 ..
             },
         ) => expected_item == found_item && type_matches(expected_self, found_self),
-        (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err)) => {
+        (InferType::Result(expected_ok, expected_err), InferType::Result(found_ok, found_err))
+        | (InferType::Map(expected_ok, expected_err), InferType::Map(found_ok, found_err)) => {
             type_matches(expected_ok, found_ok) && type_matches(expected_err, found_err)
         }
         (
@@ -1965,6 +1972,10 @@ fn tag_params(ty: &InferType, prefix: &str) -> InferType {
             Box::new(tag_params(ok, prefix)),
             Box::new(tag_params(err, prefix)),
         ),
+        InferType::Map(ok, err) => InferType::Map(
+            Box::new(tag_params(ok, prefix)),
+            Box::new(tag_params(err, prefix)),
+        ),
         InferType::Tuple(elements) => {
             InferType::Tuple(elements.iter().map(|e| tag_params(e, prefix)).collect())
         }
@@ -2019,7 +2030,7 @@ fn occurs_in(
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner) => occurs_in(name, &inner, bindings),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             occurs_in(name, &ok, bindings) || occurs_in(name, &err, bindings)
         }
         InferType::Tuple(elements) => elements.iter().any(|e| occurs_in(name, e, bindings)),
@@ -2073,7 +2084,8 @@ fn unify_headers(
         (InferType::FixedArray(left, left_len), InferType::FixedArray(right, right_len)) => {
             left_len == right_len && unify_headers(left, right, bindings)
         }
-        (InferType::Result(left_ok, left_err), InferType::Result(right_ok, right_err)) => {
+        (InferType::Result(left_ok, left_err), InferType::Result(right_ok, right_err))
+        | (InferType::Map(left_ok, left_err), InferType::Map(right_ok, right_err)) => {
             unify_headers(left_ok, right_ok, bindings)
                 && unify_headers(left_err, right_err, bindings)
         }
@@ -2142,7 +2154,7 @@ fn receiver_positions(ty: &InferType, path: &mut Vec<usize>, out: &mut HashMap<S
         | InferType::Array(inner)
         | InferType::Option(inner)
         | InferType::FixedArray(inner, _) => visit(0, inner, out),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             visit(0, ok, out);
             visit(1, err, out);
         }

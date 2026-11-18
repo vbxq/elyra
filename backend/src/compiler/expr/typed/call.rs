@@ -98,6 +98,10 @@ impl Compiler {
                 return Ok(());
             }
 
+            if self.compile_container_call(object, member, *separator, args, dest, span)? {
+                return Ok(());
+            }
+
             if matches!(
                 member.as_str(),
                 "iter" | "collect" | "map" | "filter" | "fold"

@@ -85,7 +85,9 @@ fn binds_param(ty: &InferType, declared: &HashSet<String>) -> bool {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => binds_param(inner, declared),
-        InferType::Result(ok, err) => binds_param(ok, declared) || binds_param(err, declared),
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
+            binds_param(ok, declared) || binds_param(err, declared)
+        }
         InferType::Tuple(elements) => elements
             .iter()
             .any(|element| binds_param(element, declared)),

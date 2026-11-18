@@ -676,34 +676,27 @@ impl VM {
                 self.reserve_vec(vector_ref, additional)?;
             }
             OpCode::VecLoadI | OpCode::VecLoadF | OpCode::VecLoadB | OpCode::VecLoadP => {
-                enum LoadedValue {
-                    Value(Value),
-                    Character(String),
-                }
-
                 let vec_value = reg_get!(base + b);
                 let index = reg_get!(base + c).as_int().unwrap_or(-1);
                 let index_usize = usize::try_from(index).map_err(|_| {
                     self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
                 })?;
                 let vec_ref = GcRef::new(vec_value.as_ptr().unwrap_or(0));
-                let loaded = match self.heap.get(vec_ref) {
+                let value = match self.heap.get(vec_ref) {
                     Some(object) => match &object.kind {
-                        ObjectKind::Vec(vector) => {
-                            LoadedValue::Value(vector.get(index_usize).ok_or_else(|| {
-                                self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                    index,
-                                    length: i64::try_from(vector.len()).unwrap_or(i64::MAX),
-                                })
-                            })?)
-                        }
+                        ObjectKind::Vec(vector) => vector.get(index_usize).ok_or_else(|| {
+                            self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
+                                index,
+                                length: i64::try_from(vector.len()).unwrap_or(i64::MAX),
+                            })
+                        })?,
                         ObjectKind::Array(array) if inner_opcode == OpCode::VecLoadP => {
-                            LoadedValue::Value(array.get(index_usize).ok_or_else(|| {
+                            array.get(index_usize).ok_or_else(|| {
                                 self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
                                     index,
                                     length: i64::try_from(array.len()).unwrap_or(i64::MAX),
                                 })
-                            })?)
+                            })?
                         }
                         ObjectKind::String(string) if inner_opcode == OpCode::VecLoadP => {
                             let character =
@@ -714,7 +707,7 @@ impl VM {
                                             .unwrap_or(i64::MAX),
                                     })
                                 })?;
-                            LoadedValue::Character(character.to_string())
+                            Value::char(character)
                         }
                         _ => {
                             return Err(self.runtime_error(RuntimeErrorKind::TypeError {
@@ -730,13 +723,6 @@ impl VM {
                     },
                     None => {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
-                    }
-                };
-                let value = match loaded {
-                    LoadedValue::Value(value) => value,
-                    LoadedValue::Character(character) => {
-                        self.frames[current_frame_idx].ip = ip;
-                        Value::ptr(self.intern_string(&character)?.index())
                     }
                 };
                 reg_set!(base + a, value);
@@ -786,21 +772,21 @@ impl VM {
             OpCode::StringLoadChar => {
                 let string_value = reg_get!(base + b);
                 let index = reg_get!(base + c).as_int().unwrap_or(-1);
-                let index_usize = usize::try_from(index).map_err(|_| {
-                    self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
-                })?;
                 let string_ref = GcRef::new(string_value.as_ptr().unwrap_or(0));
                 let character = match self.heap.get(string_ref) {
                     Some(object) => match &object.kind {
                         ObjectKind::String(string) => {
-                            let owned = string.as_str().to_string();
-                            match owned.chars().nth(index_usize) {
-                                Some(character) => character.to_string(),
+                            let text = string.as_str();
+                            match usize::try_from(index)
+                                .ok()
+                                .and_then(|position| text.chars().nth(position))
+                            {
+                                Some(character) => character,
                                 None => {
                                     return Err(self.runtime_error(
                                         RuntimeErrorKind::IndexOutOfBounds {
                                             index,
-                                            length: i64::try_from(owned.chars().count())
+                                            length: i64::try_from(text.chars().count())
                                                 .unwrap_or(i64::MAX),
                                         },
                                     ));
@@ -819,9 +805,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
-                self.frames[current_frame_idx].ip = ip;
-                let character_ref = self.intern_string(&character)?;
-                reg_set!(base + a, Value::ptr(character_ref.index()));
+                reg_set!(base + a, Value::char(character));
             }
             OpCode::GetUpval => {
                 if b >= upvalues_len {

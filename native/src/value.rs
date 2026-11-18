@@ -77,7 +77,7 @@ pub fn value_as_bool(v: AelysValue) -> bool {
 
 pub fn value_is_null(v: AelysValue) -> bool {
     let v = v.bits();
-    (v & (QNAN | 0x0007_0000_0000_0000)) == (QNAN | TAG_NULL)
+    (v & (QNAN | 0x0007_8000_0000_0000)) == (QNAN | TAG_NULL)
 }
 pub fn value_is_unit(v: AelysValue) -> bool {
     let v = v.bits();

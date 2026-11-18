@@ -157,7 +157,8 @@ impl ConstEvalState {
 const KNOWN_TYPE_NAMES: &[&str] = &[
     "int", "i8", "i16", "i32", "i64", "int8", "int16", "int32", "int64", "u8", "u16", "u32", "u64",
     "uint8", "uint16", "uint32", "uint64", "float", "f32", "f64", "float32", "float64", "bool",
-    "string", "void", "unit", "dynamic", "array", "vec", "option", "result", "error",
+    "string", "char", "void", "unit", "dynamic", "array", "vec", "map", "option", "result",
+    "error",
 ];
 
 pub struct TypeInference {
@@ -368,7 +369,8 @@ fn dynamic_target(found: &InferType, expected: &InferType) -> Option<InferType> 
         (InferType::FixedArray(found, _), InferType::FixedArray(expected, _)) => {
             dynamic_target(found, expected)
         }
-        (InferType::Result(found_ok, found_err), InferType::Result(expected_ok, expected_err)) => {
+        (InferType::Result(found_ok, found_err), InferType::Result(expected_ok, expected_err))
+        | (InferType::Map(found_ok, found_err), InferType::Map(expected_ok, expected_err)) => {
             dynamic_target(found_ok, expected_ok)
                 .or_else(|| dynamic_target(found_err, expected_err))
         }
@@ -468,7 +470,8 @@ fn contains_concrete_dynamic(found: &InferType, expected: &InferType) -> bool {
         (InferType::FixedArray(found, _), InferType::FixedArray(expected, _)) => {
             contains_concrete_dynamic(found, expected)
         }
-        (InferType::Result(found_ok, found_err), InferType::Result(expected_ok, expected_err)) => {
+        (InferType::Result(found_ok, found_err), InferType::Result(expected_ok, expected_err))
+        | (InferType::Map(found_ok, found_err), InferType::Map(expected_ok, expected_err)) => {
             contains_concrete_dynamic(found_ok, expected_ok)
                 || contains_concrete_dynamic(found_err, expected_err)
         }

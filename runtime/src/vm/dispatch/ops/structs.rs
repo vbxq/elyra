@@ -1,6 +1,6 @@
 use super::super::state::{DispatchControl, DispatchState};
 use crate::vm::{GcRef, ObjectKind, VM, Value};
-use aelys_bytecode::object::SumTag;
+use aelys_bytecode::object::{SumTag, TypeTag};
 use aelys_bytecode::{
     EnumSchema, FunctionSchemas, IntWidth, OpCode, SchemaId, StructSchema, TypeDescriptor,
 };
@@ -430,6 +430,10 @@ impl VM {
             TypeDescriptor::String => {
                 self.is_object_kind(value, |kind| matches!(kind, ObjectKind::String(_)))
             }
+            TypeDescriptor::Char => value.is_char(),
+            TypeDescriptor::Map(_, _) => {
+                self.is_object_kind(value, |kind| matches!(kind, ObjectKind::Map(_)))
+            }
             TypeDescriptor::Option(inner) => {
                 if value.is_none() {
                     true
@@ -449,33 +453,17 @@ impl VM {
                     false
                 }
             }
-            TypeDescriptor::Array(inner) => {
-                self.collection_satisfies(value, inner, tables, depth, |kind| {
-                    matches!(kind, ObjectKind::Array(_))
-                })
-            }
-            TypeDescriptor::FixedArray(inner, length) => {
-                let Some(reference) = value.as_ptr().map(GcRef::new) else {
-                    return false;
-                };
-                let Some(object) = self.heap.get(reference) else {
-                    return false;
-                };
-                let ObjectKind::Array(array) = &object.kind else {
-                    return false;
-                };
-                array.len() == usize::try_from(*length).unwrap_or(usize::MAX)
-                    && (0..array.len()).all(|index| {
-                        array.get(index).is_some_and(|item| {
-                            self.value_satisfies_schema(item, inner, tables, depth + 1)
-                        })
-                    })
-            }
-            TypeDescriptor::Vec(inner) => {
-                self.collection_satisfies(value, inner, tables, depth, |kind| {
-                    matches!(kind, ObjectKind::Vec(_))
-                })
-            }
+            TypeDescriptor::Array(inner) => self.is_object_kind(value, |kind| {
+                matches!(kind, ObjectKind::Array(array) if tag_admits(array.type_tag(), array.len(), inner))
+            }),
+            TypeDescriptor::FixedArray(inner, length) => self.is_object_kind(value, |kind| {
+                matches!(kind, ObjectKind::Array(array)
+                    if tag_admits(array.type_tag(), array.len(), inner)
+                        && array.len() == usize::try_from(*length).unwrap_or(usize::MAX))
+            }),
+            TypeDescriptor::Vec(inner) => self.is_object_kind(value, |kind| {
+                matches!(kind, ObjectKind::Vec(vector) if tag_admits(vector.type_tag(), vector.len(), inner))
+            }),
             TypeDescriptor::Struct(schema_id) => {
                 let Ok(index) = usize::try_from(*schema_id) else {
                     return false;
@@ -539,38 +527,6 @@ impl VM {
             TypeDescriptor::Any => !value.is_null() && value.as_nested_fn_marker().is_none(),
             TypeDescriptor::Error => self.sum_payload_if(value, SumTag::ErrorMessage).is_some(),
             TypeDescriptor::Never => false,
-        }
-    }
-
-    fn collection_satisfies(
-        &self,
-        value: Value,
-        inner: &TypeDescriptor,
-        tables: &SchemaTables<'_>,
-        depth: usize,
-        kind_matches: impl Fn(&ObjectKind) -> bool,
-    ) -> bool {
-        let Some(reference) = value.as_ptr().map(GcRef::new) else {
-            return false;
-        };
-        let Some(object) = self.heap.get(reference) else {
-            return false;
-        };
-        if !kind_matches(&object.kind) {
-            return false;
-        }
-        match &object.kind {
-            ObjectKind::Array(array) => (0..array.len()).all(|index| {
-                array
-                    .get(index)
-                    .is_some_and(|item| self.value_satisfies_schema(item, inner, tables, depth + 1))
-            }),
-            ObjectKind::Vec(vector) => (0..vector.len()).all(|index| {
-                vector
-                    .get(index)
-                    .is_some_and(|item| self.value_satisfies_schema(item, inner, tables, depth + 1))
-            }),
-            _ => false,
         }
     }
 
@@ -700,4 +656,15 @@ fn integer_fits(width: IntWidth, value: i64) -> bool {
         IntWidth::U32 => u32::try_from(value).is_ok(),
         IntWidth::U64 => value >= 0,
     }
+}
+
+// elements are typed when they are stored, so a container field is checked by kind and storage tag, never element by element
+fn tag_admits(tag: TypeTag, length: usize, element: &TypeDescriptor) -> bool {
+    length == 0
+        || match tag {
+            TypeTag::Int => matches!(element, TypeDescriptor::Int(_) | TypeDescriptor::Any),
+            TypeTag::Float => matches!(element, TypeDescriptor::Float(_) | TypeDescriptor::Any),
+            TypeTag::Bool => matches!(element, TypeDescriptor::Bool | TypeDescriptor::Any),
+            TypeTag::Object => true,
+        }
 }
