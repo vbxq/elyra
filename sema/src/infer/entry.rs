@@ -75,6 +75,9 @@ impl Default for TypeInference {
             globals_without_signature: HashSet::new(),
             module_globals: std::collections::BTreeMap::new(),
             module_scoped_globals: std::collections::BTreeMap::new(),
+            module_scopes: std::collections::BTreeMap::new(),
+            ambiguous_imports: std::collections::BTreeMap::new(),
+            immutable_imports: std::collections::BTreeSet::new(),
             scope_own_globals: false,
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),
@@ -1635,6 +1638,14 @@ impl TypeInference {
 
         inf.install_imported_types(imported_types);
         inf.predeclare_constants(&stmts, false);
+        for stmt in &stmts {
+            if let StmtKind::Function(func) = &stmt.kind
+                && stmt.definition_module.is_none()
+            {
+                inf.immutable_imports.remove(&func.name);
+                inf.env.forget_mutable_import(&func.name);
+            }
+        }
         let declared_nominals = inf.declare_nominals(&stmts);
         let declared_traits = inf.declare_traits(&stmts);
         inf.collect_trait_qualified_items(&stmts);

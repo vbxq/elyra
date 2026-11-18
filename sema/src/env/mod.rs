@@ -56,6 +56,8 @@ pub struct TypeEnv {
 
     // a namespace name is legal only as the root of a path, so it never gets a type
     namespaces: HashSet<String>,
+
+    mutable_imports: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -83,6 +85,7 @@ impl TypeEnv {
             functions: HashMap::new(),
             current_function: None,
             namespaces: HashSet::new(),
+            mutable_imports: HashSet::new(),
         }
     }
 

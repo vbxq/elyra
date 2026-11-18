@@ -205,5 +205,4 @@ pub enum SymbolConflictRepair {
     Alias,
     NameOne,
     RenameLocal,
-    Qualify,
 }

@@ -17,6 +17,18 @@ pub struct ImportedTypes {
     pub struct_def_ordinals: std::collections::HashMap<String, u32>,
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
     pub module_constants: BTreeMap<String, crate::infer::constants::ConstValue>,
+    pub module_scopes: BTreeMap<String, ModuleScope>,
+    pub ambiguous_imports: BTreeMap<String, Vec<String>>,
+    pub immutable_imports: BTreeSet<String>,
+    pub mutable_imports: BTreeSet<String>,
+}
+
+// a body carried out of its module is checked and compiled against these, never the importer's
+#[derive(Debug, Clone, Default)]
+pub struct ModuleScope {
+    pub module_aliases: std::collections::HashSet<String>,
+    pub known_native_globals: std::collections::HashSet<String>,
+    pub symbol_origins: std::collections::HashMap<String, String>,
 }
 
 impl ImportedTypes {
@@ -37,6 +49,7 @@ impl ImportedTypes {
         self.struct_def_ordinals.extend(other.struct_def_ordinals);
         self.enum_def_ordinals.extend(other.enum_def_ordinals);
         self.module_constants.extend(other.module_constants);
+        self.module_scopes.extend(other.module_scopes);
     }
 
     pub fn nominal_names(&self) -> Vec<String> {
@@ -74,8 +87,42 @@ impl TypeInference {
         self.withheld_nominals = imported.withheld;
         self.module_globals = imported.module_globals;
         self.module_scoped_globals = imported.module_scoped_globals;
+        self.module_scopes = imported.module_scopes;
+        self.ambiguous_imports = imported.ambiguous_imports;
+        self.immutable_imports = imported.immutable_imports;
+        self.env.set_mutable_imports(imported.mutable_imports);
         self.private_nominals = imported.private_nominals;
         self.unexported_nominals = imported.unexported_nominals;
+    }
+
+    pub(crate) fn imported_immutable_root(&self, expr: &aelys_syntax::Expr) -> Option<String> {
+        use aelys_syntax::{ExprKind, MemberSeparator};
+        match &expr.kind {
+            ExprKind::Identifier(name) => (self.immutable_imports.contains(name)
+                && self.env.is_imported_binding(name))
+            .then(|| name.clone()),
+            ExprKind::Grouping(inner) => self.imported_immutable_root(inner),
+            ExprKind::Index { object, .. }
+            | ExprKind::Member {
+                object,
+                separator: MemberSeparator::Dot,
+                ..
+            } => self.imported_immutable_root(object),
+            ExprKind::Member {
+                object,
+                member,
+                separator: MemberSeparator::Path,
+            } => match &object.kind {
+                ExprKind::Identifier(alias) if self.env.is_namespace(alias) => {
+                    let qualified = format!("{alias}::{member}");
+                    self.immutable_imports
+                        .contains(&qualified)
+                        .then_some(qualified)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     // an importer that never named it reads it as absent, though the table holds it for the

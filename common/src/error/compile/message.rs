@@ -56,10 +56,7 @@ impl CompileErrorKind {
                  = help: drop 'default', or move the method to a generic 'impl<T> Trait for Type<T>'"
                     .to_string()
             }
-            Self::UndefinedVariable(name) => format!(
-                "undefined variable '{}'",
-                crate::naming::unscoped_global_name(name)
-            ),
+            Self::UndefinedVariable(name) => crate::naming::undefined_variable_message(name),
             Self::VariableAlreadyDefined(name) => {
                 format!("variable '{}' already defined in this scope", name)
             }
@@ -165,14 +162,6 @@ impl CompileErrorKind {
                     super::kind::SymbolConflictRepair::NameOne => format!(
                         "import '{}' from one module only; a selective import has no 'as' form",
                         symbol
-                    ),
-                    super::kind::SymbolConflictRepair::Qualify => format!(
-                        "both modules were imported whole; write the qualified name: {}",
-                        modules
-                            .iter()
-                            .map(|module| format!("{module}::{symbol}"))
-                            .collect::<Vec<_>>()
-                            .join(" or ")
                     ),
                     super::kind::SymbolConflictRepair::RenameLocal => format!(
                         "rename this file's '{}'; a selective import has no 'as' form to alias the other",

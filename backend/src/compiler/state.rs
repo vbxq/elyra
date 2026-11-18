@@ -66,4 +66,8 @@ pub struct Compiler {
     pub struct_schemas: Rc<Vec<StructSchema>>,
     pub enum_schemas: Rc<Vec<EnumSchema>>,
     pub module_sources: Rc<HashMap<String, Arc<Source>>>,
+    // a module's own function lives in its module's slot, so another module's same name never replaces it
+    pub own_slots: Rc<HashMap<String, String>>,
+    pub module_scopes:
+        Rc<std::collections::BTreeMap<String, aelys_sema::infer::imports::ModuleScope>>,
 }

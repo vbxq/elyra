@@ -98,7 +98,18 @@ impl TypeEnv {
                 return mutability.get(name).copied().unwrap_or(false);
             }
         }
-        self.capture_mutability.get(name).copied().unwrap_or(false)
+        if let Some(mutable) = self.capture_mutability.get(name) {
+            return *mutable;
+        }
+        self.mutable_imports.contains(name) && self.functions.contains_key(name)
+    }
+
+    pub fn set_mutable_imports(&mut self, names: impl IntoIterator<Item = String>) {
+        self.mutable_imports = names.into_iter().collect();
+    }
+
+    pub fn forget_mutable_import(&mut self, name: &str) {
+        self.mutable_imports.remove(name);
     }
 
     pub fn define_borrow_binding(&mut self, name: String, kind: ReferenceKind) {
@@ -301,6 +312,12 @@ impl TypeEnv {
 
     pub fn binds_value(&self, name: &str) -> bool {
         self.locals.iter().any(|scope| scope.contains_key(name)) || self.captures.contains_key(name)
+    }
+
+    pub fn is_imported_binding(&self, name: &str) -> bool {
+        !self.locals.iter().any(|scope| scope.contains_key(name))
+            && !self.captures.contains_key(name)
+            && self.functions.contains_key(name)
     }
 
     pub fn contains(&self, name: &str) -> bool {

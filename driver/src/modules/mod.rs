@@ -55,32 +55,13 @@ pub fn resolve_globals(imports: Option<&ModuleImports>, vm: &VM) -> ResolvedGlob
         resolved
             .codegen_globals
             .extend(imports.impl_body_globals.iter().cloned());
+        for (name, target) in &imports.global_renames {
+            resolved.symbol_origins.insert(name.clone(), target.clone());
+        }
     }
 
     resolved
         .codegen_globals
         .extend(resolved.known_globals.iter().cloned());
     resolved
-}
-
-pub fn ambiguous_use_error(
-    name: &str,
-    owners: &[String],
-    span: aelys_syntax::Span,
-    source: std::sync::Arc<aelys_syntax::Source>,
-) -> aelys_common::error::AelysError {
-    aelys_common::error::AelysError::Compile(aelys_common::error::CompileError::new(
-        aelys_common::error::CompileErrorKind::SymbolConflict {
-            symbol: name.to_string(),
-            modules: owners
-                .iter()
-                .map(|owner| owner.rsplit_once("::").map_or(owner.as_str(), |(m, _)| m))
-                .map(str::to_string)
-                .collect(),
-            carried_by: Vec::new(),
-            repair: aelys_common::error::SymbolConflictRepair::Qualify,
-        },
-        span,
-        source,
-    ))
 }

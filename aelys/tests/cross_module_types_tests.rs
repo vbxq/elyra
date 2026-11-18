@@ -174,7 +174,7 @@ needs Secret from hidden
 }
 
 #[test]
-fn test_generic_public_type_reports_that_it_cannot_be_exported() {
+fn test_generic_public_type_is_instantiated_by_its_importer() {
     let dir = create_module_env();
     write_file(
         &dir,
@@ -191,22 +191,16 @@ pub enum Holder<T> {
         "main.aelys",
         r#"
 needs holder
-1
+let a = Holder::One(5)
+let b = Holder::One("abc")
+let x = match a { Holder::One(v) => v }
+let y = match b { Holder::One(s) => s.len() }
+x * 10 + y
 "#,
     );
 
-    let error = run_file(&main_path).expect_err("a generic public type must not be silently lost");
-    let message = error.to_string();
-    assert!(
-        message.contains("cannot be exported"),
-        "unexpected diagnostic: {}",
-        message
-    );
-    assert!(
-        message.contains("Holder"),
-        "unexpected diagnostic: {}",
-        message
-    );
+    let value = run_file(&main_path).expect("a generic public type crosses the boundary");
+    assert_eq!(value.as_int(), Some(53));
 }
 
 const CANDIDATE_BASE_MODULE: &str = r#"
@@ -648,7 +642,7 @@ fn an_imported_impl_body_writes_the_mutable_global_of_its_own_module() {
 }
 
 #[test]
-fn a_generic_target_type_cannot_cross_a_module_boundary() {
+fn a_generic_target_type_crosses_a_module_boundary_with_its_impls() {
     let dir = create_module_env();
     write_file(
         &dir,
@@ -658,26 +652,15 @@ fn a_generic_target_type_cannot_cross_a_module_boundary() {
     let main_path = write_file(
         &dir,
         "main.aelys",
-        "needs Wrap, Source from wraps\nimpl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\nfn main() -> int {\n    let w = Wrap { v: 7 }\n    return Source::next(w)\n}\nmain()\n",
+        "needs Wrap, Source from wraps\nimpl Source for Wrap<int> {\n    fn next(self) -> int {\n        return 1\n    }\n}\nfn main() -> int {\n    let w = Wrap { v: 7 }\n    let b = Wrap { v: true }\n    return w.next() * 10 + b.next()\n}\nmain()\n",
     );
-    let error = run_file(&main_path).expect_err("a generic export must be refused");
-    let message = error.to_string();
-    assert!(
-        message.contains("E0407") && message.contains("Wrap"),
-        "the export boundary, not the symbol guard, closes this shape, and it names the \
-         declaration it refuses: {message}"
+    assert_eq!(
+        run_file(&main_path)
+            .expect("a generic export is instantiated by its importer")
+            .as_int(),
+        Some(12),
+        "the importer's impl answers for Wrap<int> and the module's for Wrap<bool>"
     );
-    assert!(
-        message.contains("monomorphization"),
-        "the refusal states why a generic declaration cannot cross: {message}"
-    );
-    for other in ["E0355", "E0334", "E0340"] {
-        assert!(
-            !message.contains(other),
-            "the boundary refuses the export before any symbol or coherence guard sees it, \
-             so {other} must not appear: {message}"
-        );
-    }
 
     // the same two files with the target type made concrete cross and run, so the refusal
     let concrete = create_module_env();

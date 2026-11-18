@@ -518,6 +518,9 @@ fn rewrite_nominal_stmt(
                     param.ty = replace_nominal_type(&param.ty, replacements);
                 }
                 method.return_type = replace_nominal_type(&method.return_type, replacements);
+                for (_, ty) in &mut method.captures {
+                    *ty = replace_nominal_type(ty, replacements);
+                }
                 for stmt in &mut method.body {
                     rewrite_nominal_stmt(stmt, replacements, type_table);
                 }
@@ -1195,6 +1198,17 @@ impl TypeInference {
                 _ => None,
             })
             .collect::<HashMap<_, _>>();
+        let generic_modules = stmts
+            .iter()
+            .filter_map(|stmt| match (&stmt.kind, &stmt.definition_module) {
+                (TypedStmtKind::Function(function), Some(module))
+                    if !function.type_params.is_empty() =>
+                {
+                    Some((function.name.clone(), module.clone()))
+                }
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
 
         let mut queue = VecDeque::new();
         let mut queued = HashSet::new();
@@ -1252,10 +1266,10 @@ impl TypeInference {
             let Some(function) = instance else {
                 continue;
             };
-            specialized.push(TypedStmt::new(
-                TypedStmtKind::Function(function),
-                template.span,
-            ));
+            let mut instance_stmt =
+                TypedStmt::new(TypedStmtKind::Function(function), template.span);
+            instance_stmt.definition_module = generic_modules.get(&frame.key.name).cloned();
+            specialized.push(instance_stmt);
             if specialized.len() > MAX_INSTANCES {
                 errors.push(TypeError {
                     kind: TypeErrorKind::MonomorphizationLimit {
@@ -1290,10 +1304,15 @@ impl TypeInference {
 
     pub(super) fn resolve_deferred_members(&mut self, stmts: &mut [TypedStmt]) {
         let type_table = &self.type_table;
-        let hidden = |name: &str| self.refused_private_nominal(name).is_some();
         let current_module = self.current_module.clone();
         let mut errors = Vec::new();
         for stmt in stmts.iter_mut() {
+            // a carried body reads its own module's nominals, which the importer may never name
+            let carried = stmt
+                .definition_module
+                .as_ref()
+                .is_some_and(|module| *module != self.root_module);
+            let hidden = |name: &str| !carried && self.refused_private_nominal(name).is_some();
             visit_exprs_stmt(stmt, &mut |expr| {
                 resolve_deferred_field_assign(expr, type_table, &current_module, &mut errors);
                 resolve_deferred_expr(expr, type_table, &hidden, &mut errors);

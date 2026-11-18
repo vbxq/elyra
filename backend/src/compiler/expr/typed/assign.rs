@@ -102,8 +102,15 @@ impl Compiler {
                 .into());
             }
             // For assignments to user-defined globals, use raw index without translation
-            let idx = self.get_or_create_global_index_raw(name);
-            self.accessed_globals.insert(name.to_string());
+            let resolved = self.resolve_global_name(name);
+            // an imported variable is read from its module's slot, so it is written there too
+            let target = if aelys_sema::is_module_scoped_global(resolved) {
+                resolved.to_string()
+            } else {
+                name.to_string()
+            };
+            let idx = self.get_or_create_global_index_raw(&target);
+            self.accessed_globals.insert(target);
             self.emit_set_global_index(dest, idx, span);
         }
 

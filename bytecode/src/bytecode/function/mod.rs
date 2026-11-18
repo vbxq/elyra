@@ -30,6 +30,8 @@ pub struct Function {
     pub struct_schemas: Vec<StructSchema>,
     pub enum_schemas: Vec<EnumSchema>,
     pub schema_ids: Vec<SchemaId>,
+    pub enum_ids: Vec<u16>,
+    pub source: Option<Arc<aelys_syntax::Source>>,
     pub jit_unsupported_struct: bool,
 }
 
@@ -52,6 +54,8 @@ impl Function {
             struct_schemas: Vec::new(),
             enum_schemas: Vec::new(),
             schema_ids: Vec::new(),
+            enum_ids: Vec::new(),
+            source: None,
             jit_unsupported_struct: false,
         }
     }

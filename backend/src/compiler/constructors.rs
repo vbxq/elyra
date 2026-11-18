@@ -8,7 +8,7 @@ use std::sync::Arc;
 impl Compiler {
     pub fn new(name: Option<String>, source: Arc<Source>) -> Self {
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -35,6 +35,8 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -57,7 +59,7 @@ impl Compiler {
         all_enclosing_locals.extend(parent_all_enclosing_locals);
 
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -84,6 +86,8 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -96,7 +100,7 @@ impl Compiler {
         symbol_origins: HashMap<String, String>,
     ) -> Self {
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -123,6 +127,8 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
     }
 
@@ -136,7 +142,7 @@ impl Compiler {
         globals: HashMap<String, bool>,
     ) -> Self {
         Self {
-            current: Function::new(name, 0),
+            current: sourced_function(name, &source),
             source,
             scopes: Vec::new(),
             locals: Vec::new(),
@@ -163,11 +169,32 @@ impl Compiler {
             struct_schemas: Rc::new(Vec::new()),
             enum_schemas: Rc::new(Vec::new()),
             module_sources: Rc::new(HashMap::new()),
+            module_scopes: Rc::default(),
+            own_slots: Rc::default(),
         }
+    }
+
+    pub fn with_own_slots(mut self, slots: HashMap<String, String>) -> Self {
+        self.own_slots = Rc::new(slots);
+        self
     }
 
     pub fn with_module_sources(mut self, sources: HashMap<String, Arc<Source>>) -> Self {
         self.module_sources = Rc::new(sources);
         self
     }
+
+    pub fn with_module_scopes(
+        mut self,
+        scopes: std::collections::BTreeMap<String, aelys_sema::infer::imports::ModuleScope>,
+    ) -> Self {
+        self.module_scopes = Rc::new(scopes);
+        self
+    }
+}
+
+fn sourced_function(name: Option<String>, source: &Arc<Source>) -> Function {
+    let mut function = Function::new(name, 0);
+    function.source = Some(Arc::clone(source));
+    function
 }

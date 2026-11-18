@@ -8,6 +8,7 @@ use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
 use aelys_syntax::Source;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 impl Compiler {
@@ -38,7 +39,10 @@ impl Compiler {
                     .collect::<Option<Vec<_>>>()?;
                 Some(StructSchema::with_identity(
                     schema_id,
-                    DefId::from_display_name(&format!("{module_id}::{origin}"), def_ordinal),
+                    DefId::from_display_name(
+                        &format!("{module_id}::{}", unrenamed(origin)),
+                        def_ordinal,
+                    ),
                     type_args,
                     def.fields
                         .iter()
@@ -62,12 +66,21 @@ impl Compiler {
             .map(|def| {
                 let module_id = def.owner.to_string();
                 let schema_id = program.type_table.enum_schema_index(&def.name)?;
-                let name = format!("{module_id}::{}", def.name);
                 let origin = program
                     .type_table
                     .nominal_instance_origin(&def.name)
                     .unwrap_or(&def.name);
-                let def_id_name = format!("{module_id}::{origin}");
+                let def_id_name = format!("{module_id}::{}", unrenamed(origin));
+                let name = match program.type_table.nominal_instance_args(&def.name) {
+                    Some(args) => unrenamed_text(&format!(
+                        "{def_id_name}<{}>",
+                        args.iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                    None => def_id_name.clone(),
+                };
                 let def_ordinal = program
                     .type_table
                     .enum_definition_ordinal(origin)
@@ -180,9 +193,7 @@ impl Compiler {
             for stmt in &ordered[..last_idx] {
                 let restore = self.enter_definition_module(stmt);
                 let compiled = self.compile_typed_stmt(stmt);
-                if let Some(source) = restore {
-                    self.source = source;
-                }
+                self.leave_definition_module(restore);
                 compiled?;
             }
 
@@ -223,9 +234,7 @@ impl Compiler {
                     self.emit_return0(last_stmt.span);
                 }
             }
-            if let Some(source) = restore_last {
-                self.source = source;
-            }
+            self.leave_definition_module(restore_last);
         }
 
         self.current.num_registers = self.next_register;
@@ -270,7 +279,7 @@ impl Compiler {
                     let Some(slot) = names.get_mut(index) else {
                         return Err(global_layout_error(&self.source));
                     };
-                    *slot = name.clone();
+                    *slot = self.own_slots.get(name).unwrap_or(name).clone();
                 }
             }
             Ok(GlobalLayout::new(names))
@@ -455,12 +464,76 @@ fn struct_schema_id(name: &str, type_table: &aelys_sema::TypeTable) -> Option<u3
         .map(u32::from)
 }
 
-impl Compiler {
-    fn enter_definition_module(&mut self, stmt: &aelys_sema::TypedStmt) -> Option<Arc<Source>> {
-        let module = stmt.definition_module.as_ref()?;
-        let source = self.module_sources.get(module.as_str())?.clone();
-        Some(std::mem::replace(&mut self.source, source))
+// a carried private generic is renamed for its importer only, so identity reads the declared name
+fn unrenamed(name: &str) -> &str {
+    name.split('@').next().unwrap_or(name)
+}
+
+fn unrenamed_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skipping = false;
+    for ch in text.chars() {
+        if ch == '@' {
+            skipping = true;
+            continue;
+        }
+        if skipping && (ch.is_alphanumeric() || ch == '_' || ch == '.') {
+            continue;
+        }
+        skipping = false;
+        out.push(ch);
     }
+    out
+}
+
+impl Compiler {
+    fn enter_definition_module(&mut self, stmt: &aelys_sema::TypedStmt) -> DefinitionRestore {
+        let Some(module) = stmt.definition_module.as_ref() else {
+            return DefinitionRestore::default();
+        };
+        let source = self
+            .module_sources
+            .get(module.as_str())
+            .cloned()
+            .map(|source| std::mem::replace(&mut self.source, source));
+        let scope = self
+            .module_scopes
+            .get(module.as_str())
+            .cloned()
+            .map(|scope| {
+                let mut native_globals = self.known_native_globals.as_ref().clone();
+                native_globals.extend(scope.known_native_globals);
+                (
+                    std::mem::replace(&mut self.module_aliases, Rc::new(scope.module_aliases)),
+                    std::mem::replace(&mut self.symbol_origins, Rc::new(scope.symbol_origins)),
+                    std::mem::replace(&mut self.known_native_globals, Rc::new(native_globals)),
+                )
+            });
+        DefinitionRestore { source, scope }
+    }
+
+    fn leave_definition_module(&mut self, restore: DefinitionRestore) {
+        if let Some(source) = restore.source {
+            self.source = source;
+        }
+        if let Some((module_aliases, symbol_origins, known_native_globals)) = restore.scope {
+            self.module_aliases = module_aliases;
+            self.symbol_origins = symbol_origins;
+            self.known_native_globals = known_native_globals;
+        }
+    }
+}
+
+type ScopeRestore = (
+    Rc<std::collections::HashSet<String>>,
+    Rc<HashMap<String, String>>,
+    Rc<std::collections::HashSet<String>>,
+);
+
+#[derive(Default)]
+struct DefinitionRestore {
+    source: Option<Arc<Source>>,
+    scope: Option<ScopeRestore>,
 }
 
 #[cfg(test)]

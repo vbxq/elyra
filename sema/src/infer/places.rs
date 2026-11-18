@@ -25,10 +25,33 @@ pub(crate) fn place_root(expr: &Expr) -> Option<&str> {
     }
 }
 
+fn is_path_place(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Grouping(inner) => is_path_place(inner),
+        ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Dot,
+            ..
+        }
+        | ExprKind::Index { object, .. } => is_path_place(object),
+        ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Path,
+            ..
+        } => matches!(object.kind, ExprKind::Identifier(_)),
+        _ => false,
+    }
+}
+
 pub(crate) fn render_place(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Identifier(name) => name.clone(),
         ExprKind::Grouping(inner) => render_place(inner),
+        ExprKind::Member {
+            object,
+            member,
+            separator: aelys_syntax::MemberSeparator::Path,
+        } => format!("{}::{member}", render_place(object)),
         ExprKind::Member { object, member, .. } => format!("{}.{member}", render_place(object)),
         ExprKind::Index { object, index } => {
             let index = match &index.kind {
@@ -73,7 +96,7 @@ fn source_places<'a>(expr: &'a Expr, places: &mut Vec<&'a Expr>) {
                 }
             }
         }
-        _ if place_root(expr).is_some() => places.push(expr),
+        _ if place_root(expr).is_some() || is_path_place(expr) => places.push(expr),
         _ => {}
     }
 }
@@ -130,6 +153,15 @@ impl TypeInference {
         source_places(source, &mut places);
         for place in places {
             let Some(written) = place_root(place) else {
+                if let Some(root) = self.imported_immutable_root(place) {
+                    self.alias_residuals.push(AliasResidual {
+                        ty: ty.clone(),
+                        span: place.span,
+                        place: render_place(place),
+                        root,
+                        site: site.clone(),
+                    });
+                }
                 continue;
             };
             let (root, root_mutable) = self.alias_root(written);

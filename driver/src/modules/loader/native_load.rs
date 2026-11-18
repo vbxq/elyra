@@ -174,7 +174,7 @@ impl ModuleLoader {
 
         vm.update_global_mutability(mutability);
 
-        self.register_exports(needs, &exports, vm)?;
+        self.register_exports(needs, module_path_str, &exports, vm)?;
 
         let module_name = needs
             .path

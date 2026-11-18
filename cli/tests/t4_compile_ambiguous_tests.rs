@@ -15,7 +15,7 @@ fn compile_error(case: &str, files: &[(&str, &str)], main: &str) -> String {
 }
 
 #[test]
-fn compile_reports_e0410_for_a_bare_name_two_whole_modules_export() {
+fn compile_reports_e0445_for_a_bare_name_two_whole_modules_export() {
     for (case, main, name, owners) in [
         (
             "top",
@@ -43,21 +43,22 @@ fn compile_reports_e0410_for_a_bare_name_two_whole_modules_export() {
         ),
     ] {
         let error = compile_error(case, &[], main);
-        assert!(error.contains("E0410"), "{case}: {error}");
+        assert!(error.contains("E0445"), "{case}: {error}");
         assert!(!error.contains("E0379"), "{case}: {error}");
         assert!(
             error.contains(&format!("symbol '{name}' is exported by multiple modules")),
             "{case}: {error}"
         );
         assert!(
-            error.contains(&format!("{}::{name} or {}::{name}", owners[0], owners[1])),
+            error.contains(&format!("'{}::{name}'", owners[0]))
+                && error.contains(&format!("'{}::{name}'", owners[1])),
             "{case}: {error}"
         );
     }
 }
 
 #[test]
-fn compile_reports_e0410_for_a_bare_name_three_user_modules_export() {
+fn compile_reports_e0445_for_a_bare_name_three_user_modules_export() {
     let modules = [
         ("ma.aelys", "pub fn val() -> int { return 1 }\n"),
         ("mb.aelys", "pub fn val() -> int { return 2 }\n"),
@@ -68,6 +69,9 @@ fn compile_reports_e0410_for_a_bare_name_three_user_modules_export() {
         &modules,
         "needs ma\nneeds mb\nneeds mc\nlet v = val()\n",
     );
-    assert!(error.contains("E0410"), "{error}");
-    assert!(error.contains("ma::val or mb::val or mc::val"), "{error}");
+    assert!(error.contains("E0445"), "{error}");
+    assert!(
+        error.contains("'ma::val' or 'mb::val' or 'mc::val'"),
+        "{error}"
+    );
 }

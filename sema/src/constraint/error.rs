@@ -151,6 +151,14 @@ pub enum TypeErrorKind {
     UndefinedFunction {
         name: String,
     },
+    AmbiguousImport {
+        name: String,
+        modules: Vec<String>,
+    },
+    AssignToImmutableImport {
+        name: String,
+        function: bool,
+    },
     RecursionLimit,
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -691,6 +699,31 @@ impl TypeError {
                     f,
                     "undefined variable: {}",
                     crate::unscoped_global_name(name)
+                )
+            }
+            TypeErrorKind::AssignToImmutableImport { name, function } => write!(
+                f,
+                "cannot assign to '{}': it is {} of the module that declares it",
+                name,
+                if *function {
+                    "a function"
+                } else {
+                    "an immutable variable"
+                }
+            ),
+            TypeErrorKind::AmbiguousImport { name, modules } => {
+                let qualified = modules
+                    .iter()
+                    .map(|module| format!("'{module}::{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                write!(
+                    f,
+                    "symbol '{}' is exported by multiple modules: {}\n   = hint: qualify it as {}, or import it by name with a 'needs {} from ...' line",
+                    name,
+                    modules.join(", "),
+                    qualified,
+                    name
                 )
             }
             TypeErrorKind::UndefinedFunction { name } => {
@@ -1857,6 +1890,8 @@ impl TypeErrorKind {
             Self::NotCallable { .. } => 360,
             Self::InfiniteType { .. } => 361,
             Self::UndefinedFunction { .. } => 362,
+            Self::AmbiguousImport { .. } => 445,
+            Self::AssignToImmutableImport { .. } => 446,
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,

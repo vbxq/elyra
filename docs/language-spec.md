@@ -810,7 +810,19 @@ With an alias (`needs std::math as m`), only the aliased form works: `m::sqrt()`
 
 After `needs sqrt from std::math`, you call `sqrt()` directly without the module prefix.
 
-Two or more whole-module imports may export the same name, as `std::fs` and `std::bytes` both export `size` and `copy`. The qualified forms `fs::size` and `bytes::size` both work; only a bare use of `size` is rejected, at the use, with E0410 `symbol 'size' is exported by multiple modules: fs, bytes` and the hint `write the qualified name: fs::size or bytes::size`. A declaration of the importing file with that name shadows both imports.
+A whole-module import without an alias also binds the module's exports by their
+bare names. Two such imports may export the same name: `needs std::fs` next to
+`needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
+both fine. Only an unqualified use of the shared name is refused, at the use, with
+E0445 `symbol 'size' is exported by multiple modules: bytes, fs`; assigning to
+the bare name is the same E0445. A name imported
+by name with `needs size from std::bytes` wins over the whole-module imports, and
+two `needs size from ...` lines naming different modules are E0410 at the second
+line, whose hint is to import the name from one module only.
+
+Aliases and bare names belong to the file that writes them. `needs util as u` in
+one module and `needs other as u` in another give each module its own `u`, and a
+name a file imports never changes what another module's code reads.
 
 A declaration of your own always takes precedence over an auto-registered name.
 A program that defines `fn sqrt(t: int) -> int`, `fn min(...)`, `fn find(...)`
@@ -827,7 +839,7 @@ precedence over a built-in string or collection method of the same name:
 
 ### Standard Library Modules
 
-The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement:
+The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement, in the entry file and in every module it imports alike:
 
 - `std::io` - console I/O
 - `std::math` - math functions and constants
@@ -862,14 +874,67 @@ Top-level definitions in a file become the module's exports. A `pub const`
 is exported with its value, so an importer can use it as a repeat count or an
 array length (`[0; cfg::W]`); see [Constants](#constants).
 
+A dotted path is resolved from the file that writes the `needs` line: `needs
+lib::util` in `game/mobj.aelys` looks for `game/lib/util.aelys` (then
+`game/lib/util/mod.aelys` and the native forms) first, and only then for
+`lib/util.aelys` under the project root, the directory of the entry file. The
+first file found is the module. Resolution depends only on the importing file and
+the path, never on the order of `needs` lines nor on what another file imported
+first.
+
+A module is its file. One file reached by two spellings, `needs game::lib::util`
+from the entry file and `needs lib::util` from `game/mobj.aelys`, is one module:
+its top-level code runs once and its variables exist once. Two different files
+that the same dotted path names from two different importers are two modules.
+
 A top-level `let` is a variable of the module that declares it, and it has one
 slot per module. Every reference inside that module resolves to that slot: the
 module's own top-level code, its free functions, and the bodies of its impls,
 whether such a body runs in the module or in a file that imported it. Two modules
 that each declare `v` hold two variables, and a file that imports one of them and
-also declares its own `v` holds a third. An importer's binding of an imported
-`pub let mut` holds the value the module had when it was imported; assigning to
-that binding moves the importer's binding and not the module's variable.
+also declares its own `v` holds a third, which shadows the import. An imported
+variable, read bare or as `module::v`, reads the declaring module's slot, so it
+always shows the module's current value. Assigning to a bare imported `pub let
+mut` writes the module's variable; assigning to an imported `pub let` is E0446
+`cannot assign to 'v': it is an immutable variable of the module that declares
+it`. Assigning to an imported function name is E0446 too (`it is a function of
+the module that declares it`), unless the file declares its own function of that
+name, which shadows the import and keeps the local E0203. `module::v = ...` is
+not an assignment target.
+
+An imported variable's mutability carries to the places rooted at it. Through a
+bare imported `pub let mut`, field, index and `push` writes (`ms.x = 3`,
+`mh.p.x += 1`, `mv[0] = 10`, `mv.push(4)`) mutate the module's value, and the
+module sees them. Through an imported `pub let` they are refused (E0330, E0318).
+A struct, array or `Vec` is shared by reference, so binding one reached from an
+imported `pub let` mutably, bare or qualified (`let mut w = v`,
+`let mut w = cnt::v`, `let mut z = cnt::h.p`), is E0323. A
+qualified place (`cnt::ms.x = 3`) is not writable; write through the bare import.
+
+A module's functions, private and public, live in that module's own slots. A
+private helper `helper` in one module and a same-named function of another module
+or of the entry file are distinct functions: each module's code calls its own.
+
+A generic declaration crosses the boundary as a template that every importer
+specializes with its own types. A `pub fn` with type parameters is imported like
+any other function, bare, qualified (`container::largest(v, key)`, `c::largest`)
+or by name (`needs largest from container`), and each call instantiates it in the
+importing file. A `pub struct` or `pub enum` with type parameters is imported the
+same way, with its impls, and `Stack<int>` built in the module and `Stack<int>`
+built in the importer are one type. The carried body keeps its module's scope:
+it reads the module's private functions, variables and private generic
+declarations, calls the module's other generic functions, and a bound such as
+`T: Ranked` or `T: Display` is satisfied by the importer's impls. A bare generic
+name exported by two whole-module imports is E0445 at the use, two selective
+imports of it are E0410, and a file's own function or local of that name shadows
+the import. A private generic function stays private: importing it by name is
+E0405.
+
+A struct or enum value keeps its type across modules at run time: a value built
+in one module is read, matched and passed as the same type in every module that
+uses it, nested in another struct, in a `Vec`, an array, an `Option` or an enum
+payload. A runtime error raised inside a module's function reports that module's
+file and line.
 
 ### Visibility
 
@@ -884,6 +949,9 @@ fn internal_function() {
     // ...
 }
 ```
+
+A method is reachable wherever its type is, so `pub` written on an item of an
+`impl` block (`pub fn new(...)`) is accepted and changes nothing.
 
 ### Cross-module types
 
@@ -916,6 +984,12 @@ name stays out of scope, and using one is E0378 `'Kind' is exported by module
 `needs` line that would fix it. The whole-module form `needs shapes` is
 unchanged and still brings every public type into scope.
 
+A public type that an imported function returns or takes is reachable without
+being named: `needs spawn from game::mobj` lets `spawn(5).hp` read a `pub` field
+of the returned `Mobj` and call `Mobj`'s inherent methods. Writing the name
+`Mobj` itself, in a literal or an annotation, still needs `needs Mobj from
+game::mobj` (E0378).
+
 An impl written in the defining module travels with its type, but only when
 every end of the impl is itself in scope. An inherent `impl Point` arrives with
 `Point`. A trait impl `impl Scorable for Point` arrives only when the importer
@@ -944,7 +1018,9 @@ Importing a type that is not `pub` is E0403 `'Point' is not public in module
 An impl body the importer inlines is still checked and compiled in its defining
 module's terms. Everything that body reads travels with it: the types, traits and
 free functions the defining module imported, the names it reaches through a module
-path or through a module alias, the module's own globals, public or not, and the
+path or through a module alias (a standard library alias such as `needs std::bytes
+as by` included), the auto-registered modules, the module's own globals, public or
+not, and the types its free functions return, and the
 module's **own private `struct`, `enum` and `trait` declarations together with the
 impls over them**, on the same gate as its private globals. The
 importer never has to write those `needs` lines, and never sees the names they
@@ -962,10 +1038,10 @@ importing file: each resolves in its own module's terms. E0410 still applies
 where the name participates in the import contract — an associated binding, a
 signature, a nominal the importing file names in its own declarations where the
 carried body can read it, or a trait together with its own declaration. A
-**generic** private declaration that reaches the import contract has nothing
-left to send, monomorphization having erased it inside its own module, so a body
-that names one there is E0407, the refusal its public twin already gets; a
-body-only generic travels as a template and monomorphizes in the importer.
+**generic** private declaration travels as a template and monomorphizes in the
+importer, whether the carried body names it or reaches it through the signature
+of a private helper (`fn wrap(n: int) -> Cell<int>`). One that reaches the import
+contract itself (an impl header, a trait) is E0407.
 
 A file binds each nominal name once. Two declarations of one name reaching one
 file is E0410 `symbol 'K' is exported by multiple modules: cored, corec`, reported
@@ -2771,7 +2847,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0320 | UnconsumedCollectionIterator | a bare `iter()` is not a value |
 | E0321 | ConstantIndexOutOfBounds | a constant index leaves the collection |
 | E0322 | CollectionCollectRequiresPipeline | `collect` needs a pipeline |
-| E0323 | MutableCollectionAlias | a mutable alias (`let mut`, an assignment to a mutable binding, a `mut` parameter) of an aggregate reachable from an immutable binding |
+| E0323 | MutableCollectionAlias | a mutable alias (`let mut`, an assignment to a mutable binding, a `mut` parameter) of an aggregate reachable from an immutable binding, an imported `pub let` included |
 | E0324 | NonExhaustiveStruct | a struct match needs `_` or an irrefutable field pattern |
 | E0325 | GenericStructDeferred | this generic struct form is not delivered |
 | E0326 | DuplicateNominal | two declarations share a name |
@@ -2841,7 +2917,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0404 | StdlibNotAvailable | the stdlib module is not available here |
 | E0405 | SymbolNotFound | no such symbol in that module |
 | E0406 | InvalidNativeModule | the native module is malformed |
-| E0407 | TypeNotExportable | a nominal value cannot cross a module boundary |
+| E0407 | TypeNotExportable | a private nominal reaches an exported signature or an impl header |
 | E0408 | NativeChecksumMismatch | the native module checksum does not match |
 | E0409 | NativeVersionMismatch | the native module version does not match |
 | E0410 | SymbolConflict | two declarations of one name reach one file |
@@ -2876,5 +2952,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0442 | UnorderedSpecialization | two impls of one trait for one type are equally specific |
 | E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
+| E0445 | AmbiguousImport | an unqualified use of a name two whole-module imports both bind |
+| E0446 | AssignToImmutableImport | an assignment to an imported `pub let` or imported function |
 | E0470 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
 | E0471 | UnorderedSortElement | `sort` on elements with no built-in order |

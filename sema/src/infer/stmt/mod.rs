@@ -19,10 +19,26 @@ impl TypeInference {
         let mut definition_scope = false;
         let mut definition_mark = None;
         let mut definition_qualified: Vec<String> = Vec::new();
+        let mut importer_scope = None;
         if let Some(definition_module) = &stmt.definition_module {
             self.current_module = definition_module.clone();
             definition_scope = self.push_definition_module_globals(definition_module);
             definition_qualified = self.push_definition_module_imports(definition_module);
+            if let Some(scope) = self.module_scopes.get(definition_module.as_str()).cloned() {
+                if !definition_scope {
+                    self.env.push_scope();
+                    definition_scope = true;
+                }
+                for alias in &scope.module_aliases {
+                    self.env.define_namespace(alias.clone());
+                }
+                let mut native_globals = self.known_native_globals.clone();
+                native_globals.extend(scope.known_native_globals.iter().cloned());
+                importer_scope = Some((
+                    std::mem::replace(&mut self.module_aliases, scope.module_aliases),
+                    std::mem::replace(&mut self.known_native_globals, native_globals),
+                ));
+            }
             definition_mark = Some((
                 self.errors.len(),
                 self.constraints.len(),
@@ -148,6 +164,10 @@ impl TypeInference {
         };
         if definition_scope {
             self.env.pop_scope();
+        }
+        if let Some((module_aliases, known_native_globals)) = importer_scope {
+            self.module_aliases = module_aliases;
+            self.known_native_globals = known_native_globals;
         }
         for name in definition_qualified {
             self.known_native_signatures.remove(&name);
