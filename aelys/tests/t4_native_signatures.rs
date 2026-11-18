@@ -1,6 +1,6 @@
 use aelys_bytecode::object::{AelysVec, SumTag};
 use aelys_runtime::Value;
-use aelys_runtime::stdlib::{ByteBuffer, Resource, register_std_module};
+use aelys_runtime::stdlib::{Resource, register_std_module};
 use aelys_runtime::vm::{GcRef, ObjectKind, VM};
 use aelys_sema::InferType;
 use aelys_sema::native::function_signature;
@@ -8,8 +8,8 @@ use aelys_syntax::Source;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-const MODULES: [&str; 9] = [
-    "io", "convert", "sys", "time", "fs", "net", "math", "string", "bytes",
+const MODULES: [&str; 8] = [
+    "io", "convert", "sys", "time", "fs", "net", "math", "string",
 ];
 
 // blocking on stdin, ending the process, or mutating process-wide state shared with other tests
@@ -73,18 +73,14 @@ fn arguments(vm: &mut VM, fixture: &Fixture, path: &str, params: &[InferType]) -
     let mut out = Vec::new();
     for (index, param) in params.iter().enumerate() {
         let value = match (module, name, index, param) {
-            ("bytes", "alloc", 0, _) => Value::int(8),
-            ("bytes", _, 0, InferType::I64) | ("bytes", "equals", 1, InferType::I64) => {
-                handle(vm.store_resource(Resource::ByteBuffer(ByteBuffer { data: vec![0; 16] })))
-            }
             ("time", "elapsed" | "elapsed_ms" | "elapsed_us" | "reset", 0, _) => {
                 handle(vm.store_resource(Resource::Timer(std::time::Instant::now())))
             }
             ("time", "sleep" | "sleep_us", 0, _) => Value::int(0),
-            ("fs", "close" | "read" | "read_all" | "read_line" | "read_bytes", 0, _) => {
+            ("fs", "close" | "read" | "read_all" | "read_line" | "read_chunk", 0, _) => {
                 open_file(vm, &file, "r")
             }
-            ("fs", "write" | "write_bytes" | "write_line", 0, _) => {
+            ("fs", "write" | "write_chunk" | "write_line", 0, _) => {
                 open_file(vm, &fixture.path("out.txt"), "w")
             }
             ("fs", "mkdir" | "mkdir_all" | "rmdir", 0, _) => {
@@ -98,7 +94,9 @@ fn arguments(vm: &mut VM, fixture: &Fixture, path: &str, params: &[InferType]) -
                 string(vm, &victim)
             }
             ("fs", "readdir", 0, _) => string(vm, &fixture.dir.path().to_string_lossy()),
-            ("fs", "write_text" | "append_text", 0, _) => string(vm, &fixture.path("text.txt")),
+            ("fs", "write_text" | "append_text" | "write_bytes", 0, _) => {
+                string(vm, &fixture.path("text.txt"))
+            }
             ("fs", _, 0, InferType::String) => string(vm, &file),
             ("net", "listen" | "udp_bind", 0, _) => string(vm, "127.0.0.1"),
             ("net", "listen" | "udp_bind", 1, _) => Value::int(0),
@@ -120,13 +118,14 @@ fn arguments(vm: &mut VM, fixture: &Fixture, path: &str, params: &[InferType]) -
             ("convert", "parse_int_radix" | "to_radix", 1, _) => Value::int(16),
             ("time", "format", 0, _) => string(vm, "%Y"),
             ("string", "pad_left" | "pad_right", 2, _) => string(vm, "*"),
-            ("bytes", "decode", 2, _) | ("bytes", "copy", 4, _) => Value::int(2),
             (_, _, _, InferType::I64 | InferType::Param(_)) => Value::int(1),
             (_, _, _, InferType::Numeric) => Value::int(2),
             (_, _, _, InferType::Bool) => Value::bool(true),
             (_, _, _, InferType::String) => string(vm, "12"),
             (_, _, _, InferType::Char) => Value::char('a'),
-            (_, _, _, InferType::Vec(element)) if **element == InferType::I64 => {
+            (_, _, _, InferType::Vec(element))
+                if matches!(**element, InferType::I64 | InferType::U8) =>
+            {
                 let vector = AelysVec::from_ints(vec![1, 2]);
                 Value::ptr(vm.alloc_vec(vector).unwrap().index())
             }
@@ -169,6 +168,7 @@ fn describe(vm: &VM, value: Value) -> String {
 fn matches(vm: &VM, value: Value, expected: &InferType) -> bool {
     match expected {
         InferType::I64 => value.is_int(),
+        InferType::U8 => value.as_int().is_some_and(|byte| (0..=255).contains(&byte)),
         InferType::F64 => value.is_float(),
         InferType::Bool => value.is_bool(),
         InferType::Unit => value.is_unit(),
