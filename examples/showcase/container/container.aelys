@@ -18,15 +18,14 @@ struct Task { prio: int, name: string }
 impl Ordered for Task {
     fn compare(self, other: Task) -> int {
         if self.prio != other.prio {
-            return other.prio - self.prio
+            other.prio - self.prio
+        } else if self.name < other.name {
+            -1
+        } else if self.name > other.name {
+            1
+        } else {
+            0
         }
-        if self.name < other.name {
-            return -1
-        }
-        if self.name > other.name {
-            return 1
-        }
-        0
     }
 }
 
@@ -111,11 +110,8 @@ fn fill<C: Collection<T>, T>(mut c: C, xs: Vec<T>) {
 
 fn drain_all<C: Collection<T>, T>(mut c: C) -> Vec<T> {
     let mut out: Vec<T> = vec![]
-    while not c.is_empty() {
-        match c.take() {
-            Some(x) => out.push(x),
-            None => (),
-        }
+    while let Some(x) = c.take() {
+        out.push(x)
     }
     out
 }

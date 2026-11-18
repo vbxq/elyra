@@ -1,3 +1,6 @@
+needs std::fs
+needs std::sys
+
 enum Token {
     Num(float),
     Ident(string),
@@ -54,50 +57,54 @@ enum Stmt {
     Eval(Expr),
 }
 
-fn is_ident_start(c: char) -> bool { c.is_alpha() or c == '_' }
+fn is_number_char(c: char) -> bool { c.is_digit() or c == '.' }
 
 fn is_ident_char(c: char) -> bool { c.is_alphanumeric() or c == '_' }
 
-fn punctuation(c: char) -> Option<Token> {
-    match c {
-        '+' | '-' | '*' | '/' | '^' => Some(Token::Op(c)),
-        '(' => Some(Token::LParen),
-        ')' => Some(Token::RParen),
-        ',' => Some(Token::Comma),
-        '=' => Some(Token::Assign),
-        _ => None,
+fn scan(chars: Vec<char>, start: int, keep: fn(char) -> bool) -> (string, int) {
+    let mut text = ""
+    let mut i = start
+    while let Some(c) = chars.get(i) {
+        if not keep(c) { break }
+        text.push(c)
+        i++
     }
+    (text, i)
 }
 
 fn tokenize(src: string) -> Result<Vec<Spanned>, CalcError> {
     let chars = src.chars()
     let mut out: Vec<Spanned> = vec![]
     let mut i = 0
-    while i < chars.len() {
-        let c = chars[i]
+    while let Some(c) = chars.get(i) {
         let col = i + 1
-        if c.is_whitespace() {
-            i++
-        } else if c.is_digit() or c == '.' {
-            let mut text = ""
-            while i < chars.len() and (chars[i].is_digit() or chars[i] == '.') {
-                text.push(chars[i])
+        let tok = match c {
+            c if c.is_whitespace() => {
                 i++
+                continue
             }
-            let value = convert::parse_float(text).ok_or(CalcError::BadNumber { col: col, text: text })?
-            out.push(Spanned { tok: Token::Num(value), col: col, text: text })
-        } else if is_ident_start(c) {
-            let mut name = ""
-            while i < chars.len() and is_ident_char(chars[i]) {
-                name.push(chars[i])
-                i++
+            c if is_number_char(c) => {
+                let (text, next) = scan(chars, i, is_number_char)
+                i = next
+                let value = convert::parse_float(text).ok_or(CalcError::BadNumber { col: col, text: text })?
+                out.push(Spanned { tok: Token::Num(value), col: col, text: text })
+                continue
             }
-            out.push(Spanned { tok: Token::Ident(name), col: col, text: name })
-        } else {
-            let tok = punctuation(c).ok_or(CalcError::UnexpectedChar { col: col, ch: c })?
-            out.push(Spanned { tok: tok, col: col, text: string::from_char(c) })
-            i++
+            c if c.is_alpha() or c == '_' => {
+                let (name, next) = scan(chars, i, is_ident_char)
+                i = next
+                out.push(Spanned { tok: Token::Ident(name), col: col, text: name })
+                continue
+            }
+            '+' | '-' | '*' | '/' | '^' => Token::Op(c),
+            '(' => Token::LParen,
+            ')' => Token::RParen,
+            ',' => Token::Comma,
+            '=' => Token::Assign,
+            _ => { return Err(CalcError::UnexpectedChar { col: col, ch: c }) }
         }
+        out.push(Spanned { tok: tok, col: col, text: string::from_char(c) })
+        i++
     }
     Ok(out)
 }
@@ -108,14 +115,7 @@ impl Parser {
     fn new(toks: Vec<Spanned>) -> Parser { Parser { toks: toks, pos: 0 } }
 
     fn peek(self) -> Option<Token> {
-        match self.toks.get(self.pos) {
-            Some(s) => Some(s.tok),
-            None => None,
-        }
-    }
-
-    fn peek_is_op(self, op: char) -> bool {
-        self.peek() == Some(Token::Op(op))
+        if let Some(s) = self.toks.get(self.pos) { Some(s.tok) } else { None }
     }
 
     fn next(mut self) -> Result<Spanned, CalcError> {
@@ -124,40 +124,49 @@ impl Parser {
         Ok(s)
     }
 
+    fn eat(mut self, want: Token) -> bool {
+        if self.peek() == Some(want) {
+            self.pos++
+            true
+        } else {
+            false
+        }
+    }
+
+    fn eat_op(mut self, ops: string) -> Option<char> {
+        if let Some(Token::Op(op)) = self.peek() {
+            if ops.contains(string::from_char(op)) {
+                self.pos++
+                return Some(op)
+            }
+        }
+        None
+    }
+
     fn unexpected(self) -> CalcError {
-        match self.toks.get(self.pos) {
-            Some(s) => CalcError::UnexpectedToken { col: s.col, found: s.text },
-            None => CalcError::UnexpectedEnd,
+        if let Some(s) = self.toks.get(self.pos) {
+            CalcError::UnexpectedToken { col: s.col, found: s.text }
+        } else {
+            CalcError::UnexpectedEnd
         }
     }
 
     fn consume(mut self, want: Token) -> Result<unit, CalcError> {
-        if self.peek() == Some(want) {
-            self.pos++
-            Ok(())
-        } else {
-            Err(self.unexpected())
-        }
-    }
-
-    fn ident(mut self) -> Result<string, CalcError> {
-        let s: Spanned = self.next()?
-        match s.tok {
-            Token::Ident(name) => Ok(name),
-            _ => Err(CalcError::UnexpectedToken { col: s.col, found: s.text }),
-        }
-    }
-
-    fn let_binding(mut self) -> Result<Stmt, CalcError> {
-        self.pos++
-        let name = self.ident()?
-        self.consume(Token::Assign)?
-        Ok(Stmt::Let { name: name, value: self.expr()? })
+        if self.eat(want) { Ok(()) } else { Err(self.unexpected()) }
     }
 
     fn statement(mut self) -> Result<Stmt, CalcError> {
-        let is_let = self.peek() == Some(Token::Ident("let"))
-        let stmt = if is_let { self.let_binding()? } else { Stmt::Eval(self.expr()?) }
+        let stmt = if self.eat(Token::Ident("let")) {
+            let s: Spanned = self.next()?
+            let name = match s.tok {
+                Token::Ident(name) => name,
+                _ => { return Err(CalcError::UnexpectedToken { col: s.col, found: s.text }) }
+            }
+            self.consume(Token::Assign)?
+            Stmt::Let { name: name, value: self.expr()? }
+        } else {
+            Stmt::Eval(self.expr()?)
+        }
         if self.pos < self.toks.len() {
             return Err(self.unexpected())
         }
@@ -166,49 +175,43 @@ impl Parser {
 
     fn expr(mut self) -> Result<Expr, CalcError> {
         let mut lhs = self.term()?
-        while self.peek_is_op('+') or self.peek_is_op('-') {
-            let op = if self.peek_is_op('+') { '+' } else { '-' }
-            self.pos++
-            let rhs = self.term()?
-            lhs = Expr::Bin { op: op, lhs: lhs, rhs: rhs }
+        while let Some(op) = self.eat_op("+-") {
+            lhs = Expr::Bin { op: op, lhs: lhs, rhs: self.term()? }
         }
         Ok(lhs)
     }
 
     fn term(mut self) -> Result<Expr, CalcError> {
         let mut lhs = self.unary()?
-        while self.peek_is_op('*') or self.peek_is_op('/') {
-            let op = if self.peek_is_op('*') { '*' } else { '/' }
-            self.pos++
-            let rhs = self.unary()?
-            lhs = Expr::Bin { op: op, lhs: lhs, rhs: rhs }
+        while let Some(op) = self.eat_op("*/") {
+            lhs = Expr::Bin { op: op, lhs: lhs, rhs: self.unary()? }
         }
         Ok(lhs)
     }
 
     fn unary(mut self) -> Result<Expr, CalcError> {
-        if self.peek_is_op('-') {
-            self.pos++
+        if self.eat(Token::Op('-')) {
             return Ok(Expr::Neg(self.unary()?))
         }
-        self.power()
-    }
-
-    fn power(mut self) -> Result<Expr, CalcError> {
         let base = self.atom()?
-        if self.peek_is_op('^') {
-            self.pos++
-            let exponent = self.unary()?
-            return Ok(Expr::Bin { op: '^', lhs: base, rhs: exponent })
+        if self.eat(Token::Op('^')) {
+            Ok(Expr::Bin { op: '^', lhs: base, rhs: self.unary()? })
+        } else {
+            Ok(base)
         }
-        Ok(base)
     }
 
     fn atom(mut self) -> Result<Expr, CalcError> {
         let s: Spanned = self.next()?
         match s.tok {
             Token::Num(n) => Ok(Expr::Num(n)),
-            Token::Ident(name) => self.variable_or_call(name),
+            Token::Ident(name) => {
+                if self.eat(Token::LParen) {
+                    Ok(Expr::Call { name: name, args: self.arguments()? })
+                } else {
+                    Ok(Expr::Var(name))
+                }
+            }
             Token::LParen => {
                 let inner = self.expr()?
                 self.consume(Token::RParen)?
@@ -218,23 +221,13 @@ impl Parser {
         }
     }
 
-    fn variable_or_call(mut self, name: string) -> Result<Expr, CalcError> {
-        if self.peek() != Some(Token::LParen) {
-            return Ok(Expr::Var(name))
-        }
-        self.pos++
-        Ok(Expr::Call { name: name, args: self.arguments()? })
-    }
-
     fn arguments(mut self) -> Result<Vec<Expr>, CalcError> {
         let mut args: Vec<Expr> = vec![]
-        if self.peek() == Some(Token::RParen) {
-            self.pos++
+        if self.eat(Token::RParen) {
             return Ok(args)
         }
         args.push(self.expr()?)
-        while self.peek() == Some(Token::Comma) {
-            self.pos++
+        while self.eat(Token::Comma) {
             args.push(self.expr()?)
         }
         self.consume(Token::RParen)?
@@ -247,35 +240,25 @@ fn parse(src: string) -> Result<Stmt, CalcError> {
     parser.statement()
 }
 
-fn check_arity(name: string, args: Vec<float>, expected: int) -> Result<unit, CalcError> {
-    if args.len() != expected {
-        return Err(CalcError::BadArity { name: name, expected: expected, got: args.len() })
+fn arity(name: string) -> Option<int> {
+    match name {
+        "sqrt" | "abs" => Some(1),
+        "max" | "min" => Some(2),
+        _ => None,
     }
-    Ok(())
 }
 
 fn call(name: string, args: Vec<float>) -> Result<float, CalcError> {
+    let expected = arity(name).ok_or(CalcError::UnknownFunc(name))?
+    if args.len() != expected {
+        return Err(CalcError::BadArity { name: name, expected: expected, got: args.len() })
+    }
     match name {
-        "sqrt" => {
-            check_arity(name, args, 1)?
-            if args[0] < 0.0 {
-                return Err(CalcError::Domain { name: name, arg: args[0] })
-            }
-            Ok(math::sqrt(args[0]))
-        }
-        "abs" => {
-            check_arity(name, args, 1)?
-            Ok(math::abs(args[0]))
-        }
-        "max" => {
-            check_arity(name, args, 2)?
-            Ok(math::max(args[0], args[1]))
-        }
-        "min" => {
-            check_arity(name, args, 2)?
-            Ok(math::min(args[0], args[1]))
-        }
-        _ => Err(CalcError::UnknownFunc(name)),
+        "sqrt" if args[0] < 0.0 => Err(CalcError::Domain { name: name, arg: args[0] }),
+        "sqrt" => Ok(math::sqrt(args[0])),
+        "abs" => Ok(math::abs(args[0])),
+        "max" => Ok(math::max(args[0], args[1])),
+        _ => Ok(math::min(args[0], args[1])),
     }
 }
 
@@ -291,7 +274,8 @@ fn eval(e: Expr, env: Map<string, float>) -> Result<float, CalcError> {
                 '+' => Ok(a + b),
                 '-' => Ok(a - b),
                 '*' => Ok(a * b),
-                '/' => if b == 0.0 { Err(CalcError::DivByZero) } else { Ok(a / b) },
+                '/' if b == 0.0 => Err(CalcError::DivByZero),
+                '/' => Ok(a / b),
                 _ => Ok(math::pow(a, b)),
             }
         }
@@ -317,44 +301,29 @@ fn run_line(line: string, mut env: Map<string, float>) -> Result<string, CalcErr
     }
 }
 
-let script = vec![
-    "1 + 2 * 3",
-    "(1 + 2) * 3",
-    "2 ^ 3 ^ 2",
-    "-2 ^ 2",
-    "2 ^ -1",
-    "10 / 4 - 0.5",
-    "let r = 1.5",
-    "let area = pi * r ^ 2",
-    "area / pi",
-    "sqrt(16) + max(2, 7) * min(3, 4)",
-    "abs(-3.25) - --1",
-    "let x = sqrt(2)",
-    "x * x",
-    "0.1 + 0.2",
-    "1 / (3 - 3)",
-    "2 * y + 1",
-    "max(1)",
-    "sqrt(1, 2)",
-    "sqrt(-4)",
-    "max()",
-    "floor(2.5)",
-    "3 + $ 4",
-    "(1 + 2",
-    "4 + * 5",
-    "1.2.3 + 1",
-    "let 5 = 3",
-    "7 7",
-    "let total = area + x - r",
-    "total",
-]
-
-let mut env: Map<string, float> = Map::new()
-env["pi"] = math::PI
-for line in script {
-    println("> {line}")
-    match run_line(line, env) {
-        Ok(text) => println(text),
-        Err(e) => println("error: {e}"),
+fn run(script: string) {
+    let mut env: Map<string, float> = Map::new()
+    env["pi"] = math::PI
+    for line in script.lines() {
+        let line = line.trim()
+        if line.is_empty() or line.starts_with("#") { continue }
+        println("> {line}")
+        match run_line(line, env) {
+            Ok(text) => println(text),
+            Err(e) => println("error: {e}"),
+        }
     }
+}
+
+if let Some(path) = sys::arg(0) {
+    match fs::read_text(path) {
+        Ok(script) => run(script),
+        Err(e) => {
+            eprintln("calc: {e}")
+            sys::exit(1)
+        }
+    }
+} else {
+    eprintln("usage: calc <script-file>")
+    sys::exit(2)
 }

@@ -1,9 +1,6 @@
 import math
-import pathlib
 import re
 import sys
-
-HERE = pathlib.Path(__file__).resolve().parent
 
 
 def fmt(x):
@@ -19,10 +16,10 @@ class Err(Exception):
     pass
 
 
-def script_lines():
-    src = (HERE / "calc.aelys").read_text()
-    block = src.split("let script = vec![", 1)[1].split("\n]\n", 1)[0]
-    return re.findall(r'^\s*"((?:[^"\\]|\\.)*)",\s*$', block, re.M)
+def script_lines(path):
+    with open(path, encoding="utf-8") as f:
+        lines = [raw.strip() for raw in f.read().splitlines()]
+    return [line for line in lines if line and not line.startswith("#")]
 
 
 def tokenize(src):
@@ -194,7 +191,7 @@ def evaluate(e, env):
 def main():
     env = {"pi": math.pi}
     out = []
-    for line in script_lines():
+    for line in script_lines(sys.argv[1]):
         out.append(f"> {line}")
         try:
             stmt = Parser(tokenize(line)).statement()

@@ -11,7 +11,7 @@ top 10 words:
   8. the       4
   9. to        4
  10. bennet    3
-letters: 1098 total, 33 distinct, accented: àèéêùû
+letters: 1098 total, 33 distinct, accented vowels: àèéêùû
 vowels (accents folded):
   a   78 ###################
   e  160 ########################################

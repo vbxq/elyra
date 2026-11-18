@@ -2,8 +2,6 @@ import pathlib
 import re
 import sys
 
-HERE = pathlib.Path(__file__).resolve().parent
-
 
 class Fail(Exception):
     pass
@@ -99,7 +97,7 @@ class Project:
 def main():
     project = Project()
     errors = 0
-    for n, raw in enumerate((HERE / "commands.txt").read_text().splitlines(), start=1):
+    for n, raw in enumerate(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

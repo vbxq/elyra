@@ -1,6 +1,10 @@
 needs std::fs
 needs std::sys
 
+const ID_WIDTH = 3
+const PRIO_WIDTH = 4
+const STATUS_WIDTH = 6
+
 struct Task { id: int, prio: int, text: string, done: bool }
 
 enum Action {
@@ -45,10 +49,8 @@ fn number(what: string, word: string) -> Result<int, TodoError> {
 }
 
 fn task_id(command: string, words: Vec<string>) -> Result<int, TodoError> {
-    if words.len() < 2 {
-        return Err(TodoError::MissingArgument { command: command, what: "a task id" })
-    }
-    number("task id", words[1])
+    let word = words.get(1).ok_or(TodoError::MissingArgument { command: command, what: "a task id" })?
+    number("task id", word)
 }
 
 fn parse_command(line: string) -> Result<Command, TodoError> {
@@ -79,12 +81,12 @@ fn status(t: Task) -> string { if t.done { "done" } else { "open" } }
 
 fn list_order(a: Task, b: Task) -> int {
     if a.done != b.done {
-        return if a.done { 1 } else { -1 }
+        if a.done { 1 } else { -1 }
+    } else if a.prio != b.prio {
+        b.prio - a.prio
+    } else {
+        a.id - b.id
     }
-    if a.prio != b.prio {
-        return b.prio - a.prio
-    }
-    a.id - b.id
 }
 
 struct Project { tasks: Vec<Task>, history: Vec<Action>, next_id: int }
@@ -155,14 +157,11 @@ impl Project {
         }
         let mut rows = self.tasks.clone()
         rows.sort_by(list_order)
-        let mut width = 4
+        let width = rows.fold(4, fn(w: int, t: Task) -> int { math::max(w, t.text.char_len()) })
+        println("{right("ID", ID_WIDTH)}  {right("PRIO", PRIO_WIDTH)}  {left("STATUS", STATUS_WIDTH)}  TASK")
+        println("{"-".repeat(ID_WIDTH)}  {"-".repeat(PRIO_WIDTH)}  {"-".repeat(STATUS_WIDTH)}  {"-".repeat(width)}")
         for t in rows {
-            width = math::max(width, t.text.char_len())
-        }
-        println("{right("ID", 3)}  {right("PRIO", 4)}  {left("STATUS", 6)}  TASK")
-        println("{"-".repeat(3)}  {"-".repeat(4)}  {"-".repeat(6)}  {"-".repeat(width)}")
-        for t in rows {
-            println("{right("{t.id}", 3)}  {right("{t.prio}", 4)}  {left(status(t), 6)}  {t.text}")
+            println("{right("{t.id}", ID_WIDTH)}  {right("{t.prio}", PRIO_WIDTH)}  {left(status(t), STATUS_WIDTH)}  {t.text}")
         }
     }
 
@@ -205,27 +204,23 @@ fn run(path: string) -> Result<int, string> {
         if line.is_empty() or line.starts_with("#") {
             continue
         }
-        match project.run_line(line) {
-            Ok(_) => (),
-            Err(e) => {
-                errors++
-                println("line {n + 1}: {e}")
-            }
+        if let Err(e) = project.run_line(line) {
+            errors++
+            println("line {n + 1}: {e}")
         }
     }
     Ok(errors)
 }
 
-match sys::arg(0) {
-    Some(path) => match run(path) {
+if let Some(path) = sys::arg(0) {
+    match run(path) {
         Ok(errors) => println("finished with {errors} errors"),
         Err(e) => {
             eprintln("todo: cannot read {path}: {e}")
             sys::exit(1)
         }
-    },
-    None => {
-        eprintln("usage: todo <commands-file>")
-        sys::exit(2)
     }
+} else {
+    eprintln("usage: todo <commands-file>")
+    sys::exit(2)
 }
