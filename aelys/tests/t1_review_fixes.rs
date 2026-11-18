@@ -325,7 +325,7 @@ a.x * 100 + c.x * 10 + d.x
 
 const FN_VALUE_SHAPES: &str = r#"
 struct S { x: int }
-struct Holder { f: fn(S) -> int }
+struct Holder { f: fn(mut S) -> int }
 fn touch(mut s: S) -> int { s.x = 99; 0 }
 fn read(s: S) -> int { s.x }
 "#;
@@ -337,58 +337,21 @@ fn fn_value_program(body: &str) -> String {
 #[test]
 fn a_mut_parameter_reached_through_a_function_value_is_guarded() {
     let cases = [
-        (
-            "let a = S { x: 1 }\nlet h = touch\nh(a)",
-            "`mut` parameter `s`",
-        ),
-        (
-            "let a = S { x: 1 }\nlet h = touch\nlet h2 = h\nh2(a)",
-            "`mut` parameter `s`",
-        ),
-        (
-            "let a = S { x: 1 }\nlet g = fn(mut q: S) -> int { q.x = 99; 0 }\ng(a)",
-            "`mut` parameter `q`",
-        ),
-        (
-            "let a = S { x: 1 }\nlet read = touch\nread(a)",
-            "`mut` parameter `s`",
-        ),
-        (
-            "let h = touch\nfn run(a: S) -> int { h(a) }",
-            "`mut` parameter `s`",
-        ),
-        (
-            "let a = S { x: 1 }\nlet h = touch\nlet c = fn() -> int { h(a) }",
-            "`mut` parameter `s`",
-        ),
-        (
-            "fn apply(f: fn(S) -> int, s: S) -> int { f(s) }",
-            "function value",
-        ),
-        (
-            "let a = S { x: 1 }\nlet mut h = read\nh = touch\nh(a)",
-            "function value",
-        ),
-        (
-            "let a = S { x: 1 }\nlet t = Holder { f: touch }\nt.f(a)",
-            "function value",
-        ),
-        (
-            "let a = S { x: 1 }\nlet t = Holder { f: touch }\n(t.f)(a)",
-            "function value",
-        ),
-        (
-            "fn apply<T>(f: fn(T) -> int, x: T) -> int { f(x) }",
-            "function value",
-        ),
-        (
-            "let a = vec![S { x: 1 }]\nfn pick() -> fn(S) -> int { touch }\npick()(a[0])",
-            "function value",
-        ),
+        "let a = S { x: 1 }\nlet h = touch\nh(a)",
+        "let a = S { x: 1 }\nlet h = touch\nlet h2 = h\nh2(a)",
+        "let a = S { x: 1 }\nlet g = fn(mut q: S) -> int { q.x = 99; 0 }\ng(a)",
+        "let a = S { x: 1 }\nlet read = touch\nread(a)",
+        "let h = touch\nfn run(a: S) -> int { h(a) }",
+        "let a = S { x: 1 }\nlet h = touch\nlet c = fn() -> int { h(a) }",
+        "fn apply(f: fn(mut S) -> int, s: S) -> int { f(s) }",
+        "let a = S { x: 1 }\nlet mut h = touch\nh(a)",
+        "let a = S { x: 1 }\nlet t = Holder { f: touch }\nt.f(a)",
+        "let a = S { x: 1 }\nlet t = Holder { f: touch }\n(t.f)(a)",
+        "let a = vec![S { x: 1 }]\nfn pick() -> fn(mut S) -> int { touch }\npick()(a[0])",
     ];
-    for (body, site) in cases {
+    for body in cases {
         let message = assert_rejected(&fn_value_program(body), "E0323");
-        assert!(message.contains(site), "expected {site}:\n{message}");
+        assert!(message.contains("fn(mut S) -> int"), "{body}:\n{message}");
     }
 }
 
@@ -398,9 +361,10 @@ fn calls_through_function_values_that_cannot_alias_are_accepted() {
         "let a = S { x: 1 }\nlet f = fn(s: S) -> int { s.x }\nf(a)",
         "let a = S { x: 1 }\nlet h = read\nh(a)",
         "let mut a = S { x: 1 }\nlet h = touch\nh(a)",
-        "fn apply(f: fn(S) -> int, mut s: S) -> int { f(s) }\nlet mut a = S { x: 1 }\napply(touch, a)",
+        "fn apply(f: fn(mut S) -> int, mut s: S) -> int { f(s) }\nlet mut a = S { x: 1 }\napply(touch, a)",
         "fn apply(f: fn(int) -> int, n: int) -> int { f(n) }",
-        "let a = S { x: 1 }\nlet b = a.clone()\nfn apply(f: fn(S) -> int, mut s: S) -> int { f(s) }\napply(touch, a.clone())",
+        "fn apply(f: fn(S) -> int, s: S) -> int { f(s) }\nlet a = S { x: 1 }\napply(read, a)",
+        "let a = S { x: 1 }\nlet b = a.clone()\nfn apply(f: fn(mut S) -> int, mut s: S) -> int { f(s) }\napply(touch, a.clone())",
     ];
     for body in cases {
         assert_accepted(&fn_value_program(body));
@@ -412,7 +376,7 @@ fn a_mut_parameter_reached_through_a_function_value_mutates_a_mutable_root() {
     assert_int_everywhere(
         &fn_value_program(
             r#"
-fn apply(f: fn(S) -> int, mut s: S) -> int { f(s) }
+fn apply(f: fn(mut S) -> int, mut s: S) -> int { f(s) }
 let mut a = S { x: 1 }
 let mut b = S { x: 2 }
 let h = touch
