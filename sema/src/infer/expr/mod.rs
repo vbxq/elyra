@@ -27,6 +27,7 @@ impl TypeInference {
             span,
             reason: ConstraintReason::Other(reason.to_string()),
             nominal_only: true,
+            unless_method: None,
         });
     }
 

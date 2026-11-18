@@ -327,6 +327,8 @@ pub(crate) struct BoundResidual {
     pub(crate) span: aelys_syntax::Span,
     pub(crate) reason: ConstraintReason,
     pub(crate) nominal_only: bool,
+    // a receiver declaring a method of this name runs that method, so the bound does not apply to it
+    pub(crate) unless_method: Option<&'static str>,
 }
 
 impl TypeInference {
@@ -488,6 +490,12 @@ impl TypeInference {
                 matches!(ty, InferType::Struct(_) | InferType::Applied { .. })
             };
             if residual.nominal_only && !checked {
+                continue;
+            }
+            if residual
+                .unless_method
+                .is_some_and(|method| self.declares_self_method(&ty, method))
+            {
                 continue;
             }
             let trait_args: Vec<InferType> = residual

@@ -583,6 +583,7 @@ impl TypeInference {
                         span,
                         reason: ConstraintReason::Other("native parameter bound".to_string()),
                         nominal_only: false,
+                        unless_method: None,
                     });
                 }
                 crate::native::NativeObligation::OneOf(options) => {
