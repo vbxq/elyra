@@ -520,7 +520,10 @@ count++     // 2
 count--     // 1
 ```
 
-These are postfix operators and work on identifiers only.
+These are postfix operators. They work on every place a compound assignment
+accepts: a variable, a field, an element and nested paths (`s.v++`, `a[0]--`,
+`w.ps[pick()].h++`), with each index expression evaluated once. On any other
+expression, such as `f()++`, they are E0104.
 
 ### Comparison
 

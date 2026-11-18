@@ -628,3 +628,67 @@ fn an_ignored_option_or_result_is_still_rejected() {
         );
     }
 }
+
+#[test]
+fn increment_and_decrement_work_on_every_place_and_evaluate_the_index_once() {
+    assert_int_everywhere(
+        &counting(
+            r#"
+struct Bag { items: Vec<P> }
+impl Bag {
+    fn bump(mut self) { self.items[at(0)].h++ }
+}
+fn dec<T>(mut xs: Vec<int>, tag: T) { xs[at(1)]-- }
+let mut s = P { x: 5, h: 0 }
+s.x++
+s.x--
+s.x--
+let mut a = [1, 2, 3]
+a[0]++
+a[2]--
+let mut w = W { ps: vec![P { x: 0, h: 10 }, P { x: 0, h: 20 }] }
+w.ps[at(1)].h++
+w.ps[at(0)].x--
+let mut g = vec![vec![1, 2], vec![3, 4]]
+g[at(1)][at(0)]++
+let mut b = Bag { items: vec![P { x: 0, h: 7 }] }
+b.bump()
+let mut xs = vec![10, 20]
+dec(xs, 1)
+let mut ys = vec![0]
+let f = fn() { ys[at(0)]++ }
+f()
+let mut n = 1
+n++
+let checks = s.x * 1000000 + a[0] * 100000 + a[2] * 10000 + w.ps[1].h * 100 + g[1][0] * 10 + n
+checks + (w.ps[0].x + b.items[0].h + xs[1] + ys[0]) * 1000000000 + log[0] * 0
+"#,
+        ),
+        4 * 1000000
+            + 2 * 100000
+            + 2 * 10000
+            + 21 * 100
+            + 4 * 10
+            + 2
+            + (-1 + 8 + 19 + 1) * 1000000000,
+    );
+    assert_int_everywhere(
+        &counting(
+            r#"
+let mut w = W { ps: vec![P { x: 0, h: 10 }, P { x: 0, h: 20 }] }
+w.ps[at(1)].h++
+let mut g = vec![vec![1, 2], vec![3, 4]]
+g[at(1)][at(0)]--
+log[0]
+"#,
+        ),
+        111,
+    );
+}
+
+#[test]
+fn increment_on_an_immutable_place_or_a_temporary_is_rejected() {
+    assert_rejected("struct S { v: int }\nlet s = S { v: 1 }\ns.v++", "E0330");
+    assert_rejected("let a = [1, 2]\na[0]++", "E0318");
+    assert_rejected("fn f() -> int { 1 }\nf()++", "E0104");
+}

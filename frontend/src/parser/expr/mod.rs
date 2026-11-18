@@ -100,32 +100,42 @@ impl Parser {
                 )
                 .into());
             }
-            let mut hoisted = Vec::new();
-            let place = self.hoist_place_operands(expr, &mut hoisted);
-            let mut result = Self::compound_assign(place, op, rhs, end_span);
-            for (name, operand) in hoisted.into_iter().rev() {
-                let span = operand.span.merge(result.span);
-                let pattern = Pattern {
-                    kind: PatternKind::Binding(name),
-                    span: operand.span,
-                };
-                result = Expr::new(
-                    ExprKind::Match {
-                        scrutinee: Box::new(operand),
-                        arms: vec![MatchArm {
-                            pattern,
-                            guard: None,
-                            span: result.span,
-                            body: MatchArmBody::Expr(Box::new(result)),
-                        }],
-                    },
-                    span,
-                );
-            }
-            return Ok(result);
+            return Ok(self.desugar_compound(expr, op, rhs, end_span));
         }
 
         Ok(expr)
+    }
+
+    pub(super) fn desugar_compound(
+        &mut self,
+        target: Expr,
+        op: BinaryOp,
+        rhs: Expr,
+        end_span: Span,
+    ) -> Expr {
+        let mut hoisted = Vec::new();
+        let place = self.hoist_place_operands(target, &mut hoisted);
+        let mut result = Self::compound_assign(place, op, rhs, end_span);
+        for (name, operand) in hoisted.into_iter().rev() {
+            let span = operand.span.merge(result.span);
+            let pattern = Pattern {
+                kind: PatternKind::Binding(name),
+                span: operand.span,
+            };
+            result = Expr::new(
+                ExprKind::Match {
+                    scrutinee: Box::new(operand),
+                    arms: vec![MatchArm {
+                        pattern,
+                        guard: None,
+                        span: result.span,
+                        body: MatchArmBody::Expr(Box::new(result)),
+                    }],
+                },
+                span,
+            );
+        }
+        result
     }
 
     fn compound_assign(place: Expr, op: BinaryOp, rhs: Expr, end_span: Span) -> Expr {
