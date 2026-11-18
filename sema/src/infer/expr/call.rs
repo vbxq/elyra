@@ -98,7 +98,11 @@ impl TypeInference {
         args: &[Expr],
         span: Span,
     ) -> (TypedExprKind, InferType) {
-        self.with_borrow_call_scope(|this| this.infer_call_expr_inner(callee, args, span))
+        self.constructor_expectation = self.nominal_expectation.take();
+        let typed =
+            self.with_borrow_call_scope(|this| this.infer_call_expr_inner(callee, args, span));
+        self.constructor_expectation = None;
+        typed
     }
 
     fn infer_call_expr_inner(

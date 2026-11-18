@@ -1222,8 +1222,8 @@ impl TypeInference {
         type_args: &[aelys_syntax::TypeAnnotation],
         fields: &[StructFieldInit],
         _span: Span,
-        expectation: Option<InferType>,
     ) -> (TypedExprKind, InferType) {
+        let expectation = self.nominal_expectation.take();
         if let Some(error) = self.private_nominal_error(name, _span) {
             self.errors.push(error);
             return (TypedExprKind::Null, InferType::Poison);
@@ -1560,8 +1560,8 @@ impl TypeInference {
         type_args: &[aelys_syntax::TypeAnnotation],
         fields: &[StructFieldInit],
         span: Span,
-        expectation: Option<InferType>,
     ) -> (TypedExprKind, InferType) {
+        let expectation = self.nominal_expectation.take();
         let enum_name = path.first().cloned().unwrap_or_default();
         let variant_name = path.last().cloned().unwrap_or_default();
         let Some(def) = self.type_table.get_enum(&enum_name).cloned() else {

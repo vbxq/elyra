@@ -30,7 +30,15 @@ impl TypeInference {
 
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
         let callee_position = std::mem::take(&mut self.callee_position);
-        let expectation = self.nominal_expectation.take();
+        if !matches!(
+            expr.kind,
+            ExprKind::StructLiteral { .. }
+                | ExprKind::EnumLiteral { .. }
+                | ExprKind::GenericEnumLiteral { .. }
+                | ExprKind::Call { .. }
+        ) {
+            self.nominal_expectation = None;
+        }
         self.depth += 1;
         if self.depth > super::MAX_INFERENCE_DEPTH {
             self.errors.push(TypeError::recursion_limit(expr.span));
@@ -113,12 +121,7 @@ impl TypeInference {
             }
             ExprKind::And { left, right } => self.infer_logical_expr("and", left, right, expr),
             ExprKind::Or { left, right } => self.infer_logical_expr("or", left, right, expr),
-            ExprKind::Call { callee, args } => {
-                self.constructor_expectation = expectation;
-                let typed = self.infer_call_expr(callee, args, expr.span);
-                self.constructor_expectation = None;
-                typed
-            }
+            ExprKind::Call { callee, args } => self.infer_call_expr(callee, args, expr.span),
             ExprKind::GenericApply { callee, type_args } => {
                 self.callee_position = callee_position;
                 self.infer_generic_apply(callee, type_args, expr.span)
@@ -178,15 +181,15 @@ impl TypeInference {
                 name,
                 type_args,
                 fields,
-            } => self.infer_struct_literal(name, type_args, fields, expr.span, expectation),
+            } => self.infer_struct_literal(name, type_args, fields, expr.span),
             ExprKind::EnumLiteral { path, fields } => {
-                self.infer_enum_literal(path, &[], fields, expr.span, expectation)
+                self.infer_enum_literal(path, &[], fields, expr.span)
             }
             ExprKind::GenericEnumLiteral {
                 path,
                 type_args,
                 fields,
-            } => self.infer_enum_literal(path, type_args, fields, expr.span, expectation),
+            } => self.infer_enum_literal(path, type_args, fields, expr.span),
             ExprKind::Cast {
                 expr: inner,
                 target,
