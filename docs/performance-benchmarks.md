@@ -2,18 +2,9 @@
 
 These benchmarks were run on Linux x86_64. Results vary by hardware. The Fibonacci and cross-language figures below are historical interpreter measurements; use the repository's Criterion suite for current comparisons.
 
-## Runtime v3 tiering reference
+## Interpreter and JIT
 
-The final 0.22 local gate used 30 samples, a 1 second warmup, a 2 second measurement window, and a fixed CPU. Representative medians were:
-
-| Workload | Interpreter | Tiered/JIT | Speedup |
-|----------|-------------|------------|---------|
-| Typed integer loop after warmup | 3.788 ms | 105.47 µs | 35.9x |
-| First hot loop with OSR | 3.611 ms | 638.11 µs | 5.66x |
-| Integer array loop | 2.666 ms | 234.45 µs | 11.37x |
-| Cold call before threshold | 186.32 µs | 185.25 µs | no cold penalty |
-
-Run `cargo bench -p aelys --bench criterion_runtime` to reproduce the suite locally.
+Run `cargo bench -p aelys --bench criterion_runtime` to compare the interpreter and the JIT locally.
 
 ## Interpreter hot path (2026-11)
 
@@ -36,7 +27,7 @@ User-space machine instructions (`perf stat -e instructions:u`) per run of the s
 | Doom renderer, one frame of E1M1 | 327 M | 84 M | 3.9x |
 | closure call in a loop (1 M calls) | 1 555 M | 574 M | 2.7x |
 
-`-ae.jit=on` now gives the interpreter's results at the interpreter's cost on these benches (it was up to 1.5x slower on method_dispatch): functions the JIT refuses, functions handed a struct and loops past their back-edge threshold stay on the hot path.
+With `-ae.jit=on`, functions the JIT refuses and loops it no longer enters stay on the interpreter's hot path.
 
 ## Recursive Fibonacci
 
