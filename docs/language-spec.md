@@ -77,10 +77,12 @@ println(where + dyn + self)
 0o755          // octal
 ```
 
-An integer literal is an `int`, a 48-bit signed integer (roughly +-140 trillion), unless its
-context expects a sized integer type (see [Integer types](#integer-types)). The 48-bit width
-comes from NaN-boxing: the VM packs type information into the unused bits of IEEE 754 NaN
-values. A literal outside the 48-bit range is E0209.
+An integer literal is an `int`, a 64-bit signed integer, unless its context expects a sized
+integer type (see [Integer types](#integer-types)). A literal above `9223372036854775807`
+(up to `18446744073709551615`) only fits a `u64` and has that type, so it is E0301 where an
+`int` is expected; `-9223372036854775808` is the smallest `int`. A literal above
+`18446744073709551615` is E0003. In the VM an integer in -2^47..2^47 is stored inside its
+NaN-boxed value; a larger one is an immutable heap value that behaves exactly the same.
 
 Underscores are ignored, so `1_000_000` is just `1000000`. Handy for big numbers or binary patterns like `0b1111_0000`.
 
@@ -172,9 +174,9 @@ with a diagnostic that names these replacements.
 
 | Type | Description | Size |
 |------|-------------|------|
-| `int` | Signed integer, overflow traps | 48-bit |
-| `i8` `i16` `i32` | Signed integer, wrapping | 8, 16, 32-bit |
-| `u8` `u16` `u32` | Unsigned integer, wrapping | 8, 16, 32-bit |
+| `int` | Signed integer, overflow traps | 64-bit |
+| `i8` `i16` `i32` `i64` | Signed integer, wrapping | 8, 16, 32, 64-bit |
+| `u8` `u16` `u32` `u64` | Unsigned integer, wrapping | 8, 16, 32, 64-bit |
 | `float` | Floating point | 64-bit |
 | `string` | UTF-8 text | heap allocated |
 | `char` | One Unicode scalar value | immediate |
@@ -192,16 +194,20 @@ with a diagnostic that names these replacements.
 
 ### Integer types
 
-`int` is the default integer. Its arithmetic is checked: `+`, `-`, `*`, unary `-`, `<<`
-and an `as` conversion trap with `integer overflow outside the supported 48-bit range` when
-the exact result leaves the 48-bit range, and `/` or `%` by zero traps with
-`division by zero`. `int` has no other width; `i64`, `int64`, `u64` and `uint64` are E0461
-(`i64 is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping
-arithmetic`).
+`int` is the default integer, a 64-bit two's complement value from `-9223372036854775808`
+to `9223372036854775807`. Its arithmetic is checked: `+`, `-`, `*`, unary `-`, `<<`, `/`
+and a `float` to `int` conversion trap with `integer overflow outside the int range (i64)`
+when the exact result leaves that range (`9223372036854775807 + 1`, `-(-9223372036854775807 - 1)`,
+`(-9223372036854775807 - 1) / -1`, `1 << 63`), and `/` or `%` by zero traps with
+`division by zero`. `(-9223372036854775807 - 1) % -1` is `0`. The result is exact
+whatever the size of the operands: an `int` above 2^47 costs a heap allocation but
+compares, hashes (as a `Map` key), sorts, matches, prints and converts by value exactly like
+a small one.
 
-The sized types `i8`, `i16`, `i32`, `u8`, `u16` and `u32` wrap. Every operator on them
-computes the exact result and keeps its low 8, 16 or 32 bits as two's complement, so the
-value always lies in the type's range, in a variable, a struct field, an array or a `Vec`:
+The sized types `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32` and `u64` wrap. Every operator
+on them computes the exact result and keeps its low 8, 16, 32 or 64 bits as two's
+complement, so the value always lies in the type's range, in a variable, a struct field, an
+array or a `Vec` (`int64` and `uint64` are other spellings of `i64` and `u64`):
 
 ```rust
 let a: u32 = 0xFFFFFFFF
@@ -214,15 +220,17 @@ println(c + c)            // 144
 ```
 
 - `+ - * & | ^ ~` and unary `-` wrap to the width.
-- `/` truncates toward zero and `%` takes the sign of the dividend, as in C. Both trap on a
-  zero divisor. `i32::MIN / -1` wraps to `i32::MIN` and `i32::MIN % -1` is `0` (likewise
-  for `i8` and `i16`).
+- `/` truncates toward zero and `%` takes the sign of the dividend, as in C; on `u64` both
+  are unsigned. Both trap on a zero divisor. `i32::MIN / -1` wraps to `i32::MIN` and
+  `i32::MIN % -1` is `0` (likewise for `i8`, `i16` and `i64`).
 - `<<` keeps the low bits. `>>` is arithmetic on a signed type and logical on an unsigned
   one. The shift count may have any integer type, `int` included, and a literal count is
   accepted whatever its value; it is taken modulo the width of the shifted value (`& 7`,
-  `& 15`, `& 31`, and `& 63` for `int`), so `x << 33` on an `i32` is `x << 1` and a count of
-  `-1` is the width minus one. The result has the type of the shifted value.
-- Comparisons compare the values.
+  `& 15`, `& 31`, and `& 63` for `int`, `i64` and `u64`), so `x << 33` on an `i32` is
+  `x << 1` and a count of `-1` is the width minus one. The result has the type of the
+  shifted value.
+- Comparisons compare the values, so a `u64` above `9223372036854775807` is greater than
+  every smaller `u64`, in `<`, in `sort` and in a range pattern.
 
 A binary operator takes two operands of the same integer type. Mixing two integer types,
 `int` included, is E0460 `mismatched integer types in '+': i32 and int` with the help line
@@ -270,8 +278,8 @@ Any integer type, sized or not, indexes an array or a `Vec`.
 | From | To | Result |
 |------|----|--------|
 | any integer | a sized integer | the low bits, two's complement: `3000000000 as i32` is `-1294967296`, `-1 as u8` is `255` |
-| any integer | `int` | the same value (every sized value fits) |
-| `float` | `int` | truncated toward zero; NaN, an infinity or a value outside 48 bits traps with the overflow error |
+| any integer | `int` | the same value; a `u64` above `9223372036854775807` wraps to its two's complement (`18446744073709551615 as int` is `-1`) |
+| `float` | `int` | truncated toward zero; NaN, an infinity or a value outside the `int` range traps with the overflow error |
 | `float` | a sized integer | truncated toward zero, then wrapped like an integer (`-2.7 as u8` is `254`); NaN or an infinity traps with `cannot convert NaN to u8` (or `inf`, `-inf`, and the target type) |
 | integer | `float` | the nearest float |
 | `bool` | integer | `0` or `1` |
@@ -282,7 +290,7 @@ Any integer type, sized or not, indexes an array or a `Vec`.
 `FixedDiv` of 16.16 fixed-point code:
 
 - `a.mul_shr(b, n)` is `(a * b) >> n` computed without overflow, then wrapped to `i32`
-  (or checked against 48 bits for `int`, trapping on overflow).
+  (or checked against the `int` range, trapping on overflow).
 - `a.shl_div(b, n)` is `(a << n) / b` computed without overflow and truncated toward zero,
   then wrapped to `i32` (or checked for `int`). A zero `b` traps with `division by zero`.
 
@@ -417,14 +425,14 @@ computed with the runtime's rules for the constant's type: a sized constant wrap
 (`const B: u8 = 200 + 100` is `44`, `const M: u32 = 0xFFFFFFFF + 1` is `0`), each
 operand takes the type of the constants it names, and a shift count is taken modulo
 the width (`const Z = 1 >> -1` is `0`). Anything else, a function call, a `let`
-binding, a collection, a division by zero or an `int` result outside the 48-bit
+binding, a collection, a division by zero or an `int` result outside the `int`
 range, is E0395; for a division or remainder by zero or an overflow, the message
 names that cause (`cannot be evaluated at compile time: division by zero`).
 
 Outside a `const` initializer, an integer expression made only of literals is folded
-by the compiler only when every step stays inside the 48-bit range. A step that
+by the compiler only when every step stays inside the `int` range. A step that
 overflows is left to run, so the program traps at run time exactly as an unoptimised
-build would: `a[(140737488355327 * 2) & 255]` traps with the integer overflow error
+build would: `a[(9223372036854775807 * 2) & 255]` traps with the integer overflow error
 rather than reporting a constant index out of bounds (E0321).
 Declaring the same constant twice in one scope is E0396.
 
@@ -844,7 +852,7 @@ Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same f
 | `>>` | Right shift (arithmetic on `int` and signed types, logical on unsigned types) |
 
 Both operands have the same integer type. On `int` the shift count is taken modulo 64 and
-`<<` traps when the exact result leaves the 48-bit range, like `*`. On a sized type the
+`<<` traps when the exact result leaves the `int` range, like `*`. On a sized type the
 count is taken modulo the width and the result wraps.
 
 ### Evaluation order
@@ -1668,7 +1676,7 @@ So you don't need to annotate everything. `@inline` and `@inline_always` are for
 
 **Optimization never changes what a program does:**
 
-Every optimization level (`-O0` to `-O3`) produces the same output and exit code as `-O0`, and raises the same runtime error at the same point of the run. Only the location reported for an error raised inside an inlined function can differ: it is the line of the call that was inlined, and the stack trace has no frame for the inlined function. An inlined call evaluates each argument exactly once, left to right, before the body, as a real call does: an argument whose parameter is unused still runs, and one that traps (division by zero, an out-of-bounds index, an integer overflow, `<<` on `int` leaving the 48-bit range, a NaN or infinite float converted with `as`, a global read before its initialiser ran) traps at the same point. A call is only inlined when its name resolves to the top-level `fn`; a parameter, a local closure or a nested `fn` of the same name is called as written. An unused `let` is only removed when its initializer can neither write anything nor trap; `let _x = v[i]`, `let _x = a / b`, `let _x = a * b` or `let _x = g.x` with `g` a global bound after code ran still raise their error when they would at `-O0`. Operators on the sized types wrap and never trap, except `/` and `%` by zero.
+Every optimization level (`-O0` to `-O3`) produces the same output and exit code as `-O0`, and raises the same runtime error at the same point of the run. Only the location reported for an error raised inside an inlined function can differ: it is the line of the call that was inlined, and the stack trace has no frame for the inlined function. An inlined call evaluates each argument exactly once, left to right, before the body, as a real call does: an argument whose parameter is unused still runs, and one that traps (division by zero, an out-of-bounds index, an integer overflow, `<<` on `int` leaving the `int` range, a NaN or infinite float converted with `as`, a global read before its initialiser ran) traps at the same point. A call is only inlined when its name resolves to the top-level `fn`; a parameter, a local closure or a nested `fn` of the same name is called as written. An unused `let` is only removed when its initializer can neither write anything nor trap; `let _x = v[i]`, `let _x = a / b`, `let _x = a * b` or `let _x = g.x` with `g` a global bound after code ran still raise their error when they would at `-O0`. Operators on the sized types wrap and never trap, except `/` and `%` by zero.
 
 ## Semicolons
 
@@ -2155,7 +2163,8 @@ a string or float literal, or whose bounds mix an integer and a `char`, is E0108
 Exhaustiveness covers a sized integer by its own bounds
 (`u8` is covered by `0..=255`, `i8` by `-128..=127`), which is sound because sized
 arithmetic wraps, so a sized value never leaves its range. `int` is covered only by ranges
-reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character and a
+reaching its bounds (`-9223372036854775808` and `9223372036854775807`) or by `_`; `u64` by
+`0..=18446744073709551615`. A `char` pattern (`'a'`) matches one character and a
 `char` range the scalar values between its bounds; a `char` match is exhaustive only when its
 literals and ranges cover every Unicode scalar value (`..='m'` with `'n'..`, or
 `'\0'..='\u{D7FF}'` with `'\u{E000}'..='\u{10FFFF}'`), otherwise it is E0302
@@ -3706,7 +3715,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0445 | AmbiguousImport | an unqualified use of a name two whole-module imports both bind |
 | E0446 | AssignToImmutableImport | an assignment to an imported `pub let` or imported function |
 | E0460 | MixedIntegerOperands | a binary operator mixes two integer types |
-| E0461 | WideIntegerUnavailable | `i64` or `u64` is written; `int` is a 48-bit integer |
+| E0461 | (retired) | no longer emitted: `i64` and `u64` are wrapping 64-bit types; the code is not reused |
 | E0462 | FixedPointShiftOutOfRange | a literal shift count of `mul_shr` or `shl_div` lies outside 0..=63 |
 | E0470 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
 | E0471 | UnorderedSortElement | `sort` on elements with no built-in order |
