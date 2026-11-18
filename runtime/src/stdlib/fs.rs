@@ -1,7 +1,8 @@
 // fs module - file system operations (handles, paths, directories)
 
 use crate::stdlib::helpers::{
-    get_handle, get_int, get_string, make_string, option_some, result_err, result_ok,
+    get_handle, get_int, get_string, make_int_checked, make_string, option_some, result_err,
+    result_ok,
 };
 use crate::stdlib::{
     ByteBuffer, FileMode, FileResource, Resource, StdModuleExports, register_native,
@@ -329,7 +330,13 @@ fn native_is_dir(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_size(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let p = get_string(vm, args[0], "fs.size")?;
     match fs::metadata(p) {
-        Ok(metadata) => fs_ok(vm, Value::int(metadata.len() as i64)),
+        Ok(metadata) => match i64::try_from(metadata.len()) {
+            Ok(size) => {
+                let size = make_int_checked(vm, size, "fs.size")?;
+                fs_ok(vm, size)
+            }
+            Err(_) => fs_fail(vm, "fs.size", format!("'{}': size exceeds int range", p)),
+        },
         Err(e) => fs_fail(vm, "fs.size", format!("'{}': {e}", p)),
     }
 }
@@ -400,7 +407,13 @@ fn native_copy(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let src = get_string(vm, args[0], "fs.copy")?;
     let dst = get_string(vm, args[1], "fs.copy")?;
     match fs::copy(src, dst) {
-        Ok(bytes) => fs_ok(vm, Value::int(bytes as i64)),
+        Ok(bytes) => match i64::try_from(bytes) {
+            Ok(bytes) => {
+                let bytes = make_int_checked(vm, bytes, "fs.copy")?;
+                fs_ok(vm, bytes)
+            }
+            Err(_) => fs_fail(vm, "fs.copy", format!("'{}': size exceeds int range", src)),
+        },
         Err(e) => fs_fail(vm, "fs.copy", format!("'{}' -> '{}': {e}", src, dst)),
     }
 }

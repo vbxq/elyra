@@ -50,7 +50,8 @@ macro_rules! impl_read {
                 let mut arr = [0u8; $size];
                 arr.copy_from_slice(&buf.data[off..off + $size]);
                 let v = <$ty>::$conv(arr);
-                Ok($to_val(v))
+                let value: Option<Value> = ($to_val(v)).into();
+                value.ok_or_else(|| err(vm, $op, format!("value {v} exceeds the 48-bit int range")))
             } else {
                 Err(err(vm, $op, "invalid handle".into()))
             }
@@ -522,7 +523,9 @@ impl_read!(
     8,
     u64,
     from_le_bytes,
-    |v: u64| Value::int(v as i64)
+    |v: u64| i64::try_from(v)
+        .ok()
+        .and_then(|v| Value::int_checked(v).ok())
 );
 impl_read!(
     native_read_i64,
@@ -530,7 +533,7 @@ impl_read!(
     8,
     i64,
     from_le_bytes,
-    |v: i64| Value::int(v)
+    |v: i64| Value::int_checked(v).ok()
 );
 impl_read!(
     native_read_u64_be,
@@ -538,7 +541,9 @@ impl_read!(
     8,
     u64,
     from_be_bytes,
-    |v: u64| Value::int(v as i64)
+    |v: u64| i64::try_from(v)
+        .ok()
+        .and_then(|v| Value::int_checked(v).ok())
 );
 impl_read!(
     native_read_i64_be,
@@ -546,7 +551,7 @@ impl_read!(
     8,
     i64,
     from_be_bytes,
-    |v: i64| Value::int(v)
+    |v: i64| Value::int_checked(v).ok()
 );
 
 impl_write_int!(
