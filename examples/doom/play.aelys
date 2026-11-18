@@ -63,11 +63,11 @@ let mut th_x: Vec<int> = vec![0]
 let mut th_y: Vec<int> = vec![0]
 let mut th_r: Vec<int> = vec![0]
 let mut num_solid = 0
-let mut p_skill_bit = 2
-let mut p_no_monsters = false
+let mut skill_bit = 2
+let mut no_monsters = false
 
-let mut p_nodes: Vec<Node> = vec![]
-let mut p_num_nodes = 0
+let mut nodes: Vec<Node> = vec![]
+let mut num_nodes = 0
 let mut ss_sector: Vec<int> = vec![0]
 let mut validcount = 0
 
@@ -109,13 +109,13 @@ let mut use_t: Vec<float> = vec![0.0; 64]
 let mut moves_tried = 0
 let mut slides = 0
 
-fn p_abs(a: int) -> int {
+fn iabs(a: int) -> int {
     if a < 0 { -a } else { a }
 }
 
-fn p_push_int(mut v: Vec<int>, x: int) { v.push(x) }
+fn push_int(mut v: Vec<int>, x: int) { v.push(x) }
 
-fn p_node_side(x: int, y: int, node: Node) -> int {
+fn node_side(x: int, y: int, node: Node) -> int {
     let nx = node.x << 16
     let ny = node.y << 16
     let ndx = node.dx
@@ -139,11 +139,11 @@ fn p_node_side(x: int, y: int, node: Node) -> int {
     if right < left { 0 } else { 1 }
 }
 
-fn p_subsector_at(x: int, y: int) -> int {
-    let mut n = p_num_nodes - 1
+fn subsector_at(x: int, y: int) -> int {
+    let mut n = num_nodes - 1
     while true {
-        let node = p_nodes[n]
-        let c: Child = if p_node_side(x, y, node) == 0 { node.right } else { node.left }
+        let node = nodes[n]
+        let c: Child = if node_side(x, y, node) == 0 { node.right } else { node.left }
         match c {
             Child::Leaf(i) => { return i },
             Child::Node(i) => { n = i },
@@ -153,7 +153,7 @@ fn p_subsector_at(x: int, y: int) -> int {
 }
 
 pub fn sector_at(x: int, y: int) -> int {
-    ss_sector[p_subsector_at(x, y)]
+    ss_sector[subsector_at(x, y)]
 }
 
 pub fn angle_to(x: int, y: int) -> int {
@@ -217,7 +217,7 @@ pub fn angle_to(x: int, y: int) -> int {
     if neg { (base - fixed::tantoangle[slope]) & 0xFFFFFFFF } else { (base + fixed::tantoangle[slope]) & 0xFFFFFFFF }
 }
 
-fn p_is_monster(kind: int) -> bool {
+fn is_monster(kind: int) -> bool {
     kind == 3004 or kind == 9 or kind == 3001 or kind == 3002 or kind == 58 or kind == 3006 or kind == 3005 or kind == 3003 or kind == 16 or kind == 7
 }
 
@@ -368,8 +368,8 @@ fn setup_things(lv: Level) {
             pangle = (0x20000000 * (t.angle / 45)) & 0xFFFFFFFF
         }
         if (t.flags & 16) != 0 { continue }
-        if (t.flags & p_skill_bit) == 0 { continue }
-        if p_no_monsters and p_is_monster(t.kind) { continue }
+        if (t.flags & skill_bit) == 0 { continue }
+        if no_monsters and is_monster(t.kind) { continue }
         let r = solid_radius(t.kind)
         if r == 0 { continue }
         let x = t.x << 16
@@ -380,14 +380,14 @@ fn setup_things(lv: Level) {
         th_x.push(x)
         th_y.push(y)
         th_r.push(r << 16)
-        p_push_int(th_blocks[by * bm_w + bx], th_x.len() - 1)
+        push_int(th_blocks[by * bm_w + bx], th_x.len() - 1)
     }
     num_solid = th_x.len()
 }
 
-pub fn init_level(mut lv: Level, skill_bit: int, no_monsters: bool) {
-    p_skill_bit = skill_bit
-    p_no_monsters = no_monsters
+pub fn init_level(mut lv: Level, skill: int, nomonsters: bool) {
+    skill_bit = skill
+    no_monsters = nomonsters
     setup_lines(lv)
     setup_sectors(lv)
     let bm = lv.blockmap
@@ -396,8 +396,8 @@ pub fn init_level(mut lv: Level, skill_bit: int, no_monsters: bool) {
     bm_w = bm.columns
     bm_h = bm.rows
     bm_lists = lv.blockmap.lists
-    p_nodes = lv.nodes
-    p_num_nodes = p_nodes.len()
+    nodes = lv.nodes
+    num_nodes = nodes.len()
     ss_sector = vec![]
     for ss in lv.subsectors {
         let seg = lv.segs[ss.first_seg]
@@ -518,7 +518,7 @@ fn block_things(bx: int, by: int) -> bool {
     if bx < 0 or by < 0 or bx >= bm_w or by >= bm_h { return true }
     for t in th_blocks[by * bm_w + bx] {
         let bd = th_r[t] + 1048576
-        if p_abs(th_x[t] - tm_x) < bd and p_abs(th_y[t] - tm_y) < bd {
+        if iabs(th_x[t] - tm_x) < bd and iabs(th_y[t] - tm_y) < bd {
             tm_blockline = -1
             return false
         }
@@ -533,7 +533,7 @@ fn check_position(x: int, y: int) -> bool {
     tm_right = x + 1048576
     tm_bottom = y - 1048576
     tm_top = y + 1048576
-    let sec = ss_sector[p_subsector_at(x, y)]
+    let sec = ss_sector[subsector_at(x, y)]
     tm_floor = s_floor[sec]
     tm_drop = tm_floor
     tm_ceil = s_ceil[sec]
@@ -646,7 +646,7 @@ fn xy_movement() {
     while xmove != 0 or ymove != 0 {
         let mut tx = 0
         let mut ty = 0
-        if p_abs(xmove) > 983040 or p_abs(ymove) > 983040 {
+        if iabs(xmove) > 983040 or iabs(ymove) > 983040 {
             xmove = xmove / 2
             ymove = ymove / 2
             tx = px + xmove
