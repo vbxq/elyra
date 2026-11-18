@@ -168,8 +168,10 @@ impl Compiler {
                 && let Some(module_name) = Self::typed_path_name(object)
                 && self.has_module_alias(&module_name)
             {
-                let qualified_name = format!("{}::{}", module_name, member);
-                let global_idx = self.get_or_create_global_index(&qualified_name);
+                let qualified_name = self
+                    .resolve_global_name(&format!("{}::{}", module_name, member))
+                    .to_string();
+                let global_idx = self.get_or_create_global_index_raw(&qualified_name);
                 self.accessed_globals.insert(qualified_name.clone());
 
                 let arg_start = match dest.checked_add(1) {

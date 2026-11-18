@@ -47,8 +47,10 @@ pub struct VM {
     pub(crate) jit_backedge_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
     pub(crate) jit_refused: crate::jit::InlineMap<GcRef, ()>,
     pub(crate) schema_registry: HashMap<SchemaId, StructSchema>,
-    pub(crate) schema_index: HashMap<u64, Vec<SchemaId>>,
+    pub(crate) schema_index: HashMap<super::alloc::StructIdentity, SchemaId>,
     pub(crate) next_schema_id: u32,
+    pub(crate) enum_index: HashMap<super::alloc::EnumIdentity, u16>,
+    pub(crate) enum_registry: Vec<Box<[usize]>>,
     pub(crate) source: Arc<Source>,
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,
@@ -70,6 +72,15 @@ pub struct VM {
     pub(crate) repl_known_globals: HashSet<String>,
     pub(crate) repl_known_native_globals: HashSet<String>,
     pub(crate) repl_symbol_origins: HashMap<String, String>,
+    pub(crate) prelude: Arc<PreludeScope>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PreludeScope {
+    pub module_aliases: HashSet<String>,
+    pub known_globals: HashSet<String>,
+    pub known_native_globals: HashSet<String>,
+    pub symbol_origins: HashMap<String, String>,
 }
 
 // cached pointers refer to allocations owned by that same vm and are never shared.

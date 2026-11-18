@@ -49,6 +49,8 @@ impl VM {
             schema_registry: HashMap::new(),
             schema_index: HashMap::new(),
             next_schema_id: 1,
+            enum_index: HashMap::new(),
+            enum_registry: Vec::new(),
             source,
             open_upvalues: Vec::new(),
             current_upvalues: Vec::new(),
@@ -69,6 +71,7 @@ impl VM {
             repl_known_globals: HashSet::new(),
             repl_known_native_globals: HashSet::new(),
             repl_symbol_origins: HashMap::new(),
+            prelude: Arc::default(),
         };
         super::builtins::register_builtins(&mut vm)?;
 
@@ -105,6 +108,12 @@ impl VM {
             }
         }
 
+        vm.prelude = Arc::new(super::core::PreludeScope {
+            module_aliases: vm.repl_module_aliases.clone(),
+            known_globals: vm.repl_known_globals.clone(),
+            known_native_globals: vm.repl_known_native_globals.clone(),
+            symbol_origins: vm.repl_symbol_origins.clone(),
+        });
         Ok(vm)
     }
 }

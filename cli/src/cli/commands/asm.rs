@@ -174,6 +174,7 @@ fn compile_source(
         resolved.symbol_origins,
     )
     .with_module_sources(imports.module_sources.clone())
+    .with_module_scopes(imports.imported_types.module_scopes.clone())
     .compile_typed(&typed_program)
     .map_err(|err| err.to_string())?;
 

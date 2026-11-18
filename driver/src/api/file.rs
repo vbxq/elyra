@@ -186,7 +186,8 @@ pub fn run_file_full_with_control_and_jit(
         resolved.known_native_globals,
         resolved.symbol_origins,
     )
-    .with_module_sources(imports.module_sources.clone());
+    .with_module_sources(imports.module_sources.clone())
+    .with_module_scopes(imports.imported_types.module_scopes.clone());
     let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
     let func_ref = if jit_enabled {

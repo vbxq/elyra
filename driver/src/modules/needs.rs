@@ -20,17 +20,11 @@ fn resolve_loaded_module<'a>(
     String,
     Option<String>,
 ) {
-    let full_path = needs.path.join(".");
-    if let Some(module_info) = loader.get_module(&full_path) {
-        return (Some(module_info), full_path, None);
-    }
-    if needs.path.len() > 1 {
-        let parent = needs.path[..needs.path.len() - 1].join(".");
-        if let Some(module_info) = loader.get_module(&parent) {
-            return (Some(module_info), parent, needs.path.last().cloned());
-        }
-    }
-    (None, full_path, None)
+    let (key, symbol) = match loader.resolved_needs(needs) {
+        Some(resolved) => (resolved.key.clone(), resolved.symbol.clone()),
+        None => (needs.path.join("."), None),
+    };
+    (loader.get_module(&key), key, symbol)
 }
 
 fn surface_module(module_path: &str) -> String {
@@ -160,6 +154,10 @@ impl NominalImports {
             self.types.module_globals.insert(
                 module.as_str().to_string(),
                 module_info.exported_types.globals.clone(),
+            );
+            self.types.module_scopes.insert(
+                module.as_str().to_string(),
+                module_info.exported_types.scope.clone(),
             );
             self.types.module_scoped_globals.insert(
                 module.as_str().to_string(),
@@ -372,6 +370,7 @@ fn load_modules(
     let mut symbol_origins: HashMap<String, String> = HashMap::new();
     let mut nominal_imports = NominalImports::default();
     let mut nominal_scopes: Vec<NominalScopeEntry> = Vec::new();
+    let mut global_renames: HashMap<String, String> = HashMap::new();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
         .iter()
@@ -412,6 +411,7 @@ fn load_modules(
                 (None, _) => None,
             };
             widen_nominal_scope(&mut nominal_scopes, &module_path, wanted, needs.span);
+            global_renames.extend(loader.import_renames(needs, &effective_kind, &module_path));
             for native_name in &module_info.native_functions {
                 known_native_globals.insert(native_name.clone());
             }
@@ -573,6 +573,7 @@ fn load_modules(
             imported_impl_stmts: nominal_imports.impl_stmts,
             impl_body_globals: nominal_imports.body_globals,
             module_sources: nominal_imports.module_sources,
+            global_renames,
         },
         loader,
     ))

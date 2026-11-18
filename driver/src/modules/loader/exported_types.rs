@@ -24,6 +24,7 @@ pub struct ExportedTypes {
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
     pub renamed_privates: BTreeMap<String, String>,
     pub renamed_private_traits: BTreeSet<String>,
+    pub scope: aelys_sema::infer::imports::ModuleScope,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -134,6 +135,12 @@ fn names_the_impls_reach(exported: &ExportedTypes, impls: &[Stmt]) -> HashSet<St
     }
     loop {
         let mut grew = false;
+        for (name, ty) in &exported.globals {
+            let bare = name.rsplit("::").next().unwrap_or(name);
+            if reached.contains(name) || reached.contains(bare) {
+                grew |= collect_identifiers(&ty.to_string(), &mut reached);
+            }
+        }
         for def in &exported.types.structs {
             if !reached.contains(&def.name) {
                 continue;

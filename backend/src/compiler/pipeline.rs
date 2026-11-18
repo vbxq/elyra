@@ -8,6 +8,7 @@ use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
 use aelys_syntax::Source;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 impl Compiler {
@@ -166,9 +167,7 @@ impl Compiler {
             for stmt in &program.stmts[..last_idx] {
                 let restore = self.enter_definition_module(stmt);
                 let compiled = self.compile_typed_stmt(stmt);
-                if let Some(source) = restore {
-                    self.source = source;
-                }
+                self.leave_definition_module(restore);
                 compiled?;
             }
 
@@ -209,9 +208,7 @@ impl Compiler {
                     self.emit_return0(last_stmt.span);
                 }
             }
-            if let Some(source) = restore_last {
-                self.source = source;
-            }
+            self.leave_definition_module(restore_last);
         }
 
         self.current.num_registers = self.next_register;
@@ -427,11 +424,53 @@ fn struct_schema_id(name: &str, type_table: &aelys_sema::TypeTable) -> Option<u3
 }
 
 impl Compiler {
-    fn enter_definition_module(&mut self, stmt: &aelys_sema::TypedStmt) -> Option<Arc<Source>> {
-        let module = stmt.definition_module.as_ref()?;
-        let source = self.module_sources.get(module.as_str())?.clone();
-        Some(std::mem::replace(&mut self.source, source))
+    fn enter_definition_module(&mut self, stmt: &aelys_sema::TypedStmt) -> DefinitionRestore {
+        let Some(module) = stmt.definition_module.as_ref() else {
+            return DefinitionRestore::default();
+        };
+        let source = self
+            .module_sources
+            .get(module.as_str())
+            .cloned()
+            .map(|source| std::mem::replace(&mut self.source, source));
+        let scope = self
+            .module_scopes
+            .get(module.as_str())
+            .cloned()
+            .map(|scope| {
+                let mut native_globals = self.known_native_globals.as_ref().clone();
+                native_globals.extend(scope.known_native_globals);
+                (
+                    std::mem::replace(&mut self.module_aliases, Rc::new(scope.module_aliases)),
+                    std::mem::replace(&mut self.symbol_origins, Rc::new(scope.symbol_origins)),
+                    std::mem::replace(&mut self.known_native_globals, Rc::new(native_globals)),
+                )
+            });
+        DefinitionRestore { source, scope }
     }
+
+    fn leave_definition_module(&mut self, restore: DefinitionRestore) {
+        if let Some(source) = restore.source {
+            self.source = source;
+        }
+        if let Some((module_aliases, symbol_origins, known_native_globals)) = restore.scope {
+            self.module_aliases = module_aliases;
+            self.symbol_origins = symbol_origins;
+            self.known_native_globals = known_native_globals;
+        }
+    }
+}
+
+type ScopeRestore = (
+    Rc<std::collections::HashSet<String>>,
+    Rc<HashMap<String, String>>,
+    Rc<std::collections::HashSet<String>>,
+);
+
+#[derive(Default)]
+struct DefinitionRestore {
+    source: Option<Arc<Source>>,
+    scope: Option<ScopeRestore>,
 }
 
 #[cfg(test)]

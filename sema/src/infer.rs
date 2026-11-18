@@ -215,6 +215,7 @@ pub struct TypeInference {
     module_globals:
         std::collections::BTreeMap<String, std::collections::BTreeMap<String, InferType>>,
     module_scoped_globals: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    module_scopes: std::collections::BTreeMap<String, imports::ModuleScope>,
     scope_own_globals: bool,
     pub(crate) monomorphization_active: Vec<(String, Vec<InferType>)>,
     current_trait_name: Option<String>,

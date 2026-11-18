@@ -1275,9 +1275,15 @@ impl TypeInference {
 
     pub(super) fn resolve_deferred_members(&mut self, stmts: &mut [TypedStmt]) {
         let type_table = &self.type_table;
-        let hidden = |name: &str| self.refused_private_nominal(name).is_some();
         let mut errors = Vec::new();
         for stmt in stmts.iter_mut() {
+            // a body carried from its defining module reads that module's nominals, which the
+            // importer may never have named
+            let carried = stmt
+                .definition_module
+                .as_ref()
+                .is_some_and(|module| *module != self.root_module);
+            let hidden = |name: &str| !carried && self.refused_private_nominal(name).is_some();
             visit_exprs_stmt(stmt, &mut |expr| {
                 resolve_deferred_expr(expr, type_table, &hidden, &mut errors);
             });

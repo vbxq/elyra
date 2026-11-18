@@ -66,4 +66,6 @@ pub struct Compiler {
     pub struct_schemas: Rc<Vec<StructSchema>>,
     pub enum_schemas: Rc<Vec<EnumSchema>>,
     pub module_sources: Rc<HashMap<String, Arc<Source>>>,
+    pub module_scopes:
+        Rc<std::collections::BTreeMap<String, aelys_sema::infer::imports::ModuleScope>>,
 }

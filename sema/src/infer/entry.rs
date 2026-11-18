@@ -69,6 +69,7 @@ impl Default for TypeInference {
             globals_without_signature: HashSet::new(),
             module_globals: std::collections::BTreeMap::new(),
             module_scoped_globals: std::collections::BTreeMap::new(),
+            module_scopes: std::collections::BTreeMap::new(),
             scope_own_globals: false,
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),

@@ -85,19 +85,15 @@ impl ModuleLoader {
             .insert(module_path_str.to_string(), module_info);
 
         let original_base_dir = self.base_dir.clone();
-        let original_base_root = self.base_root.clone();
         self.base_dir = file_path
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or(original_base_dir.clone());
-        self.base_root = self
-            .base_dir
-            .canonicalize()
-            .unwrap_or_else(|_| self.base_dir.clone());
 
-        let mut module_aliases = std::collections::HashSet::new();
-        let mut known_globals = std::collections::HashSet::new();
-        let mut known_native_globals = std::collections::HashSet::new();
+        let prelude = vm.prelude_scope();
+        let mut module_aliases = prelude.module_aliases.clone();
+        let mut known_globals = prelude.known_globals.clone();
+        let mut known_native_globals = prelude.known_native_globals.clone();
         let mut native_signatures = std::collections::HashMap::new();
         let mut imported_types = aelys_sema::infer::imports::ImportedTypes::default();
         let mut imported_impl_stmts: Vec<aelys_syntax::Stmt> = Vec::new();
@@ -114,6 +110,8 @@ impl ModuleLoader {
             std::collections::HashSet::new();
         let mut qualified_imports: std::collections::BTreeMap<String, InferType> =
             std::collections::BTreeMap::new();
+        let mut global_renames: std::collections::HashMap<String, String> =
+            prelude.symbol_origins.clone();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -128,15 +126,24 @@ impl ModuleLoader {
                     }
                 }
 
-                let nested_module_path = nested_needs.path.join(".");
+                let (nested_module_path, fallback_symbol) = match self.resolved_needs(nested_needs)
+                {
+                    Some(resolved) => (resolved.key.clone(), resolved.symbol.clone()),
+                    None => (nested_needs.path.join("."), None),
+                };
+                let effective_kind = match &fallback_symbol {
+                    Some(symbol) => aelys_syntax::ImportKind::Symbols(vec![symbol.clone()]),
+                    None => nested_needs.kind.clone(),
+                };
                 if let Some(module_info) = self.get_module(&nested_module_path) {
                     for native_name in &module_info.native_functions {
                         known_native_globals.insert(native_name.clone());
                     }
                     native_signatures.extend(module_info.native_signatures.clone());
-                    let wanted = match &nested_needs.kind {
-                        aelys_syntax::ImportKind::Symbols(symbols) => Some(symbols.clone()),
-                        _ => None,
+                    let wanted = match (&fallback_symbol, &effective_kind) {
+                        (Some(_), _) => Some(Vec::new()),
+                        (None, aelys_syntax::ImportKind::Symbols(symbols)) => Some(symbols.clone()),
+                        (None, _) => None,
                     };
                     super::exported_types::widen_nominal_scope(
                         &mut nominal_scopes,
@@ -144,8 +151,13 @@ impl ModuleLoader {
                         wanted,
                         nested_needs.span,
                     );
+                    global_renames.extend(self.import_renames(
+                        nested_needs,
+                        &effective_kind,
+                        &nested_module_path,
+                    ));
 
-                    match &nested_needs.kind {
+                    match &effective_kind {
                         aelys_syntax::ImportKind::Module { alias: None }
                         | aelys_syntax::ImportKind::Wildcard => {
                             for name in module_info.exports.keys() {
@@ -283,6 +295,9 @@ impl ModuleLoader {
                     module_id.clone(),
                     module_info.exported_types.globals.clone(),
                 );
+                imported_types
+                    .module_scopes
+                    .insert(module_id.clone(), module_info.exported_types.scope.clone());
                 for name in &module_info.exported_types.scoped_globals {
                     scoped_globals.insert(aelys_sema::module_scoped_global(&module_id, name));
                 }
@@ -331,7 +346,6 @@ impl ModuleLoader {
         }
 
         self.base_dir = original_base_dir;
-        self.base_root = original_base_root;
 
         // reach this module by two routes, so the same body must not register twice
         let mut seen_impls: std::collections::HashSet<(String, usize, usize)> =
@@ -383,6 +397,12 @@ impl ModuleLoader {
         super::rename::rename_stmts(&mut own_stmts, &applied_renames);
 
         let main_stmts: Vec<_> = imported_impl_stmts.into_iter().chain(own_stmts).collect();
+        let module_scopes = imported_types.module_scopes.clone();
+        let own_scope = aelys_sema::infer::imports::ModuleScope {
+            module_aliases: module_aliases.clone(),
+            known_native_globals: known_native_globals.clone(),
+            symbol_origins: global_renames.clone(),
+        };
 
         let inference_result = TypeInference::infer_program_full_with_native_signatures_in_module(
             aelys_sema::InferenceInputs {
@@ -463,6 +483,7 @@ impl ModuleLoader {
             &applied_renames,
         )?;
         exported_types.source = Some(module_source.clone());
+        exported_types.scope = own_scope;
         exported_types.private_types = private_types;
         exported_types.private_impls = private_impls;
         exported_types.private_origins = nominal_origins;
@@ -522,9 +543,10 @@ impl ModuleLoader {
             module_aliases,
             codegen_globals,
             known_native_globals,
-            std::collections::HashMap::new(),
+            global_renames,
         )
-        .with_module_sources(module_sources.clone());
+        .with_module_sources(module_sources.clone())
+        .with_module_scopes(module_scopes);
         let (function, _globals) = compiler.compile_typed(&typed_program)?;
 
         let global_layout = Arc::clone(&function.global_layout);
@@ -555,7 +577,7 @@ impl ModuleLoader {
             module_info.exported_types.scoped_globals = published;
         }
 
-        self.register_exports(needs, &exports, vm)?;
+        self.register_exports(needs, module_path_str, &exports, vm)?;
 
         Ok(())
     }

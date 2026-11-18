@@ -11,6 +11,7 @@ struct SchemaTables<'a> {
     structs: &'a [StructSchema],
     runtime_ids: &'a [SchemaId],
     enums: &'a [EnumSchema],
+    enum_runtime_ids: &'a [u16],
 }
 
 fn view(schemas: &FunctionSchemas) -> SchemaTables<'_> {
@@ -18,6 +19,7 @@ fn view(schemas: &FunctionSchemas) -> SchemaTables<'_> {
         structs: &schemas.structs,
         runtime_ids: &schemas.runtime_ids,
         enums: &schemas.enums,
+        enum_runtime_ids: &schemas.enum_runtime_ids,
     }
 }
 
@@ -63,7 +65,14 @@ impl VM {
             )));
         }
         self.check_materialized_ids(&function_schemas)?;
-        let enum_schemas = &function_schemas.enums;
+        let runtime_enum_id = *function_schemas
+            .enum_runtime_ids
+            .get(usize::from(schema_index))
+            .ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                    "enum schema index has no runtime id".to_string(),
+                ))
+            })?;
         let tables = view(&function_schemas);
         let base = state.base;
 
@@ -107,7 +116,7 @@ impl VM {
                     }
                     slots.push(value);
                 }
-                let reference = self.alloc_enum(schema_index, c, slots)?;
+                let reference = self.alloc_enum(runtime_enum_id, c, slots)?;
                 state.write_register(
                     self,
                     base + usize::from(a),
@@ -126,32 +135,12 @@ impl VM {
                     && let Some(object) = self.heap.get(GcRef::new(pointer))
                     && let ObjectKind::Enum(value) = &object.kind
                 {
-                    let actual_schema =
-                        enum_schemas
-                            .get(usize::from(value.enum_id))
-                            .ok_or_else(|| {
-                                self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                                    "enum object has invalid schema index".to_string(),
-                                ))
-                            })?;
-                    let actual_variant = actual_schema
-                        .variants
-                        .get(usize::from(value.variant_id))
-                        .ok_or_else(|| {
-                            self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                                "enum object has invalid variant index".to_string(),
-                            ))
-                        })?;
-                    if value.slot_count != u16::try_from(value.slots.len()).unwrap_or(u16::MAX)
-                        || value.slots.len() != actual_variant.fields.len()
-                        || actual_schema.schema_id != value.enum_id
-                        || actual_variant.variant_id != value.variant_id
-                    {
+                    if !self.enum_object_matches_registry(value) {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                             "enum object slot count does not match schema".to_string(),
                         )));
                     }
-                    value.enum_id == schema_index && value.variant_id == c
+                    value.enum_id == runtime_enum_id && value.variant_id == c
                 } else {
                     false
                 };
@@ -177,34 +166,14 @@ impl VM {
                         got: value.type_name().to_string(),
                     }));
                 };
-                let actual_schema =
-                    enum_schemas
-                        .get(usize::from(value.enum_id))
-                        .ok_or_else(|| {
-                            self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                                "enum object has invalid schema index".to_string(),
-                            ))
-                        })?;
-                let actual_variant = actual_schema
-                    .variants
-                    .get(usize::from(value.variant_id))
-                    .ok_or_else(|| {
-                        self.runtime_error(RuntimeErrorKind::InvalidBytecode(
-                            "enum object has invalid variant index".to_string(),
-                        ))
-                    })?;
-                if value.slot_count != u16::try_from(value.slots.len()).unwrap_or(u16::MAX)
-                    || value.slots.len() != actual_variant.fields.len()
-                    || actual_schema.schema_id != value.enum_id
-                    || actual_variant.variant_id != value.variant_id
-                {
+                if !self.enum_object_matches_registry(value) {
                     return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                         "enum object slot count does not match schema".to_string(),
                     )));
                 }
-                if value.enum_id != schema_index {
+                if value.enum_id != runtime_enum_id {
                     return Err(self.runtime_error(RuntimeErrorKind::InvalidEnumField {
-                        expected_schema: schema_index,
+                        expected_schema: runtime_enum_id,
                         actual_schema: value.enum_id,
                         expected_variant: c,
                         actual_variant: value.variant_id,
@@ -213,7 +182,7 @@ impl VM {
                 }
                 if value.variant_id != c {
                     return Err(self.runtime_error(RuntimeErrorKind::InvalidEnumField {
-                        expected_schema: schema_index,
+                        expected_schema: runtime_enum_id,
                         actual_schema: value.enum_id,
                         expected_variant: c,
                         actual_variant: value.variant_id,
@@ -235,7 +204,7 @@ impl VM {
                 }
                 if usize::from(count_or_zero) >= variant.fields.len() {
                     return Err(self.runtime_error(RuntimeErrorKind::InvalidEnumField {
-                        expected_schema: schema_index,
+                        expected_schema: runtime_enum_id,
                         actual_schema: value.enum_id,
                         expected_variant: c,
                         actual_variant: value.variant_id,
@@ -244,7 +213,7 @@ impl VM {
                 }
                 if variant.fields[usize::from(count_or_zero)].offset != count_or_zero {
                     return Err(self.runtime_error(RuntimeErrorKind::InvalidEnumField {
-                        expected_schema: schema_index,
+                        expected_schema: runtime_enum_id,
                         actual_schema: value.enum_id,
                         expected_variant: c,
                         actual_variant: value.variant_id,
@@ -401,8 +370,21 @@ impl VM {
         Ok(function.schemas())
     }
 
+    fn enum_object_matches_registry(&self, value: &aelys_bytecode::object::AelysEnum) -> bool {
+        let Some(variants) = self.enum_registry.get(usize::from(value.enum_id)) else {
+            return false;
+        };
+        let Some(field_count) = variants.get(usize::from(value.variant_id)) else {
+            return false;
+        };
+        value.slot_count == u16::try_from(value.slots.len()).unwrap_or(u16::MAX)
+            && value.slots.len() == *field_count
+    }
+
     fn check_materialized_ids(&self, schemas: &FunctionSchemas) -> Result<(), RuntimeError> {
-        if schemas.runtime_ids.len() != schemas.structs.len() {
+        if schemas.runtime_ids.len() != schemas.structs.len()
+            || schemas.enum_runtime_ids.len() != schemas.enums.len()
+        {
             return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
                 "struct schema table has no materialized runtime ids".to_string(),
             )));
@@ -506,7 +488,7 @@ impl VM {
                 let ObjectKind::Enum(value) = &object.kind else {
                     return false;
                 };
-                if value.enum_id != *expected {
+                if tables.enum_runtime_ids.get(usize::from(*expected)) != Some(&value.enum_id) {
                     return false;
                 }
                 let Some(schema) = tables.enums.get(usize::from(*expected)) else {

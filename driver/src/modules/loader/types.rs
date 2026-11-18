@@ -41,6 +41,7 @@ pub struct ModuleImports {
     pub imported_impl_stmts: Vec<aelys_syntax::Stmt>,
     pub impl_body_globals: HashSet<String>,
     pub module_sources: HashMap<String, Arc<Source>>,
+    pub global_renames: HashMap<String, String>,
 }
 
 pub enum LoadResult {
@@ -58,6 +59,15 @@ pub struct ModuleLoader {
     pub(crate) manifest: Option<Manifest>,
     pub(crate) loaded_native_modules: HashMap<String, LoadedNativeInfo>,
     pub(crate) host_modules: HashSet<String>,
+    pub(crate) project_dir: PathBuf,
+    pub(crate) file_keys: HashMap<PathBuf, String>,
+    pub(crate) resolved_needs: HashMap<(PathBuf, String), ResolvedNeeds>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedNeeds {
+    pub(crate) key: String,
+    pub(crate) symbol: Option<String>,
 }
 
 pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {

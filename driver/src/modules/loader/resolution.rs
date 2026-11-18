@@ -27,9 +27,7 @@ impl ModuleLoader {
         }
 
         let module_path_str = needs.path.join(".");
-        if self.host_modules.contains(&module_path_str)
-            || self.loaded_modules.contains_key(&module_path_str)
-        {
+        if self.host_modules.contains(&module_path_str) {
             return Ok(());
         }
 
@@ -55,6 +53,16 @@ impl ModuleLoader {
     }
 
     pub(crate) fn resolve_module_path(&self, module_path: &[String]) -> Result<ModuleResolution> {
+        self.resolve_rooted(module_path)
+            .map(|(resolution, _)| resolution)
+    }
+
+    // the root a module was found under names it, so one dotted path seen from two importers
+    // is two modules exactly when it is two files
+    pub(crate) fn resolve_rooted(
+        &self,
+        module_path: &[String],
+    ) -> Result<(ModuleResolution, Option<PathBuf>)> {
         if is_std_module(module_path) {
             return Err(AelysError::Compile(CompileError::new(
                 CompileErrorKind::StdlibNotAvailable {
@@ -71,7 +79,7 @@ impl ModuleLoader {
             && let Some(policy) = manifest.module(&module_name_str)
         {
             if let Some(explicit_path) = &policy.path {
-                let resolved_path = self.base_dir.join(explicit_path);
+                let resolved_path = self.project_dir.join(explicit_path);
                 if let Some(canonical) = self.canonicalize_if_exists(&resolved_path, module_path)? {
                     let kind = if policy.is_native() {
                         ModuleKind::Native
@@ -88,10 +96,13 @@ impl ModuleLoader {
                             ModuleKind::Script
                         }
                     };
-                    return Ok(ModuleResolution {
-                        path: canonical,
-                        kind,
-                    });
+                    return Ok((
+                        ModuleResolution {
+                            path: canonical,
+                            kind,
+                        },
+                        None,
+                    ));
                 }
             }
 
@@ -135,7 +146,19 @@ impl ModuleLoader {
     }
 
     // validates path segments (no .., no slashes) and builds filesystem path
-    fn validate_and_build_path(&self, module_path: &[String]) -> Result<PathBuf> {
+    fn search_roots(&self) -> Vec<PathBuf> {
+        let mut roots = vec![self.base_dir.clone()];
+        let same = |left: &Path, right: &Path| match (left.canonicalize(), right.canonicalize()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        };
+        if !same(&self.base_dir, &self.project_dir) {
+            roots.push(self.project_dir.clone());
+        }
+        roots
+    }
+
+    fn validate_and_build_path(&self, root: &Path, module_path: &[String]) -> Result<PathBuf> {
         if module_path.is_empty() {
             return Err(AelysError::Compile(CompileError::new(
                 CompileErrorKind::ModuleNotFound {
@@ -146,7 +169,7 @@ impl ModuleLoader {
                 self.source.clone(),
             )));
         }
-        let mut path = self.base_dir.clone();
+        let mut path = root.to_path_buf();
         for segment in module_path {
             if segment == ".." || segment == "." || segment.contains('/') || segment.contains('\\')
             {
@@ -168,22 +191,25 @@ impl ModuleLoader {
         &self,
         module_path: &[String],
         patterns: &[ExtensionPattern],
-    ) -> Result<ModuleResolution> {
-        let base_path = self.validate_and_build_path(module_path)?;
-        let module_name = module_path
-            .last()
-            .expect("module_path validated as non-empty");
-
+    ) -> Result<(ModuleResolution, Option<PathBuf>)> {
         let mut searched_paths = Vec::new();
-
-        for pattern in patterns {
-            let candidate = pattern.to_path(&base_path, module_name);
-            searched_paths.push(candidate.display().to_string());
-            if let Some(canonical) = self.canonicalize_if_exists(&candidate, module_path)? {
-                return Ok(ModuleResolution {
-                    path: canonical,
-                    kind: pattern.kind(),
-                });
+        for root in self.search_roots() {
+            let base_path = self.validate_and_build_path(&root, module_path)?;
+            let module_name = module_path
+                .last()
+                .expect("module_path validated as non-empty");
+            for pattern in patterns {
+                let candidate = pattern.to_path(&base_path, module_name);
+                searched_paths.push(candidate.display().to_string());
+                if let Some(canonical) = self.canonicalize_if_exists(&candidate, module_path)? {
+                    return Ok((
+                        ModuleResolution {
+                            path: canonical,
+                            kind: pattern.kind(),
+                        },
+                        Some(root),
+                    ));
+                }
             }
         }
 
@@ -197,7 +223,10 @@ impl ModuleLoader {
         )))
     }
 
-    fn resolve_native_only(&self, module_path: &[String]) -> Result<ModuleResolution> {
+    fn resolve_native_only(
+        &self,
+        module_path: &[String],
+    ) -> Result<(ModuleResolution, Option<PathBuf>)> {
         self.search_with_patterns(module_path, native_only_search_patterns())
     }
 
@@ -206,22 +235,26 @@ impl ModuleLoader {
             return Vec::new();
         }
 
-        let mut base_path = self.base_dir.clone();
-        for segment in module_path {
-            base_path.push(segment);
-        }
-
         let module_name = module_path
             .last()
             .expect("module_path verified as non-empty");
 
-        full_search_patterns()
-            .iter()
-            .map(|pattern| {
-                pattern
-                    .to_path(&base_path, module_name)
-                    .display()
-                    .to_string()
+        self.search_roots()
+            .into_iter()
+            .flat_map(|root| {
+                let mut base_path = root;
+                for segment in module_path {
+                    base_path.push(segment);
+                }
+                full_search_patterns()
+                    .iter()
+                    .map(|pattern| {
+                        pattern
+                            .to_path(&base_path, module_name)
+                            .display()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
@@ -229,4 +262,47 @@ impl ModuleLoader {
 
 fn is_std_module(module_path: &[String]) -> bool {
     matches!(module_path.first().map(|s| s.as_str()), Some("std"))
+}
+
+impl ModuleLoader {
+    pub(crate) fn module_key(
+        &mut self,
+        file: &Path,
+        root: Option<&Path>,
+        module_path: &[String],
+    ) -> String {
+        if let Some(key) = self.file_keys.get(file) {
+            return key.clone();
+        }
+        let mut segments: Vec<String> = root
+            .and_then(|root| root.canonicalize().ok())
+            .and_then(|root| {
+                let project = self.project_dir.canonicalize().ok()?;
+                root.strip_prefix(&project).ok().map(|relative| {
+                    relative
+                        .components()
+                        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        segments.extend(module_path.iter().cloned());
+        let mut key = segments.join(".");
+        let taken = |key: &str, keys: &std::collections::HashMap<PathBuf, String>| {
+            keys.values().any(|existing| existing == key)
+        };
+        let base = key.clone();
+        let mut suffix = 2;
+        while taken(&key, &self.file_keys) {
+            key = format!("{base}.v{suffix}");
+            suffix += 1;
+        }
+        self.file_keys.insert(file.to_path_buf(), key.clone());
+        key
+    }
+
+    pub(crate) fn resolved_needs(&self, needs: &NeedsStmt) -> Option<&super::types::ResolvedNeeds> {
+        self.resolved_needs
+            .get(&(self.base_dir.clone(), needs.path.join(".")))
+    }
 }

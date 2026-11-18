@@ -27,6 +27,9 @@ impl Compiler {
         self.symbol_origins
             .get(name)
             .filter(|origin| origin.contains("::"))
+            .filter(|origin| {
+                !(aelys_sema::is_module_scoped_global(origin) && self.globals.contains_key(name))
+            })
             .map(String::as_str)
             .unwrap_or(name)
     }

@@ -130,10 +130,7 @@ impl RuntimeErrorKind {
                 )
             }
             Self::DivisionByZero => "division by zero".to_string(),
-            Self::UndefinedVariable(name) => format!(
-                "undefined variable '{}'",
-                crate::naming::unscoped_global_name(name)
-            ),
+            Self::UndefinedVariable(name) => crate::naming::undefined_variable_message(name),
             Self::NotCallable(ty) => format!("'{}' is not callable", ty),
             Self::ArityMismatch { expected, got } => {
                 format!("expected {} arguments, got {}", expected, got)
@@ -211,13 +208,10 @@ impl fmt::Display for RuntimeError {
         writeln!(f, "error: {}", self.kind.message())?;
 
         if let Some(frame) = self.stack_trace.first() {
-            writeln!(
-                f,
-                "  --> {}:{}:{}",
-                self.source.name, frame.line, frame.column
-            )?;
+            let source = frame.source.as_ref().unwrap_or(&self.source);
+            writeln!(f, "  --> {}:{}:{}", source.name, frame.line, frame.column)?;
 
-            let line_content = self.source.get_line(frame.line);
+            let line_content = source.get_line(frame.line);
             let line_num_width = frame.line.to_string().len().max(2);
 
             writeln!(f, "{:width$} |", "", width = line_num_width)?;
@@ -237,7 +231,8 @@ impl fmt::Display for RuntimeError {
             let display_count = self.stack_trace.len().min(MAX_FRAMES);
             for frame in &self.stack_trace[..display_count] {
                 let name = frame.function_name.as_deref().unwrap_or("<script>");
-                writeln!(f, "  {} ({}:{})", name, self.source.name, frame.line)?;
+                let source = frame.source.as_ref().unwrap_or(&self.source);
+                writeln!(f, "  {} ({}:{})", name, source.name, frame.line)?;
             }
             if self.stack_trace.len() > MAX_FRAMES {
                 writeln!(

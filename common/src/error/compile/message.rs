@@ -52,10 +52,7 @@ impl CompileErrorKind {
                  = help: drop 'default', or move the method to a generic 'impl<T> Trait for Type<T>'"
                     .to_string()
             }
-            Self::UndefinedVariable(name) => format!(
-                "undefined variable '{}'",
-                crate::naming::unscoped_global_name(name)
-            ),
+            Self::UndefinedVariable(name) => crate::naming::undefined_variable_message(name),
             Self::VariableAlreadyDefined(name) => {
                 format!("variable '{}' already defined in this scope", name)
             }

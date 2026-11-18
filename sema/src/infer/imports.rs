@@ -16,6 +16,16 @@ pub struct ImportedTypes {
     pub unexported_nominals: BTreeSet<String>,
     pub struct_def_ordinals: std::collections::HashMap<String, u32>,
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
+    pub module_scopes: BTreeMap<String, ModuleScope>,
+}
+
+// the names a module's own code reads beyond its globals, so a body carried out of it is
+// checked and compiled against them and never against the importer's
+#[derive(Debug, Clone, Default)]
+pub struct ModuleScope {
+    pub module_aliases: std::collections::HashSet<String>,
+    pub known_native_globals: std::collections::HashSet<String>,
+    pub symbol_origins: std::collections::HashMap<String, String>,
 }
 
 impl ImportedTypes {
@@ -35,6 +45,7 @@ impl ImportedTypes {
         self.unexported_nominals.extend(other.unexported_nominals);
         self.struct_def_ordinals.extend(other.struct_def_ordinals);
         self.enum_def_ordinals.extend(other.enum_def_ordinals);
+        self.module_scopes.extend(other.module_scopes);
     }
 
     pub fn nominal_names(&self) -> Vec<String> {
@@ -70,6 +81,7 @@ impl TypeInference {
         self.withheld_nominals = imported.withheld;
         self.module_globals = imported.module_globals;
         self.module_scoped_globals = imported.module_scoped_globals;
+        self.module_scopes = imported.module_scopes;
         self.private_nominals = imported.private_nominals;
         self.unexported_nominals = imported.unexported_nominals;
     }

@@ -52,12 +52,13 @@ impl ModuleLoader {
     pub(crate) fn register_exports(
         &self,
         needs: &aelys_syntax::NeedsStmt,
+        module_key: &str,
         exports: &std::collections::HashMap<String, ExportInfo>,
         vm: &mut VM,
     ) -> Result<()> {
         let module_alias = self.get_module_alias(needs);
-        let module_path_str = needs.path.join(".");
-        let module_id = aelys_syntax::ModuleId::new(module_path_str.as_str());
+        let module_path_str = module_key.to_string();
+        let module_id = aelys_syntax::ModuleId::new(module_key);
         // stdlib constant this module never wrote
         let read = |vm: &VM, name: &str| {
             vm.get_global(&aelys_sema::module_scoped_global(module_id.as_str(), name))
@@ -168,6 +169,56 @@ impl ModuleLoader {
             .get(module_path)
             .map(|m| m.exports.contains_key(symbol))
             .unwrap_or(false)
+    }
+
+    // an alias or a bare import is a spelling local to one importer, so the global it reads
+    // is the defining module's own slot, never a name another importer may rebind
+    pub(crate) fn import_renames(
+        &self,
+        needs: &aelys_syntax::NeedsStmt,
+        kind: &ImportKind,
+        module_key: &str,
+    ) -> Vec<(String, String)> {
+        let Some(module_info) = self.loaded_modules.get(module_key) else {
+            return Vec::new();
+        };
+        if self.loaded_native_modules.contains_key(module_key) {
+            return Vec::new();
+        }
+        let is_std = module_key.starts_with("std.");
+        let target = |name: &str| {
+            if is_std {
+                format!("{}::{}", module_info.name, name)
+            } else {
+                aelys_sema::module_scoped_global(
+                    aelys_syntax::ModuleId::new(module_key).as_str(),
+                    name,
+                )
+            }
+        };
+        let alias = self.get_module_alias(needs);
+        let mut renames = Vec::new();
+        match kind {
+            ImportKind::Module { alias: None } | ImportKind::Wildcard => {
+                for name in module_info.exports.keys() {
+                    renames.push((format!("{alias}::{name}"), target(name)));
+                    renames.push((name.clone(), target(name)));
+                }
+            }
+            ImportKind::Module { alias: Some(_) } => {
+                for name in module_info.exports.keys() {
+                    renames.push((format!("{alias}::{name}"), target(name)));
+                }
+            }
+            ImportKind::Symbols(symbols) => {
+                for name in symbols {
+                    if module_info.exports.contains_key(name) {
+                        renames.push((name.clone(), target(name)));
+                    }
+                }
+            }
+        }
+        renames
     }
 
     pub fn get_module(&self, module_path: &str) -> Option<&ModuleInfo> {

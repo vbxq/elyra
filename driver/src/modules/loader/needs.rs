@@ -3,6 +3,7 @@ use aelys_common::Result;
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_modules::resolution::ModuleResolution;
 use aelys_syntax::{ImportKind, NeedsStmt};
+use std::path::PathBuf;
 
 impl ModuleLoader {
     pub(crate) fn get_load_result(&self, needs: &NeedsStmt) -> LoadResult {
@@ -37,9 +38,14 @@ impl ModuleLoader {
         &self,
         module_path: &[String],
         needs: &NeedsStmt,
-    ) -> Result<(ModuleResolution, Vec<String>, Option<String>)> {
-        if let Ok(resolution) = self.resolve_module_path(module_path) {
-            return Ok((resolution, module_path.to_vec(), None));
+    ) -> Result<(
+        ModuleResolution,
+        Option<PathBuf>,
+        Vec<String>,
+        Option<String>,
+    )> {
+        if let Ok((resolution, root)) = self.resolve_rooted(module_path) {
+            return Ok((resolution, root, module_path.to_vec(), None));
         }
 
         if module_path.len() > 1 {
@@ -55,8 +61,8 @@ impl ModuleLoader {
                 ))
             })?;
 
-            if let Ok(resolution) = self.resolve_module_path(&parent_path) {
-                return Ok((resolution, parent_path, Some(symbol)));
+            if let Ok((resolution, root)) = self.resolve_rooted(&parent_path) {
+                return Ok((resolution, root, parent_path, Some(symbol)));
             }
         }
 
