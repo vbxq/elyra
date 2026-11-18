@@ -28,6 +28,7 @@ pub struct InferenceResult {
     pub type_table: TypeTable,
     pub generic_structs: Vec<crate::types::StructDef>,
     pub generic_enums: Vec<crate::types::EnumDef>,
+    pub constants: std::collections::BTreeMap<String, crate::infer::constants::ConstValue>,
 }
 
 impl Default for TypeInference {
@@ -61,6 +62,11 @@ impl Default for TypeInference {
             match_exhaustivity_residuals: Vec::new(),
             dynamic_residuals: Vec::new(),
             bound_residuals: Vec::new(),
+            alias_residuals: Vec::new(),
+            imported_constants: HashMap::new(),
+            global_constants: HashMap::new(),
+            exported_constants: std::collections::BTreeMap::new(),
+            function_mutable_params: HashMap::new(),
             surface_dynamic_spans: HashSet::new(),
             sum_type_residuals: Vec::new(),
             explicit_dynamic_functions: HashSet::new(),
@@ -965,10 +971,26 @@ impl TypeInference {
         path: &[String],
         span: aelys_syntax::Span,
     ) -> Option<usize> {
+        debug_assert!(span.end >= span.start);
+        let constant = match path {
+            [name] => self.env.lookup_constant(name).or_else(|| {
+                (!self.env.binds_value(name))
+                    .then(|| {
+                        self.global_constants
+                            .get(name)
+                            .or_else(|| self.imported_constants.get(name))
+                            .cloned()
+                    })
+                    .flatten()
+            }),
+            _ => self.imported_constants.get(&path.join("::")).cloned(),
+        };
+        if let Some(crate::infer::constants::ConstValue::Int(value)) = constant {
+            return usize::try_from(value).ok();
+        }
         if path.len() != 2 {
             return None;
         }
-        debug_assert!(span.end >= span.start);
         match self.resolve_constant(&path[0], &path[1]) {
             ConstResolution::Value(value) => usize::try_from(value).ok(),
             _ => None,
@@ -1597,6 +1619,7 @@ impl TypeInference {
         crate::prelude::register(&mut inf.type_table);
 
         inf.install_imported_types(imported_types);
+        inf.predeclare_constants(&stmts, false);
         let declared_nominals = inf.declare_nominals(&stmts);
         let declared_traits = inf.declare_traits(&stmts);
         inf.collect_trait_qualified_items(&stmts);
@@ -1610,6 +1633,7 @@ impl TypeInference {
         inf.collect_function_signatures(&stmts, "");
         inf.validate_associated_type_cycles();
         inf.collect_global_bindings(&stmts);
+        inf.predeclare_constants(&stmts, true);
 
         let typed_stmts = inf.infer_stmts(&stmts);
 
@@ -1619,6 +1643,7 @@ impl TypeInference {
         inf.validate_sum_method_residuals(&mut subst);
         inf.validate_dynamic_residuals(&subst);
         inf.validate_bound_residuals(&subst);
+        inf.validate_alias_residuals(&subst);
         inf.validate_try_residuals(&subst);
         inf.validate_must_use_values(&subst);
         inf.validate_match_reachability(&subst);
@@ -1728,6 +1753,7 @@ impl TypeInference {
             type_table,
             generic_structs: generic_templates.0,
             generic_enums: generic_templates.1,
+            constants: inf.exported_constants,
         })
     }
 
@@ -1744,9 +1770,18 @@ impl TypeInference {
                 continue;
             };
 
+            let constant = match &stmt.kind {
+                StmtKind::Let { is_const: true, .. } => self.global_constants.get(name).cloned(),
+                _ => None,
+            };
             let ty = type_annotation
                 .as_ref()
                 .map(|annotation| self.type_from_annotation(annotation))
+                .or_else(|| {
+                    constant
+                        .as_ref()
+                        .map(crate::infer::constants::ConstValue::infer_type)
+                })
                 .unwrap_or_else(|| self.global_initializer_type(initializer));
             let known_length = self.constant_collection_length(initializer).or(match &ty {
                 InferType::FixedArray(_, length) => Some(*length),
@@ -1761,6 +1796,9 @@ impl TypeInference {
                 self.env.define_local(name.clone(), ty);
             }
             self.env.set_mutable(name, *mutable);
+            if let Some(value) = constant {
+                self.env.define_constant(name, value);
+            }
             if self.scope_own_globals {
                 let scoped = crate::infer::module_scoped_global(self.current_module.as_str(), name);
                 self.env.define_local_alias(name.clone(), scoped);

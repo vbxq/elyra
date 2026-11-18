@@ -16,6 +16,11 @@ impl TypeInference {
 
         if let Some(var_type) = self.env.lookup(name).cloned() {
             self.env.invalidate_collection_length(name);
+            self.record_mutable_alias(
+                value,
+                &var_type,
+                crate::constraint::AliasSite::Assignment(name.to_string()),
+            );
             let reason = ConstraintReason::Assignment {
                 var_name: name.to_string(),
             };

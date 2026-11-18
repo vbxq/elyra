@@ -78,7 +78,7 @@ impl Parser {
                 match word.as_str() {
                     "type" => {
                         self.advance();
-                        let name = self.consume_identifier("associated type name")?;
+                        let name = self.consume_declared_identifier("associated type name")?;
                         self.consume(&TokenKind::Eq, "=")?;
                         let value = self.parse_type_annotation()?;
                         associated_types.push(aelys_syntax::AssociatedTypeDef {
@@ -91,7 +91,7 @@ impl Parser {
                     }
                     "const" => {
                         self.advance();
-                        let name = self.consume_identifier("associated constant name")?;
+                        let name = self.consume_declared_identifier("associated constant name")?;
                         self.consume(&TokenKind::Colon, ":")?;
                         let type_annotation = self.parse_type_annotation()?;
                         self.consume(&TokenKind::Eq, "=")?;

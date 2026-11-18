@@ -235,11 +235,11 @@ impl TypeInference {
     }
 
     pub(super) fn constant_length_value(&self, expr: &Expr) -> Option<i64> {
-        constant_int_value_with(expr, &|leaf| self.constant_path_int(leaf))
+        constant_int_value_with(expr, &|leaf| self.constant_int_leaf(leaf))
     }
 
     pub(crate) fn constant_collection_length(&self, expr: &Expr) -> Option<usize> {
-        constant_collection_length_with(expr, &|leaf| self.constant_path_int(leaf))
+        constant_collection_length_with(expr, &|leaf| self.constant_int_leaf(leaf))
     }
 
     fn infer_repeat_count(&mut self, count: &Expr) -> TypedExpr {
@@ -401,32 +401,8 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         self.check_write_access(object, span, "index assignment");
         self.reject_constant_index(object, index);
-        let binding = mutable_collection_binding(object);
-        let binding_type = binding
-            .and_then(|name| self.env.lookup(name).cloned())
-            .unwrap_or(InferType::Dynamic);
-        if binding.is_some_and(|name| self.env.is_read_only(name)) {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::ReadOnlyCollectionRequired {
-                    method: "index assignment".to_string(),
-                    receiver: binding_type.clone(),
-                },
-                span: object.span,
-                reason: ConstraintReason::Other("read-only collection receiver".to_string()),
-            });
-        } else if binding
-            .is_none_or(|name| self.env.borrow_kind(name).is_none() && !self.env.is_mutable(name))
-        {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::MutableCollectionRequired {
-                    method: "index assignment".to_string(),
-                    receiver: binding_type,
-                },
-                span: object.span,
-                reason: ConstraintReason::Other("mutable collection receiver".to_string()),
-            });
-        }
         let typed_object = self.infer_expr(object);
+        self.require_mutable_place(object, &typed_object.ty, "index assignment", true);
         let typed_index = self.infer_expr(index);
         let typed_value = self.infer_expr(value);
 
@@ -772,15 +748,6 @@ fn constant_collection_length_with(
             .and_then(|size| usize::try_from(size).ok()),
         ExprKind::String(value) => Some(value.chars().count()),
         ExprKind::Grouping(inner) => constant_collection_length_with(inner, resolve),
-        _ => None,
-    }
-}
-
-fn mutable_collection_binding(expr: &Expr) -> Option<&str> {
-    match &expr.kind {
-        ExprKind::Identifier(name) => Some(name.as_str()),
-        ExprKind::Grouping(inner) => mutable_collection_binding(inner),
-        ExprKind::Index { object, .. } => mutable_collection_binding(object),
         _ => None,
     }
 }

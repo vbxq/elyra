@@ -6,7 +6,9 @@ mod unary;
 use super::Parser;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
-use aelys_syntax::{BinaryOp, Expr, ExprKind, TokenKind};
+use aelys_syntax::{
+    BinaryOp, Expr, ExprKind, MatchArm, MatchArmBody, Pattern, PatternKind, Span, TokenKind,
+};
 use std::sync::Arc;
 
 impl Parser {
@@ -81,84 +83,148 @@ impl Parser {
 
         if let Some(op) = self.match_compound_assign() {
             let rhs = self.assignment()?;
-
-            if let ExprKind::Identifier(ref name) = expr.kind {
-                let binary = Expr::new(
-                    ExprKind::Binary {
-                        left: Box::new(expr.clone()),
-                        op,
-                        right: Box::new(rhs),
-                    },
-                    expr.span.merge(self.previous().span),
-                );
-                let span = expr.span.merge(binary.span);
-                return Ok(Expr::new(
-                    ExprKind::Assign {
-                        name: name.clone(),
-                        value: Box::new(binary),
-                    },
-                    span,
-                ));
+            let end_span = self.previous().span;
+            if !matches!(
+                expr.kind,
+                ExprKind::Identifier(_)
+                    | ExprKind::Index { .. }
+                    | ExprKind::Member {
+                        separator: aelys_syntax::MemberSeparator::Dot,
+                        ..
+                    }
+            ) {
+                return Err(CompileError::new(
+                    CompileErrorKind::InvalidAssignmentTarget,
+                    expr.span,
+                    Arc::clone(&self.source),
+                )
+                .into());
             }
-
-            if let ExprKind::Index {
-                ref object,
-                ref index,
-            } = expr.kind
-            {
-                let binary = Expr::new(
-                    ExprKind::Binary {
-                        left: Box::new(expr.clone()),
-                        op,
-                        right: Box::new(rhs),
-                    },
-                    expr.span.merge(self.previous().span),
-                );
-                let span = object.span.merge(binary.span);
-                return Ok(Expr::new(
-                    ExprKind::IndexAssign {
-                        object: object.clone(),
-                        index: index.clone(),
-                        value: Box::new(binary),
-                    },
-                    span,
-                ));
-            }
-
-            if let ExprKind::Member {
-                ref object,
-                ref member,
-                separator: aelys_syntax::MemberSeparator::Dot,
-            } = expr.kind
-            {
-                let binary = Expr::new(
-                    ExprKind::Binary {
-                        left: Box::new(expr.clone()),
-                        op,
-                        right: Box::new(rhs),
-                    },
-                    expr.span.merge(self.previous().span),
-                );
-                let span = object.span.merge(binary.span);
-                return Ok(Expr::new(
-                    ExprKind::MemberAssign {
-                        object: object.clone(),
-                        member: member.clone(),
-                        value: Box::new(binary),
-                    },
-                    span,
-                ));
-            }
-
-            return Err(CompileError::new(
-                CompileErrorKind::InvalidAssignmentTarget,
-                expr.span,
-                Arc::clone(&self.source),
-            )
-            .into());
+            return Ok(self.desugar_compound(expr, op, rhs, end_span));
         }
 
         Ok(expr)
+    }
+
+    pub(super) fn desugar_compound(
+        &mut self,
+        target: Expr,
+        op: BinaryOp,
+        rhs: Expr,
+        end_span: Span,
+    ) -> Expr {
+        let mut hoisted = Vec::new();
+        let place = self.hoist_place_operands(target, &mut hoisted);
+        let mut result = Self::compound_assign(place, op, rhs, end_span);
+        for (name, operand) in hoisted.into_iter().rev() {
+            let span = operand.span.merge(result.span);
+            let pattern = Pattern {
+                kind: PatternKind::Binding(name),
+                span: operand.span,
+            };
+            result = Expr::new(
+                ExprKind::Match {
+                    scrutinee: Box::new(operand),
+                    arms: vec![MatchArm {
+                        pattern,
+                        guard: None,
+                        span: result.span,
+                        body: MatchArmBody::Expr(Box::new(result)),
+                    }],
+                },
+                span,
+            );
+        }
+        result
+    }
+
+    fn compound_assign(place: Expr, op: BinaryOp, rhs: Expr, end_span: Span) -> Expr {
+        let binary = Expr::new(
+            ExprKind::Binary {
+                left: Box::new(place.clone()),
+                op,
+                right: Box::new(rhs),
+            },
+            place.span.merge(end_span),
+        );
+        let span = place.span.merge(binary.span);
+        let value = Box::new(binary);
+        let kind = match place.kind {
+            ExprKind::Identifier(name) => ExprKind::Assign { name, value },
+            ExprKind::Index { object, index } => ExprKind::IndexAssign {
+                object,
+                index,
+                value,
+            },
+            ExprKind::Member { object, member, .. } => ExprKind::MemberAssign {
+                object,
+                member,
+                value,
+            },
+            _ => unreachable!("compound assignment target checked by the caller"),
+        };
+        Expr::new(kind, span)
+    }
+
+    fn hoist_place_operands(&mut self, expr: Expr, hoisted: &mut Vec<(String, Expr)>) -> Expr {
+        let span = expr.span;
+        let kind = match expr.kind {
+            ExprKind::Index { object, index } => {
+                let object = self.hoist_place_operands(*object, hoisted);
+                let index = if Self::is_duplicable(&index) {
+                    *index
+                } else {
+                    let name = format!("__aelys_place{}", self.synthetic_counter);
+                    self.synthetic_counter += 1;
+                    let index_span = index.span;
+                    hoisted.push((name.clone(), *index));
+                    Expr::new(ExprKind::Identifier(name), index_span)
+                };
+                ExprKind::Index {
+                    object: Box::new(object),
+                    index: Box::new(index),
+                }
+            }
+            ExprKind::Member {
+                object,
+                member,
+                separator: aelys_syntax::MemberSeparator::Dot,
+            } => ExprKind::Member {
+                object: Box::new(self.hoist_place_operands(*object, hoisted)),
+                member,
+                separator: aelys_syntax::MemberSeparator::Dot,
+            },
+            ExprKind::Grouping(inner) => {
+                ExprKind::Grouping(Box::new(self.hoist_place_operands(*inner, hoisted)))
+            }
+            other => other,
+        };
+        Expr::new(kind, span)
+    }
+
+    fn is_duplicable(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::String(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Null
+            | ExprKind::Unit
+            | ExprKind::Identifier(_) => true,
+            ExprKind::Grouping(inner) => Self::is_duplicable(inner),
+            ExprKind::Unary { operand, .. } => Self::is_duplicable(operand),
+            ExprKind::Cast { expr, .. } => Self::is_duplicable(expr),
+            ExprKind::Binary { left, right, .. }
+            | ExprKind::And { left, right }
+            | ExprKind::Or { left, right } => {
+                Self::is_duplicable(left) && Self::is_duplicable(right)
+            }
+            ExprKind::Member { object, .. } => Self::is_duplicable(object),
+            ExprKind::Index { object, index } => {
+                Self::is_duplicable(object) && Self::is_duplicable(index)
+            }
+            _ => false,
+        }
     }
 
     fn parse_expression_range(&mut self, start: Option<Expr>) -> Result<Expr> {

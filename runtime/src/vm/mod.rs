@@ -25,6 +25,7 @@ mod roots;
 mod arithmetic;
 mod call_data;
 mod calls;
+mod clone;
 mod closures;
 mod comparison;
 mod dispatch;

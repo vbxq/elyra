@@ -64,8 +64,7 @@ impl TypeInference {
             }
 
             let last_stmt = &body[body.len() - 1];
-            let typed_last = self.infer_stmt_with_implicit_return(last_stmt, &return_type);
-            stmts.push(typed_last);
+            stmts.extend(self.infer_body_tail(last_stmt, &return_type, return_type_ann.is_some()));
 
             stmts
         };

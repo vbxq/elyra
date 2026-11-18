@@ -24,4 +24,4 @@ pub use string::AelysString;
 pub use struct_object::AelysStruct;
 pub use sum::{AelysEnum, AelysSum, SumTag};
 pub use upvalue::{AelysUpvalue, UpvalueLocation};
-pub use vec::AelysVec;
+pub use vec::{AelysVec, VecData};

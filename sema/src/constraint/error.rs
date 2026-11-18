@@ -114,6 +114,14 @@ pub enum ProjectionFailure {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AliasSite {
+    Binding,
+    Parameter(String),
+    Assignment(String),
+    FunctionValue,
+}
+
 #[derive(Debug, Clone)]
 pub enum TypeErrorKind {
     Mismatch {
@@ -266,7 +274,8 @@ pub enum TypeErrorKind {
     },
     MutableCollectionRequired {
         method: String,
-        receiver: InferType,
+        place: String,
+        root: Option<String>,
     },
     ReadOnlyCollectionRequired {
         method: String,
@@ -274,7 +283,18 @@ pub enum TypeErrorKind {
     },
     UnconsumedCollectionIterator,
     CollectionCollectRequiresPipeline,
-    MutableCollectionAlias,
+    NonConstantInitializer {
+        name: String,
+        cause: Option<String>,
+    },
+    DuplicateConstant {
+        name: String,
+    },
+    MutableCollectionAlias {
+        place: String,
+        root: String,
+        site: AliasSite,
+    },
     GenericStructDeferred {
         name: String,
     },
@@ -922,14 +942,20 @@ impl TypeError {
                 },
                 length
             ),
-            TypeErrorKind::MutableCollectionRequired { method, receiver } => {
-                write!(
+            TypeErrorKind::MutableCollectionRequired {
+                method,
+                place,
+                root,
+            } => match root {
+                Some(root) => write!(
                     f,
-                    "collection operation '{}' requires a mutable collection receiver, found {}",
-                    method,
-                    receiver.source_spelling()
-                )
-            }
+                    "collection operation '{method}' requires a mutable collection receiver: `{place}` is reached from the immutable binding `{root}`\n   = help: declare `{root}` with `let mut`, or receive it as `mut self` or a `mut` parameter"
+                ),
+                None => write!(
+                    f,
+                    "collection operation '{method}' requires a mutable collection receiver: `{place}` is a temporary value\n   = help: bind it with `let mut` before mutating it"
+                ),
+            },
             TypeErrorKind::ReadOnlyCollectionRequired { method, receiver } => {
                 write!(
                     f,
@@ -946,10 +972,39 @@ impl TypeError {
                 f,
                 "collect is a pipeline terminal; call iter, map, or filter first"
             ),
-            TypeErrorKind::MutableCollectionAlias => write!(
+            TypeErrorKind::NonConstantInitializer {
+                name,
+                cause: Some(cause),
+            } => write!(
                 f,
-                "mutable aliases of collections are not supported; mutate the original binding"
+                "the initializer of constant `{name}` cannot be evaluated at compile time: {cause}"
             ),
+            TypeErrorKind::DuplicateConstant { name } => write!(
+                f,
+                "constant `{name}` is already declared in this scope\n   = help: give the second constant another name"
+            ),
+            TypeErrorKind::NonConstantInitializer { name, cause: None } => write!(
+                f,
+                "the initializer of constant `{name}` is not a compile-time constant\n   = help: use literals, arithmetic, comparisons, `as` casts and other constants, or declare `{name}` with `let`"
+            ),
+            TypeErrorKind::MutableCollectionAlias { place, root, site } => {
+                let site = match site {
+                    AliasSite::Parameter(parameter) => {
+                        format!("pass `{place}` to the `mut` parameter `{parameter}`")
+                    }
+                    AliasSite::Binding => format!("bind `{place}` mutably"),
+                    AliasSite::Assignment(target) => {
+                        format!("assign `{place}` to the mutable binding `{target}`")
+                    }
+                    AliasSite::FunctionValue => format!(
+                        "pass `{place}` to a call through a function value, whose parameter may be `mut`"
+                    ),
+                };
+                write!(
+                    f,
+                    "cannot {site}: it is reachable from the immutable binding `{root}`, and aggregates are shared by reference\n   = help: write `{place}.clone()` to copy it, or declare `{root}` with `let mut` to share it"
+                )
+            }
             TypeErrorKind::GenericStructDeferred { .. } => {
                 write!(f, "generic struct support is reserved for Stage 2")
             }
@@ -1702,7 +1757,9 @@ impl TypeErrorKind {
             Self::UnconsumedCollectionIterator => 320,
             Self::ConstantIndexOutOfBounds { .. } => 321,
             Self::CollectionCollectRequiresPipeline => 322,
-            Self::MutableCollectionAlias => 323,
+            Self::MutableCollectionAlias { .. } => 323,
+            Self::NonConstantInitializer { .. } => 395,
+            Self::DuplicateConstant { .. } => 396,
             Self::NonExhaustiveStruct { .. } => 324,
             Self::GenericStructDeferred { .. } => 325,
             Self::DuplicateNominal { .. } => 326,

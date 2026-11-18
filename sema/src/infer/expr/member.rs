@@ -1517,6 +1517,9 @@ impl TypeInference {
                         }
                     }
                 }
+                None if matches!(typed_object.ty, InferType::Var(_)) => {
+                    (0, DEFERRED_FIELD_SCHEMA, self.type_gen.fresh())
+                }
                 _ => (0, 0, InferType::Poison),
             };
         if !self.reject_dynamic(
@@ -1995,11 +1998,14 @@ impl TypeInference {
     }
 }
 
+pub(crate) const DEFERRED_FIELD_SCHEMA: u16 = u16::MAX;
+
 fn root_binding_name(expr: &Expr) -> Option<&str> {
     match &expr.kind {
         aelys_syntax::ExprKind::Identifier(name) => Some(name),
         aelys_syntax::ExprKind::Grouping(inner) => root_binding_name(inner),
-        aelys_syntax::ExprKind::Member { object, .. } => root_binding_name(object),
+        aelys_syntax::ExprKind::Member { object, .. }
+        | aelys_syntax::ExprKind::Index { object, .. } => root_binding_name(object),
         _ => None,
     }
 }

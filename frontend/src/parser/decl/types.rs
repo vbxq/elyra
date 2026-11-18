@@ -246,7 +246,7 @@ impl Parser {
         let name = if receiver_reference.is_some() {
             "self".to_string()
         } else {
-            self.consume_identifier("parameter name")?
+            self.consume_declared_identifier("parameter name")?
         };
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {

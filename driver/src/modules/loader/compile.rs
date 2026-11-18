@@ -35,6 +35,18 @@ impl ModuleLoader {
         let stmts = Parser::new_rust_collections(tokens, module_source.clone()).parse()?;
 
         let exports = self.collect_exports(&stmts, module_path_str)?;
+        let public_constants: Vec<String> = stmts
+            .iter()
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::Let {
+                    name,
+                    is_pub: true,
+                    is_const: true,
+                    ..
+                } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
 
         let module_name = needs
             .path
@@ -80,6 +92,7 @@ impl ModuleLoader {
             native_functions: Vec::new(),
             native_signatures: export_signatures,
             exported_types: super::exported_types::ExportedTypes::default(),
+            constants: std::collections::HashMap::new(),
         };
         self.loaded_modules
             .insert(module_path_str.to_string(), module_info);
@@ -134,6 +147,11 @@ impl ModuleLoader {
                         known_native_globals.insert(native_name.clone());
                     }
                     native_signatures.extend(module_info.native_signatures.clone());
+                    module_info.import_constants(
+                        &self.get_module_alias(nested_needs),
+                        &nested_needs.kind,
+                        &mut imported_types.module_constants,
+                    );
                     let wanted = match &nested_needs.kind {
                         aelys_syntax::ImportKind::Symbols(symbols) => Some(symbols.clone()),
                         _ => None,
@@ -506,9 +524,19 @@ impl ModuleLoader {
             }
         }
         let module_global_names: Vec<String> = exported_types.globals.keys().cloned().collect();
+        let constants: std::collections::HashMap<String, aelys_sema::ConstValue> = public_constants
+            .iter()
+            .filter_map(|name| {
+                inference_result
+                    .constants
+                    .get(name)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
         if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
             module_info.native_signatures = inferred_export_signatures;
             module_info.exported_types = exported_types;
+            module_info.constants = constants;
         }
 
         let mut optimizer = Optimizer::new(aelys_opt::OptimizationLevel::Standard);

@@ -652,11 +652,20 @@ impl TypeInference {
             .insert(full_name.clone(), func.type_params.clone());
         self.function_reference_modes
             .insert(full_name.clone(), reference_modes.clone());
+        let mutable_params: Vec<Option<String>> = func
+            .params
+            .iter()
+            .map(|param| param.mutable.then(|| param.name.clone()))
+            .collect();
+        self.function_mutable_params
+            .insert(full_name.clone(), mutable_params.clone());
         if !prefix.is_empty() {
             self.function_type_params
                 .insert(func.name.clone(), func.type_params.clone());
             self.function_reference_modes
                 .insert(func.name.clone(), reference_modes);
+            self.function_mutable_params
+                .insert(func.name.clone(), mutable_params);
         }
 
         self.env.define_function(full_name, Rc::clone(&fn_type));
@@ -2114,6 +2123,14 @@ impl TypeInference {
             self.function_reference_modes.insert(
                 symbol.clone(),
                 method.params.iter().map(|param| param.reference).collect(),
+            );
+            self.function_mutable_params.insert(
+                symbol.clone(),
+                method
+                    .params
+                    .iter()
+                    .map(|param| param.mutable.then(|| param.name.clone()))
+                    .collect(),
             );
             let carries_obligation = !method_bounds.is_empty() || !method_bindings.is_empty();
             if !method_bounds.is_empty() {

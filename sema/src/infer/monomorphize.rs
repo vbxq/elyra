@@ -1276,9 +1276,11 @@ impl TypeInference {
     pub(super) fn resolve_deferred_members(&mut self, stmts: &mut [TypedStmt]) {
         let type_table = &self.type_table;
         let hidden = |name: &str| self.refused_private_nominal(name).is_some();
+        let current_module = self.current_module.clone();
         let mut errors = Vec::new();
         for stmt in stmts.iter_mut() {
             visit_exprs_stmt(stmt, &mut |expr| {
+                resolve_deferred_field_assign(expr, type_table, &current_module, &mut errors);
                 resolve_deferred_expr(expr, type_table, &hidden, &mut errors);
             });
             visit_exprs_stmt(stmt, &mut |expr| {
@@ -2948,6 +2950,80 @@ fn resolve_deferred_expr(
         return;
     }
     resolve_deferred_member(expr, type_table, hidden, errors);
+}
+
+fn resolve_deferred_field_assign(
+    expr: &mut TypedExpr,
+    type_table: &crate::types::TypeTable,
+    current_module: &aelys_syntax::ModuleId,
+    errors: &mut Vec<TypeError>,
+) {
+    let TypedExprKind::MemberAssign {
+        object,
+        member,
+        offset,
+        schema_index,
+        value,
+    } = &mut expr.kind
+    else {
+        return;
+    };
+    if *schema_index != crate::infer::expr::member::DEFERRED_FIELD_SCHEMA {
+        return;
+    }
+    let resolved = crate::infer::expr::member::nominal_parts(&object.ty, type_table).and_then(
+        |(name, substitutions)| {
+            let definition = type_table.get_struct(&name)?;
+            Some((name.clone(), definition.clone(), substitutions))
+        },
+    );
+    let Some((name, definition, substitutions)) = resolved else {
+        errors.push(TypeError {
+            kind: TypeErrorKind::UndeterminedType,
+            span: expr.span,
+            reason: ConstraintReason::Other("deferred field assignment".to_string()),
+        });
+        return;
+    };
+    let Some(field) = definition.fields.iter().find(|field| field.name == *member) else {
+        errors.push(TypeError {
+            kind: TypeErrorKind::UnknownField {
+                structure: name,
+                field: member.clone(),
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("deferred field assignment".to_string()),
+        });
+        return;
+    };
+    if !field.is_pub && !current_module.is_same_or_descendant_of(&definition.owner) {
+        errors.push(TypeError {
+            kind: TypeErrorKind::PrivateFieldAccess {
+                structure: name,
+                field: member.clone(),
+                owner: definition.owner.clone(),
+                current: current_module.clone(),
+                operation: "write".to_string(),
+            },
+            span: expr.span,
+            reason: ConstraintReason::Other("private field write".to_string()),
+        });
+        return;
+    }
+    let field_ty = field.ty.substitute_params(&substitutions);
+    if !fits_call_site(&field_ty, &value.ty, &[], &mut HashMap::new()) {
+        errors.push(TypeError {
+            kind: TypeErrorKind::Mismatch {
+                expected: field_ty.clone(),
+                found: value.ty.clone(),
+            },
+            span: value.span,
+            reason: ConstraintReason::Other("deferred field assignment".to_string()),
+        });
+    }
+    *offset = field.ordinal;
+    *schema_index = type_table.schema_index(&name).unwrap_or(0);
+    expr.ty = field_ty;
 }
 
 fn resolve_deferred_member(

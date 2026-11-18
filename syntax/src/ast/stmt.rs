@@ -44,6 +44,7 @@ pub enum StmtKind {
         type_annotation: Option<TypeAnnotation>,
         initializer: Expr,
         is_pub: bool,
+        is_const: bool,
     },
 
     Block(Vec<Stmt>),

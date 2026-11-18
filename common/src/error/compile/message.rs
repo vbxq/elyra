@@ -28,6 +28,9 @@ impl CompileErrorKind {
             Self::UnknownVariant { variant, expected } => {
                 format!("unknown variant '{variant}' for {expected}")
             }
+            Self::ReservedIdentifier { name } => format!(
+                "'{name}' cannot be declared: names starting with `__` are reserved for the compiler and its builtins"
+            ),
             Self::MatchArmValueRequired => {
                 "match arm must produce a value or diverge with return, break, or continue"
                     .to_string()

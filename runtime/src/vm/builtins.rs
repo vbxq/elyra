@@ -9,6 +9,8 @@ pub fn register_builtins(vm: &mut VM) -> Result<(), RuntimeError> {
     vm.set_global("panic".to_string(), Value::ptr(panic_fn.index()));
     let assert_fn = vm.alloc_native("assert", 2, builtin_assert)?;
     vm.set_global("assert".to_string(), Value::ptr(assert_fn.index()));
+    let clone_fn = vm.alloc_native("__clone", 1, builtin_clone)?;
+    vm.set_global("__clone".to_string(), Value::ptr(clone_fn.index()));
 
     Ok(())
 }
@@ -37,4 +39,8 @@ pub fn builtin_assert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     }
     let message = format!("assertion failed: {}", vm.value_to_string(args[1]));
     Err(vm.runtime_error(RuntimeErrorKind::Panic { message }))
+}
+
+pub fn builtin_clone(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    vm.deep_clone_value(args[0])
 }

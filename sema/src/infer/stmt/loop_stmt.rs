@@ -220,6 +220,7 @@ impl TypeInference {
         self.env.push_scope();
         self.env
             .define_local(iterator.to_string(), elem_type.clone());
+        self.record_binding_origins(iterable, &[iterator.to_string()]);
         if let Some(name) = collection_binding_name(iterable) {
             self.env.mark_read_only(name);
         }

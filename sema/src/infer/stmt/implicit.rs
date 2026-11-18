@@ -2,9 +2,47 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason};
 use crate::typed_ast::{TypedStmt, TypedStmtKind};
 use crate::types::InferType;
-use aelys_syntax::Stmt;
+use aelys_syntax::{ExprKind, Stmt, StmtKind};
+
+fn is_assignment_statement(stmt: &Stmt) -> bool {
+    fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Assign { .. }
+            | ExprKind::MemberAssign { .. }
+            | ExprKind::IndexAssign { .. } => true,
+            ExprKind::Grouping(inner) => is_assignment(inner),
+            ExprKind::Match { arms, .. } => match arms.as_slice() {
+                [arm] => {
+                    matches!(&arm.pattern.kind, aelys_syntax::PatternKind::Binding(name) if name.starts_with("__"))
+                        && matches!(&arm.body, aelys_syntax::MatchArmBody::Expr(body) if is_assignment(body))
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+    matches!(&stmt.kind, StmtKind::Expression(expr) if is_assignment(expr))
+}
 
 impl TypeInference {
+    pub(crate) fn infer_body_tail(
+        &mut self,
+        last_stmt: &Stmt,
+        return_type: &InferType,
+        annotated: bool,
+    ) -> Vec<TypedStmt> {
+        if annotated || !is_assignment_statement(last_stmt) {
+            return vec![self.infer_stmt_with_implicit_return(last_stmt, return_type)];
+        }
+        let assignment = self.infer_stmt(last_stmt);
+        let unit = Stmt::new(
+            StmtKind::Expression(aelys_syntax::Expr::new(ExprKind::Unit, last_stmt.span)),
+            last_stmt.span,
+        );
+        let unit = self.infer_stmt_with_implicit_return(&unit, return_type);
+        vec![assignment, unit]
+    }
+
     pub(crate) fn infer_stmt_with_implicit_return(
         &mut self,
         stmt: &Stmt,

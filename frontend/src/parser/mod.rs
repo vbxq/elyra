@@ -18,6 +18,7 @@ pub struct Parser {
     type_depth: usize,
     legacy_collections: bool,
     no_brace_construction: bool,
+    synthetic_counter: usize,
 }
 
 impl Parser {
@@ -30,6 +31,7 @@ impl Parser {
             type_depth: 0,
             legacy_collections: false,
             no_brace_construction: false,
+            synthetic_counter: 0,
         }
     }
 
@@ -46,6 +48,7 @@ impl Parser {
             type_depth: 0,
             legacy_collections: true,
             no_brace_construction: false,
+            synthetic_counter: 0,
         }
     }
 
@@ -120,6 +123,27 @@ impl Parser {
                 found: self.peek().kind.to_string(),
             })),
         }
+    }
+
+    fn consume_declared_identifier(&mut self, expected: &str) -> Result<String> {
+        let span = self.peek().span;
+        let name = self.consume_identifier(expected)?;
+        self.reject_reserved_name(&name, span)?;
+        Ok(name)
+    }
+
+    fn reject_reserved_name(&self, name: &str, span: aelys_syntax::Span) -> Result<()> {
+        if name.starts_with("__") {
+            return Err(CompileError::new(
+                CompileErrorKind::ReservedIdentifier {
+                    name: name.to_string(),
+                },
+                span,
+                Arc::clone(&self.source),
+            )
+            .into());
+        }
+        Ok(())
     }
 
     fn check(&self, kind: &TokenKind) -> bool {

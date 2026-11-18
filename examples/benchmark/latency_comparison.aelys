@@ -40,7 +40,7 @@ io::print("Max pause: " + convert::to_string(max1) + "us")
 
 io::print("")
 io::print("=== @no_gc version ===")
-let arr: Vec<int> = vec![0; 1024]
+let mut arr: Vec<int> = vec![0; 1024]
 let t2 = time::timer()
 i = 0
 let mut max2 = 0

@@ -8,7 +8,7 @@ impl Parser {
         let start_span = self.peek().span;
         self.advance(); // consume `struct`
 
-        let name = self.consume_identifier("struct name")?;
+        let name = self.consume_declared_identifier("struct name")?;
 
         if name.chars().next().is_none_or(|c| !c.is_uppercase()) {
             return Err(self.error(CompileErrorKind::UnexpectedToken {
@@ -20,7 +20,7 @@ impl Parser {
         let type_params = if self.match_token(&TokenKind::Lt) {
             let mut params = Vec::new();
             loop {
-                params.push(self.consume_identifier("type parameter")?);
+                params.push(self.consume_declared_identifier("type parameter")?);
                 if !self.match_token(&TokenKind::Comma) {
                     break;
                 }
@@ -37,7 +37,7 @@ impl Parser {
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             let field_span = self.peek().span;
             let field_is_pub = self.match_token(&TokenKind::Pub);
-            let field_name = self.consume_identifier("field name")?;
+            let field_name = self.consume_declared_identifier("field name")?;
             if fields
                 .iter()
                 .any(|field: &StructFieldDecl| field.name == field_name)

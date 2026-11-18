@@ -190,6 +190,7 @@ impl ModuleLoader {
             native_functions,
             native_signatures,
             exported_types: Default::default(),
+            constants: Default::default(),
         };
 
         self.loaded_modules

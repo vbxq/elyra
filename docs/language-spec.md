@@ -29,6 +29,12 @@ MAX_VALUE
 Thing2
 ```
 
+A name that starts with two underscores (`__clone`, `__tostring`) belongs to
+the compiler and its builtins. Calling a builtin such as `__tostring(x)` is
+allowed, but declaring such a name (a variable, constant, function, parameter,
+pattern or loop binding, type, field, variant, type parameter or module alias)
+is E0114.
+
 ### Reserved Words
 
 ```
@@ -38,9 +44,10 @@ trait impl and or not pub needs as from true false null
 
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
 
-`where`, `dyn`, and `self` are contextual. They carry meaning in a generic
-bound, a type position, and a method receiver respectively, and they are still
-ordinary identifiers everywhere else:
+`where`, `dyn`, `self` and `const` are contextual. They carry meaning in a
+generic bound, a type position, a method receiver and a constant declaration
+(`const NAME = ...`) respectively, and they are still ordinary identifiers
+everywhere else:
 
 ```rust
 let where = 1
@@ -242,6 +249,44 @@ println(x)      // 1
 
 Block-scoped. Variables live until their enclosing `}`.
 
+### Constants
+
+`const NAME: T = expr` declares a compile-time constant; `pub const` exports it
+from a module. The type annotation is optional and follows the rules of `let`
+(`const SMALL: u8 = 200` is a `u8`).
+
+```rust
+const SCREEN_W: int = 320
+const SCREEN_H = SCREEN_W * 5 / 8      // 200
+const MASK = (1 << 16) - 1
+const TITLE: string = "doom"
+pub const FRACUNIT: int = 1 << 16
+
+let column = [0; SCREEN_H]             // a repeat count
+struct Frame { pixels: [int; SCREEN_W] } // an array length in a type
+```
+
+The initializer must be a constant expression: integer, float, bool and string
+literals; unary `-`, `~` and `not`; arithmetic, shifts and bitwise operators on
+integers; arithmetic on floats; comparisons; `and`/`or` on bools; string `+`;
+`as` between `int` and `float`; and other constants, including another module's
+`pub const` (`cfg::W`) and associated constants (`Cfg::N`). Anything else, a
+function call, a `let` binding, a collection, a division by zero or an integer
+outside the 48-bit range, is E0395; for a division or remainder by zero, an
+overflow or a shift count out of range, the message names that cause
+(`cannot be evaluated at compile time: division by zero`). Declaring the same
+constant twice in one scope is E0396.
+
+A constant is folded when the program is compiled: every use is replaced by its
+value, so a constant can be read before its declaration line, from a function
+declared earlier, and inside closures. A constant can also be declared inside a
+function body. It cannot be assigned (E0203), and a local `let` of the same name
+shadows it like any other binding.
+
+Across modules, `needs cfg` makes `cfg::W` and `W` available, `needs cfg::W`
+makes `W` available, and both forms work as repeat counts and array lengths. A
+constant without `pub` stays private (E0313).
+
 ## Functions
 
 ### Declaration
@@ -295,7 +340,8 @@ fn build_line(mut acc: int, n: int) -> int {
 build_line(10, 5)  // 15
 ```
 
-Mutable parameters are value copies. Modifying them inside the function doesn't affect the caller:
+Reassigning a mutable parameter never affects the caller: the parameter is a
+new binding.
 
 ```rust
 fn try_modify(mut x: int) -> int {
@@ -306,6 +352,39 @@ fn try_modify(mut x: int) -> int {
 let a = 1
 let b = try_modify(a)  // b = 101
 a                       // still 1
+```
+
+Aggregates (structs, enums, arrays and `Vec`) are passed by reference, so a
+`mut` parameter of aggregate type mutates the caller's value. That is only
+allowed when the argument is reachable from a mutable root: passing `a`, `a.f`
+or `a[i]` to a `mut` parameter when `a` is immutable is E0323. Pass
+`a.clone()` to give the function its own copy. The same rule applies to a
+`mut self` receiver (E0331). See [Structs](#structs).
+
+```rust
+fn grow(mut v: Vec<int>) { v.push(0) }
+
+let mut shared = vec![1]
+grow(shared)                // shared.len() == 2
+let fixed = vec![1]
+grow(fixed)                 // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter `v`
+grow(fixed.clone())         // ✓ fixed is unchanged
+```
+
+A function type does not record which parameters are `mut`, so the rule
+follows the function value as far as the compiler can see it. An immutable
+`let` bound directly to a named function or a lambda (`let h = grow`,
+`let g = fn(mut v: Vec<int>) { ... }`, `let h2 = h`) keeps the `mut`
+parameters of that function, including when captured. Any other call through a
+function value (a function-typed parameter or field, a `let mut` binding, the
+result of a call) treats every aggregate or generic argument as passed to a
+`mut` parameter, so the argument must have a mutable root or be a clone:
+
+```rust
+fn apply(f: fn(Vec<int>), v: Vec<int>) { f(v) }      // ✗ error[E0323]: cannot pass `v` to a call through a function value
+fn apply(f: fn(Vec<int>), mut v: Vec<int>) { f(v) }  // ✓ callers pass a mutable root
+let h = grow
+h(fixed)                                            // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter `v`
 ```
 
 Works with lambdas too:
@@ -423,6 +502,8 @@ let mut s = "hello"
 s += " world"       // "hello world"
 ```
 
+The target is evaluated once: in `ms[pick()].hp -= 10` or `w.ps[i + f()].x *= 2`, every index expression of the place is evaluated exactly once, left to right, before the right-hand side; the same slot is read and written.
+
 ### Increment and Decrement
 
 For the common case of adding or subtracting 1:
@@ -439,7 +520,10 @@ count++     // 2
 count--     // 1
 ```
 
-These are postfix operators and work on identifiers only.
+These are postfix operators. They work on every place a compound assignment
+accepts: a variable, a field, an element and nested paths (`s.v++`, `a[0]--`,
+`w.ps[pick()].h++`), with each index expression evaluated once. On any other
+expression, such as `f()++`, they are E0104.
 
 ### Comparison
 
@@ -708,6 +792,19 @@ After `needs sqrt from std::math`, you call `sqrt()` directly without the module
 
 Two or more whole-module imports may export the same name, as `std::fs` and `std::bytes` both export `size` and `copy`. The qualified forms `fs::size` and `bytes::size` both work; only a bare use of `size` is rejected, at the use, with E0410 `symbol 'size' is exported by multiple modules: fs, bytes` and the hint `write the qualified name: fs::size or bytes::size`. A declaration of the importing file with that name shadows both imports.
 
+A declaration of your own always takes precedence over an auto-registered name.
+A program that defines `fn sqrt(t: int) -> int`, `fn min(...)`, `fn find(...)`
+or `fn len(...)` calls its own function in every position: a direct call, an
+argument, a collection element, a field initializer, a return value, a closure
+body, a method body, a nested function and a function value, including a use
+that comes before the declaration: every top-level `fn` and `impl` is defined
+before the first statement of the script runs, so `let top = sqrt(4)` followed
+by `fn sqrt` calls the user function. The qualified
+`math::sqrt` and `math::min` still name the standard library functions. In the
+same way, a method declared on a user type, directly or through a trait, takes
+precedence over a built-in string or collection method of the same name:
+`dir.find("a")`, `dir.len()` or `bag.push(x)` call the user methods.
+
 ### Standard Library Modules
 
 The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement:
@@ -741,7 +838,9 @@ needs utils              // imports utils.aelys
 needs lib::helper        // imports lib/helper.aelys
 ```
 
-Top-level definitions in a file become the module's exports.
+Top-level definitions in a file become the module's exports. A `pub const`
+is exported with its value, so an importer can use it as a repeat count or an
+array length (`[0; cfg::W]`); see [Constants](#constants).
 
 A top-level `let` is a variable of the module that declares it, and it has one
 slot per module. Every reference inside that module resolves to that slot: the
@@ -1048,17 +1147,26 @@ let typed: Vec<int> = vec![]
 ```
 
 `[value; N]` creates an array with a compile-time non-negative constant length.
-`N` is an integer literal, an arithmetic expression over such literals, or an
+`N` is an integer literal, an arithmetic expression over such literals, a
+[constant](#constants) (`const N`, or another module's `cfg::N`), or an
 associated constant named on a concrete type or on `Self`, the same lengths the
 annotation `[T; N]` accepts. `vec![value; count]` creates a Vec and permits a
-dynamic count. The element is
-evaluated once and copied into each slot. There is no runtime-sized array
-constructor; use a Vec when the count is not known at compile time.
+dynamic count. There is no runtime-sized array constructor; use a Vec when the
+count is not known at compile time.
+
+The element is evaluated once. A scalar or string element is stored in every
+slot. An aggregate element (a struct, enum, `Option`/`Result`, array or `Vec`)
+is deep-copied into each slot, as by `clone()`, so every slot holds its own
+object, including when the element is an existing binding:
 
 ```rust
 let zeros = [0; 10]
 let repeated = [7; 3]
 let mut buffer = vec![0; 4]
+let mut grid = [[0; 4]; 3]
+grid[1][2] = 5                    // only row 1 changes
+let mut mobjs = vec![Mobj { x: 0, y: 0 }; 128]
+mobjs[0].x = 10                   // only slot 0 changes
 ```
 
 All elements must have one common type. A fixed array annotation is checked at
@@ -1071,8 +1179,11 @@ numbers.push(3)
 numbers[0] = 9
 ```
 
-Mutation requires `let mut`, a mutable parameter, or a mutable base binding
-for an indexed place. `push`, `pop`, and `reserve` are Vec operations. `pop`
+Mutation requires `let mut`, a mutable parameter, or a mutable root binding
+for the place, however deep: `v[i] = x`, `w.items.push(x)` and `w.grid[i][j] = x`
+all follow the root (see [Structs](#structs)). Collections are reference
+types: `let mut alias = values` shares the Vec when `values` is mutable and is
+E0323 when it is not; `values.clone()` copies it. `push`, `pop`, and `reserve` are Vec operations. `pop`
 and `get` return `Option<T>` and therefore must be handled as values:
 
 ```rust
@@ -1268,8 +1379,88 @@ fn move_bullet() -> float {
 
 Struct names start with an uppercase letter. Fields are checked against their
 declared types at compile time. A field place is resolved to its declared
-offset, not looked up by a runtime string key. A field write requires a mutable
-root binding; an immutable binding or a temporary cannot be used as the root.
+offset, not looked up by a runtime string key.
+
+### Reference semantics
+
+Structs, enums, arrays and `Vec` are reference types, like classes in C# or
+Java: a binding, a parameter, a field and a collection slot hold a reference to
+one shared object. `let b = a`, passing `a` to a function, `v.push(a)`,
+`S { inner: a }` and `Some(a)` do not copy `a`; they share it. Strings,
+closures and scalars are values or immutable, so sharing them is unobservable.
+A value returned from a function is treated as a fresh binding.
+
+`x.clone()` makes a deep copy of a struct, enum, `Option`/`Result`, array or
+`Vec`: every nested struct, enum payload, array and `Vec` is copied too, while
+strings and closures are shared. A structure with cycles or shared children is
+copied with the same shape, and a cycle does not make `clone` loop. A user
+method named `clone` takes precedence over the built-in one.
+
+```rust
+struct P { x: int, y: int }
+
+let mut a = P { x: 1, y: 2 }
+let mut b = a          // b and a are the same object
+b.x = 5                // a.x == 5
+let mut c = a.clone()  // an independent copy
+c.x = 9                // a.x is still 5
+```
+
+### Mutability is a property of the root binding
+
+A place is a binding followed by any chain of fields and indexes: `p`, `p.x`,
+`v[i]`, `w.ps[i].x`. A place is mutable when its root binding is: a `let mut`
+binding, a `mut` parameter, or `self` in a `mut self` method. Every write form
+works through any such place:
+
+```rust
+struct World { ps: Vec<P>, ids: [int; 4] }
+
+let mut w = World { ps: vec![P { x: 0, y: 0 }], ids: [0; 4] }
+w.ps[0].x = 10        // field write through an index
+w.ps[0].x += 1        // compound assignment
+w.ps.push(P { x: 2, y: 2 })
+w.ids[3] = 7          // index write through a field
+w.ps[1].shift(5)      // a `mut self` method on an element
+```
+
+`self.items.push(v)` and `self.items[i] = v` work in a `mut self` method,
+including in an impl of a generic struct. Writing through an immutable root is
+an error: a field write is E0330, an index write or `push`/`pop`/`reserve` is
+E0318, and calling a `mut self` method is E0331. A temporary, such as the
+result of a call, cannot be the root of a write.
+
+Because aggregates are shared, creating a mutable alias of an aggregate that
+is reachable from an immutable binding would let the immutable binding change.
+It is E0323, at every place where an alias is created:
+
+```rust
+let a = P { x: 1, y: 2 }
+let mut b = a                  // ✗ error[E0323]: cannot bind `a` mutably
+let mut c = a.clone()          // ✓
+let h = World { ps: vec![], ids: [0; 4] }
+let mut ps = h.ps              // ✗ error[E0323]
+let mut b = if c { a } else { P { x: 0, y: 0 } }   // ✗ error[E0323]
+let mut d = P { x: 0, y: 0 }
+d = a                          // ✗ error[E0323]: cannot assign `a` to the mutable binding `d`
+fn bump(mut p: P) { p.x += 1 }
+bump(a)                        // ✗ error[E0323]: cannot pass `a` to the `mut` parameter `p`
+```
+
+The message names the place and its root and suggests `a.clone()` or `let mut
+a`. When the root is mutable, `let mut b = a`, `d = a` and passing `a` to a
+`mut` parameter are allowed and share the object. Storing an aggregate in a
+container or a field (`v.push(a)`, `S { inner: a }`) always shares it and is
+never an error. A function that receives an immutable parameter can still
+return it, and the caller may bind the result mutably: a returned value is a
+fresh binding, and this route is not tracked.
+
+The iteration variable of `for p in ps` and the bindings of a `match` pattern
+are views of the iterated or matched place: `let mut q = p` inside the loop is
+allowed when the root of `ps` is mutable, and shares the element; when the root
+is immutable it is E0323 and the message names that root. Writing through `p`
+itself (`p.x = ...`) is E0330 because `p` is an immutable binding; write
+`ps[i].x = ...` with an index loop, or clone.
 
 Methods and associated functions live in an `impl` block:
 
@@ -2204,6 +2395,11 @@ last spelling is the only discard; there is no `discard` keyword. E0303 (Result)
 E0304 (Option) print these repairs. The check covers expression statements, block
 and closure bodies, match arms, and named bindings; a `Result` stored inside a
 collection literal such as `vec![r(), r()]` is not tracked.
+match it, call a consuming method, or write `let _ = expression` explicitly.
+Assigning one to a variable, a field or an element (`a.next = Some(x)`,
+`v[i] = Ok(1)`) uses it. A function or lambda without a declared return type
+whose last statement is an assignment returns unit, so a setter such as
+`fn link(mut self, v: int) { self.next = Some(v) }` can be called as a statement.
 
 The `?` operator propagates `Err` or `None` out of the enclosing function and
 otherwise yields the operand's success value. The success type of the operand and
@@ -2397,6 +2593,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0110 | MatchArmValueRequired | a match arm must produce a value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
+| E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
 
 ### E02xx, names and emission limits
 
@@ -2439,20 +2636,20 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0315 | NegativeArraySize | an array length below zero |
 | E0316 | NonConstantArrayRepeat | an array repeat count that is not constant |
 | E0317 | ConstantSliceOutOfBounds | a constant slice range leaves the source |
-| E0318 | MutableCollectionRequired | the operation needs a mutable receiver |
+| E0318 | MutableCollectionRequired | an index write or `push`/`pop`/`reserve` through a place whose root is immutable or a temporary |
 | E0319 | ReadOnlyCollectionRequired | the operation needs a read-only receiver |
 | E0320 | UnconsumedCollectionIterator | a bare `iter()` is not a value |
 | E0321 | ConstantIndexOutOfBounds | a constant index leaves the collection |
 | E0322 | CollectionCollectRequiresPipeline | `collect` needs a pipeline |
-| E0323 | MutableCollectionAlias | a mutable collection is aliased |
+| E0323 | MutableCollectionAlias | a mutable alias (`let mut`, an assignment to a mutable binding, a `mut` parameter) of an aggregate reachable from an immutable binding |
 | E0324 | NonExhaustiveStruct | a struct match needs `_` or an irrefutable field pattern |
 | E0325 | GenericStructDeferred | this generic struct form is not delivered |
 | E0326 | DuplicateNominal | two declarations share a name |
 | E0327 | DuplicateStructField | two fields share a name |
 | E0328 | UnknownStruct | no such struct |
 | E0329 | InvalidStructMethod | no such method on that struct |
-| E0330 | ImmutableStructField | a field write through an immutable root |
-| E0331 | ImmutableStructMethod | a `mut self` method on an immutable value |
+| E0330 | ImmutableStructField | a field write through a place whose root is immutable |
+| E0331 | ImmutableStructMethod | a `mut self` method on a place whose root is immutable |
 | E0332 | UnknownTrait | no such trait |
 | E0333 | MissingTraitMethod | an impl omits a required method |
 | E0334 | DuplicateTraitImpl | the same impl is written twice |
@@ -2501,6 +2698,8 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
+| E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
+| E0396 | DuplicateConstant | a `const` declared twice in the same scope |
 
 ### E04xx, modules, visibility, borrows, and associated items
 
