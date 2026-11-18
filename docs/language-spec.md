@@ -223,8 +223,10 @@ A binary operator takes two operands of the same integer type. Mixing two intege
 An integer literal takes the sized type its context expects: a `let` annotation, a struct
 field, an enum constructor payload (`E::A(200)` with `A(u8)`, `E::B { x: -5 }` with an
 `i16` field), a function argument, a return value or a function's last expression, an
-element of an array or `Vec` literal whose type is known, a `push` onto a `Vec<T>`, an
-assignment to a variable, field or element, the other operand of a binary operator, a
+element of an array or `Vec` literal whose type is known, a `push` onto a `Vec<T>`, the
+element, key or value argument of the other `Vec`, array and `Map` methods
+(`v.extend(vec![255])`, `m.insert(1, 2)` on a `Map<u8, i32>`), an assignment to a
+variable, field, element or `Map` entry, the other operand of a binary operator, a
 compound assignment, a `match` pattern on a sized value, a branch of an `if` or a `match`
 arm whose sibling branch is sized, and the bounds of a `for` range whose other bound is
 sized (the loop variable then has that type). The shifted value of `1 << n` takes the
@@ -232,9 +234,10 @@ context's type; the count keeps its own. A literal that does not fit its type is
 `integer literal 256 does not fit in u8`. The payload of a generic struct or enum takes
 the type its arguments name, written out (`Holder::<u8>::Full(200)`, `Box::<i8> { value:
 100 }`) or expected by a `let` annotation, a return type or a parameter (`let b: Box<u8> =
-Box { value: 200 }`). A literal passed to a generic parameter otherwise stays `int`; the
-other operand of a binary operator whose type is still being inferred gives the literal
-that type once inference settles it.
+Box { value: 200 }`). A method argument takes the type the receiver's arguments give its
+parameter (`s.push(200)` on a `Stack<u8>`). A literal passed to a generic parameter
+otherwise stays `int`; the other operand of a binary operator whose type is still being
+inferred gives the literal that type once inference settles it.
 
 ```rust
 let x: i32 = 5
@@ -396,13 +399,16 @@ struct Frame { pixels: [int; SCREEN_W] } // an array length in a type
 The initializer must be a constant expression: integer, float, bool and string
 literals; unary `-`, `~` and `not`; arithmetic, shifts and bitwise operators on
 integers; arithmetic on floats; comparisons; `and`/`or` on bools; string `+`;
-`as` between `int` and `float`; and other constants, including another module's
-`pub const` (`cfg::W`) and associated constants (`Cfg::N`). Anything else, a
-function call, a `let` binding, a collection, a division by zero or an integer
-outside the 48-bit range, is E0395; for a division or remainder by zero, an
-overflow or a shift count out of range, the message names that cause
-(`cannot be evaluated at compile time: division by zero`). Declaring the same
-constant twice in one scope is E0396.
+`as` between the integer types and `float`; and other constants, including another
+module's `pub const` (`cfg::W`) and associated constants (`Cfg::N`). The value is
+computed with the runtime's rules for the constant's type: a sized constant wraps
+(`const B: u8 = 200 + 100` is `44`, `const M: u32 = 0xFFFFFFFF + 1` is `0`), each
+operand takes the type of the constants it names, and a shift count is taken modulo
+the width (`const Z = 1 >> -1` is `0`). Anything else, a function call, a `let`
+binding, a collection, a division by zero or an `int` result outside the 48-bit
+range, is E0395; for a division or remainder by zero or an overflow, the message
+names that cause (`cannot be evaluated at compile time: division by zero`).
+Declaring the same constant twice in one scope is E0396.
 
 A constant is folded when the program is compiled: every use is replaced by its
 value, so a constant can be read before its declaration line, from a function
@@ -1563,7 +1569,8 @@ Lookups, inserts and removals are O(1) on average.
 ### Characters
 
 `char` is one Unicode scalar value, stored unboxed. `c as int` gives its scalar
-value; `n as char` converts any integer and traps with `invalid char: N is not a
+value, and `c as u8` (or any sized integer type) keeps the low bits of that value
+(`'é' as u8` is `233`, `'€' as u8` is `172`); `n as char` converts any integer and traps with `invalid char: N is not a
 Unicode scalar value` outside `0..=0x10FFFF` or inside the surrogate range.
 `char` values compare with `==`, `!=` and the ordering operators, appear in
 `match` patterns (`'a' | 'e' => ...`), and serve as Map keys. Methods:
