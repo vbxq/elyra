@@ -71,6 +71,10 @@ fn apply_vm_arg(
             config.gc_stress = parse_switch(raw_value, raw_arg)?;
             Ok(())
         }
+        "gc-verify" => {
+            config.gc_verify = parse_switch(raw_value, raw_arg)?;
+            Ok(())
+        }
         "gc-nursery" => {
             let bytes = parse_size_value(raw_value, raw_arg)?;
             if bytes < VmConfig::MIN_GC_NURSERY_BYTES {

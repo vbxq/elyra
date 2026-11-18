@@ -147,7 +147,62 @@ impl Heap {
         slot.object.as_ref()
     }
 
+    pub fn verify_remembered(&self) -> Result<(), String> {
+        let mut children = Vec::new();
+        for (index, slot) in self.objects.iter().enumerate() {
+            let Some(object) = slot.object.as_ref() else {
+                continue;
+            };
+            if slot.heap_generation != HeapGeneration::Old || slot.flags & REMEMBERED != 0 {
+                continue;
+            }
+            children.clear();
+            match Self::element_values(object) {
+                Some(values) => {
+                    children.extend(values.iter().enumerate().filter_map(|(element, value)| {
+                        value.as_ptr().map(|raw| (Some(element), GcRef::new(raw)))
+                    }))
+                }
+                None => {
+                    let mut refs = Vec::new();
+                    Self::collect_children(object, &mut refs);
+                    children.extend(refs.into_iter().map(|child| (None, child)));
+                }
+            }
+            for (element, child) in children.iter().copied() {
+                if self.heap_generation(child) != Some(HeapGeneration::Young) {
+                    continue;
+                }
+                let remembered = element.is_some_and(|element| {
+                    slot.card_table != 0
+                        && self.card_tables[slot.card_table as usize]
+                            .get(element / 64)
+                            .is_some_and(|word| word & (1u64 << (element % 64)) != 0)
+                });
+                if !remembered {
+                    let place =
+                        element.map_or_else(String::new, |element| format!(" slot {element}"));
+                    return Err(format!(
+                        "gc-verify: old {} #{index}{place} holds young {} #{} without a remembered entry (missing write barrier)",
+                        self.get_type_name(GcRef::from_parts(
+                            u32::try_from(index).unwrap_or(u32::MAX),
+                            slot.generation
+                        )),
+                        self.get_type_name(child),
+                        child.slot_index()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn mark_young(&mut self, roots: impl IntoIterator<Item = GcRef>) {
+        if self.verify
+            && let Err(message) = self.verify_remembered()
+        {
+            panic!("{message}");
+        }
         for root in roots {
             self.young_shade(root);
         }
@@ -303,8 +358,9 @@ impl Heap {
         self.phase = MajorPhase::Idle;
         self.sweep_cursor = 0;
         self.sweep_freed = 0;
-        self.next_gc =
-            (self.bytes_allocated * Self::GC_GROWTH_FACTOR).max(Self::INITIAL_GC_THRESHOLD);
+        self.next_gc = (self.bytes_allocated * Self::GC_GROWTH_FACTOR)
+            .max(Self::INITIAL_GC_THRESHOLD)
+            .min(self.max_heap / 2);
         self.major_collections = self.major_collections.saturating_add(1);
         self.slice_at = u64::MAX;
         self.update_next_event();

@@ -79,6 +79,11 @@ pub struct Heap {
     slice_at: u64,
     next_event: u64,
     nursery_bytes: u64,
+    nursery_limit: u64,
+    minor_cost_rate: u64,
+    slice_interval: u64,
+    max_heap: usize,
+    verify: bool,
     next_gc: usize,
     slice_work: usize,
     live_objects: usize,
@@ -93,8 +98,12 @@ impl Heap {
     pub const INITIAL_GC_THRESHOLD: usize = 4 * 1024 * 1024;
     pub const DEFAULT_NURSERY_BYTES: u64 = 256 * 1024;
     pub const MIN_NURSERY_BYTES: u64 = 1024;
+    pub const ADAPTIVE_NURSERY_FLOOR: u64 = 16 * 1024;
+    pub const MINOR_TARGET_NANOS: u64 = 1_000_000;
+    pub const REMEMBERED_LIMIT: usize = 4096;
     const GC_GROWTH_FACTOR: usize = 2;
     const SLICE_BYTES: u64 = 32 * 1024;
+    const MIN_SLICE_INTERVAL: u64 = 2 * 1024;
     const MIN_SLICE_WORK: usize = 4096;
     const STRESS_SLICE_WORK: usize = 16;
     const MAX_SLICE_WORK: usize = 1 << 20;
@@ -122,6 +131,11 @@ impl Heap {
             slice_at: u64::MAX,
             next_event: 0,
             nursery_bytes: Self::DEFAULT_NURSERY_BYTES,
+            nursery_limit: Self::DEFAULT_NURSERY_BYTES,
+            minor_cost_rate: 0,
+            slice_interval: Self::SLICE_BYTES,
+            max_heap: usize::MAX,
+            verify: false,
             next_gc: Self::INITIAL_GC_THRESHOLD,
             slice_work: Self::MIN_SLICE_WORK,
             live_objects: 0,
@@ -140,9 +154,40 @@ impl Heap {
     }
 
     pub fn set_nursery_bytes(&mut self, bytes: u64) {
-        self.nursery_bytes = bytes.max(Self::MIN_NURSERY_BYTES);
+        self.nursery_limit = bytes.max(Self::MIN_NURSERY_BYTES);
+        self.nursery_bytes = (self.nursery_limit / 4).max(self.nursery_floor());
         self.minor_at = self.alloc_clock.saturating_add(self.nursery_bytes);
         self.update_next_event();
+    }
+
+    fn nursery_floor(&self) -> u64 {
+        Self::ADAPTIVE_NURSERY_FLOOR.min(self.nursery_limit)
+    }
+
+    pub fn note_minor_cost(&mut self, nanos: u64) {
+        if self.stress {
+            return;
+        }
+        let measured = nanos.saturating_mul(1000) / self.nursery_bytes.max(1);
+        self.minor_cost_rate = measured.max(self.minor_cost_rate - self.minor_cost_rate / 16);
+        let next =
+            (Self::MINOR_TARGET_NANOS / 2).saturating_mul(1000) / self.minor_cost_rate.max(1);
+        self.nursery_bytes = next.clamp(self.nursery_floor(), self.nursery_limit);
+        self.minor_at = self.alloc_clock.saturating_add(self.nursery_bytes);
+        self.update_next_event();
+    }
+
+    pub fn nursery_limit(&self) -> u64 {
+        self.nursery_limit
+    }
+
+    pub fn set_max_heap_bytes(&mut self, bytes: u64) {
+        self.max_heap = usize::try_from(bytes).unwrap_or(usize::MAX);
+        self.next_gc = self.next_gc.min(self.max_heap / 2);
+    }
+
+    pub fn set_verify(&mut self, verify: bool) {
+        self.verify = verify;
     }
 
     pub fn set_stress(&mut self, stress: bool) {
@@ -185,9 +230,18 @@ impl Heap {
         self.slice_work
     }
 
-    pub fn note_major_slice(&mut self) {
-        let interval = if self.stress { 1 } else { Self::SLICE_BYTES };
-        self.slice_at = self.alloc_clock.saturating_add(interval);
+    pub fn note_major_slice(&mut self, kept_pace: bool) {
+        if self.phase == MajorPhase::Idle {
+            return;
+        }
+        self.slice_interval = if self.stress {
+            1
+        } else if kept_pace {
+            self.slice_interval.saturating_mul(2).min(Self::SLICE_BYTES)
+        } else {
+            (self.slice_interval / 2).max(Self::MIN_SLICE_INTERVAL)
+        };
+        self.slice_at = self.alloc_clock.saturating_add(self.slice_interval);
         self.update_next_event();
     }
 
@@ -207,9 +261,14 @@ impl Heap {
         self.gray.clear();
         let slots = self.objects.len();
         let estimated_work = slots.saturating_mul(2).saturating_add(1024);
+        let headroom = u64::try_from(self.max_heap.saturating_sub(self.bytes_allocated) / 2)
+            .unwrap_or(u64::MAX);
         let budget_bytes = u64::try_from(self.bytes_allocated)
             .unwrap_or(u64::MAX)
-            .max(self.nursery_bytes.saturating_mul(8));
+            .max(self.nursery_limit.saturating_mul(8))
+            .min(headroom)
+            .max(Self::SLICE_BYTES);
+        self.slice_interval = Self::SLICE_BYTES;
         let slices = usize::try_from((budget_bytes / Self::SLICE_BYTES).max(1)).unwrap_or(1);
         self.slice_work = if self.stress {
             Self::STRESS_SLICE_WORK

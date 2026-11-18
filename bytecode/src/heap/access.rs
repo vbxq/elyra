@@ -61,20 +61,44 @@ impl Heap {
             _ => false,
         };
         if old_to_young {
-            self.remember(owner, element);
+            let indexed_owner = self.objects[owner.slot_index()]
+                .object
+                .as_ref()
+                .is_some_and(|object| {
+                    matches!(object.kind, ObjectKind::Vec(_) | ObjectKind::Array(_))
+                });
+            if self.remembered.len() >= Self::REMEMBERED_LIMIT
+                || (indexed_owner && element == WHOLE_OBJECT)
+            {
+                self.promote(child);
+            } else {
+                self.remember(owner, element, indexed_owner);
+            }
         }
         if self.phase == MajorPhase::Mark {
             self.shade(child);
         }
     }
 
-    fn remember(&mut self, owner: GcRef, element: u32) {
-        let index = owner.slot_index();
-        let indexed = element != WHOLE_OBJECT
-            && self.objects[index].object.as_ref().is_some_and(|object| {
-                matches!(object.kind, ObjectKind::Vec(_) | ObjectKind::Array(_))
+    fn promote(&mut self, child: GcRef) {
+        let slot = self.objects[child.slot_index()].as_mut();
+        slot.heap_generation = HeapGeneration::Old;
+        let has_children = slot
+            .object
+            .as_ref()
+            .is_some_and(|object| Self::may_have_children(&object.kind));
+        if has_children && slot.flags & REMEMBERED == 0 {
+            slot.flags |= REMEMBERED;
+            self.remembered.push(RememberedEntry {
+                owner: child,
+                element: WHOLE_OBJECT,
             });
-        if !indexed {
+        }
+    }
+
+    fn remember(&mut self, owner: GcRef, element: u32, indexed_owner: bool) {
+        let index = owner.slot_index();
+        if !indexed_owner {
             let slot = self.objects[index].as_mut();
             if slot.flags & REMEMBERED == 0 {
                 slot.flags |= REMEMBERED;

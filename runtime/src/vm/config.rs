@@ -6,6 +6,7 @@ pub struct VmConfig {
     pub gc_stats: bool,
     pub gc_nursery_bytes: u64,
     pub gc_stress: bool,
+    pub gc_verify: bool,
 }
 
 impl VmConfig {
@@ -48,6 +49,7 @@ impl Default for VmConfig {
             gc_stats: false,
             gc_nursery_bytes: Self::DEFAULT_GC_NURSERY_BYTES,
             gc_stress: false,
+            gc_verify: false,
         }
     }
 }

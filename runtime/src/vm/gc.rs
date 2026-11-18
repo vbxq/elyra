@@ -175,7 +175,7 @@ impl VM {
             .unwrap_or(u64::MAX)
             .saturating_add(additional);
         if projected > self.config.max_heap_bytes {
-            self.collect();
+            self.collect_near_limit(additional);
             return;
         }
         if self.heap.gc_work_due() {
@@ -194,12 +194,12 @@ impl VM {
                 self.heap.begin_major_collection(roots);
             }
         } else if self.heap.major_slice_due() {
-            self.heap.note_major_slice();
             let mut budget = self.heap.slice_work_budget();
             self.major_work(
                 &mut budget,
                 started.wall.checked_add(Self::GC_SLICE_DEADLINE),
             );
+            self.heap.note_major_slice(budget == 0);
         }
         self.record_gc_pause(started);
     }
@@ -207,6 +207,35 @@ impl VM {
     pub fn collect(&mut self) {
         let started = PauseClock::start();
         self.minor_collection();
+        self.finish_major();
+        self.record_gc_pause(started);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn collect_near_limit(&mut self, additional: u64) {
+        let started = PauseClock::start();
+        let fits = |vm: &Self, room: u64| {
+            u64::try_from(vm.heap.bytes_allocated())
+                .unwrap_or(u64::MAX)
+                .saturating_add(additional)
+                .saturating_add(room)
+                <= vm.config.max_heap_bytes
+        };
+        self.minor_collection();
+        if !fits(self, self.heap.nursery_bytes()) {
+            self.execution_stats.forced_collections =
+                self.execution_stats.forced_collections.saturating_add(1);
+            let was_active = self.heap.major_collection_active();
+            self.finish_major();
+            if was_active && !fits(self, 0) {
+                self.finish_major();
+            }
+        }
+        self.record_gc_pause(started);
+    }
+
+    fn finish_major(&mut self) {
         if !self.heap.major_collection_active() {
             let roots = self.root_refs();
             self.heap.begin_major_collection(roots);
@@ -215,7 +244,6 @@ impl VM {
             let mut budget = usize::MAX;
             self.major_work(&mut budget, None);
         }
-        self.record_gc_pause(started);
     }
 
     pub fn collect_minor(&mut self) {
@@ -225,9 +253,12 @@ impl VM {
     }
 
     fn minor_collection(&mut self) {
+        let cpu = thread_cpu_nanos();
         let roots = self.root_refs();
         self.heap.mark_young(roots);
         self.heap.sweep_young();
+        self.heap
+            .note_minor_cost(thread_cpu_nanos().saturating_sub(cpu));
         self.sweep_jit_metadata();
         self.globals_by_index_cache.clear();
         self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);

@@ -27,6 +27,8 @@ impl VM {
         let mut heap = Heap::new();
         heap.set_nursery_bytes(config.gc_nursery_bytes);
         heap.set_stress(config.gc_stress);
+        heap.set_max_heap_bytes(config.max_heap_bytes);
+        heap.set_verify(config.gc_verify);
         let mut vm = Self {
             heap,
             config,
