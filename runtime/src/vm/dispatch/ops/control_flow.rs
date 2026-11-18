@@ -95,6 +95,11 @@ macro_rules! execute_control_flow {
             }
 
             127 => {
+                if $ip + 1 >= $bytecode_len {
+                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                        "wide loop is missing an extension word".to_string(),
+                    )));
+                }
                 let (inner, _, _) = decode_abc($instr);
                 let register_word = unsafe { *$bytecode_ptr.add($ip) };
                 let offset =
@@ -134,24 +139,17 @@ macro_rules! execute_control_flow {
                         let string_ref = GcRef::new(string_value.as_ptr().unwrap_or(0));
                         let character = $vm.heap.get(string_ref).and_then(|object| {
                             if let ObjectKind::String(string) = &object.kind {
-                                string
-                                    .as_str()
-                                    .get(byte_offset..)?
-                                    .chars()
-                                    .next()
-                                    .map(|character| character.to_string())
+                                string.as_str().get(byte_offset..)?.chars().next()
                             } else {
                                 None
                             }
                         });
                         if let Some(character) = character {
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            let character_ref = $vm.intern_string(&character)?;
-                            $reg_set!(first, Value::ptr(character_ref.index()));
+                            $reg_set!(first, Value::char(character));
                             $reg_set!(
                                 first + 1,
                                 $int_value!(
-                                    i64::try_from(byte_offset + character.len())
+                                    i64::try_from(byte_offset + character.len_utf8())
                                         .unwrap_or(i64::MAX)
                                 )
                             );
@@ -309,21 +307,12 @@ macro_rules! execute_control_flow {
                     if byte_offset < s_str.len() {
                         let remaining = &s_str[byte_offset..];
                         if let Some(ch) = remaining.chars().next() {
-                            let char_len = ch.len_utf8();
-                            let mut buf = [0u8; 4];
-                            let char_str = ch.encode_utf8(&mut buf);
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            match $vm.intern_string(char_str) {
-                                Ok(new_ref) => {
-                                    $reg_set!(char_idx, Value::ptr(new_ref.index()));
-                                    $reg_set!(
-                                        offset_idx,
-                                        $int_value!((byte_offset + char_len) as i64)
-                                    );
-                                    $ip = ($ip as isize + imm as isize) as usize;
-                                }
-                                Err(e) => return Err(e),
-                            }
+                            $reg_set!(char_idx, Value::char(ch));
+                            $reg_set!(
+                                offset_idx,
+                                $int_value!((byte_offset + ch.len_utf8()) as i64)
+                            );
+                            $ip = ($ip as isize + imm as isize) as usize;
                         }
                         // else: invalid UTF-8, just exit loop
                     }

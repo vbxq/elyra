@@ -34,6 +34,48 @@ impl VM {
         )))
     }
 
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn global_read_error(&self, operation: &str, index: usize) -> RuntimeError {
+        if index < self.globals_by_index.len() {
+            self.uninitialized_global_error(index)
+        } else {
+            self.global_index_error(operation, index)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn uninitialized_global_error(&self, index: usize) -> RuntimeError {
+        let name = self
+            .frames
+            .last()
+            .and_then(|frame| self.global_layout_of(frame.function()))
+            .and_then(|layout| layout.names().get(index).cloned())
+            .unwrap_or_else(|| format!("#{index}"));
+        self.runtime_error(RuntimeErrorKind::UninitializedGlobal(name))
+    }
+
+    fn global_layout_of(
+        &self,
+        function: GcRef,
+    ) -> Option<std::sync::Arc<super::super::GlobalLayout>> {
+        match &self.heap.get(function)?.kind {
+            super::super::ObjectKind::Function(function) => {
+                Some(std::sync::Arc::clone(&function.function.global_layout))
+            }
+            super::super::ObjectKind::Closure(closure) => {
+                match &self.heap.get(closure.function)?.kind {
+                    super::super::ObjectKind::Function(function) => {
+                        Some(std::sync::Arc::clone(&function.function.global_layout))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn global_names(&self) -> Vec<String> {
         self.globals.keys().cloned().collect()
     }

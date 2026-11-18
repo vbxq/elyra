@@ -40,7 +40,7 @@ impl Compiler {
 
         let value_reg = self.alloc_register()?;
         self.compile_typed_expr(value, value_reg)?;
-        let loop_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_reg = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_reg, 3)?;
         let end_reg = loop_reg + 1;
         let step_reg = loop_reg + 2;
@@ -57,7 +57,13 @@ impl Compiler {
             OpCode::ArrayStoreB,
             OpCode::ArrayStoreP,
         );
-        self.emit_a(store_opcode, dest, loop_reg, value_reg, span);
+        if Self::is_shared_aggregate(inner) {
+            let copy = self.emit_deep_clone(value_reg, span)?;
+            self.emit_a(store_opcode, dest, loop_reg, copy, span);
+            self.free_deep_clone(copy);
+        } else {
+            self.emit_a(store_opcode, dest, loop_reg, value_reg, span);
+        }
         self.patch_jump(jump_to_loop);
         self.emit_loop_back(
             OpCode::ForLoopI,
@@ -106,7 +112,7 @@ impl Compiler {
 
         let value_reg = self.alloc_register()?;
         self.compile_typed_expr(value, value_reg)?;
-        let loop_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let loop_reg = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_reg, 3)?;
         let end_reg = loop_reg + 1;
         let step_reg = loop_reg + 2;
@@ -123,7 +129,13 @@ impl Compiler {
             OpCode::VecPushB,
             OpCode::VecPushP,
         );
-        self.emit_a(push_opcode, dest, value_reg, 0, span);
+        if Self::is_shared_aggregate(inner) {
+            let copy = self.emit_deep_clone(value_reg, span)?;
+            self.emit_a(push_opcode, dest, copy, 0, span);
+            self.free_deep_clone(copy);
+        } else {
+            self.emit_a(push_opcode, dest, value_reg, 0, span);
+        }
         self.patch_jump(jump_to_loop);
         self.emit_loop_back(
             OpCode::ForLoopI,
@@ -138,6 +150,36 @@ impl Compiler {
         self.free_register(value_reg);
         self.free_register(count_reg);
         Ok(())
+    }
+
+    fn is_shared_aggregate(ty: &InferType) -> bool {
+        matches!(
+            ty,
+            InferType::Struct(_)
+                | InferType::Applied { .. }
+                | InferType::Array(_)
+                | InferType::FixedArray(_, _)
+                | InferType::Vec(_)
+                | InferType::Map(_, _)
+                | InferType::Option(_)
+                | InferType::Result(_, _)
+        )
+    }
+
+    fn emit_deep_clone(&mut self, source: u16, span: Span) -> Result<u16> {
+        let callee = self.alloc_call_window(2, span)?;
+        self.alloc_consecutive_from(callee, 2)?;
+        let global = self.get_or_create_global_index("__clone");
+        self.accessed_globals.insert("__clone".to_string());
+        self.emit_get_global_index(callee, global, span);
+        self.emit_a(OpCode::Move, callee + 1, source, 0, span);
+        self.emit_a(OpCode::Call, callee, callee, 1, span);
+        Ok(callee)
+    }
+
+    fn free_deep_clone(&mut self, callee: u16) {
+        self.free_register(callee + 1);
+        self.free_register(callee);
     }
 
     pub(super) fn compile_typed_array_sized(
@@ -189,7 +231,7 @@ impl Compiler {
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
-        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
+        let start_reg = self.alloc_consecutive_registers(count, span)?;
 
         for i in 0..count {
             let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
@@ -247,7 +289,7 @@ impl Compiler {
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
-        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
+        let start_reg = self.alloc_consecutive_registers(count, span)?;
 
         for i in 0..count {
             let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
@@ -298,6 +340,9 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
+        if matches!(object.ty, InferType::Map(_, _)) {
+            return self.compile_map_index(object, index, dest, span);
+        }
         let (obj_reg, obj_owned) = self.operand_register(object)?;
         let (idx_reg, idx_owned) = self.operand_register(index)?;
 
@@ -340,6 +385,9 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
+        if matches!(object.ty, InferType::Map(_, _)) {
+            return self.compile_map_index_assign(object, index, value, dest, span);
+        }
         let (obj_reg, obj_owned) = self.operand_register(object)?;
         let (idx_reg, idx_owned) = self.operand_register(index)?;
 

@@ -97,10 +97,7 @@ impl ValidatedNativeModule {
                     .collect();
                 signatures.insert(
                     qualified.clone(),
-                    InferType::Function {
-                        params,
-                        ret: Box::new(native_type_to_infer_type(signature.result)),
-                    },
+                    InferType::function(params, native_type_to_infer_type(signature.result)),
                 );
             }
             functions.push((qualified, export.arity, function, result_type));
@@ -124,6 +121,7 @@ fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
         AelysNativeType::String => InferType::String,
         AelysNativeType::Unit => InferType::Unit,
         AelysNativeType::Dynamic => InferType::Dynamic,
+        AelysNativeType::Bytes => InferType::I64,
         AelysNativeType::OptionInt => InferType::Option(Box::new(InferType::I64)),
         AelysNativeType::OptionFloat => InferType::Option(Box::new(InferType::F64)),
         AelysNativeType::OptionBool => InferType::Option(Box::new(InferType::Bool)),

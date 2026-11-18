@@ -28,6 +28,7 @@ pub struct InferenceResult {
     pub type_table: TypeTable,
     pub generic_structs: Vec<crate::types::StructDef>,
     pub generic_enums: Vec<crate::types::EnumDef>,
+    pub constants: std::collections::BTreeMap<String, crate::infer::constants::ConstValue>,
 }
 
 impl Default for TypeInference {
@@ -59,9 +60,22 @@ impl Default for TypeInference {
             must_use_values: Vec::new(),
             sum_method_residuals: Vec::new(),
             match_exhaustivity_residuals: Vec::new(),
+            loop_frames: Vec::new(),
+            match_unit_residuals: Vec::new(),
             dynamic_residuals: Vec::new(),
             bound_residuals: Vec::new(),
+            alias_residuals: Vec::new(),
+            imported_constants: HashMap::new(),
+            global_constants: HashMap::new(),
+            exported_constants: std::collections::BTreeMap::new(),
+            function_mutable_params: HashMap::new(),
+            fall_through_residuals: Vec::new(),
+            statement_match: false,
+            script_tail: false,
             surface_dynamic_spans: HashSet::new(),
+            pending_int_literals: Vec::new(),
+            nominal_expectation: None,
+            constructor_expectation: None,
             sum_type_residuals: Vec::new(),
             explicit_dynamic_functions: HashSet::new(),
             module_aliases: HashSet::new(),
@@ -69,6 +83,9 @@ impl Default for TypeInference {
             globals_without_signature: HashSet::new(),
             module_globals: std::collections::BTreeMap::new(),
             module_scoped_globals: std::collections::BTreeMap::new(),
+            module_scopes: std::collections::BTreeMap::new(),
+            ambiguous_imports: std::collections::BTreeMap::new(),
+            immutable_imports: std::collections::BTreeSet::new(),
             scope_own_globals: false,
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),
@@ -153,7 +170,7 @@ impl TypeInference {
 
         let expected = match ann.name.to_lowercase().as_str() {
             "array" | "vec" | "option" => Some(1),
-            "result" => Some(2),
+            "result" | "map" => Some(2),
             name if KNOWN_TYPE_NAMES.contains(&name) => Some(0),
             _ => self
                 .type_table
@@ -184,7 +201,7 @@ impl TypeInference {
 
     fn type_from_annotation_inner(&mut self, ann: &TypeAnnotation) -> InferType {
         if ann.is_function_type() {
-            let params = ann
+            let params: Vec<InferType> = ann
                 .fn_params
                 .as_ref()
                 .map(|params| {
@@ -200,6 +217,7 @@ impl TypeInference {
                 .map(|ret| self.type_from_annotation_argument(ret))
                 .unwrap_or(InferType::Unit);
             return InferType::Function {
+                modes: crate::types::function_annotation_modes(ann, &params),
                 params,
                 ret: Box::new(ret),
             };
@@ -411,11 +429,26 @@ impl TypeInference {
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::U64,
+            "u64" | "uint64" => InferType::I64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
             "string" => InferType::String,
+            "char" => InferType::Char,
+            "map" => {
+                let key = ann
+                    .type_params
+                    .first()
+                    .map(|param| self.type_from_annotation_argument(param))
+                    .unwrap_or(InferType::Poison);
+                let value = ann
+                    .type_params
+                    .get(1)
+                    .map(|param| self.type_from_annotation_argument(param))
+                    .unwrap_or(InferType::Poison);
+                self.require_map_key(&key, ann.span);
+                InferType::Map(Box::new(key), Box::new(value))
+            }
             "unit" | "void" => InferType::Unit,
             "dynamic" => InferType::Dynamic,
             "array" => {
@@ -572,10 +605,26 @@ impl TypeInference {
             return;
         }
 
+        if matches!(name_lower.as_str(), "i64" | "int64" | "u64" | "uint64")
+            && self
+                .surface_dynamic_spans
+                .insert((ann.span.start, ann.span.end))
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::WideIntegerUnavailable {
+                    name: ann.name.clone(),
+                },
+                span: ann.span,
+                reason: ConstraintReason::TypeAnnotation {
+                    var_name: ann.name.clone(),
+                },
+            });
+        }
+
         if KNOWN_TYPE_NAMES.contains(&name_lower.as_str()) {
             let expected = match name_lower.as_str() {
                 "array" | "vec" | "option" => Some(1),
-                "result" => Some(2),
+                "result" | "map" => Some(2),
                 _ => Some(0),
             };
             if let Some(expected) = expected
@@ -965,10 +1014,26 @@ impl TypeInference {
         path: &[String],
         span: aelys_syntax::Span,
     ) -> Option<usize> {
+        debug_assert!(span.end >= span.start);
+        let constant = match path {
+            [name] => self.env.lookup_constant(name).or_else(|| {
+                (!self.env.binds_value(name))
+                    .then(|| {
+                        self.global_constants
+                            .get(name)
+                            .or_else(|| self.imported_constants.get(name))
+                            .cloned()
+                    })
+                    .flatten()
+            }),
+            _ => self.imported_constants.get(&path.join("::")).cloned(),
+        };
+        if let Some(crate::infer::constants::ConstValue::Int(value)) = constant {
+            return usize::try_from(value).ok();
+        }
         if path.len() != 2 {
             return None;
         }
-        debug_assert!(span.end >= span.start);
         match self.resolve_constant(&path[0], &path[1]) {
             ConstResolution::Value(value) => usize::try_from(value).ok(),
             _ => None,
@@ -1597,6 +1662,15 @@ impl TypeInference {
         crate::prelude::register(&mut inf.type_table);
 
         inf.install_imported_types(imported_types);
+        inf.predeclare_constants(&stmts, false);
+        for stmt in &stmts {
+            if let StmtKind::Function(func) = &stmt.kind
+                && stmt.definition_module.is_none()
+            {
+                inf.immutable_imports.remove(&func.name);
+                inf.env.forget_mutable_import(&func.name);
+            }
+        }
         let declared_nominals = inf.declare_nominals(&stmts);
         let declared_traits = inf.declare_traits(&stmts);
         inf.collect_trait_qualified_items(&stmts);
@@ -1610,24 +1684,30 @@ impl TypeInference {
         inf.collect_function_signatures(&stmts, "");
         inf.validate_associated_type_cycles();
         inf.collect_global_bindings(&stmts);
+        inf.predeclare_constants(&stmts, true);
 
-        let typed_stmts = inf.infer_stmts(&stmts);
+        let typed_stmts = inf.infer_program_stmts(&stmts);
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
+        inf.settle_pending_int_literals(&mut subst);
 
         inf.validate_sum_method_residuals(&mut subst);
         inf.validate_dynamic_residuals(&subst);
         inf.validate_bound_residuals(&subst);
+        inf.validate_alias_residuals(&subst);
+        inf.validate_fall_through_residuals(&subst);
         inf.validate_try_residuals(&subst);
         inf.validate_must_use_values(&subst);
         inf.validate_match_reachability(&subst);
         inf.validate_match_exhaustivity(&subst);
         inf.validate_sum_types(&subst);
+        subst.close_modes();
 
         let mut resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
         inf.resolve_deferred_members(&mut resolved_stmts);
-        let resolved_stmts = inf.monomorphize_program(resolved_stmts);
+        let mut resolved_stmts = inf.monomorphize_program(resolved_stmts);
+        inf.validate_collection_instances(&mut resolved_stmts);
 
         inf.validate_unused_sum_bindings(&resolved_stmts);
         inf.validate_surface_type_boundaries(&resolved_stmts);
@@ -1728,6 +1808,7 @@ impl TypeInference {
             type_table,
             generic_structs: generic_templates.0,
             generic_enums: generic_templates.1,
+            constants: inf.exported_constants,
         })
     }
 
@@ -1744,14 +1825,26 @@ impl TypeInference {
                 continue;
             };
 
+            let constant = match &stmt.kind {
+                StmtKind::Let { is_const: true, .. } => self.global_constants.get(name).cloned(),
+                _ => None,
+            };
             let ty = type_annotation
                 .as_ref()
                 .map(|annotation| self.type_from_annotation(annotation))
+                .or_else(|| {
+                    constant
+                        .as_ref()
+                        .map(crate::infer::constants::ConstValue::infer_type)
+                })
                 .unwrap_or_else(|| self.global_initializer_type(initializer));
-            let known_length = self.constant_collection_length(initializer).or(match &ty {
-                InferType::FixedArray(_, length) => Some(*length),
-                _ => None,
-            });
+            let known_length = self
+                .constant_collection_length(initializer)
+                .or(match &ty {
+                    InferType::FixedArray(_, length) => Some(*length),
+                    _ => None,
+                })
+                .filter(|_| crate::infer::length_is_fixed(&ty, *mutable));
             if type_annotation.is_some() && ty.contains_dynamic() {
                 self.env.define_explicit_dynamic_local(name.clone(), ty);
             } else if let Some(length) = known_length {
@@ -1761,6 +1854,9 @@ impl TypeInference {
                 self.env.define_local(name.clone(), ty);
             }
             self.env.set_mutable(name, *mutable);
+            if let Some(value) = constant {
+                self.env.define_constant(name, value);
+            }
             if self.scope_own_globals {
                 let scoped = crate::infer::module_scoped_global(self.current_module.as_str(), name);
                 self.env.define_local_alias(name.clone(), scoped);
@@ -1855,11 +1951,11 @@ fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
         | InferType::Vec(inner)
         | InferType::Option(inner)
         | InferType::FixedArray(inner, _) => collect_type_params(inner, out),
-        InferType::Result(ok, error) => {
+        InferType::Result(ok, error) | InferType::Map(ok, error) => {
             collect_type_params(ok, out);
             collect_type_params(error, out);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_type_params(param, out);
             }
@@ -1879,6 +1975,7 @@ fn error_priority(kind: &TypeErrorKind) -> u8 {
         // a mangling collision is a symptom: a coherence verdict, a duplicate
         TypeErrorKind::MangledSymbolCollision { .. } => 3,
         TypeErrorKind::PoisonedType
+        | TypeErrorKind::UnresolvedTypeVariable
         | TypeErrorKind::UnmaterializedAppliedType { .. }
         | TypeErrorKind::IgnoredResult
         | TypeErrorKind::IgnoredOption => 2,

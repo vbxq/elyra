@@ -87,6 +87,18 @@ pub(super) fn verify(
             verify_reg(a, num_regs, "UnaryOp")?;
             verify_reg(b, num_regs, "UnaryOp")?;
         }
+        aelys_bytecode::sized_binary_opcodes!() => {
+            verify_reg(a, num_regs, "SizedBinOp")?;
+            verify_reg(b, num_regs, "SizedBinOp")?;
+            verify_reg(c, num_regs, "SizedBinOp")?;
+        }
+        OpCode::NegW | OpCode::NotW => {
+            verify_reg(a, num_regs, "SizedUnaryOp")?;
+            verify_reg(b, num_regs, "SizedUnaryOp")?;
+            if aelys_bytecode::SizedInt::from_u8(c as u8).is_none() {
+                return Err(format!("invalid integer width {c}"));
+            }
+        }
         OpCode::Cast => {
             verify_reg(a, num_regs, "Cast")?;
             verify_reg(b, num_regs, "Cast")?;

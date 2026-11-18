@@ -25,7 +25,9 @@ mod roots;
 mod arithmetic;
 mod call_data;
 mod calls;
+mod clone;
 mod closures;
+pub(crate) mod collections;
 mod comparison;
 mod dispatch;
 mod helpers;
@@ -44,8 +46,9 @@ pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
 pub use builtins::{builtin_type, register_builtins};
 pub use config::{VmConfig, VmConfigError};
 pub use control::{ExecutionControl, ExecutionStats, InterruptHandle, call_jit_global};
-pub use core::{MAX_FRAMES, MAX_REGISTERS, StepResult, VM};
+pub use core::{MAX_FRAMES, MAX_REGISTERS, PreludeScope, StepResult, VM};
 pub use frame::CallFrame;
+pub use gc::GcPauseStats;
 pub use native::{
     ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,
 };

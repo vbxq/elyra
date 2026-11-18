@@ -45,6 +45,7 @@ pub enum TypedStmtKind {
     While {
         condition: TypedExpr,
         body: Box<TypedStmt>,
+        label: Option<String>,
     },
 
     For {
@@ -54,6 +55,7 @@ pub enum TypedStmtKind {
         inclusive: bool,
         step: Box<Option<TypedExpr>>,
         body: Box<TypedStmt>,
+        label: Option<String>,
     },
 
     ForEach {
@@ -62,12 +64,18 @@ pub enum TypedStmtKind {
         elem_type: InferType,
         read_only: bool,
         body: Box<TypedStmt>,
+        label: Option<String>,
     },
 
     Return(Option<TypedExpr>),
 
-    Break,
-    Continue,
+    Break {
+        label: Option<String>,
+        value: Option<TypedExpr>,
+    },
+    Continue {
+        label: Option<String>,
+    },
 
     Function(TypedFunction),
 
@@ -142,6 +150,7 @@ pub enum TypedExprKind {
     Int(i64),
     Float(f64),
     Bool(bool),
+    Char(char),
     String(String),
     FmtString(Vec<TypedFmtStringPart>),
     Unit,
@@ -302,6 +311,13 @@ pub enum TypedExprKind {
         trait_name: String,
         item: String,
     },
+
+    Block(Vec<TypedStmt>),
+
+    Loop {
+        body: Vec<TypedStmt>,
+        label: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +347,7 @@ pub enum TypedPatternKind {
     Wildcard,
     Binding(String),
     Int(i64),
+    Char(char),
     String(String),
     Bool(bool),
     Variant {
@@ -347,6 +364,10 @@ pub enum TypedPatternKind {
         has_rest: bool,
     },
     Or(Vec<TypedPattern>),
+    Range {
+        start: Option<i64>,
+        end: Option<i64>,
+    },
 }
 
 impl TypedExpr {

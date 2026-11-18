@@ -119,6 +119,19 @@ impl VM {
                         }
                     }
                 }
+                (ObjectKind::Map(left_map), ObjectKind::Map(right_map)) => {
+                    if left_map.len() != right_map.len() {
+                        return false;
+                    }
+                    for (key, left_value) in left_map.entries() {
+                        let Some(right_value) =
+                            self.map_key(key).and_then(|key| right_map.get(&key))
+                        else {
+                            return false;
+                        };
+                        pending.push((left_value, right_value));
+                    }
+                }
                 (ObjectKind::Range(left_range), ObjectKind::Range(right_range)) => {
                     if left_range.start != right_range.start
                         || left_range.end != right_range.end
@@ -131,6 +144,13 @@ impl VM {
             }
         }
         true
+    }
+
+    fn ordered_text(&self, left: Value, right: Value) -> Option<std::cmp::Ordering> {
+        if let (Some(a), Some(b)) = (left.as_char(), right.as_char()) {
+            return Some(a.cmp(&b));
+        }
+        Some(self.string_bytes(left)?.cmp(self.string_bytes(right)?))
     }
 
     pub fn compare_lt(&self, left: Value, right: Value) -> Result<bool, RuntimeError> {
@@ -149,9 +169,13 @@ impl VM {
             return Ok(a < (b as f64));
         }
 
+        if let Some(ordering) = self.ordered_text(left, right) {
+            return Ok(ordering.is_lt());
+        }
+
         Err(self.runtime_error(RuntimeErrorKind::TypeError {
             operation: "comparison",
-            expected: "number",
+            expected: "number, char or string",
             got: format!(
                 "{} and {}",
                 self.value_type_name(left),
@@ -176,9 +200,13 @@ impl VM {
             return Ok(a <= (b as f64));
         }
 
+        if let Some(ordering) = self.ordered_text(left, right) {
+            return Ok(ordering.is_le());
+        }
+
         Err(self.runtime_error(RuntimeErrorKind::TypeError {
             operation: "comparison",
-            expected: "number",
+            expected: "number, char or string",
             got: format!(
                 "{} and {}",
                 self.value_type_name(left),
@@ -203,9 +231,13 @@ impl VM {
             return Ok(a > (b as f64));
         }
 
+        if let Some(ordering) = self.ordered_text(left, right) {
+            return Ok(ordering.is_gt());
+        }
+
         Err(self.runtime_error(RuntimeErrorKind::TypeError {
             operation: "comparison",
-            expected: "number",
+            expected: "number, char or string",
             got: format!(
                 "{} and {}",
                 self.value_type_name(left),
@@ -230,9 +262,13 @@ impl VM {
             return Ok(a >= (b as f64));
         }
 
+        if let Some(ordering) = self.ordered_text(left, right) {
+            return Ok(ordering.is_ge());
+        }
+
         Err(self.runtime_error(RuntimeErrorKind::TypeError {
             operation: "comparison",
-            expected: "number",
+            expected: "number, char or string",
             got: format!(
                 "{} and {}",
                 self.value_type_name(left),

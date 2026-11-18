@@ -1,5 +1,5 @@
 use super::super::VM;
-use super::super::{GcRef, ObjectKind, Value};
+use super::super::{AelysString, GcRef, ObjectKind, Value};
 use aelys_common::error::RuntimeError;
 
 impl VM {
@@ -11,27 +11,27 @@ impl VM {
         let (Some(left_ptr), Some(right_ptr)) = (left.as_ptr(), right.as_ptr()) else {
             return Ok(None);
         };
-
-        let concatenated = {
-            let left_obj = self.heap.get(GcRef::new(left_ptr));
-            let right_obj = self.heap.get(GcRef::new(right_ptr));
-
-            if let (Some(l), Some(r)) = (left_obj, right_obj) {
-                if let (ObjectKind::String(ls), ObjectKind::String(rs)) = (&l.kind, &r.kind) {
-                    Some(format!("{}{}", ls.as_str(), rs.as_str()))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        let (left_ref, right_ref) = (GcRef::new(left_ptr), GcRef::new(right_ptr));
+        let Some(charge) = self.concat_charge(left_ref, right_ref) else {
+            return Ok(None);
         };
+        self.maybe_collect_for(charge);
+        let charge = self.concat_charge(left_ref, right_ref).unwrap_or(charge);
+        self.ensure_heap_capacity(charge)?;
+        Ok(self
+            .heap
+            .concat_strings(left_ref, right_ref)
+            .map(|joined| Value::ptr(joined.index())))
+    }
 
-        if let Some(result) = concatenated {
-            let str_ref = self.alloc_string(&result)?;
-            return Ok(Some(Value::ptr(str_ref.index())));
+    fn concat_charge(&self, left: GcRef, right: GcRef) -> Option<u64> {
+        match (&self.heap.get(left)?.kind, &self.heap.get(right)?.kind) {
+            (ObjectKind::String(left), ObjectKind::String(right)) => {
+                let bytes = std::mem::size_of::<AelysString>()
+                    .saturating_add(AelysString::concat_charge(left, right));
+                Some(u64::try_from(bytes).unwrap_or(u64::MAX))
+            }
+            _ => None,
         }
-
-        Ok(None)
     }
 }

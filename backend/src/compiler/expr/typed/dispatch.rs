@@ -9,6 +9,7 @@ impl Compiler {
             TypedExprKind::Int(n) => self.compile_literal_int(*n, dest, expr.span),
             TypedExprKind::Float(f) => self.compile_literal_float(*f, dest, expr.span),
             TypedExprKind::String(s) => self.compile_literal_string(s, dest, expr.span),
+            TypedExprKind::Char(c) => self.compile_literal_char(*c, dest, expr.span),
             TypedExprKind::FmtString(parts) => {
                 self.compile_typed_fmt_string(parts, &[], dest, expr.span)
             }
@@ -55,10 +56,17 @@ impl Compiler {
             TypedExprKind::Lambda(inner) => self.compile_typed_expr(inner, dest),
             TypedExprKind::LambdaInner {
                 params,
-                return_type: _,
+                return_type,
                 body,
                 captures,
-            } => self.compile_typed_lambda_with_stmts(params, body, captures, dest, expr.span),
+            } => self.compile_typed_lambda_with_stmts(
+                params,
+                matches!(return_type, aelys_sema::InferType::Unit),
+                body,
+                captures,
+                dest,
+                expr.span,
+            ),
             TypedExprKind::Member {
                 object,
                 member,
@@ -185,6 +193,10 @@ impl Compiler {
             TypedExprKind::Match { scrutinee, arms } => {
                 self.compile_typed_match(scrutinee, arms, dest, expr.span)
             }
+            TypedExprKind::Block(stmts) => self.compile_typed_stmts_value(stmts, dest, expr.span),
+            TypedExprKind::Loop { body, label } => {
+                self.compile_typed_loop(body, label.as_ref(), dest, expr.span)
+            }
         }
     }
 
@@ -259,11 +271,14 @@ impl Compiler {
             TypedExprKind::Cast { expr, .. } => Self::typed_expr_may_have_side_effects(expr),
             TypedExprKind::Unit => false,
             TypedExprKind::Try { .. } => true,
-            TypedExprKind::Match { .. } => true,
+            TypedExprKind::Match { .. } | TypedExprKind::Block(_) | TypedExprKind::Loop { .. } => {
+                true
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Null
             | TypedExprKind::Identifier(_) => false,

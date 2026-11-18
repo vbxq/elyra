@@ -1,13 +1,32 @@
 // pick typed or generic opcode based on resolved types
 
-use aelys_bytecode::OpCode;
+use aelys_bytecode::{OpCode, SizedInt, WrappingOp};
 use aelys_sema::ResolvedType;
 use aelys_syntax::ast::BinaryOp;
+
+pub fn sized_kind(ty: &ResolvedType) -> Option<SizedInt> {
+    match ty {
+        ResolvedType::I8 => Some(SizedInt::I8),
+        ResolvedType::I16 => Some(SizedInt::I16),
+        ResolvedType::I32 => Some(SizedInt::I32),
+        ResolvedType::U8 => Some(SizedInt::U8),
+        ResolvedType::U16 => Some(SizedInt::U16),
+        ResolvedType::U32 => Some(SizedInt::U32),
+        _ => None,
+    }
+}
 
 pub fn select_opcode(op: BinaryOp, left: &ResolvedType, right: &ResolvedType) -> OpCode {
     let needs_guard = left.needs_guard() || right.needs_guard();
     let left_inner = left.unwrap_uncertain();
     let right_inner = right.unwrap_uncertain();
+
+    let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
+    if let Some(kind) = sized_kind(left_inner)
+        && (left_inner == right_inner || (shift && right_inner.is_integer()))
+    {
+        return select_sized_opcode(op, kind);
+    }
 
     match (left_inner, right_inner) {
         // sized integer types collapse to int opcodes until LLVM backend
@@ -53,6 +72,18 @@ fn select_typed_int_opcode(op: BinaryOp) -> OpCode {
         BinaryOp::BitAnd => OpCode::AndII,
         BinaryOp::BitOr => OpCode::OrII,
         BinaryOp::BitXor => OpCode::XorII,
+    }
+}
+
+fn select_sized_opcode(op: BinaryOp, kind: SizedInt) -> OpCode {
+    match op {
+        BinaryOp::Add => OpCode::wrapping(WrappingOp::Add, kind),
+        BinaryOp::Sub => OpCode::wrapping(WrappingOp::Sub, kind),
+        BinaryOp::Mul => OpCode::wrapping(WrappingOp::Mul, kind),
+        BinaryOp::Shl => OpCode::wrapping(WrappingOp::Shl, kind),
+        BinaryOp::Shr => OpCode::wrapping_shr(kind),
+        BinaryOp::Div => OpCode::wrapping_div(kind).unwrap_or(OpCode::DivII),
+        other => select_typed_int_opcode(other),
     }
 }
 

@@ -23,6 +23,7 @@ pub enum FmtPart {
 pub enum TokenKind {
     Int(i64),
     Float(f64),
+    Char(char),
     String(String),
     FmtString(Vec<FmtPart>),
     True,
@@ -30,6 +31,7 @@ pub enum TokenKind {
     Null,
 
     Identifier(String),
+    Label(String),
 
     Let,
     Mut,
@@ -49,7 +51,6 @@ pub enum TokenKind {
     From, // module system
     For,
     In,
-    Step,
     Struct,
     Enum,
     Trait,
@@ -112,6 +113,7 @@ impl TokenKind {
             self,
             Self::Int(_)
                 | Self::Float(_)
+                | Self::Char(_)
                 | Self::String(_)
                 | Self::FmtString(_)
                 | Self::True
@@ -124,8 +126,10 @@ impl TokenKind {
         matches!(
             self,
             Self::Identifier(_)
+                | Self::Label(_)
                 | Self::Int(_)
                 | Self::Float(_)
+                | Self::Char(_)
                 | Self::String(_)
                 | Self::FmtString(_)
                 | Self::True
@@ -150,12 +154,14 @@ impl std::fmt::Display for TokenKind {
         match self {
             Self::Int(n) => write!(f, "{}", n),
             Self::Float(n) => write!(f, "{}", n),
+            Self::Char(c) => write!(f, "{:?}", c),
             Self::String(s) => write!(f, "\"{}\"", s),
             Self::FmtString(_) => write!(f, "<format string>"),
             Self::True => write!(f, "true"),
             Self::False => write!(f, "false"),
             Self::Null => write!(f, "null"),
             Self::Identifier(s) => write!(f, "{}", s),
+            Self::Label(s) => write!(f, "'{}", s),
             Self::Let => write!(f, "let"),
             Self::Mut => write!(f, "mut"),
             Self::Fn => write!(f, "fn"),
@@ -174,7 +180,6 @@ impl std::fmt::Display for TokenKind {
             Self::From => write!(f, "from"),
             Self::For => write!(f, "for"),
             Self::In => write!(f, "in"),
-            Self::Step => write!(f, "step"),
             Self::Struct => write!(f, "struct"),
             Self::Enum => write!(f, "enum"),
             Self::Trait => write!(f, "trait"),

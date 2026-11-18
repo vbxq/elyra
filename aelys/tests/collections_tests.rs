@@ -109,8 +109,13 @@ fn read_only_iteration_rejects_mutable_aliases() {
 
 #[test]
 fn mutable_collection_aliases_are_rejected() {
-    let message = compile_message("let mut v = vec![1]; let mut alias = v; alias.push(2)");
-    assert!(message.contains("alias"), "{message}");
+    let message = compile_message("let v = vec![1]; let mut alias = v; alias.push(2)");
+    assert!(message.contains("E0323"), "{message}");
+    assert!(message.contains("v.clone()"), "{message}");
+    assert_aelys_int(
+        "let mut v = vec![1]; let mut alias = v; alias.push(2); v.len()",
+        2,
+    );
 }
 
 #[test]

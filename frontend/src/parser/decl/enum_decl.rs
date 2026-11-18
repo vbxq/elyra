@@ -9,7 +9,7 @@ impl Parser {
     pub(super) fn enum_declaration(&mut self, is_pub: bool) -> Result<Stmt> {
         let start_span = self.peek().span;
         self.advance();
-        let name = self.consume_identifier("enum name")?;
+        let name = self.consume_declared_identifier("enum name")?;
         if name.chars().next().is_none_or(|c| !c.is_uppercase()) {
             return Err(self.error(CompileErrorKind::UnexpectedToken {
                 expected: "capitalized enum name".to_string(),
@@ -20,7 +20,7 @@ impl Parser {
         let type_params = if self.match_token(&TokenKind::Lt) {
             let mut params = Vec::new();
             loop {
-                params.push(self.consume_identifier("type parameter")?);
+                params.push(self.consume_declared_identifier("type parameter")?);
                 if !self.match_token(&TokenKind::Comma) {
                     break;
                 }
@@ -38,7 +38,7 @@ impl Parser {
                 continue;
             }
             let variant_span = self.peek().span;
-            let variant_name = self.consume_identifier("enum variant name")?;
+            let variant_name = self.consume_declared_identifier("enum variant name")?;
             if variants
                 .iter()
                 .any(|variant: &EnumVariantDecl| variant.name == variant_name)
@@ -73,7 +73,7 @@ impl Parser {
                     }
                     let field_span = self.peek().span;
                     let field_is_pub = self.match_token(&TokenKind::Pub);
-                    let field_name = self.consume_identifier("enum field name")?;
+                    let field_name = self.consume_declared_identifier("enum field name")?;
                     if fields
                         .iter()
                         .any(|field: &StructFieldDecl| field.name == field_name)

@@ -908,15 +908,7 @@ impl Isolate {
                 .or_insert_with(|| origin.clone());
         }
 
-        let main_statements: Vec<_> =
-            imports
-                .imported_impl_stmts
-                .iter()
-                .cloned()
-                .chain(statements.into_iter().filter(|statement| {
-                    !matches!(statement.kind, aelys_syntax::StmtKind::Needs(_))
-                }))
-                .collect();
+        let main_statements = imports.program_stmts(statements);
 
         let typed = TypeInference::infer_program_full_with_native_signatures(
             main_statements,
@@ -1027,8 +1019,8 @@ impl Isolate {
             allocations: stats.allocations,
             allocated_bytes: self.vm.heap().bytes_allocated(),
             collections: stats.collections,
-            gc_pause_total_ns: stats.gc_pause_micros.saturating_mul(1_000),
-            gc_pause_max_ns: stats.gc_max_pause_micros.saturating_mul(1_000),
+            gc_pause_total_ns: stats.gc_pause_nanos,
+            gc_pause_max_ns: stats.gc_max_pause_nanos,
             cache_hits: stats.cache_hits,
             cache_misses: stats.cache_misses,
             instruction_pointer: stats.last_instruction_pointer,
@@ -1115,8 +1107,8 @@ impl Isolate {
                 allocations: stats.allocations,
                 allocated_bytes: self.vm.heap().bytes_allocated(),
                 collections: stats.collections,
-                gc_pause_total_ns: stats.gc_pause_micros.saturating_mul(1_000),
-                gc_pause_max_ns: stats.gc_max_pause_micros.saturating_mul(1_000),
+                gc_pause_total_ns: stats.gc_pause_nanos,
+                gc_pause_max_ns: stats.gc_max_pause_nanos,
                 cache_hits: stats.cache_hits,
                 cache_misses: stats.cache_misses,
                 function: self.vm.last_execution_function_name(),
@@ -1165,8 +1157,8 @@ impl Isolate {
                 allocations: stats.allocations,
                 allocated_bytes: self.vm.heap().bytes_allocated(),
                 collections: stats.collections,
-                gc_pause_total_ns: stats.gc_pause_micros.saturating_mul(1_000),
-                gc_pause_max_ns: stats.gc_max_pause_micros.saturating_mul(1_000),
+                gc_pause_total_ns: stats.gc_pause_nanos,
+                gc_pause_max_ns: stats.gc_max_pause_nanos,
                 cache_hits: stats.cache_hits,
                 cache_misses: stats.cache_misses,
                 function: self.vm.last_execution_function_name(),
@@ -1253,6 +1245,7 @@ impl Isolate {
                 ObjectKind::Native(_) => Err(StructuredCloneError::Unsupported("native function")),
                 ObjectKind::Upvalue(_) => Err(StructuredCloneError::Unsupported("upvalue")),
                 ObjectKind::Range(_) => Err(StructuredCloneError::Unsupported("range")),
+                ObjectKind::Map(_) => Err(StructuredCloneError::Unsupported("map")),
                 ObjectKind::Sum(_) => Err(StructuredCloneError::Unsupported("sum")),
                 ObjectKind::Enum(_) => Err(StructuredCloneError::Unsupported("enum")),
                 ObjectKind::Struct(_) => Err(StructuredCloneError::StructValuesUnsupported),
@@ -1283,26 +1276,37 @@ impl Isolate {
                 .map(|reference| Value::ptr(reference.index()))
                 .map_err(StructuredCloneError::Runtime),
             StructuredValue::Array(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| self.import_value(value, depth + 1))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let (values, _pins) = self.import_children(values, depth)?;
                 self.vm
                     .alloc_array(AelysArray::from_objects(values))
                     .map(|reference| Value::ptr(reference.index()))
                     .map_err(StructuredCloneError::Runtime)
             }
             StructuredValue::Vec(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| self.import_value(value, depth + 1))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let (values, _pins) = self.import_children(values, depth)?;
                 self.vm
                     .alloc_vec(AelysVec::from_objects(values))
                     .map(|reference| Value::ptr(reference.index()))
                     .map_err(StructuredCloneError::Runtime)
             }
         }
+    }
+
+    fn import_children(
+        &mut self,
+        values: &[StructuredValue],
+        depth: usize,
+    ) -> Result<(Vec<Value>, Vec<HostRoot>), StructuredCloneError> {
+        let mut imported = Vec::with_capacity(values.len());
+        let mut pins = Vec::new();
+        for value in values {
+            let value = self.import_value(value, depth + 1)?;
+            if let Some(raw) = value.as_ptr() {
+                pins.push(self.vm.pin_host_ref(GcRef::new(raw)));
+            }
+            imported.push(value);
+        }
+        Ok((imported, pins))
     }
 
     fn reject_foreign_module(&self, module: &CompiledModule) -> Result<(), AelysError> {

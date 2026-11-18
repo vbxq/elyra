@@ -49,8 +49,11 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
     verify_struct_schemas(func)?;
     verify_schema_descriptors(func)?;
 
+    let mut starts = vec![false; bytecode.len() + 1];
+    let mut targets = Vec::new();
     let mut ip = 0;
     while ip < bytecode.len() {
+        starts[ip] = true;
         let instr = bytecode[ip];
         let opcode_byte = (instr >> 24) as u8;
         let opcode = OpCode::from_u8(opcode_byte)
@@ -113,6 +116,14 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             {
                 return Err(format!("invalid wide cast target {wide_c}"));
             }
+            if matches!(inner, OpCode::NegW | OpCode::NotW)
+                && u8::try_from(wide_c)
+                    .ok()
+                    .and_then(aelys_bytecode::SizedInt::from_u8)
+                    .is_none()
+            {
+                return Err(format!("invalid wide integer width {wide_c}"));
+            }
             if inner == OpCode::MatchFail && wide_a > 2 {
                 return Err(format!("invalid wide match failure family {wide_a}"));
             }
@@ -133,7 +144,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 let adjusted_ip = ip
                     .checked_add(2)
                     .ok_or_else(|| "wide while ip overflow".to_string())?;
-                super::checks::check_jump(adjusted_ip, offset, bytecode.len(), "wide while loop")?;
+                let target = super::checks::check_jump(
+                    adjusted_ip,
+                    offset,
+                    bytecode.len(),
+                    "wide while loop",
+                )?;
+                targets.push((ip, target));
             }
             ip += 3;
             continue;
@@ -335,12 +352,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             let adjusted_ip = ip
                 .checked_add(1)
                 .ok_or_else(|| format!("{opcode:?} ip overflow"))?;
-            super::checks::check_jump_i32(
+            let target = super::checks::check_jump_i32(
                 adjusted_ip,
                 offset,
                 bytecode.len(),
                 "wide conditional jump",
             )?;
+            targets.push((ip, target));
             ip += 3;
             continue;
         }
@@ -408,7 +426,9 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             let adjusted_ip = ip
                 .checked_add(1)
                 .ok_or_else(|| format!("{opcode:?} ip overflow"))?;
-            super::checks::check_jump_i32(adjusted_ip, offset, bytecode.len(), "wide loop")?;
+            let target =
+                super::checks::check_jump_i32(adjusted_ip, offset, bytecode.len(), "wide loop")?;
+            targets.push((ip, target));
             ip += 3;
             continue;
         }
@@ -432,7 +452,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 _ => return Err(format!("invalid long-offset opcode {opcode:?}")),
             }
             let offset = i32::from_ne_bytes(extension.to_ne_bytes());
-            super::checks::check_jump_i32(ip, offset, bytecode.len(), "long-offset instruction")?;
+            let target = super::checks::check_jump_i32(
+                ip,
+                offset,
+                bytecode.len(),
+                "long-offset instruction",
+            )?;
+            targets.push((ip, target));
             ip += 2;
             continue;
         }
@@ -469,6 +495,39 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             continue;
         }
 
+        if opcode.format() == InstructionFormat::Fixed {
+            let first = bytecode
+                .as_slice()
+                .get(ip + 1)
+                .ok_or_else(|| format!("{opcode:?} at {ip} is missing operand word 1"))?;
+            let second = bytecode
+                .as_slice()
+                .get(ip + 2)
+                .ok_or_else(|| format!("{opcode:?} at {ip} is missing operand word 2"))?;
+            if aelys_bytecode::FixedKind::from_u8(a as u8).is_none() {
+                return Err(format!("{opcode:?} at {ip} has invalid width {a}"));
+            }
+            match b {
+                0 => {
+                    if second & 0xffff != 0 {
+                        return Err(format!("{opcode:?} at {ip} has non-zero reserved bits"));
+                    }
+                }
+                1 => {
+                    if c != 0 {
+                        return Err(format!("{opcode:?} at {ip} has non-zero reserved bits"));
+                    }
+                    verify_reg((second & 0xffff) as usize, num_regs, "fixed-point shift")?;
+                }
+                _ => return Err(format!("{opcode:?} at {ip} has invalid shift mode {b}")),
+            }
+            verify_reg((first >> 16) as usize, num_regs, "fixed-point operand")?;
+            verify_reg((first & 0xffff) as usize, num_regs, "fixed-point operand")?;
+            verify_reg((second >> 16) as usize, num_regs, "fixed-point operand")?;
+            ip += 3;
+            continue;
+        }
+
         if registers::verify(opcode, a, b, c, imm, num_regs, constants_len)? {
             ip += 1;
             continue;
@@ -477,7 +536,17 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             ip += 1;
             continue;
         }
-        if control::verify(opcode, ip, a, b, c, imm, num_regs, bytecode.len())? {
+        if control::verify(
+            opcode,
+            ip,
+            a,
+            b,
+            c,
+            imm,
+            num_regs,
+            bytecode.len(),
+            &mut targets,
+        )? {
             ip += 1;
             continue;
         }
@@ -514,6 +583,14 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
         }
 
         return Err(format!("unhandled opcode {:?} at {}", opcode, ip));
+    }
+    starts[bytecode.len()] = true;
+    for (origin, target) in targets {
+        if !starts[target] {
+            return Err(format!(
+                "jump at {origin} lands inside an instruction at {target}"
+            ));
+        }
     }
 
     Ok(())
@@ -618,7 +695,8 @@ fn verify_enum_descriptor(
         | aelys_bytecode::TypeDescriptor::Vec(inner) => {
             verify_enum_descriptor(inner, enum_schemas, depth + 1)?;
         }
-        aelys_bytecode::TypeDescriptor::Result(ok, err) => {
+        aelys_bytecode::TypeDescriptor::Result(ok, err)
+        | aelys_bytecode::TypeDescriptor::Map(ok, err) => {
             verify_enum_descriptor(ok, enum_schemas, depth + 1)?;
             verify_enum_descriptor(err, enum_schemas, depth + 1)?;
         }
@@ -721,7 +799,8 @@ fn verify_descriptor_ids(
         | aelys_bytecode::TypeDescriptor::Vec(inner) => {
             verify_descriptor_ids(inner, struct_count, enum_schemas, depth + 1)?;
         }
-        aelys_bytecode::TypeDescriptor::Result(ok, err) => {
+        aelys_bytecode::TypeDescriptor::Result(ok, err)
+        | aelys_bytecode::TypeDescriptor::Map(ok, err) => {
             verify_descriptor_ids(ok, struct_count, enum_schemas, depth + 1)?;
             verify_descriptor_ids(err, struct_count, enum_schemas, depth + 1)?;
         }
@@ -758,7 +837,7 @@ pub(super) fn verify_jump(
     imm: i16,
     bytecode_len: usize,
     op: &str,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     check_jump(ip, imm, bytecode_len, op)
 }
 

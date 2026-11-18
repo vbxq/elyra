@@ -1,6 +1,6 @@
 use super::{
-    CANONICAL_NAN, IntegerOverflowError, PAYLOAD_MASK, QNAN, TAG_BOOL, TAG_INT, TAG_NESTED_FN,
-    TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
+    CANONICAL_NAN, CHAR_FLAG, IntegerOverflowError, PAYLOAD_MASK, QNAN, TAG_BOOL, TAG_INT,
+    TAG_NESTED_FN, TAG_NONE, TAG_NULL, TAG_PTR, TAG_UNIT, Value,
 };
 
 impl Value {
@@ -47,12 +47,21 @@ impl Value {
         Self(QNAN | TAG_BOOL | u64::from(b))
     }
 
+    pub fn char(c: char) -> Self {
+        Self(QNAN | TAG_NULL | CHAR_FLAG | u64::from(u32::from(c)))
+    }
+
     pub fn null() -> Self {
         Self(QNAN | TAG_NULL)
     }
 
     pub fn unit() -> Self {
         Self(QNAN | TAG_UNIT)
+    }
+
+    // a global slot whose initializer has not run yet; it never leaves the global tables
+    pub const fn uninit() -> Self {
+        Self(QNAN | TAG_NULL | 1)
     }
 
     pub fn none() -> Self {

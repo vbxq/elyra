@@ -44,6 +44,7 @@ pub enum StmtKind {
         type_annotation: Option<TypeAnnotation>,
         initializer: Expr,
         is_pub: bool,
+        is_const: bool,
     },
 
     Block(Vec<Stmt>),
@@ -56,6 +57,7 @@ pub enum StmtKind {
     While {
         condition: Expr,
         body: Box<Stmt>,
+        label: Option<String>,
     },
 
     For {
@@ -65,16 +67,23 @@ pub enum StmtKind {
         inclusive: bool,
         step: Box<Option<Expr>>, // default: inferred from direction
         body: Box<Stmt>,
+        label: Option<String>,
     },
 
     ForEach {
         iterator: String,
         iterable: Expr,
         body: Box<Stmt>,
+        label: Option<String>,
     },
 
-    Break,
-    Continue,
+    Break {
+        label: Option<String>,
+        value: Option<Expr>,
+    },
+    Continue {
+        label: Option<String>,
+    },
     Return(Option<Expr>),
     Function(Function),
     ImplDecl {

@@ -141,7 +141,7 @@ impl Compiler {
                 span,
             );
         } else if let Some(message) = message {
-            let base = self.alloc_consecutive_registers_for_call(2, span)?;
+            let base = self.alloc_consecutive_registers(2, span)?;
             self.alloc_consecutive_from(base, 2)?;
             self.emit_a(OpCode::Move, base, message, 0, span);
             self.emit_a(OpCode::Move, base + 1, source, 0, span);
@@ -448,8 +448,8 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let count = args.len() + 2;
-        let base = self.alloc_consecutive_registers_for_call(count, span)?;
+        let count = args.len() + 1;
+        let base = self.alloc_call_window(count, span)?;
         for offset in 0..count {
             let register = base + u16::try_from(offset).expect("call register offset fits");
             self.register_pool[register as usize] = true;

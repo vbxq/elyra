@@ -56,7 +56,15 @@ pub struct AelysVmApi {
             out_len: *mut usize,
         ) -> i32,
     >,
-    pub _reserved: [usize; 2],
+    pub borrow_bytes_shared: Option<
+        extern "C" fn(
+            context: *mut NativeContext,
+            handle: AelysValue,
+            out_ptr: *mut *const u8,
+            out_len: *mut usize,
+        ) -> i32,
+    >,
+    pub _reserved: [usize; 1],
 }
 
 #[repr(C)]
@@ -94,6 +102,7 @@ pub enum AelysNativeType {
     ResultBoolString = 14,
     ResultStringString = 15,
     ResultUnitString = 16,
+    Bytes = 17,
 }
 
 impl TryFrom<u8> for AelysNativeType {
@@ -117,6 +126,7 @@ impl TryFrom<u8> for AelysNativeType {
             14 => Ok(Self::ResultBoolString),
             15 => Ok(Self::ResultStringString),
             16 => Ok(Self::ResultUnitString),
+            17 => Ok(Self::Bytes),
             _ => Err(()),
         }
     }
@@ -173,6 +183,7 @@ impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
 
     /// construct a descriptor at an FFI boundary
+    #[allow(clippy::missing_safety_doc)]
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
         abi_version: u32,

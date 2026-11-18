@@ -5,6 +5,10 @@ impl Compiler {
     /// Use for function calls to direct imports.
     pub fn get_or_create_global_index(&mut self, name: &str) -> u32 {
         let actual_name = self.resolve_global_name(name).to_string();
+        // callers record the spelling they were given, which the layout does not hold
+        if actual_name != name {
+            self.accessed_globals.insert(actual_name.clone());
+        }
         self.get_or_create_global_index_raw(&actual_name)
     }
 
@@ -22,6 +26,9 @@ impl Compiler {
     }
 
     pub fn resolve_global_name<'a>(&'a self, name: &'a str) -> &'a str {
+        if self.globals.contains_key(name) {
+            return name;
+        }
         // Only translate to qualified name if it's a stdlib import (contains ::)
         // Custom module entries contain module path (like "mod_a") not qualified names
         self.symbol_origins

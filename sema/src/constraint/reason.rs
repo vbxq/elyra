@@ -36,6 +36,7 @@ pub enum ConstraintReason {
         method: String,
     },
     InvalidCast,
+    MapKey,
     UnknownType {
         name: String,
     },
@@ -104,6 +105,7 @@ impl fmt::Display for ConstraintReason {
                 write!(f, "collection method '{}' receiver", method)
             }
             ConstraintReason::InvalidCast => write!(f, "invalid cast"),
+            ConstraintReason::MapKey => write!(f, "map key"),
             ConstraintReason::UnknownType { name } => write!(f, "unknown type '{}'", name),
             ConstraintReason::IntLiteralOverflow { value, target } => {
                 write!(

@@ -47,7 +47,7 @@ fn infer_type_from_annotation_sized_integers() {
     assert_eq!(InferType::from_annotation(&make_ann("i32")), InferType::I32);
     assert_eq!(InferType::from_annotation(&make_ann("i16")), InferType::I16);
     assert_eq!(InferType::from_annotation(&make_ann("i8")), InferType::I8);
-    assert_eq!(InferType::from_annotation(&make_ann("u64")), InferType::U64);
+    assert_eq!(InferType::from_annotation(&make_ann("u64")), InferType::I64);
     assert_eq!(InferType::from_annotation(&make_ann("u32")), InferType::U32);
     assert_eq!(InferType::from_annotation(&make_ann("u16")), InferType::U16);
     assert_eq!(InferType::from_annotation(&make_ann("u8")), InferType::U8);
@@ -458,8 +458,9 @@ fn unify_struct_nominal_different_name_fails() {
 }
 
 #[test]
-fn e2e_i64_annotation() {
-    assert_eq!(run_ok("let x: i64 = 42\nx").as_int(), Some(42));
+fn e2e_i64_annotation_is_refused() {
+    let error = aelys::run("let x: i64 = 42\nx", "<test>").expect_err("i64 is refused");
+    assert!(error.to_string().contains("E0461"), "{error}");
 }
 
 #[test]
@@ -480,8 +481,8 @@ fn e2e_float_alias_still_works() {
 }
 
 #[test]
-fn e2e_i64_arithmetic() {
-    let v = run_ok("let a: i64 = 10\nlet b: i64 = 20\na + b");
+fn e2e_int_arithmetic() {
+    let v = run_ok("let a: int = 10\nlet b: int = 20\na + b");
     assert_eq!(v.as_int(), Some(30));
 }
 
@@ -501,7 +502,7 @@ fn e2e_struct_declaration_is_noop_in_vm() {
 fn e2e_typed_for_loop() {
     let v = run_ok(
         r#"
-        let mut sum: i64 = 0
+        let mut sum: int = 0
         for i in 1..=10 {
             sum += i
         }
@@ -515,7 +516,7 @@ fn e2e_typed_for_loop() {
 fn e2e_typed_function_params() {
     let v = run_ok(
         r#"
-        fn add(a: i64, b: i64) -> i64 {
+        fn add(a: int, b: int) -> int {
             return a + b
         }
         add(100, 200)
@@ -528,7 +529,7 @@ fn e2e_typed_function_params() {
 fn e2e_typed_lambda() {
     let v = run_ok(
         r#"
-        let mul = fn(a: i64, b: i64) -> i64 { return a * b }
+        let mul = fn(a: int, b: int) -> int { return a * b }
         mul(7, 8)
     "#,
     );

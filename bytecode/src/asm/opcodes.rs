@@ -894,7 +894,46 @@ impl<'a> AasmParser<'a> {
                 extension_words.extend(encode_wide_operands(register, 0, 0));
                 encode_a(OpCode::Wide, u8::from(OpCode::Return), 0, 0)
             }
-            _ => return Err(AssemblerError::UnknownOpcode(opcode_name)),
+            "NegW" | "NotW" => {
+                let op = if opcode_name == "NegW" {
+                    OpCode::NegW
+                } else {
+                    OpCode::NotW
+                };
+                let a = self.parse_register()?;
+                self.skip_comma()?;
+                let b = self.parse_register()?;
+                self.skip_comma()?;
+                let c = self.parse_u8()?;
+                encode_a(op, a, b, c)
+            }
+            "MulShr" | "ShlDiv" => {
+                let op = if opcode_name == "MulShr" {
+                    OpCode::MulShr
+                } else {
+                    OpCode::ShlDiv
+                };
+                let kind = self.parse_u8()?;
+                self.skip_comma()?;
+                let mode = self.parse_u8()?;
+                self.skip_comma()?;
+                let immediate = self.parse_u8()?;
+                self.skip_comma()?;
+                let a = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let b = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let c = self.parse_wide_register()?;
+                self.skip_comma()?;
+                let n = self.parse_wide_register()?;
+                extension_words.push((u32::from(a) << 16) | u32::from(b));
+                extension_words.push((u32::from(c) << 16) | u32::from(n));
+                encode_a(op, kind, mode, immediate)
+            }
+            name => match sized_binary_opcode(name) {
+                Some(op) => self.parse_ternary_reg(op)?,
+                None => return Err(AssemblerError::UnknownOpcode(opcode_name)),
+            },
         };
 
         bytecode.push(instr);
@@ -1045,4 +1084,10 @@ pub(super) fn encode_b(op: OpCode, a: u8, imm: i16) -> u32 {
 
 fn encode_wide_operands(a: u16, b: u16, c: u16) -> [u32; 2] {
     [(u32::from(a) << 16) | u32::from(b), u32::from(c) << 16]
+}
+
+fn sized_binary_opcode(name: &str) -> Option<OpCode> {
+    (OpCode::AddWI8 as u8..=OpCode::DivWI32 as u8)
+        .filter_map(OpCode::from_u8)
+        .find(|op| format!("{op:?}") == name)
 }

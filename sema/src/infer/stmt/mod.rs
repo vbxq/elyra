@@ -4,6 +4,9 @@ mod let_stmt;
 mod loop_stmt;
 mod needs;
 mod return_stmt;
+mod tail;
+
+pub(crate) use loop_stmt::LoopFrame;
 
 use super::TypeInference;
 use crate::typed_ast::{TypedStmt, TypedStmtKind};
@@ -14,15 +17,43 @@ impl TypeInference {
         stmts.iter().map(|s| self.infer_stmt(s)).collect()
     }
 
+    // the last statement of a script is its value, so a match there keeps its arm values
+    pub(super) fn infer_program_stmts(&mut self, stmts: &[Stmt]) -> Vec<TypedStmt> {
+        let Some((last, prefix)) = stmts.split_last() else {
+            return Vec::new();
+        };
+        let mut typed = self.infer_stmts(prefix);
+        self.script_tail = true;
+        typed.push(self.infer_stmt(last));
+        typed
+    }
+
     pub(super) fn infer_stmt(&mut self, stmt: &Stmt) -> TypedStmt {
+        let script_tail = std::mem::take(&mut self.script_tail);
         let previous_module = self.current_module.clone();
         let mut definition_scope = false;
         let mut definition_mark = None;
         let mut definition_qualified: Vec<String> = Vec::new();
+        let mut importer_scope = None;
         if let Some(definition_module) = &stmt.definition_module {
             self.current_module = definition_module.clone();
             definition_scope = self.push_definition_module_globals(definition_module);
             definition_qualified = self.push_definition_module_imports(definition_module);
+            if let Some(scope) = self.module_scopes.get(definition_module.as_str()).cloned() {
+                if !definition_scope {
+                    self.env.push_scope();
+                    definition_scope = true;
+                }
+                for alias in &scope.module_aliases {
+                    self.env.define_namespace(alias.clone());
+                }
+                let mut native_globals = self.known_native_globals.clone();
+                native_globals.extend(scope.known_native_globals.iter().cloned());
+                importer_scope = Some((
+                    std::mem::replace(&mut self.module_aliases, scope.module_aliases),
+                    std::mem::replace(&mut self.known_native_globals, native_globals),
+                ));
+            }
             definition_mark = Some((
                 self.errors.len(),
                 self.constraints.len(),
@@ -31,8 +62,12 @@ impl TypeInference {
         }
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
+                self.statement_match =
+                    !script_tail && matches!(expr.kind, aelys_syntax::ExprKind::Match { .. });
                 let typed_expr = self.infer_expr(expr);
-                self.record_must_use_value(&typed_expr);
+                if !super::functions::is_assignment(expr) {
+                    self.record_must_use_value(&typed_expr);
+                }
                 TypedStmtKind::Expression(typed_expr)
             }
             StmtKind::Let {
@@ -41,21 +76,41 @@ impl TypeInference {
                 type_annotation,
                 initializer,
                 is_pub,
-            } => self.infer_let_stmt(
-                stmt.span,
-                name,
-                *mutable,
-                type_annotation,
-                initializer,
-                *is_pub,
-            ),
+                is_const,
+            } => {
+                let mut kind = self.infer_let_stmt(
+                    stmt.span,
+                    name,
+                    *mutable,
+                    type_annotation,
+                    initializer,
+                    *is_pub,
+                );
+                let context = if *is_const {
+                    self.constant_context(name, type_annotation.as_ref())
+                } else {
+                    crate::types::InferType::I64
+                };
+                if *is_const
+                    && let Some(value) =
+                        self.declare_constant(name, initializer, &context, stmt.span)
+                    && let TypedStmtKind::Let { initializer, .. } = &mut kind
+                {
+                    initializer.kind = value.literal();
+                }
+                kind
+            }
             StmtKind::Block(stmts) => self.infer_block_stmt(stmts),
             StmtKind::If {
                 condition,
                 then_branch,
                 else_branch,
             } => self.infer_if_stmt(condition, then_branch, else_branch.as_deref()),
-            StmtKind::While { condition, body } => self.infer_while_stmt(condition, body),
+            StmtKind::While {
+                condition,
+                body,
+                label,
+            } => self.infer_while_stmt(condition, body, label.as_ref()),
             StmtKind::For {
                 iterator,
                 start,
@@ -63,6 +118,7 @@ impl TypeInference {
                 inclusive,
                 step,
                 body,
+                label,
             } => self.infer_for_stmt(
                 iterator,
                 start,
@@ -70,15 +126,19 @@ impl TypeInference {
                 *inclusive,
                 step.as_ref().as_ref(),
                 body,
+                label.as_ref(),
             ),
             StmtKind::ForEach {
                 iterator,
                 iterable,
                 body,
-            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.read_only, stmt.span),
+                label,
+            } => self.infer_for_each_stmt(iterator, iterable, body, stmt.read_only, label.as_ref()),
             StmtKind::Return(expr) => self.infer_return_stmt(stmt.span, expr.as_ref()),
-            StmtKind::Break => TypedStmtKind::Break,
-            StmtKind::Continue => TypedStmtKind::Continue,
+            StmtKind::Break { label, value } => {
+                self.infer_break_stmt(label.as_ref(), value.as_ref(), stmt.span)
+            }
+            StmtKind::Continue { label } => self.infer_continue_stmt(label.as_ref(), stmt.span),
             StmtKind::Function(func) => {
                 let typed_func = self.infer_function(func);
                 TypedStmtKind::Function(typed_func)
@@ -138,6 +198,10 @@ impl TypeInference {
         };
         if definition_scope {
             self.env.pop_scope();
+        }
+        if let Some((module_aliases, known_native_globals)) = importer_scope {
+            self.module_aliases = module_aliases;
+            self.known_native_globals = known_native_globals;
         }
         for name in definition_qualified {
             self.known_native_signatures.remove(&name);

@@ -18,7 +18,12 @@ pub fn eliminate_unused_in_block(
             initializer,
             is_pub,
             ..
-        } => !*is_pub && !used_vars.contains(name) && !has_effects(initializer),
+        } => {
+            !*is_pub
+                && !aelys_sema::is_module_scoped_global(name)
+                && !used_vars.contains(name)
+                && !has_effects(initializer)
+        }
         _ => false,
     };
 

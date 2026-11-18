@@ -43,7 +43,7 @@ fn cast_in_expression() {
 
 #[test]
 fn cast_preserves_value() {
-    assert_aelys_int("100 as i64", 100);
+    assert_aelys_int("100 as int", 100);
 }
 
 #[test]

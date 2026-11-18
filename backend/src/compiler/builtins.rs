@@ -7,6 +7,7 @@ impl Compiler {
         "load",
         "store",
         "__tostring",
+        "__clone",
         "panic",
         "assert",
     ];

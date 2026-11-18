@@ -39,7 +39,9 @@ fn collect_all_uses_in_stmt(stmt: &TypedStmt, uses: &mut HashSet<String>) {
                 collect_all_uses_in_stmt(else_b, uses);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_all_uses_in_expr(condition, uses);
             collect_all_uses_in_stmt(body, uses);
         }
@@ -57,7 +59,10 @@ fn collect_all_uses_in_stmt(stmt: &TypedStmt, uses: &mut HashSet<String>) {
             }
             collect_all_uses_in_stmt(body, uses);
         }
-        TypedStmtKind::Return(Some(expr)) => {
+        TypedStmtKind::Return(Some(expr))
+        | TypedStmtKind::Break {
+            value: Some(expr), ..
+        } => {
             collect_all_uses_in_expr(expr, uses);
         }
         TypedStmtKind::Function(inner_func) => {
@@ -80,8 +85,8 @@ fn collect_all_uses_in_stmt(stmt: &TypedStmt, uses: &mut HashSet<String>) {
             collect_all_uses_in_stmt(body, uses);
         }
         TypedStmtKind::Return(None)
-        | TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        | TypedStmtKind::Break { value: None, .. }
+        | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::TraitDecl { .. }
@@ -228,10 +233,16 @@ fn collect_all_uses_in_expr(expr: &TypedExpr, uses: &mut HashSet<String>) {
                 }
             }
         }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                collect_all_uses_in_stmt(stmt, uses);
+            }
+        }
         TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Null => {}

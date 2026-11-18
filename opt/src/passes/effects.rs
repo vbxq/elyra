@@ -17,6 +17,7 @@ pub(crate) fn has_effects(expr: &TypedExpr) -> bool {
         TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::String(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
@@ -31,7 +32,13 @@ pub(crate) fn has_effects(expr: &TypedExpr) -> bool {
         | TypedExprKind::MemberAssign { .. }
         | TypedExprKind::Try { .. }
         | TypedExprKind::Member { .. }
-        | TypedExprKind::Slice { .. } => true,
+        | TypedExprKind::Slice { .. }
+        | TypedExprKind::Loop { .. } => true,
+
+        TypedExprKind::Block(stmts) => stmts.iter().any(|stmt| match &stmt.kind {
+            TypedStmtKind::Expression(e) => has_effects(e),
+            _ => true,
+        }),
 
         TypedExprKind::Grouping(inner) => has_effects(inner),
         TypedExprKind::And { left, right } | TypedExprKind::Or { left, right } => {

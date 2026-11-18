@@ -42,7 +42,7 @@ impl Compiler {
         compile_lambda_body(&mut lambda_compiler, body, span)?;
 
         lambda_compiler.end_scope();
-        lambda_compiler.current.num_registers = lambda_compiler.next_register;
+        lambda_compiler.finish_registers()?;
         lambda_compiler.current.arity = u16::try_from(params.len()).map_err(|_| {
             aelys_common::error::CompileError::new(
                 aelys_common::error::CompileErrorKind::TooManyArguments,

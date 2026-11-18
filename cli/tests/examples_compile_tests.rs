@@ -17,8 +17,12 @@ const KNOWN_FAILING: &[(&str, &str)] = &[
         "E0406: the checked-in opengl native module is built against native ABI 2, the runtime wants 5",
     ),
     (
+        "examples/sdl/gradient.aelys",
+        "E0401: needs the sdl native module, built out of tree per docs/native-modules.md",
+    ),
+    (
         "main.aelys",
-        "E0301: the program itself is wrong, main is declared -> i64 but its body ends in println",
+        "E0461: the program itself is wrong, main is declared -> i64, which is refused, and its body ends in println",
     ),
 ];
 

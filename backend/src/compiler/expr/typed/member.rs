@@ -55,8 +55,10 @@ impl Compiler {
             && let Some(module_name) = Self::typed_path_name(object)
             && self.has_module_alias(&module_name)
         {
-            let global_name = format!("{}::{}", module_name, member);
-            let idx = self.get_or_create_global_index(&global_name);
+            let global_name = self
+                .resolve_global_name(&format!("{}::{}", module_name, member))
+                .to_string();
+            let idx = self.get_or_create_global_index_raw(&global_name);
             self.accessed_globals.insert(global_name.clone());
             self.emit_get_global_index(dest, idx, span);
             return Ok(());

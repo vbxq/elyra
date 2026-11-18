@@ -6,6 +6,7 @@ pub enum Constant {
     Bool(bool),
     Int(i64),
     Float(u64),
+    Char(u32),
     String(String),
     NestedFunction(u32),
 }
@@ -20,6 +21,8 @@ impl Constant {
             Some(Self::Int(value))
         } else if let Some(value) = value.as_float() {
             Some(Self::Float(value.to_bits()))
+        } else if let Some(value) = value.as_char() {
+            Some(Self::Char(u32::from(value)))
         } else {
             value
                 .as_nested_fn_marker()
@@ -34,6 +37,7 @@ impl Constant {
             Self::Bool(value) => Value::bool(*value),
             Self::Int(value) => Value::int(*value),
             Self::Float(bits) => Value::float(f64::from_bits(*bits)),
+            Self::Char(scalar) => char::from_u32(*scalar).map_or_else(Value::null, Value::char),
             Self::String(value) => Value::ptr(heap.intern_string(value).index()),
             Self::NestedFunction(index) => Value::nested_fn_marker(*index as usize),
         }

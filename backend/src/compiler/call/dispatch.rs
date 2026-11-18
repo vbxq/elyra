@@ -106,8 +106,7 @@ impl Compiler {
 
         let total_args = 1 + remaining_args.len();
         let call_arity = self.checked_call_arity(total_args, span)?;
-        let func_reg =
-            self.alloc_consecutive_registers_for_call(total_args.saturating_add(1), span)?;
+        let func_reg = self.alloc_call_window(total_args.saturating_add(1), span)?;
 
         for i in 0..=total_args {
             let reg = func_reg + u16::try_from(i).expect("register offset was range checked");

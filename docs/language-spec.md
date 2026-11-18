@@ -29,18 +29,33 @@ MAX_VALUE
 Thing2
 ```
 
+A name that starts with two underscores (`__clone`, `__tostring`) belongs to
+the compiler and its builtins. Calling a builtin such as `__tostring(x)` is
+allowed, but declaring such a name (a variable, constant, function, parameter,
+pattern or loop binding, type, field, variant, type parameter or module alias)
+is E0114.
+
 ### Reserved Words
 
 ```
-let mut fn if else while for in step return break continue match struct enum
+let mut fn if else while for in return break continue match struct enum
 trait impl and or not pub needs as from true false null
 ```
 
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
 
-`where`, `dyn`, and `self` are contextual. They carry meaning in a generic
-bound, a type position, and a method receiver respectively, and they are still
-ordinary identifiers everywhere else:
+`loop` is contextual: it opens a loop only when a `{` follows it, so `let loop = 1`
+still declares a variable. `step` is contextual too: it is a keyword only after
+the range of a `for` header, so a function, variable or field may be named `step`.
+A label is an identifier written after a quote, `'outer`, and is only meaningful
+before `for`, `while` or `loop` and after `break` or `continue`. A quote, one
+character and a closing quote (`'a'`) is a char literal, not a label, and a quote,
+a longer name and a closing quote (`'ab'`) is an invalid char literal.
+
+`where`, `dyn`, `self` and `const` are contextual. They carry meaning in a
+generic bound, a type position, a method receiver and a constant declaration
+(`const NAME = ...`) respectively, and they are still ordinary identifiers
+everywhere else:
 
 ```rust
 let where = 1
@@ -62,7 +77,10 @@ println(where + dyn + self)
 0o755          // octal
 ```
 
-Integers are 48-bit signed (roughly +-140 trillion). This is due to NaN-boxing, the VM packs type information into the unused bits of IEEE 754 NaN values. You'll probably never hit this limit in practice.
+An integer literal is an `int`, a 48-bit signed integer (roughly +-140 trillion), unless its
+context expects a sized integer type (see [Integer types](#integer-types)). The 48-bit width
+comes from NaN-boxing: the VM packs type information into the unused bits of IEEE 754 NaN
+values. A literal outside the 48-bit range is E0209.
 
 Underscores are ignored, so `1_000_000` is just `1000000`. Handy for big numbers or binary patterns like `0b1111_0000`.
 
@@ -85,7 +103,20 @@ Standard IEEE 754 double precision (64-bit).
 "backslash: \\"
 ```
 
-UTF-8 encoded. Escape sequences: `\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash), `\"` (quote).
+UTF-8 encoded. Escape sequences: `\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash), `\"` (quote), `\'` (single quote), `\0` (NUL), and `\u{...}` with one to six hex digits naming a Unicode scalar value (`"caf\u{e9}"` is `"café"`).
+
+**Characters**
+```rust
+'a'
+'\n'
+'\''
+'\u{e9}'
+```
+
+A `char` literal holds exactly one Unicode scalar value between single quotes and
+takes the same escapes as a string. An empty literal, a literal with two or more
+characters, a missing closing quote, and a `\u{...}` escape that names no scalar
+value (above `10FFFF`, or a surrogate in `D800`-`DFFF`) are each E0008.
 
 **String Interpolation**
 
@@ -141,9 +172,12 @@ with a diagnostic that names these replacements.
 
 | Type | Description | Size |
 |------|-------------|------|
-| `int` | Signed integer | 48-bit |
+| `int` | Signed integer, overflow traps | 48-bit |
+| `i8` `i16` `i32` | Signed integer, wrapping | 8, 16, 32-bit |
+| `u8` `u16` `u32` | Unsigned integer, wrapping | 8, 16, 32-bit |
 | `float` | Floating point | 64-bit |
 | `string` | UTF-8 text | heap allocated |
+| `char` | One Unicode scalar value | immediate |
 | `bool` | Boolean | 1 bit (packed) |
 | `unit` | No meaningful value | immediate |
 | `Option<T>` | A value or absence | heap allocated when needed |
@@ -153,6 +187,119 @@ with a diagnostic that names these replacements.
 | `Name { field: T, ... }` | Fixed-layout struct | heap allocated |
 | `[T; N]` | Fixed-size array | heap allocated |
 | `Vec<T>` | Growable vector | heap allocated |
+| `Map<K, V>` | Insertion-ordered hash map | heap allocated |
+| `(A, B, ...)` | Immutable tuple of 2 to 8 elements | heap allocated |
+
+### Integer types
+
+`int` is the default integer. Its arithmetic is checked: `+`, `-`, `*`, unary `-`, `<<`
+and an `as` conversion trap with `integer overflow outside the supported 48-bit range` when
+the exact result leaves the 48-bit range, and `/` or `%` by zero traps with
+`division by zero`. `int` has no other width; `i64`, `int64`, `u64` and `uint64` are E0461
+(`i64 is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping
+arithmetic`).
+
+The sized types `i8`, `i16`, `i32`, `u8`, `u16` and `u32` wrap. Every operator on them
+computes the exact result and keeps its low 8, 16 or 32 bits as two's complement, so the
+value always lies in the type's range, in a variable, a struct field, an array or a `Vec`:
+
+```rust
+let a: u32 = 0xFFFFFFFF
+let one: u32 = 1
+println(a + one)          // 0
+let b: i32 = 0x7FFFFFFF
+println(b + 1)            // -2147483648
+let c: u8 = 200
+println(c + c)            // 144
+```
+
+- `+ - * & | ^ ~` and unary `-` wrap to the width.
+- `/` truncates toward zero and `%` takes the sign of the dividend, as in C. Both trap on a
+  zero divisor. `i32::MIN / -1` wraps to `i32::MIN` and `i32::MIN % -1` is `0` (likewise
+  for `i8` and `i16`).
+- `<<` keeps the low bits. `>>` is arithmetic on a signed type and logical on an unsigned
+  one. The shift count may have any integer type, `int` included, and a literal count is
+  accepted whatever its value; it is taken modulo the width of the shifted value (`& 7`,
+  `& 15`, `& 31`, and `& 63` for `int`), so `x << 33` on an `i32` is `x << 1` and a count of
+  `-1` is the width minus one. The result has the type of the shifted value.
+- Comparisons compare the values.
+
+A binary operator takes two operands of the same integer type. Mixing two integer types,
+`int` included, is E0460 `mismatched integer types in '+': i32 and int` with the help line
+``convert with `as` ``. A shift count is the exception: `x >> n` with `x: u32` and
+`n: int` or `n: u8` is accepted.
+
+An integer literal takes the sized type its context expects: a `let` annotation, a struct
+field, an enum constructor payload (`E::A(200)` with `A(u8)`, `E::B { x: -5 }` with an
+`i16` field), a function argument, a return value or a function's last expression, an
+element of an array or `Vec` literal whose type is known, a `push` onto a `Vec<T>`, the
+element, key or value argument of the other `Vec`, array and `Map` methods
+(`v.extend(vec![255])`, `m.insert(1, 2)` on a `Map<u8, i32>`), an assignment to a
+variable, field, element or `Map` entry, the other operand of a binary operator, a
+compound assignment, a `match` pattern on a sized value (a literal, a range bound or a
+`const` naming an integer), a branch of an `if` or a `match` arm whose sibling branch is
+sized, the last expression of a value block (`{ ...; 200 }`, a multi-line `if` branch or a
+block `match` arm) and the `break` values of a `loop`, all wherever the block, `if`,
+`match` or `loop` itself has a sized context, and the bounds of a `for` range whose other bound is
+sized (the loop variable then has that type). The shifted value of `1 << n` takes the
+context's type; the count keeps its own. A literal that does not fit its type is E0301
+`integer literal 256 does not fit in u8`. The payload of a generic struct or enum takes
+the type its arguments name, written out (`Holder::<u8>::Full(200)`, `Box::<i8> { value:
+100 }`) or expected by a `let` annotation, a return type or a parameter (`let b: Box<u8> =
+Box { value: 200 }`). A method argument takes the type the receiver's arguments give its
+parameter (`s.push(200)` on a `Stack<u8>`). A literal passed to a generic parameter
+otherwise stays `int`; the other operand of a binary operator whose type is still being
+inferred gives the literal that type once inference settles it.
+
+```rust
+let x: i32 = 5
+let y: i32 = 3
+let p: i32 = (x * y) >> 16          // the 16 is an i32
+struct Pixel { v: u8 }
+let px = Pixel { v: 1 }
+let bytes: Vec<u8> = vec![1, 2, 255]
+let pair: [i32; 2] = [1, -1]
+```
+
+Any integer type, sized or not, indexes an array or a `Vec`.
+
+#### Conversions with `as`
+
+`as` converts between every integer type, `float` and `bool`:
+
+| From | To | Result |
+|------|----|--------|
+| any integer | a sized integer | the low bits, two's complement: `3000000000 as i32` is `-1294967296`, `-1 as u8` is `255` |
+| any integer | `int` | the same value (every sized value fits) |
+| `float` | `int` | truncated toward zero; NaN, an infinity or a value outside 48 bits traps with the overflow error |
+| `float` | a sized integer | truncated toward zero, then wrapped like an integer (`-2.7 as u8` is `254`); NaN or an infinity traps with `cannot convert NaN to u8` (or `inf`, `-inf`, and the target type) |
+| integer | `float` | the nearest float |
+| `bool` | integer | `0` or `1` |
+
+#### Fixed-point helpers
+
+`i32` and `int` have two methods with an exact intermediate, the `FixedMul` and
+`FixedDiv` of 16.16 fixed-point code:
+
+- `a.mul_shr(b, n)` is `(a * b) >> n` computed without overflow, then wrapped to `i32`
+  (or checked against 48 bits for `int`, trapping on overflow).
+- `a.shl_div(b, n)` is `(a << n) / b` computed without overflow and truncated toward zero,
+  then wrapped to `i32` (or checked for `int`). A zero `b` traps with `division by zero`.
+
+`b` has the receiver's type and `n` is an `int`. A literal `n` outside 0..=63 is E0462
+`shift count 64 of 'mul_shr' is outside 0..=63`; a computed `n` is taken modulo 64
+(`& 63`), so 64 shifts by 0 and -1 by 63.
+
+```rust
+fn fixed_mul(a: i32, b: i32) -> i32 { a.mul_shr(b, 16) }
+fn fixed_div(a: i32, b: i32) -> i32 { a.shl_div(b, 16) }
+println(fixed_mul(0x7FFF0000, 0x20000))   // -131072
+println(fixed_div(10 << 16, 4 << 16))     // 163840, 2.5 in 16.16
+```
+
+Each sized operator, and each of these two methods, is a single VM instruction. The JIT
+does not compile a function that uses them; it runs in the interpreter with the same
+results.
 
 ### Type Annotations
 
@@ -188,7 +335,9 @@ let g: fn(int) -> int = f
 ```
 
 A function type is written `fn(T, ...) -> R`, with the parameter types and no
-parameter names. `function` is not a type: `let f: function`, `fn f(g: function)`
+parameter names. A parameter of aggregate type written `mut T` is a `mut`
+parameter, which is part of the type (see [Mutable Parameters](#mutable-parameters)).
+`function` is not a type: `let f: function`, `fn f(g: function)`
 and `fn f() -> function` are each E0372 `unknown type 'function'`.
 
 ### Type Inference
@@ -241,6 +390,47 @@ println(x)      // 1
 ### Scope
 
 Block-scoped. Variables live until their enclosing `}`.
+
+### Constants
+
+`const NAME: T = expr` declares a compile-time constant; `pub const` exports it
+from a module. The type annotation is optional and follows the rules of `let`
+(`const SMALL: u8 = 200` is a `u8`).
+
+```rust
+const SCREEN_W: int = 320
+const SCREEN_H = SCREEN_W * 5 / 8      // 200
+const MASK = (1 << 16) - 1
+const TITLE: string = "doom"
+pub const FRACUNIT: int = 1 << 16
+
+let column = [0; SCREEN_H]             // a repeat count
+struct Frame { pixels: [int; SCREEN_W] } // an array length in a type
+```
+
+The initializer must be a constant expression: integer, float, bool and string
+literals; unary `-`, `~` and `not`; arithmetic, shifts and bitwise operators on
+integers; arithmetic on floats; comparisons; `and`/`or` on bools; string `+`;
+`as` between the integer types and `float`; and other constants, including another
+module's `pub const` (`cfg::W`) and associated constants (`Cfg::N`). The value is
+computed with the runtime's rules for the constant's type: a sized constant wraps
+(`const B: u8 = 200 + 100` is `44`, `const M: u32 = 0xFFFFFFFF + 1` is `0`), each
+operand takes the type of the constants it names, and a shift count is taken modulo
+the width (`const Z = 1 >> -1` is `0`). Anything else, a function call, a `let`
+binding, a collection, a division by zero or an `int` result outside the 48-bit
+range, is E0395; for a division or remainder by zero or an overflow, the message
+names that cause (`cannot be evaluated at compile time: division by zero`).
+Declaring the same constant twice in one scope is E0396.
+
+A constant is folded when the program is compiled: every use is replaced by its
+value, so a constant can be read before its declaration line, from a function
+declared earlier, and inside closures. A constant can also be declared inside a
+function body. It cannot be assigned (E0203), and a local `let` of the same name
+shadows it like any other binding.
+
+Across modules, `needs cfg` makes `cfg::W` and `W` available, `needs cfg::W`
+makes `W` available, and both forms work as repeat counts and array lengths. A
+constant without `pub` stays private (E0313).
 
 ## Functions
 
@@ -295,7 +485,8 @@ fn build_line(mut acc: int, n: int) -> int {
 build_line(10, 5)  // 15
 ```
 
-Mutable parameters are value copies. Modifying them inside the function doesn't affect the caller:
+Reassigning a mutable parameter never affects the caller: the parameter is a
+new binding.
 
 ```rust
 fn try_modify(mut x: int) -> int {
@@ -307,6 +498,56 @@ let a = 1
 let b = try_modify(a)  // b = 101
 a                       // still 1
 ```
+
+Aggregates (structs, enums, arrays and `Vec`) are passed by reference, so a
+`mut` parameter of aggregate type mutates the caller's value. That is only
+allowed when the argument is reachable from a mutable root: passing `a`, `a.f`
+or `a[i]` to a `mut` parameter when `a` is immutable is E0323. Pass
+`a.clone()` to give the function its own copy. The same rule applies to a
+`mut self` receiver (E0331). See [Structs](#structs).
+
+```rust
+fn grow(mut v: Vec<int>) { v.push(0) }
+
+let mut shared = vec![1]
+grow(shared)                // shared.len() == 2
+let fixed = vec![1]
+grow(fixed)                 // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter `v`
+grow(fixed.clone())         // ✓ fixed is unchanged
+```
+
+A `mut` parameter of aggregate type is part of the function's type. `grow`
+has type `fn(mut Vec<int>) -> unit`, a lambda `fn(mut v: Vec<int>) { ... }` has
+the same type, and the annotation `fn(mut T, U) -> R` writes it. `fn(mut S) -> R`
+and `fn(S) -> R` are different types: neither is accepted where the other is
+expected (E0301, with a help line naming the `mut`). An unannotated function
+parameter, as `f` in `fn apply(f, s) { f(s) }`, takes the type of the function
+passed to it, `mut` included; like its other parameter types it is fixed by the
+call sites, so passing it both a `fn(S)` and a `fn(mut S)` is E0301.
+
+`mut` on a parameter whose type is a scalar (`int`, a sized integer, `float`,
+`bool`, `string`, `unit`) only rebinds a local copy, which no caller can see, so
+it is not part of the type: `fn(mut x: int) -> int` has type `fn(int) -> int`.
+
+A call through a function value checks the `mut` positions of its type exactly
+like a direct call: an argument at a `mut` position must have a mutable root or
+be a clone, and the other positions accept any argument. This holds for a
+function-typed parameter or field, a `let` or `let mut` binding, an element of a
+`Vec` or array, a captured value and the result of a call.
+
+```rust
+fn show(v: Vec<int>) { println(v.len()) }
+fn apply(f: fn(Vec<int>) -> unit, v: Vec<int>) { f(v) }                 // ✓ no mut position
+apply(show, fixed)                                                     // ✓
+apply(grow, shared)                                                    // ✗ error[E0301]: expected fn(Vec<int>) -> unit, found fn(mut Vec<int>) -> unit
+fn grow_all(f: fn(mut Vec<int>) -> unit, v: Vec<int>) { f(v) }         // ✗ error[E0323]: cannot pass `v` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
+fn grow_all(f: fn(mut Vec<int>) -> unit, mut v: Vec<int>) { f(v) }     // ✓ callers pass a mutable root
+let h = grow
+h(fixed)                                                               // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
+```
+
+The callbacks of the built-in collection, `Option` and `Result` methods (`map`,
+`filter`, `fold`, `and_then`, ...) accept either form.
 
 Works with lambdas too:
 
@@ -335,6 +576,38 @@ fn foo() -> int {
 
 Functions without a returned value have type `unit`. A function with a concrete
 return type must return that type on every reachable path.
+
+In a function or lambda without a return annotation, a bare `return` (also
+directly before `}`) and `return ()` return `unit`, and a trailing assignment
+(`x = v`, `x += v`, `s.f = v`, `v[i] = v`, an `if`/`else` or a `match` whose
+branches all end in an assignment) is a statement, not a returned value: such a
+function has type `unit` and returns `()` at run time. With an explicit return
+type, a trailing assignment still yields the assigned value.
+
+An unannotated function that returns a value with `return v` takes the type of
+`v`, so every path must yield a value: ending on a trailing assignment (or any
+other statement) after such a `return` is E0215.
+
+```rust
+let mut g = 0
+fn f(c: bool) {
+    if c { return 7 }
+    g = 5          // E0215: this path falls through without a value
+}
+```
+
+Every top-level `fn` and `impl` of a file is bound before the file's top-level
+code runs, so a top-level `let` initializer may call a function declared further
+down the same file or module. Top-level `let` bindings still run in source order:
+a function that reads a global whose `let` has not run yet stops the program with
+the runtime error ``global `b` read before its initialiser ran``, pointing at the
+reading line. The value is never read as a default.
+
+```rust
+let a = f()        // runtime error: global `b` read before its initialiser ran
+let b = 10
+fn f() -> int { b + 1 }
+```
 
 ### Lambdas (Anonymous Functions)
 
@@ -396,7 +669,10 @@ apply_twice(double, 5)  // 20
 | `/` | Division |
 | `%` | Modulo |
 
-Integer division truncates: `7 / 2` gives `3`. Use floats if you need decimal results.
+Integer division truncates toward zero: `7 / 2` gives `3` and `-7 / 2` gives `-3`; `%` takes
+the sign of the dividend (`-7 % 2` is `-1`). On `int` an overflowing result traps; on a sized
+integer type it wraps (see [Integer types](#integer-types)). Use floats if you need decimal
+results.
 
 ### Compound Assignment
 
@@ -423,6 +699,8 @@ let mut s = "hello"
 s += " world"       // "hello world"
 ```
 
+The target is evaluated once: in `ms[pick()].hp -= 10` or `w.ps[i + f()].x *= 2`, every index expression of the place is evaluated exactly once, left to right, before the right-hand side; the same slot is read and written.
+
 ### Increment and Decrement
 
 For the common case of adding or subtracting 1:
@@ -439,7 +717,10 @@ count++     // 2
 count--     // 1
 ```
 
-These are postfix operators and work on identifiers only.
+These are postfix operators. They work on every place a compound assignment
+accepts: a variable, a field, an element and nested paths (`s.v++`, `a[0]--`,
+`w.ps[pick()].h++`), with each index expression evaluated once. On any other
+expression, such as `f()++`, they are E0104.
 
 ### Comparison
 
@@ -451,6 +732,11 @@ These are postfix operators and work on identifiers only.
 | `<=` | Less than or equal |
 | `>` | Greater than |
 | `>=` | Greater than or equal |
+
+The ordering operators accept two operands of one numeric type, two `char`
+values (ordered by scalar value), or two strings (ordered lexicographically by
+scalar value, so `"Z" < "a"`, `"ab" < "abc"` and `"é" > "z"`). A `char` and a
+`string` never compare with each other.
 
 ### Equality on aggregates
 
@@ -512,7 +798,11 @@ Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same f
 | `^` | Bitwise XOR |
 | `~` | Bitwise NOT |
 | `<<` | Left shift |
-| `>>` | Right shift (arithmetic) |
+| `>>` | Right shift (arithmetic on `int` and signed types, logical on unsigned types) |
+
+Both operands have the same integer type. On `int` the shift count is taken modulo 64 and
+`<<` traps when the exact result leaves the 48-bit range, like `*`. On a sized type the
+count is taken modulo the width and the result wraps.
 
 ### Precedence (lowest to highest)
 
@@ -584,6 +874,70 @@ if n < 0 {
 
 Braces are required. Parentheses around conditions are not.
 
+`if` is also an expression. Every branch is a block whose value is its last
+statement when that statement is an expression (with or without a trailing `;`),
+an `if` that has an `else`, or a nested block; any other last statement, and an
+empty block, make the branch `unit`. A chain of any length yields the value of
+the branch it takes, in every position: a function or closure tail, a `let`
+initialiser, a match arm, an argument, a `return` operand, inside another block.
+
+```rust
+fn grade(score: int) -> int {
+    if score >= 90 { 4 } else if score >= 80 { 3 } else if score >= 70 { 2 } else { 0 }
+}
+
+let bonus = if grade(85) == 3 {
+    let extra = 1
+    10 + extra
+} else if grade(85) == 4 { 20 } else { 0 }
+println(bonus)   // 11
+```
+
+All branches must have the same type. In expression position an `if` needs an
+`else` (E0101 `expected else`); as the tail of a function whose return type is not
+`unit`, an `if` without `else` can fall through and is E0215 `function can fall
+through without returning int`, never a silent `unit`. A function or closure
+without a return type whose tail is not a value (an `if` without `else`, a `let`,
+a loop, an assignment) returns `unit`, so `let x: int = f(1)` is E0301; if such
+a body also returns a value with `return`, it can fall through and is E0215. An
+assignment `x = v` or `x += v` is never the value of such a tail, so
+`fn set(c: bool) { if c { count = 1 } else { name = "b" } }` is a `unit` function.
+Branches that are both values must still agree: `if c { v.push(1) } else { v.pop() }`
+as the tail of a function without a return type is E0301.
+
+### Block expressions
+
+A `{ ... }` in expression position is a block expression with its own scope. Its
+value follows the same rule as an `if` branch.
+
+```rust
+let x = 1
+let area = {
+    let x = 10
+    let width = x * 2
+    width * x
+}
+println(area + x)   // 201
+```
+
+### if let
+
+`if let PATTERN = value { ... } else { ... }` runs the first block when the
+pattern matches, with the pattern's bindings in scope only inside that block.
+`else` is optional, and `else if` / `else if let` chain as usual, after an `if`
+or an `if let`, in statement and expression position. It is an expression: when
+the chain ends with an `else` block every block gives its value and they must
+have the same type; a chain without a final `else` is `unit`, and is only
+allowed in statement position.
+
+```rust
+let found: Option<int> = Some(7)
+if let Some(v) = found { println(v) } else { println("none") }
+
+let doubled = if let Some(v) = found { v * 2 } else { 0 }
+println(doubled)   // 14
+```
+
 ### while
 
 ```rust
@@ -593,6 +947,40 @@ while n < 3 {
 }
 println(n)   // 3
 ```
+
+### while let
+
+`while let PATTERN = value { ... }` evaluates `value` before every iteration and
+stops at the first value the pattern does not match. `break` and `continue` act on
+it like on any loop.
+
+```rust
+let mut stack = vec![1, 2, 3]
+let mut sum = 0
+while let Some(top) = stack.pop() {
+    sum += top
+}
+println(sum)   // 6
+```
+
+### loop
+
+`loop { ... }` repeats until a `break` or a `return`. It is an expression:
+`break value` leaves the loop with that value, a bare `break` gives `unit`, and a
+loop no `break` leaves has the type `never`, so it satisfies any return type.
+Every `break` of one loop must carry values of the same type.
+
+```rust
+let mut i = 0
+let first_square_above_50 = loop {
+    i += 1
+    if i * i > 50 { break i }
+}
+println(first_square_above_50)   // 8
+```
+
+`break value` is only allowed for `loop`; on a `while`, `while let` or `for` it is
+E0391. The `break` values of one `loop` must share a type (E0301).
 
 ### for
 
@@ -652,7 +1040,7 @@ for item in v {
 }
 ```
 
-String iteration is Unicode-aware, so each `c` is a single-character string, not a byte; so it means that multi-byte characters like `é` or `😀` are handled well !
+String iteration is Unicode-aware: each `c` is a `char`, one Unicode scalar value, not a byte, so multi-byte characters like `é` or `😀` come out whole.
 
 ```rust
 let mut count = 0
@@ -666,7 +1054,7 @@ You can use `break` and `continue` inside for-each loops:
 
 ```rust
 for c in "abcdefgh" {
-    if c == "d" { break }
+    if c == 'd' { break }
     println(c)    // prints a, b, c
 }
 ```
@@ -681,7 +1069,90 @@ for i in 0..100 {
 }
 ```
 
-Work in `while` loops too.
+Work in `while`, `while let` and `loop` too.
+
+### Labels
+
+A loop may carry a label, `'name:`, written before `for`, `while` or `loop`.
+`break 'name` and `continue 'name` act on that loop from any depth of nested
+loops, and `break 'name value` gives a labeled `loop` its value. An unknown label
+is E0390. A closure created inside a loop body keeps its own copy of the
+variables of its iteration, the loop variable and the names declared in the body,
+including when the iteration ends by `break` or `continue`; a variable declared
+outside the loop stays shared, so every closure sees its later writes.
+
+```rust
+let mut pairs = 0
+'rows: for x in 0..10 {
+    for y in 0..10 {
+        if y > x { continue 'rows }
+        if x == 5 { break 'rows }
+        pairs += 1
+    }
+}
+println(pairs)   // 15
+
+let hit = 'search: loop {
+    for a in 1..20 {
+        for b in a..20 {
+            if a * b == 91 { break 'search a * 100 + b }
+        }
+    }
+    break 0
+}
+println(hit)   // 713
+```
+
+## Tuples
+
+A tuple groups 2 to 8 values of possibly different types. The type is written
+`(A, B, ...)`, a value `(a, b, ...)`, and an element is read with `.0`, `.1`, ...
+in declaration order. `(x)` is just a parenthesised `x`.
+
+```rust
+fn divmod(a: int, b: int) -> (int, int) { (a / b, a % b) }
+
+let t = divmod(17, 5)
+println(t.0)   // 3
+println(t.1)   // 2
+
+let pair: (int, string) = (1, "one")
+let nested = ((1, 2), 3)
+println(nested.0.1)   // 2
+```
+
+Tuples are immutable: writing an element, `t.0 = 1` or `t.0 += 1`, is E0393. They
+are aggregate values shared by reference (like structs, see
+[Structs](#structs)), which is never observable because no element can change.
+`==` compares them element by element. Tuples can be returned, passed, stored in
+`Vec`, arrays, struct fields and enum payloads, used in generic functions, and
+returned from a module; the tuple fields and payloads of a type imported from
+another module read and match like local ones. A tuple has no `Display`; print its elements. Reading an
+element past the arity, `t.2` on a pair, is E0363 `tuple (int, int) has no field
+2`. Names starting with `AelysTuple` are reserved for the compiler's tuple types:
+writing one anywhere (a type, a struct, a variable) is E0394.
+
+### Destructuring let
+
+`let` accepts a tuple pattern or a struct pattern on its left side. The pattern
+must be irrefutable: it may contain only names, `_`, tuple patterns and struct
+patterns (`..` allowed). `let mut` makes every name it binds mutable. A literal,
+range, variant or alternation is E0108 `refutable pattern in let`; use `match` or
+`if let` for those. A type that does not fit the pattern (wrong tuple arity, wrong
+struct) is E0301; a wrong arity says `tuple pattern has 3 elements, but the value
+is a tuple of 2 elements`, in `let` and in `match`.
+
+```rust
+struct Point { x: int, y: int }
+
+let (q, r) = divmod(23, 4)
+let (_, middle, _) = (7, 8, 9)
+let mut (a, b) = (1, 2)
+a += 10
+
+let Point { x, y } = Point { x: 3, y: 4 }
+println(q + r + middle + a + b + x + y)
+```
 
 ## Modules
 
@@ -706,9 +1177,36 @@ With an alias (`needs std::math as m`), only the aliased form works: `m::sqrt()`
 
 After `needs sqrt from std::math`, you call `sqrt()` directly without the module prefix.
 
+A whole-module import without an alias also binds the module's exports by their
+bare names. Two such imports may export the same name: `needs std::fs` next to
+`needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
+both fine. Only an unqualified use of the shared name is refused, at the use, with
+E0445 `symbol 'size' is exported by multiple modules: bytes, fs`; assigning to
+the bare name is the same E0445. A name imported
+by name with `needs size from std::bytes` wins over the whole-module imports, and
+two `needs size from ...` lines naming different modules are E0410 at the second
+line, whose hint is to import the name from one module only.
+
+Aliases and bare names belong to the file that writes them. `needs util as u` in
+one module and `needs other as u` in another give each module its own `u`, and a
+name a file imports never changes what another module's code reads.
+
+A declaration of your own always takes precedence over an auto-registered name.
+A program that defines `fn sqrt(t: int) -> int`, `fn min(...)`, `fn find(...)`
+or `fn len(...)` calls its own function in every position: a direct call, an
+argument, a collection element, a field initializer, a return value, a closure
+body, a method body, a nested function and a function value, including a use
+that comes before the declaration: every top-level `fn` and `impl` is defined
+before the first statement of the script runs, so `let top = sqrt(4)` followed
+by `fn sqrt` calls the user function. The qualified
+`math::sqrt` and `math::min` still name the standard library functions. In the
+same way, a method declared on a user type, directly or through a trait, takes
+precedence over a built-in string or collection method of the same name:
+`dir.find("a")`, `dir.len()` or `bag.push(x)` call the user methods.
+
 ### Standard Library Modules
 
-The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement:
+The safe standard library modules are **auto-registered**, their functions are available without any `needs` statement, in the entry file and in every module it imports alike:
 
 - `std::io` - console I/O
 - `std::math` - math functions and constants
@@ -718,6 +1216,8 @@ The safe standard library modules are **auto-registered**, their functions are a
 
 
 See [Standard Library](standard-library.md) for full documentation.
+
+Native modules (shared libraries written against the aelys-native ABI, such as the SDL2 module in `modules/sdl`) are imported with `needs` like any module; how to write, build and load one, and the rules for byte buffers they borrow, are in [Native modules](native-modules.md).
 
 ### Custom Modules
 
@@ -737,16 +1237,71 @@ needs utils              // imports utils.aelys
 needs lib::helper        // imports lib/helper.aelys
 ```
 
-Top-level definitions in a file become the module's exports.
+Top-level definitions in a file become the module's exports. A `pub const`
+is exported with its value, so an importer can use it as a repeat count or an
+array length (`[0; cfg::W]`); see [Constants](#constants).
+
+A dotted path is resolved from the file that writes the `needs` line: `needs
+lib::util` in `game/mobj.aelys` looks for `game/lib/util.aelys` (then
+`game/lib/util/mod.aelys` and the native forms) first, and only then for
+`lib/util.aelys` under the project root, the directory of the entry file. The
+first file found is the module. Resolution depends only on the importing file and
+the path, never on the order of `needs` lines nor on what another file imported
+first.
+
+A module is its file. One file reached by two spellings, `needs game::lib::util`
+from the entry file and `needs lib::util` from `game/mobj.aelys`, is one module:
+its top-level code runs once and its variables exist once. Two different files
+that the same dotted path names from two different importers are two modules.
 
 A top-level `let` is a variable of the module that declares it, and it has one
 slot per module. Every reference inside that module resolves to that slot: the
 module's own top-level code, its free functions, and the bodies of its impls,
 whether such a body runs in the module or in a file that imported it. Two modules
 that each declare `v` hold two variables, and a file that imports one of them and
-also declares its own `v` holds a third. An importer's binding of an imported
-`pub let mut` holds the value the module had when it was imported; assigning to
-that binding moves the importer's binding and not the module's variable.
+also declares its own `v` holds a third, which shadows the import. An imported
+variable, read bare or as `module::v`, reads the declaring module's slot, so it
+always shows the module's current value. Assigning to a bare imported `pub let
+mut` writes the module's variable; assigning to an imported `pub let` is E0446
+`cannot assign to 'v': it is an immutable variable of the module that declares
+it`. Assigning to an imported function name is E0446 too (`it is a function of
+the module that declares it`), unless the file declares its own function of that
+name, which shadows the import and keeps the local E0203. `module::v = ...` is
+not an assignment target.
+
+An imported variable's mutability carries to the places rooted at it. Through a
+bare imported `pub let mut`, field, index and `push` writes (`ms.x = 3`,
+`mh.p.x += 1`, `mv[0] = 10`, `mv.push(4)`) mutate the module's value, and the
+module sees them. Through an imported `pub let` they are refused (E0330, E0318).
+A struct, array or `Vec` is shared by reference, so binding one reached from an
+imported `pub let` mutably, bare or qualified (`let mut w = v`,
+`let mut w = cnt::v`, `let mut z = cnt::h.p`), is E0323. A
+qualified place (`cnt::ms.x = 3`) is not writable; write through the bare import.
+
+A module's functions, private and public, live in that module's own slots. A
+private helper `helper` in one module and a same-named function of another module
+or of the entry file are distinct functions: each module's code calls its own.
+
+A generic declaration crosses the boundary as a template that every importer
+specializes with its own types. A `pub fn` with type parameters is imported like
+any other function, bare, qualified (`container::largest(v, key)`, `c::largest`)
+or by name (`needs largest from container`), and each call instantiates it in the
+importing file. A `pub struct` or `pub enum` with type parameters is imported the
+same way, with its impls, and `Stack<int>` built in the module and `Stack<int>`
+built in the importer are one type. The carried body keeps its module's scope:
+it reads the module's private functions, variables and private generic
+declarations, calls the module's other generic functions, and a bound such as
+`T: Ranked` or `T: Display` is satisfied by the importer's impls. A bare generic
+name exported by two whole-module imports is E0445 at the use, two selective
+imports of it are E0410, and a file's own function or local of that name shadows
+the import. A private generic function stays private: importing it by name is
+E0405.
+
+A struct or enum value keeps its type across modules at run time: a value built
+in one module is read, matched and passed as the same type in every module that
+uses it, nested in another struct, in a `Vec`, an array, an `Option` or an enum
+payload. A runtime error raised inside a module's function reports that module's
+file and line.
 
 ### Visibility
 
@@ -761,6 +1316,9 @@ fn internal_function() {
     // ...
 }
 ```
+
+A method is reachable wherever its type is, so `pub` written on an item of an
+`impl` block (`pub fn new(...)`) is accepted and changes nothing.
 
 ### Cross-module types
 
@@ -793,6 +1351,12 @@ name stays out of scope, and using one is E0378 `'Kind' is exported by module
 `needs` line that would fix it. The whole-module form `needs shapes` is
 unchanged and still brings every public type into scope.
 
+A public type that an imported function returns or takes is reachable without
+being named: `needs spawn from game::mobj` lets `spawn(5).hp` read a `pub` field
+of the returned `Mobj` and call `Mobj`'s inherent methods. Writing the name
+`Mobj` itself, in a literal or an annotation, still needs `needs Mobj from
+game::mobj` (E0378).
+
 An impl written in the defining module travels with its type, but only when
 every end of the impl is itself in scope. An inherent `impl Point` arrives with
 `Point`. A trait impl `impl Scorable for Point` arrives only when the importer
@@ -821,7 +1385,9 @@ Importing a type that is not `pub` is E0403 `'Point' is not public in module
 An impl body the importer inlines is still checked and compiled in its defining
 module's terms. Everything that body reads travels with it: the types, traits and
 free functions the defining module imported, the names it reaches through a module
-path or through a module alias, the module's own globals, public or not, and the
+path or through a module alias (a standard library alias such as `needs std::bytes
+as by` included), the auto-registered modules, the module's own globals, public or
+not, and the types its free functions return, and the
 module's **own private `struct`, `enum` and `trait` declarations together with the
 impls over them**, on the same gate as its private globals. The
 importer never has to write those `needs` lines, and never sees the names they
@@ -839,10 +1405,10 @@ importing file: each resolves in its own module's terms. E0410 still applies
 where the name participates in the import contract — an associated binding, a
 signature, a nominal the importing file names in its own declarations where the
 carried body can read it, or a trait together with its own declaration. A
-**generic** private declaration that reaches the import contract has nothing
-left to send, monomorphization having erased it inside its own module, so a body
-that names one there is E0407, the refusal its public twin already gets; a
-body-only generic travels as a template and monomorphizes in the importer.
+**generic** private declaration travels as a template and monomorphizes in the
+importer, whether the carried body names it or reaches it through the signature
+of a private helper (`fn wrap(n: int) -> Cell<int>`). One that reaches the import
+contract itself (an impl header, a trait) is E0407.
 
 A file binds each nominal name once. Two declarations of one name reaching one
 file is E0410 `symbol 'K' is exported by multiple modules: cored, corec`, reported
@@ -1033,6 +1599,18 @@ Explicit semicolons let you put multiple statements on one line:
 let x = 1; let y = 2; let z = 3
 ```
 
+A newline directly inside `(...)` or `[...]` inserts nothing, so arguments and
+elements may span lines. A `{` opens a block where newlines end statements again,
+even inside parentheses or brackets, so a multi-line block, `if`, `match` or
+closure body works as an argument, a `vec!` element or a tuple element:
+
+```rust
+let total = apply(fn(a: int) -> int {
+    let doubled = a * 2
+    doubled + 1
+})
+```
+
 ## Collections
 
 ### Arrays and vectors
@@ -1048,17 +1626,26 @@ let typed: Vec<int> = vec![]
 ```
 
 `[value; N]` creates an array with a compile-time non-negative constant length.
-`N` is an integer literal, an arithmetic expression over such literals, or an
+`N` is an integer literal, an arithmetic expression over such literals, a
+[constant](#constants) (`const N`, or another module's `cfg::N`), or an
 associated constant named on a concrete type or on `Self`, the same lengths the
 annotation `[T; N]` accepts. `vec![value; count]` creates a Vec and permits a
-dynamic count. The element is
-evaluated once and copied into each slot. There is no runtime-sized array
-constructor; use a Vec when the count is not known at compile time.
+dynamic count. There is no runtime-sized array constructor; use a Vec when the
+count is not known at compile time.
+
+The element is evaluated once. A scalar or string element is stored in every
+slot. An aggregate element (a struct, enum, `Option`/`Result`, array, `Vec` or
+`Map`) is deep-copied into each slot, as by `clone()`, so every slot holds its own
+object, including when the element is an existing binding:
 
 ```rust
 let zeros = [0; 10]
 let repeated = [7; 3]
 let mut buffer = vec![0; 4]
+let mut grid = [[0; 4]; 3]
+grid[1][2] = 5                    // only row 1 changes
+let mut mobjs = vec![Mobj { x: 0, y: 0 }; 128]
+mobjs[0].x = 10                   // only slot 0 changes
 ```
 
 All elements must have one common type. A fixed array annotation is checked at
@@ -1071,8 +1658,11 @@ numbers.push(3)
 numbers[0] = 9
 ```
 
-Mutation requires `let mut`, a mutable parameter, or a mutable base binding
-for an indexed place. `push`, `pop`, and `reserve` are Vec operations. `pop`
+Mutation requires `let mut`, a mutable parameter, or a mutable root binding
+for the place, however deep: `v[i] = x`, `w.items.push(x)` and `w.grid[i][j] = x`
+all follow the root (see [Structs](#structs)). Collections are reference
+types: `let mut alias = values` shares the Vec when `values` is mutable and is
+E0323 when it is not; `values.clone()` copies it. `push`, `pop`, and `reserve` are Vec operations. `pop`
 and `get` return `Option<T>` and therefore must be handled as values:
 
 ```rust
@@ -1085,7 +1675,12 @@ let answer = match item {
 ```
 
 Indexing with a constant index that is provably outside a known collection
-length is a compile error. Other invalid indices trap at runtime; they never
+length is a compile error. A length is known for an array or Vec literal indexed
+directly, for a fixed-size array type `[T; N]`, and for an immutable array
+binding. A Vec binding never has a known length, even when it is immutable,
+because `push` and any `mut` parameter it is handed can grow it; neither does a
+`let mut` array of unsized type, which another function or a closure can
+replace. Those indices are checked at run time. Other invalid indices trap at runtime; they never
 produce a null value. `len` and `is_empty` are available on arrays and Vecs.
 
 For-each accepts an array, Vec, or string. `for item in &values` makes the
@@ -1125,24 +1720,134 @@ Ranges are values as well as slice syntax. Open and closed forms are available:
 a slice, for example `let span = 1..3; source[span]`. A range without a valid
 collection context is still a type error.
 
+### Vec and array methods
+
+Beyond `len`, `is_empty`, `get`, `push`, `pop`, `capacity` and `reserve`, a Vec
+has these methods. Every method that changes the collection needs a mutable
+receiver (E0318); every index is checked at run time and an invalid one traps
+with `index out of bounds: index I is out of bounds for length N`.
+
+| Method | Result | Meaning |
+|--------|--------|---------|
+| `v.insert(i, x)` | `unit` | insert before index `i`; `i == len` appends |
+| `v.remove(i)` | `T` | remove and return the element at `i`, shifting the rest left |
+| `v.swap_remove(i)` | `T` | remove the element at `i` and move the last element into its slot |
+| `v.clear()` | `unit` | remove every element |
+| `v.extend(w)` | `unit` | append a copy of every element of the Vec or array `w` (`&w` is accepted) |
+| `v.append(w)` | `unit` | append every element of the Vec `w`, then empty `w` (which must be mutable) |
+| `v.truncate(n)` | `unit` | keep the first `n` elements; a larger `n` does nothing |
+| `v.resize(n, x)` | `unit` | truncate to `n`, or grow to `n` with copies of `x` |
+| `v.swap(i, j)` | `unit` | exchange two elements |
+| `v.reverse()` | `unit` | reverse in place |
+| `v.contains(x)` | `bool` | whether some element is `==` to `x` (structural) |
+| `v.index_of(x)` | `Option<int>` | index of the first element `==` to `x` |
+| `v.sort()` | `unit` | stable ascending sort |
+| `v.sort_by(f)` | `unit` | stable sort with `f: fn(T, T) -> int`, negative when the first argument goes first |
+| `v.first()`, `v.last()` | `Option<T>` | the first or last element |
+| `v.set(i, x)` | `unit` | `v[i] = x` as a method |
+| `v.fill(x)` | `unit` | overwrite every element with `x` |
+| `v.join(sep)` | `string` | concatenate a `Vec<string>` with `sep` between elements |
+
+A fixed array `[T; N]` has the methods that keep its length: `swap`, `reverse`,
+`contains`, `index_of`, `sort`, `sort_by`, `first`, `last`, `set` and `fill`.
+`insert`, `remove`, `swap_remove`, `clear`, `extend`, `append`, `truncate` and
+`resize` on an array are E0311.
+
+`sort` orders integers and floats numerically (NaN after every number), strings
+lexicographically by scalar value, chars by scalar value, and `false` before
+`true`; any other element type is E0471, which names `sort_by` as the way out.
+`sort_by` is a merge sort: it calls the comparator O(n log n) times, and a
+comparator that changes the length of the Vec it is sorting traps with
+`vector changed length while sort_by was running its comparator`.
+
+`resize` and `fill` store one value in many slots. Like a repeat literal, an
+aggregate value (a struct, enum, `Option`/`Result`, array, `Vec` or `Map`) is
+deep-copied into each slot, as by `clone()`, so every slot holds its own
+object. Scalars, strings, chars and closures are stored as they are.
+
+Inside a generic function the element type may be a type parameter. E0471 is
+then checked on every instantiation, and reported at the `sort` call when one
+instantiation's element type breaks the rule.
+
+### Maps
+
+`Map<K, V>` is a built-in hash map with reference semantics, like `Vec`. The key
+type is `int`, a sized integer, `string`, `char` or `bool`; any other key type,
+written or inferred, is E0470. A generic `Map<K, V>` is checked on every
+instantiation of the generic code, so `mk(1.5, 2)` for a generic `mk` is E0470
+at compile time. A Map that would grow past `-ae.max-heap` fails with
+`out of memory` at the insert.
+
+```rust
+let mut ages: Map<string, int> = Map::new()
+ages["reimu"] = 17
+ages["marisa"] = 16
+ages["reimu"] += 1
+let seen = ages.contains_key("sakuya")      // false
+let marisa = ages.get("marisa")             // Some(16)
+let _ = ages.insert("youmu", 15)            // None: the key was new
+for name in ages.keys() { println(name) }   // reimu, marisa, youmu
+```
+
+| Operation | Result | Meaning |
+|-----------|--------|---------|
+| `Map::new()` | `Map<K, V>` | an empty map; `K` and `V` are inferred |
+| `m.insert(k, v)` | `Option<V>` | store `v` under `k`, returning the previous value |
+| `m.get(k)` | `Option<V>` | the value under `k` |
+| `m.contains_key(k)` | `bool` | whether `k` is present |
+| `m.remove(k)` | `Option<V>` | remove `k`, returning its value |
+| `m.len()`, `m.is_empty()` | `int`, `bool` | entry count |
+| `m.clear()` | `unit` | remove every entry |
+| `m.keys()`, `m.values()` | `Vec<K>`, `Vec<V>` | fresh Vecs of the keys or values |
+| `m[k]` | `V` | the value under `k`; a missing key traps with `map key not found: k` |
+| `m[k] = v` | `unit` | insert or overwrite; `m[k] += x` reads then writes |
+
+`insert` and `remove` return an `Option`, which must be used like any other
+(`let _ = m.remove(k)`); `m[k] = v` is the statement form of an insert. Mutation
+needs a mutable receiver (E0318). Iteration order is insertion order: a new key
+goes last, overwriting a key keeps its place, and removing a key does not
+reorder the others. A map is not iterable directly (E0365 points at `keys()` and
+`values()`). `==` on two maps is structural and ignores order: same key set and
+`==` values. A map whose key and value types are both scalars, `char` or
+`string` implements `Display`, rendering `{k: v, k: v}` in insertion order.
+Lookups, inserts and removals are O(1) on average.
+
+### Characters
+
+`char` is one Unicode scalar value, stored unboxed. `c as int` gives its scalar
+value, and `c as u8` (or any sized integer type) keeps the low bits of that value
+(`'é' as u8` is `233`, `'€' as u8` is `172`); `n as char` converts any integer and traps with `invalid char: N is not a
+Unicode scalar value` outside `0..=0x10FFFF` or inside the surrogate range.
+`char` values compare with `==`, `!=` and the ordering operators, appear in
+`match` patterns (`'a' | 'e' => ...`), and serve as Map keys. Methods:
+`is_digit()` (ASCII `0`-`9`), `is_alpha()`, `is_alphanumeric()`,
+`is_whitespace()` (Unicode properties), and `to_upper()`, `to_lower()`, which
+return the character unchanged when its case mapping is not a single character
+(`'ß'.to_upper()` is `'ß'`). `string::from_char(c)` makes a one-character
+string, and `s.push(c)` appends one to a string variable or to a string place
+reached from a mutable root (`p.name.push(c)`, `v[i].push(c)`, `m[k].push(c)`),
+evaluating each index of the place once; on an immutable root it is E0318.
+
 ### String Indexing
 
 Strings support character-based indexing with `[]`:
 
 ```rust
 let s = "hello"
-s[0]    // "h"
-s[1]    // "e"
-s[4]    // "o"
+s[0]    // 'h'
+s[1]    // 'e'
+s[4]    // 'o'
 ```
 
-Each index returns a single-character string. Indexing is Unicode-aware: it accesses the Nth character, not the Nth byte.
+Each index returns a `char`, the same type a for-each over the string yields.
+Indexing is Unicode-aware: it accesses the Nth character, not the Nth byte, so it
+walks the string from the start.
 
 You can combine string indexing with a range-based for loop:
 
 ```rust
 let s = "hello"
-for i in 0..s.len() {
+for i in 0..s.char_len() {
     println(s[i])
 }
 ```
@@ -1186,12 +1891,37 @@ payload field occupies one immutable value slot. The compiler assigns the
 constructor and variant IDs, checks their field count and types, and resolves
 pattern field offsets before emitting bytecode.
 
-Matching an enum is exhaustive at compile time. Guards do not cover a
-constructor, and nested patterns are checked recursively. A missing arm emits
-E0302 `non-exhaustive match; missing E::B`, naming the missing constructor, with
-the help line `add a missing arm or '_'`. Alternation may combine constructors
-when all alternatives bind the same names and types. Integer and string matches
-still require `_`.
+Matching is exhaustive at compile time. The check is a usefulness analysis over
+the whole pattern, so it looks through every level of nesting: `Ok(_)`,
+`Err(AppE::Io(_))` and `Err(AppE::Bad(_))` together cover a
+`Result<int, AppE>`, and `Some(K::A)`, `Some(K::B)` and `None` cover an
+`Option<K>`, with no `_` needed. Guards do not cover a constructor. A missing
+arm emits E0302 `non-exhaustive match; missing ...`, naming every missing
+top-level constructor and, inside one, the precise nested shape that is left:
+`missing C::Red, C::Blue`, `missing Err(AppE::Bad(..))`,
+`missing Ok(Some(Mid::M(In::Y)))`, `missing E::A(false, false)`, with the help
+line `add a missing arm or '_'`. Alternation may combine constructors when all
+alternatives bind the same names and types.
+
+Integer matches are checked over the value range of the scrutinee's type
+(`int`, `i8` to `u32`): they need `_` unless their literals and
+[range patterns](#range-patterns) cover the whole range, and the message names
+the first uncovered interval, for example `missing 128` or `missing ..=-1`.
+String matches always need `_` (or a binding).
+
+A bare name in a pattern binds a new variable and matches everything. When the
+value at that position is an enum (including `Option` and `Result`) and the name
+starts with an uppercase letter, the pattern is almost certainly a misspelt or
+unqualified variant, so it is E0392 `pattern 'Blu' is not a variant`, with
+`did you mean Color::Blue?` when a variant is close. Write the variant with its
+enum path, or bind with a lowercase name.
+
+```rust
+enum Color { Red, Green, Blue }
+fn f(c: Color) -> int { match c { Color::Red => 1, Color::Green => 2, Blu => 3 } }
+// ✗ error[E0392]: pattern `Blu` is not a variant: a bare name binds a new variable that matches every value
+//   = help: did you mean Color::Blue?
+```
 
 ```rust
 enum BulletKind {
@@ -1212,6 +1942,25 @@ fn score(kind: BulletKind) -> int {
 println(score(BulletKind::Directed { damage: 2, speed: 1.5 }))
 ```
 
+A `match` used as a statement (not as a value and not as the last statement of a
+block that gives a value) discards its arm values, so its arms need not agree:
+`match o { Ok(v) => total = v, Err(_) => {} }` and arms that all `return` are
+accepted. A discarded `Result` or `Option` arm value is still E0303/E0304. The
+last statement of a script is its value, so a `match` there keeps its arm values.
+An assignment (`r = Some(3)`) is never a discarded value, whatever its type.
+
+A bare name in a pattern that names a `const` in scope matches the constant's value, as
+a literal would; it does not bind a new variable, and E0392 never applies to it. A local
+variable or parameter of the same name hides the constant, and then the name binds. A
+`float` constant cannot be a pattern (E0301).
+
+```rust
+const LIMIT = 10
+fn at_limit(x: int) -> int { match x { LIMIT => 1, _ => 0 } }
+fn hit(x: int) -> int { if let LIMIT = x { 1 } else { 0 } }
+println(at_limit(10) + hit(10) + at_limit(3))   // 2
+```
+
 ### Unreachable patterns
 
 Exhaustivity has a mirror rule. An arm that no value can reach is E0356
@@ -1229,6 +1978,10 @@ fn duplicate(k: Kind) -> int { match k { Kind::A => 1, Kind::A => 2, Kind::B => 
 // ✗ error[E0356]: unreachable pattern: Kind::A is already covered by an earlier arm
 ```
 
+An arm is also unreachable when the earlier unguarded arms together already
+cover it, for example `Some(_)` after `Some(K::A)` and `Some(K::B)`, or `3..=5`
+after `0..=9`.
+
 A guard makes the earlier arm conditional, so a later arm for the same
 constructor is still reachable and is accepted:
 
@@ -1245,6 +1998,34 @@ fn classify(k: Kind) -> int {
 
 println(classify(Kind::A(5)))    // 1
 println(classify(Kind::A(-5)))   // 2
+```
+
+### Range patterns
+
+An integer pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
+excluded), `..=hi` and `lo..` (open). Bounds are integer literals, possibly
+negative. A range applies to `int` and to the sized integers, whose bounds must
+fit the type: a bound outside it is E0301 `integer literal 256 does not fit in u8`, and on
+any other type a range is E0301. Exhaustiveness covers a sized integer by its own bounds
+(`u8` is covered by `0..=255`, `i8` by `-128..=127`), which is sound because sized
+arithmetic wraps, so a sized value never leaves its range. `int` is covered only by ranges
+reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character; the
+`char` domain is open, so a `match` on a `char` needs a `_` arm. A range that matches nothing
+(`9..=1`) or an inclusive range with no end is E0108. Ranges combine with `|`
+and nest inside variants and tuples.
+
+```rust
+fn class(n: int) -> int {
+    match n {
+        ..=-1 => 0,
+        0 => 1,
+        1..=9 => 2,
+        10.. => 3,
+    }
+}
+
+fn half(b: u8) -> int { match b { 0..=127 => 0, 128..=255 => 1 } }
+println(class(42) + half(200))   // 4
 ```
 
 Enum values are heap objects traced through every payload slot. A malformed
@@ -1268,8 +2049,91 @@ fn move_bullet() -> float {
 
 Struct names start with an uppercase letter. Fields are checked against their
 declared types at compile time. A field place is resolved to its declared
-offset, not looked up by a runtime string key. A field write requires a mutable
-root binding; an immutable binding or a temporary cannot be used as the root.
+offset, not looked up by a runtime string key.
+
+### Reference semantics
+
+Structs, enums, arrays and `Vec` are reference types, like classes in C# or
+Java: a binding, a parameter, a field and a collection slot hold a reference to
+one shared object. `let b = a`, passing `a` to a function, `v.push(a)`,
+`S { inner: a }` and `Some(a)` do not copy `a`; they share it. Strings,
+closures and scalars are values or immutable, so sharing them is unobservable.
+A value returned from a function is treated as a fresh binding.
+
+`x.clone()` makes a deep copy of a struct, enum, `Option`/`Result`, array,
+`Vec` or `Map`: every nested struct, enum payload, array, `Vec` and `Map` value
+is copied too, while strings, closures and `Map` keys are shared. A structure with cycles or shared children is
+copied with the same shape, and a cycle does not make `clone` loop. A user
+method named `clone` takes precedence over the built-in one.
+
+```rust
+struct P { x: int, y: int }
+
+let mut a = P { x: 1, y: 2 }
+let mut b = a          // b and a are the same object
+b.x = 5                // a.x == 5
+let mut c = a.clone()  // an independent copy
+c.x = 9                // a.x is still 5
+```
+
+### Mutability is a property of the root binding
+
+A place is a binding followed by any chain of fields and indexes: `p`, `p.x`,
+`v[i]`, `w.ps[i].x`. A place is mutable when its root binding is: a `let mut`
+binding, a `mut` parameter, or `self` in a `mut self` method. Every write form
+works through any such place:
+
+```rust
+struct World { ps: Vec<P>, ids: [int; 4] }
+
+let mut w = World { ps: vec![P { x: 0, y: 0 }], ids: [0; 4] }
+w.ps[0].x = 10        // field write through an index
+w.ps[0].x += 1        // compound assignment
+w.ps.push(P { x: 2, y: 2 })
+w.ids[3] = 7          // index write through a field
+w.ps[1].shift(5)      // a `mut self` method on an element
+```
+
+`self.items.push(v)` and `self.items[i] = v` work in a `mut self` method,
+including in an impl of a generic struct. Writing through an immutable root is
+an error: a field write is E0330, an index write or `push`/`pop`/`reserve` is
+E0318, and calling a `mut self` method is E0331. A temporary, such as the
+result of a call, cannot be the root of a write.
+
+Because aggregates are shared, creating a mutable alias of an aggregate that
+is reachable from an immutable binding would let the immutable binding change.
+It is E0323, at every place where an alias is created:
+
+```rust
+let a = P { x: 1, y: 2 }
+let mut b = a                  // ✗ error[E0323]: cannot bind `a` mutably
+let mut c = a.clone()          // ✓
+let h = World { ps: vec![], ids: [0; 4] }
+let mut ps = h.ps              // ✗ error[E0323]
+let mut b = if c { a } else { P { x: 0, y: 0 } }   // ✗ error[E0323]
+let mut d = P { x: 0, y: 0 }
+d = a                          // ✗ error[E0323]: cannot assign `a` to the mutable binding `d`
+fn bump(mut p: P) { p.x += 1 }
+bump(a)                        // ✗ error[E0323]: cannot pass `a` to the `mut` parameter `p`
+```
+
+The message names the place and its root and suggests `a.clone()` or `let mut
+a`. When the root is mutable, `let mut b = a`, `d = a` and passing `a` to a
+`mut` parameter are allowed and share the object. Storing an aggregate in a
+container or a field (`v.push(a)`, `S { inner: a }`) always shares it and is
+never an error. A function that receives an immutable parameter can still
+return it, and the caller may bind the result mutably: a returned value is a
+fresh binding, and this route is not tracked.
+A call through a function value applies the same rule at the `mut` positions
+of the function's type (`fn(mut P) -> R`), see
+[Mutable Parameters](#mutable-parameters).
+
+The iteration variable of `for p in ps` and the bindings of a `match` pattern
+are views of the iterated or matched place: `let mut q = p` inside the loop is
+allowed when the root of `ps` is mutable, and shares the element; when the root
+is immutable it is E0323 and the message names that root. Writing through `p`
+itself (`p.x = ...`) is E0330 because `p` is an immutable binding; write
+`ps[i].x = ...` with an index loop, or clone.
 
 Methods and associated functions live in an `impl` block:
 
@@ -2204,6 +3068,10 @@ last spelling is the only discard; there is no `discard` keyword. E0303 (Result)
 E0304 (Option) print these repairs. The check covers expression statements, block
 and closure bodies, match arms, and named bindings; a `Result` stored inside a
 collection literal such as `vec![r(), r()]` is not tracked.
+Assigning one to a variable, a field or an element (`a.next = Some(x)`,
+`v[i] = Ok(1)`) uses it. A function or lambda without a declared return type
+whose last statement is an assignment returns unit, so a setter such as
+`fn link(mut self, v: int) { self.next = Some(v) }` can be called as a statement.
 
 The `?` operator propagates `Err` or `None` out of the enclosing function and
 otherwise yields the operand's success value. The success type of the operand and
@@ -2380,6 +3248,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0005 | InvalidEscape | an unknown escape sequence in a string |
 | E0006 | UnterminatedFmtExpr | an interpolation `{` with no closing `}` |
 | E0007 | UnmatchedCloseBrace | a `}` with no interpolation to close |
+| E0008 | InvalidCharLiteral | a char literal that is empty, holds more than one character, is unterminated, or a `\u{...}` escape naming no scalar value |
 
 ### E01xx, syntax
 
@@ -2394,9 +3263,10 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0107 | ExpectedPattern | a pattern was required |
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
 | E0109 | UnknownVariant | no such variant on that type |
-| E0110 | MatchArmValueRequired | a match arm must produce a value |
+| E0110 | MatchArmValueRequired | a match arm whose block ends without a value, in a match whose other arms produce a non-`unit` value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
+| E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
 
 ### E02xx, names and emission limits
 
@@ -2406,7 +3276,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0202 | VariableAlreadyDefined | a name is declared twice in one scope |
 | E0203 | AssignToImmutable | assignment to a binding without `mut` |
 | E0204 | TooManyConstants | the constant pool limit is exceeded |
-| E0205 | TooManyRegisters | the register limit is exceeded |
+| E0205 | TooManyRegisters | the register limit is exceeded, or an instruction with no wide form would need a register above 255; reported at the line that needs it, never compiled into a truncated register |
 | E0206 | TooManyArguments | the argument limit is exceeded |
 | E0207 | BreakOutsideLoop | `break` outside a loop |
 | E0208 | ContinueOutsideLoop | `continue` outside a loop |
@@ -2417,6 +3287,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0213 | JumpOffsetTooLarge | a jump exceeds the encodable range |
 | E0214 | CompilationLimitExceeded | a compilation limit is exceeded |
 | E0215 | MissingReturnValue | a path falls through without a value |
+| E0216 | CallWindowOverlap | internal compiler error: a call frame would overwrite a register that is still live; the program is refused instead of run with a corrupted local |
 
 ### E03xx, types
 
@@ -2439,20 +3310,20 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0315 | NegativeArraySize | an array length below zero |
 | E0316 | NonConstantArrayRepeat | an array repeat count that is not constant |
 | E0317 | ConstantSliceOutOfBounds | a constant slice range leaves the source |
-| E0318 | MutableCollectionRequired | the operation needs a mutable receiver |
+| E0318 | MutableCollectionRequired | an index write or `push`/`pop`/`reserve` through a place whose root is immutable or a temporary |
 | E0319 | ReadOnlyCollectionRequired | the operation needs a read-only receiver |
 | E0320 | UnconsumedCollectionIterator | a bare `iter()` is not a value |
 | E0321 | ConstantIndexOutOfBounds | a constant index leaves the collection |
 | E0322 | CollectionCollectRequiresPipeline | `collect` needs a pipeline |
-| E0323 | MutableCollectionAlias | a mutable collection is aliased |
+| E0323 | MutableCollectionAlias | a mutable alias (`let mut`, an assignment to a mutable binding, a `mut` parameter) of an aggregate reachable from an immutable binding, an imported `pub let` included |
 | E0324 | NonExhaustiveStruct | a struct match needs `_` or an irrefutable field pattern |
 | E0325 | GenericStructDeferred | this generic struct form is not delivered |
 | E0326 | DuplicateNominal | two declarations share a name |
 | E0327 | DuplicateStructField | two fields share a name |
 | E0328 | UnknownStruct | no such struct |
 | E0329 | InvalidStructMethod | no such method on that struct |
-| E0330 | ImmutableStructField | a field write through an immutable root |
-| E0331 | ImmutableStructMethod | a `mut self` method on an immutable value |
+| E0330 | ImmutableStructField | a field write through a place whose root is immutable |
+| E0331 | ImmutableStructMethod | a `mut self` method on a place whose root is immutable |
 | E0332 | UnknownTrait | no such trait |
 | E0333 | MissingTraitMethod | an impl omits a required method |
 | E0334 | DuplicateTraitImpl | the same impl is written twice |
@@ -2501,6 +3372,13 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
+| E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
+| E0396 | DuplicateConstant | a `const` declared twice in the same scope |
+| E0390 | UndefinedLabel | a `break` or `continue` names a label no enclosing loop declares |
+| E0391 | BreakValueOutsideLoop | `break` with a value targets a `while` or `for` |
+| E0392 | CapitalizedBindingPattern | a bare capitalised name in a pattern on an enum, which would bind instead of matching a variant |
+| E0393 | TupleFieldAssignment | a write to a tuple field; tuples are immutable |
+| E0394 | ReservedName | a name starts with `AelysTuple`, which is reserved for the compiler's tuple types |
 
 ### E04xx, modules, visibility, borrows, and associated items
 
@@ -2512,7 +3390,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0404 | StdlibNotAvailable | the stdlib module is not available here |
 | E0405 | SymbolNotFound | no such symbol in that module |
 | E0406 | InvalidNativeModule | the native module is malformed |
-| E0407 | TypeNotExportable | a nominal value cannot cross a module boundary |
+| E0407 | TypeNotExportable | a private nominal reaches an exported signature or an impl header |
 | E0408 | NativeChecksumMismatch | the native module checksum does not match |
 | E0409 | NativeVersionMismatch | the native module version does not match |
 | E0410 | SymbolConflict | two declarations of one name reach one file |
@@ -2547,3 +3425,10 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0442 | UnorderedSpecialization | two impls of one trait for one type are equally specific |
 | E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
+| E0445 | AmbiguousImport | an unqualified use of a name two whole-module imports both bind |
+| E0446 | AssignToImmutableImport | an assignment to an imported `pub let` or imported function |
+| E0460 | MixedIntegerOperands | a binary operator mixes two integer types |
+| E0461 | WideIntegerUnavailable | `i64` or `u64` is written; `int` is a 48-bit integer |
+| E0462 | FixedPointShiftOutOfRange | a literal shift count of `mul_shr` or `shl_div` lies outside 0..=63 |
+| E0470 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
+| E0471 | UnorderedSortElement | `sort` on elements with no built-in order |

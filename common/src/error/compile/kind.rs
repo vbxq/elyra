@@ -6,6 +6,9 @@ pub enum CompileErrorKind {
     InvalidEscape(char),
     UnterminatedFmtExpr,
     UnmatchedCloseBrace,
+    InvalidCharLiteral {
+        reason: String,
+    },
 
     UnexpectedToken {
         expected: String,
@@ -41,6 +44,12 @@ pub enum CompileErrorKind {
         trait_name: String,
     },
     InvalidDefaultMethod,
+    ReservedIdentifier {
+        name: String,
+    },
+    ReservedName {
+        name: String,
+    },
 
     UndefinedVariable(String),
     VariableAlreadyDefined(String),
@@ -53,6 +62,10 @@ pub enum CompileErrorKind {
         distance: usize,
     },
     CompilationLimitExceeded(String),
+    CallWindowOverlap {
+        register: u16,
+        window_base: u16,
+    },
     BreakOutsideLoop,
     ContinueOutsideLoop,
     ReturnOutsideFunction,

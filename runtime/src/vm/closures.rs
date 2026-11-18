@@ -26,6 +26,7 @@ impl VM {
                 {
                     upval.location = UpvalueLocation::Closed(value);
                 }
+                self.heap.write_barrier_value(upval_ref, value);
                 self.open_upvalues.swap_remove(i);
             } else {
                 i += 1;
@@ -119,6 +120,7 @@ impl VM {
                 {
                     upval.location = UpvalueLocation::Closed(value);
                 }
+                self.heap.write_barrier_value(upval_ref, value);
             }
         }
     }
@@ -150,6 +152,7 @@ impl VM {
                 {
                     upval.location = UpvalueLocation::Closed(value);
                 }
+                self.heap.write_barrier_value(upval_ref, value);
 
                 // Remove from open_upvalues list
                 self.open_upvalues.swap_remove(i);
