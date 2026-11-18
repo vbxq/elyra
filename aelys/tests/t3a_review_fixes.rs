@@ -132,12 +132,12 @@ fn assert_jump_targets_must_start_an_instruction(function: &Function, label: &st
     let starts = instruction_starts(words);
     let sites = jump_sites(words);
     for site in &sites {
-        for target in 0..=words.len() {
+        for (target, starts_here) in starts.iter().enumerate() {
             let Some(patched) = retargeted(function, site, target) else {
                 continue;
             };
             let verdict = aelys_runtime::verify_emitted_function(&patched);
-            if starts[target] {
+            if *starts_here {
                 assert!(
                     verdict.is_ok(),
                     "{label}: jump at word {} to instruction start {target} must verify: {verdict:?}",
