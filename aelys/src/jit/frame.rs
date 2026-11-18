@@ -1196,11 +1196,38 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 let exit = self.exit();
                 self.compare_ints(inst, IntCC::SignedGreaterThanOrEqual, Some(exit));
             }
-            Eq | EqIIG => {
+            Eq | Ne => {
+                let exit = self.exit();
+                let left = self.get(inst.b);
+                let right = self.get(inst.c);
+                let mut plain = None;
+                for value in [left, right] {
+                    let float = self.is_float(value);
+                    let pointer = self.tag_is(value, Value::ptr(0).raw() & TAG_BITS);
+                    let either = self.builder.ins().bor(float, pointer);
+                    let simple = self.builder.ins().icmp_imm_s(IntCC::Equal, either, 0);
+                    plain = Some(match plain {
+                        Some(previous) => self.builder.ins().band(previous, simple),
+                        None => simple,
+                    });
+                }
+                if let Some(plain) = plain {
+                    self.guard(plain, exit);
+                }
+                let condition = if inst.op == Eq {
+                    IntCC::Equal
+                } else {
+                    IntCC::NotEqual
+                };
+                let result = self.builder.ins().icmp(condition, left, right);
+                let boxed = self.box_bool(result);
+                self.set(inst.a, boxed);
+            }
+            EqIIG => {
                 let exit = self.exit();
                 self.compare_ints(inst, IntCC::Equal, Some(exit));
             }
-            Ne | NeIIG => {
+            NeIIG => {
                 let exit = self.exit();
                 self.compare_ints(inst, IntCC::NotEqual, Some(exit));
             }
