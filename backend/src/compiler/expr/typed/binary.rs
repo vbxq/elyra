@@ -5,7 +5,7 @@ use aelys_syntax::Span;
 use aelys_syntax::ast::BinaryOp;
 
 impl Compiler {
-    fn get_typed_local_register(&self, expr: &aelys_sema::TypedExpr) -> Option<u16> {
+    pub(super) fn get_typed_local_register(&self, expr: &aelys_sema::TypedExpr) -> Option<u16> {
         if let aelys_sema::TypedExprKind::Identifier(name) = &expr.kind
             && let Some((reg, _)) = self.resolve_variable(name)
         {
@@ -95,5 +95,70 @@ impl Compiler {
         }
 
         Ok(())
+    }
+
+    pub(super) fn try_compile_fixed_point_call(
+        &mut self,
+        callee: &aelys_sema::TypedExpr,
+        args: &[aelys_sema::TypedExpr],
+        dest: u16,
+        span: Span,
+    ) -> Result<bool> {
+        let aelys_sema::TypedExprKind::Member {
+            object,
+            member,
+            separator: aelys_syntax::MemberSeparator::Dot,
+        } = &callee.kind
+        else {
+            return Ok(false);
+        };
+        let opcode = match member.as_str() {
+            "mul_shr" => OpCode::MulShr,
+            "shl_div" => OpCode::ShlDiv,
+            _ => return Ok(false),
+        };
+        let [right, shift] = args else {
+            return Ok(false);
+        };
+        let resolved = aelys_sema::ResolvedType::from_infer_type(&object.ty);
+        let kind = match crate::opcode_select::sized_kind(&resolved) {
+            Some(kind) => aelys_bytecode::FixedKind::Sized(kind),
+            None if resolved == aelys_sema::ResolvedType::I64 => aelys_bytecode::FixedKind::Int,
+            None => return Ok(false),
+        };
+        let mut temporaries = Vec::new();
+        let mut operand = |this: &mut Self, expr: &aelys_sema::TypedExpr| -> Result<u16> {
+            if let Some(register) = this.get_typed_local_register(expr) {
+                return Ok(register);
+            }
+            let register = this.alloc_register()?;
+            this.compile_typed_expr(expr, register)?;
+            temporaries.push(register);
+            Ok(register)
+        };
+        let left_register = operand(self, object)?;
+        let right_register = operand(self, right)?;
+        let shift = match &shift.kind {
+            aelys_sema::TypedExprKind::Int(value) if (0..=63).contains(value) => {
+                aelys_bytecode::FixedShift::Immediate(
+                    u8::try_from(*value).expect("the shift was range checked"),
+                )
+            }
+            _ => aelys_bytecode::FixedShift::Register(operand(self, shift)?),
+        };
+        let line = self.current_line(span);
+        self.current.emit_fixed(
+            opcode,
+            kind,
+            shift,
+            dest,
+            left_register,
+            right_register,
+            line,
+        );
+        for register in temporaries.into_iter().rev() {
+            self.free_register(register);
+        }
+        Ok(true)
     }
 }

@@ -276,6 +276,28 @@ impl Function {
         self.record_lines(2, line);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn emit_fixed(
+        &mut self,
+        op: OpCode,
+        kind: super::FixedKind,
+        shift: FixedShift,
+        a: u16,
+        b: u16,
+        c: u16,
+        line: u32,
+    ) {
+        debug_assert!(matches!(op, OpCode::MulShr | OpCode::ShlDiv));
+        let (mode, immediate, register) = match shift {
+            FixedShift::Immediate(value) => (0u8, value, 0u16),
+            FixedShift::Register(register) => (1u8, 0u8, register),
+        };
+        self.emit_a(op, kind.to_u8(), mode, immediate, line);
+        self.push_raw((u32::from(a) << 16) | u32::from(b));
+        self.push_raw((u32::from(c) << 16) | u32::from(register));
+        self.record_lines(2, line);
+    }
+
     fn emit_wide_or_record_error(
         &mut self,
         op: OpCode,
@@ -304,4 +326,10 @@ impl Function {
             nested.strip_debug_info();
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixedShift {
+    Immediate(u8),
+    Register(u16),
 }

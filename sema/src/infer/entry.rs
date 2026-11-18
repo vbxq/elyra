@@ -68,6 +68,9 @@ impl Default for TypeInference {
             exported_constants: std::collections::BTreeMap::new(),
             function_mutable_params: HashMap::new(),
             surface_dynamic_spans: HashSet::new(),
+            pending_int_literals: Vec::new(),
+            nominal_expectation: None,
+            constructor_expectation: None,
             sum_type_residuals: Vec::new(),
             explicit_dynamic_functions: HashSet::new(),
             module_aliases: HashSet::new(),
@@ -421,7 +424,7 @@ impl TypeInference {
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::U64,
+            "u64" | "uint64" => InferType::I64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
@@ -595,6 +598,22 @@ impl TypeInference {
                 self.check_type_annotation(param);
             }
             return;
+        }
+
+        if matches!(name_lower.as_str(), "i64" | "int64" | "u64" | "uint64")
+            && self
+                .surface_dynamic_spans
+                .insert((ann.span.start, ann.span.end))
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::WideIntegerUnavailable {
+                    name: ann.name.clone(),
+                },
+                span: ann.span,
+                reason: ConstraintReason::TypeAnnotation {
+                    var_name: ann.name.clone(),
+                },
+            });
         }
 
         if KNOWN_TYPE_NAMES.contains(&name_lower.as_str()) {
@@ -1666,6 +1685,7 @@ impl TypeInference {
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
+        inf.settle_pending_int_literals(&mut subst);
 
         inf.validate_sum_method_residuals(&mut subst);
         inf.validate_dynamic_residuals(&subst);

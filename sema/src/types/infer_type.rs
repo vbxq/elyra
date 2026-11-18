@@ -230,6 +230,39 @@ impl InferType {
         )
     }
 
+    pub fn is_sized_integer(&self) -> bool {
+        matches!(
+            self,
+            InferType::I8
+                | InferType::I16
+                | InferType::I32
+                | InferType::U8
+                | InferType::U16
+                | InferType::U32
+        )
+    }
+
+    pub fn wrap_int(&self, value: i64) -> i64 {
+        match self {
+            InferType::I8 => value as i8 as i64,
+            InferType::I16 => value as i16 as i64,
+            InferType::I32 => value as i32 as i64,
+            InferType::U8 => value as u8 as i64,
+            InferType::U16 => value as u16 as i64,
+            InferType::U32 => value as u32 as i64,
+            _ => value,
+        }
+    }
+
+    pub fn int_bits(&self) -> Option<u32> {
+        match self {
+            InferType::I8 | InferType::U8 => Some(8),
+            InferType::I16 | InferType::U16 => Some(16),
+            InferType::I32 | InferType::U32 => Some(32),
+            _ => None,
+        }
+    }
+
     pub fn is_float(&self) -> bool {
         matches!(self, InferType::F32 | InferType::F64)
     }
@@ -435,7 +468,7 @@ impl InferType {
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::U64,
+            "u64" | "uint64" => InferType::I64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
@@ -510,7 +543,7 @@ impl InferType {
             "u8" | "uint8" => InferType::U8,
             "u16" | "uint16" => InferType::U16,
             "u32" | "uint32" => InferType::U32,
-            "u64" | "uint64" => InferType::U64,
+            "u64" | "uint64" => InferType::I64,
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,

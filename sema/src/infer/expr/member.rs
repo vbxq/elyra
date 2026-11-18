@@ -1227,6 +1227,7 @@ impl TypeInference {
         fields: &[StructFieldInit],
         _span: Span,
     ) -> (TypedExprKind, InferType) {
+        let expectation = self.nominal_expectation.take();
         if let Some(error) = self.private_nominal_error(name, _span) {
             self.errors.push(error);
             return (TypedExprKind::Null, InferType::Poison);
@@ -1246,10 +1247,13 @@ impl TypeInference {
                 },
             });
         }
-        let explicit_type_args = type_args
+        let mut explicit_type_args = type_args
             .iter()
             .map(|annotation| self.type_from_annotation(annotation))
             .collect::<Vec<_>>();
+        if explicit_type_args.is_empty() {
+            explicit_type_args = Self::expected_type_args(expectation, name);
+        }
         if let Some(definition) = &def
             && !explicit_type_args.is_empty()
             && explicit_type_args.len() != definition.type_params.len()
@@ -1310,7 +1314,7 @@ impl TypeInference {
         let typed_fields: Vec<(String, Box<TypedExpr>)> = fields
             .iter()
             .filter_map(|f| {
-                let typed_value = self.infer_expr(&f.value);
+                let mut typed_value = self.infer_expr(&f.value);
 
                 if !seen.insert(f.name.clone()) {
                     self.errors.push(TypeError {
@@ -1340,6 +1344,7 @@ impl TypeInference {
                         }
                         field_offsets.push(field_def.ordinal);
                         let field_ty = field_def.ty.substitute_params(&substitutions);
+                        self.fit_int_literal(&mut typed_value, &field_ty);
                         let reason = ConstraintReason::TypeAnnotation {
                             var_name: format!("{}.{}", name, f.name),
                         };
@@ -1446,7 +1451,7 @@ impl TypeInference {
         object: &Expr,
         typed_object: TypedExpr,
         member: &str,
-        typed_value: TypedExpr,
+        mut typed_value: TypedExpr,
         span: Span,
     ) -> (TypedExprKind, InferType) {
         let value_span = typed_value.span;
@@ -1538,6 +1543,7 @@ impl TypeInference {
                 }
                 _ => (0, 0, InferType::Poison),
             };
+        self.fit_int_literal(&mut typed_value, &field_ty);
         if !self.reject_dynamic(
             &typed_value.ty,
             &field_ty,
@@ -1574,6 +1580,7 @@ impl TypeInference {
         fields: &[StructFieldInit],
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        let expectation = self.nominal_expectation.take();
         let enum_name = path.first().cloned().unwrap_or_default();
         let variant_name = path.last().cloned().unwrap_or_default();
         let Some(def) = self.type_table.get_enum(&enum_name).cloned() else {
@@ -1618,10 +1625,13 @@ impl TypeInference {
                 InferType::Poison,
             );
         }
-        let explicit_types = type_args
+        let mut explicit_types = type_args
             .iter()
             .map(|annotation| self.type_from_annotation(annotation))
             .collect::<Vec<_>>();
+        if explicit_types.is_empty() {
+            explicit_types = Self::expected_type_args(expectation, &enum_name);
+        }
         if explicit_types.len() != def.type_params.len() {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::GenericArityMismatch {
@@ -1714,7 +1724,7 @@ impl TypeInference {
         let mut field_visibility_error = false;
         let mut typed_by_name = std::collections::HashMap::new();
         for field in fields {
-            let typed_value = self.infer_expr(&field.value);
+            let mut typed_value = self.infer_expr(&field.value);
             if !seen.insert(field.name.clone()) {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::DuplicateStructField {
@@ -1743,6 +1753,7 @@ impl TypeInference {
                     var_name: format!("{}::{}.{}", enum_name, variant_name, field.name),
                 };
                 let expected_ty = expected.ty.substitute_params(&substitutions);
+                self.fit_int_literal(&mut typed_value, &expected_ty);
                 if !self.reject_dynamic(&typed_value.ty, &expected_ty, field.span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,

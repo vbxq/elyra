@@ -164,15 +164,23 @@ impl Compiler {
         &mut self,
         inner: &TypedExpr,
         target: &InferType,
+        sized: Option<aelys_bytecode::CastTarget>,
         dest: u16,
         span: Span,
     ) -> Result<bool> {
-        let native = match (&inner.ty, target) {
-            (InferType::Char, InferType::Char) => {
+        let native = match (&inner.ty, target, sized) {
+            (InferType::Char, InferType::Char, _) => {
                 return self.compile_typed_expr(inner, dest).map(|()| true);
             }
-            (InferType::Char, _) => "__char_to_int",
-            (_, InferType::Char) => "__char_from_int",
+            (InferType::Char, _, Some(sized)) => {
+                let source = self.alloc_register()?;
+                self.call_native("__char_to_int", &[Operand::Expr(inner)], source, span)?;
+                self.emit_a(OpCode::Cast, dest, source, u16::from(sized as u8), span);
+                self.free_register(source);
+                return Ok(true);
+            }
+            (InferType::Char, _, None) => "__char_to_int",
+            (_, InferType::Char, _) => "__char_from_int",
             _ => return Ok(false),
         };
         self.call_native(native, &[Operand::Expr(inner)], dest, span)?;

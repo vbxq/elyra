@@ -13,8 +13,9 @@ impl TypeInference {
         _span: Span,
     ) -> (TypedExprKind, InferType) {
         let typed_cond = self.infer_expr(condition);
-        let typed_then = self.infer_expr(then_branch);
-        let typed_else = self.infer_expr(else_branch);
+        let mut typed_then = self.infer_expr(then_branch);
+        let mut typed_else = self.infer_expr(else_branch);
+        self.unify_branch_literals(&mut [&mut typed_then, &mut typed_else]);
         let dynamic_result = matches!(typed_then.ty, InferType::Dynamic)
             || matches!(typed_else.ty, InferType::Dynamic);
         let poisoned_result = matches!(typed_then.ty, InferType::Poison)

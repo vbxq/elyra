@@ -1469,19 +1469,6 @@ impl TypeInference {
                 MatchArmBody::Expr(expr) => {
                     let typed_expr = self.infer_expr(expr);
                     dynamic_result |= matches!(typed_expr.ty, InferType::Dynamic);
-                    if !self.reject_dynamic(
-                        &typed_expr.ty,
-                        &result_type,
-                        expr.span,
-                        ConstraintReason::IfBranches,
-                    ) {
-                        self.constraints.push(Constraint::equal(
-                            result_type.clone(),
-                            typed_expr.ty.clone(),
-                            expr.span,
-                            ConstraintReason::IfBranches,
-                        ));
-                    }
                     TypedMatchArmBody::Expr(typed_expr)
                 }
                 MatchArmBody::Block(stmts) => {
@@ -1545,6 +1532,32 @@ impl TypeInference {
             });
         }
 
+        let mut bodies: Vec<&mut TypedExpr> = typed_arms
+            .iter_mut()
+            .filter_map(|arm| match &mut arm.body {
+                TypedMatchArmBody::Expr(expr) => Some(expr),
+                TypedMatchArmBody::Block(_) => None,
+            })
+            .collect();
+        self.unify_branch_literals(&mut bodies);
+        for arm in &typed_arms {
+            if let TypedMatchArmBody::Expr(typed_expr) = &arm.body
+                && !self.reject_dynamic(
+                    &typed_expr.ty,
+                    &result_type,
+                    typed_expr.span,
+                    ConstraintReason::IfBranches,
+                )
+            {
+                self.constraints.push(Constraint::equal(
+                    result_type.clone(),
+                    typed_expr.ty.clone(),
+                    typed_expr.span,
+                    ConstraintReason::IfBranches,
+                ));
+            }
+        }
+
         self.match_exhaustivity_residuals
             .push(MatchExhaustivityResidual {
                 ty: typed_scrutinee.ty.clone(),
@@ -1585,12 +1598,28 @@ impl TypeInference {
                 TypedPatternKind::Binding(name.clone())
             }
             PatternKind::Int(value) => {
-                self.constraints.push(Constraint::equal(
-                    ty.clone(),
-                    InferType::I64,
-                    pattern.span,
-                    ConstraintReason::Comparison,
-                ));
+                if ty.is_sized_integer() {
+                    if !InferType::int_fits(*value, ty) {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::Mismatch {
+                                expected: ty.clone(),
+                                found: InferType::I64,
+                            },
+                            span: pattern.span,
+                            reason: ConstraintReason::IntLiteralOverflow {
+                                value: *value,
+                                target: ty.clone(),
+                            },
+                        });
+                    }
+                } else {
+                    self.constraints.push(Constraint::equal(
+                        ty.clone(),
+                        InferType::I64,
+                        pattern.span,
+                        ConstraintReason::Comparison,
+                    ));
+                }
                 TypedPatternKind::Int(*value)
             }
             PatternKind::String(value) => {

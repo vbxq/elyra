@@ -22,8 +22,12 @@ impl Compiler {
         if *op != BinaryOp::Add || left_name != name {
             return Ok(false);
         }
-        if !aelys_sema::ResolvedType::from_infer_type(&left.ty).is_integer()
-            || !aelys_sema::ResolvedType::from_infer_type(&right.ty).is_integer()
+        let left_resolved = aelys_sema::ResolvedType::from_infer_type(&left.ty);
+        let right_resolved = aelys_sema::ResolvedType::from_infer_type(&right.ty);
+        if !left_resolved.is_integer()
+            || !right_resolved.is_integer()
+            || crate::opcode_select::sized_kind(&left_resolved).is_some()
+            || crate::opcode_select::sized_kind(&right_resolved).is_some()
         {
             return Ok(false);
         }

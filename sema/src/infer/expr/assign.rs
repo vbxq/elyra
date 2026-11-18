@@ -22,9 +22,10 @@ impl TypeInference {
                 reason: ConstraintReason::Other("assignment".to_string()),
             });
         }
-        let typed_value = self.infer_expr(value);
+        let mut typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {
+            self.fit_int_literal(&mut typed_value, &var_type);
             self.env.invalidate_collection_length(name);
             self.record_mutable_alias(
                 value,

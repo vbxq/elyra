@@ -81,23 +81,35 @@ impl TypeInference {
         step: Option<&Expr>,
         body: &Stmt,
     ) -> TypedStmtKind {
-        let typed_start = self.infer_expr(start);
-        let typed_end = self.infer_expr(end);
-        let typed_step = step.map(|s| self.infer_expr(s));
+        let mut typed_start = self.infer_expr(start);
+        let mut typed_end = self.infer_expr(end);
+        let mut typed_step = step.map(|s| self.infer_expr(s));
+        let bound_ty = [&typed_start.ty, &typed_end.ty]
+            .into_iter()
+            .find(|ty| ty.is_sized_integer())
+            .cloned()
+            .unwrap_or(InferType::I64);
+        if bound_ty.is_sized_integer() {
+            self.fit_int_literal(&mut typed_start, &bound_ty);
+            self.fit_int_literal(&mut typed_end, &bound_ty);
+            if let Some(typed_step) = typed_step.as_mut() {
+                self.fit_int_literal(typed_step, &bound_ty);
+            }
+        }
 
         if !self.reject_dynamic(
             &typed_start.ty,
-            &InferType::I64,
+            &bound_ty,
             start.span,
             ConstraintReason::ForBounds,
         ) && !self.reject_untyped_native(
             &typed_start.ty,
-            &InferType::I64,
+            &bound_ty,
             start.span,
             ConstraintReason::ForBounds,
         ) {
             self.constraints.push(Constraint::equal(
-                InferType::I64,
+                bound_ty.clone(),
                 typed_start.ty.clone(),
                 start.span,
                 ConstraintReason::ForBounds,
@@ -105,17 +117,17 @@ impl TypeInference {
         }
         if !self.reject_dynamic(
             &typed_end.ty,
-            &InferType::I64,
+            &bound_ty,
             end.span,
             ConstraintReason::ForBounds,
         ) && !self.reject_untyped_native(
             &typed_end.ty,
-            &InferType::I64,
+            &bound_ty,
             end.span,
             ConstraintReason::ForBounds,
         ) {
             self.constraints.push(Constraint::equal(
-                InferType::I64,
+                bound_ty.clone(),
                 typed_end.ty.clone(),
                 end.span,
                 ConstraintReason::ForBounds,
@@ -123,19 +135,16 @@ impl TypeInference {
         }
         if let Some(ref ts) = typed_step {
             let step_span = step.map(|s| s.span).unwrap_or(body.span);
-            if !self.reject_dynamic(
-                &ts.ty,
-                &InferType::I64,
-                step_span,
-                ConstraintReason::ForBounds,
-            ) && !self.reject_untyped_native(
-                &ts.ty,
-                &InferType::I64,
-                step_span,
-                ConstraintReason::ForBounds,
-            ) {
+            if !self.reject_dynamic(&ts.ty, &bound_ty, step_span, ConstraintReason::ForBounds)
+                && !self.reject_untyped_native(
+                    &ts.ty,
+                    &bound_ty,
+                    step_span,
+                    ConstraintReason::ForBounds,
+                )
+            {
                 self.constraints.push(Constraint::equal(
-                    InferType::I64,
+                    bound_ty.clone(),
                     ts.ty.clone(),
                     step_span,
                     ConstraintReason::ForBounds,
@@ -144,7 +153,7 @@ impl TypeInference {
         }
 
         self.env.push_scope();
-        self.env.define_local(iterator.to_string(), InferType::I64);
+        self.env.define_local(iterator.to_string(), bound_ty);
         let typed_body = self.infer_stmt(body);
         self.env.pop_scope();
 
