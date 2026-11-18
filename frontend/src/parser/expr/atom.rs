@@ -1105,8 +1105,29 @@ fn remap_expr_spans(expr: &mut Expr, span: aelys_syntax::Span) {
             remap_expr_spans(object, span);
             remap_expr_spans(value, span);
         }
-        ExprKind::Grouping(inner) => {
+        ExprKind::Grouping(inner) | ExprKind::Try(inner) => {
             remap_expr_spans(inner, span);
+        }
+        ExprKind::Borrow { operand, .. } => {
+            remap_expr_spans(operand, span);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            remap_expr_spans(scrutinee, span);
+            for arm in arms {
+                arm.span = span;
+                arm.pattern.span = span;
+                if let Some(guard) = &mut arm.guard {
+                    remap_expr_spans(guard, span);
+                }
+                match &mut arm.body {
+                    MatchArmBody::Expr(body) => remap_expr_spans(body, span),
+                    MatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            remap_stmt_spans(stmt, span);
+                        }
+                    }
+                }
+            }
         }
         ExprKind::If {
             condition,

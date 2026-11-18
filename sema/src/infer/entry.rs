@@ -64,6 +64,7 @@ impl Default for TypeInference {
             match_unit_residuals: Vec::new(),
             dynamic_residuals: Vec::new(),
             bound_residuals: Vec::new(),
+            bound_deductions: Vec::new(),
             alias_residuals: Vec::new(),
             imported_constants: HashMap::new(),
             global_constants: HashMap::new(),
@@ -1696,6 +1697,7 @@ impl TypeInference {
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
+        inf.deduce_bound_arguments(&mut subst);
         inf.settle_pending_int_literals(&mut subst);
 
         inf.validate_sum_method_residuals(&mut subst);

@@ -420,6 +420,12 @@ the width (`const Z = 1 >> -1` is `0`). Anything else, a function call, a `let`
 binding, a collection, a division by zero or an `int` result outside the 48-bit
 range, is E0395; for a division or remainder by zero or an overflow, the message
 names that cause (`cannot be evaluated at compile time: division by zero`).
+
+Outside a `const` initializer, an integer expression made only of literals is folded
+by the compiler only when every step stays inside the 48-bit range. A step that
+overflows is left to run, so the program traps at run time exactly as an unoptimised
+build would: `a[(140737488355327 * 2) & 255]` traps with the integer overflow error
+rather than reporting a constant index out of bounds (E0321).
 Declaring the same constant twice in one scope is E0396.
 
 A constant is folded when the program is compiled: every use is replaced by its
@@ -546,6 +552,12 @@ let h = grow
 h(fixed)                                                               // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
 ```
 
+An argument whose type is a type parameter `T` counts as an aggregate at a `mut`
+position, direct or through a function value, because an instance may give `T` a
+struct or a `Vec`: in `fn apply<T>(f: fn(mut T) -> int, x: T) -> int { f(x) }` the
+call `f(x)` is E0323; declare the parameter `mut x: T` so that callers must pass a
+mutable root.
+
 The callbacks of the built-in collection, `Option` and `Result` methods (`map`,
 `filter`, `fold`, `and_then`, ...) accept either form.
 
@@ -642,6 +654,27 @@ counter()  // 3
 ```
 
 The inner function holds a reference to `count`, which persists across calls.
+
+A captured variable belongs to the scope that declares it. When control leaves that
+scope, by reaching its end or by `break`, `continue`, `return`, `?`, the end of a
+`match` arm, a failing arm guard, or the end of an `if let` or `while let` body,
+every closure that captured one of its variables keeps the value the variable had
+then; a later variable reusing the slot never shows through. A closure made in a
+match arm, an `if let` branch or a loop iteration and stored in a `Vec` reads its
+own binding when it is called after the match or the loop:
+
+```rust
+let mut fs: Vec<fn() -> int> = vec![]
+for i in 0..3 {
+    match Some(i * 10) {
+        Some(v) => fs.push(fn() -> int { v + 1 }),
+        None => fs.push(fn() -> int { 0 }),
+    }
+}
+let mut t = 0
+for f in fs { t = t * 100 + f() }
+println(t)   // 11121
+```
 
 ### Higher-Order Functions
 
@@ -803,6 +836,30 @@ Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same f
 Both operands have the same integer type. On `int` the shift count is taken modulo 64 and
 `<<` traps when the exact result leaves the 48-bit range, like `*`. On a sized type the
 count is taken modulo the width and the result wraps.
+
+### Evaluation order
+
+Operands are evaluated left to right, as in Rust and Java. The left operand of a
+binary operator is read before the right operand is evaluated, even when the right
+operand calls a function that writes the variable on the left through a closure:
+
+```rust
+fn main() -> int {
+    let mut x = 10
+    let bump = fn() -> int { x = 100; 1 }
+    x = x + bump()      // 11: x is read as 10 before bump runs
+    x
+}
+```
+
+The same order holds everywhere: call arguments and collection literal elements
+in order; in `v[i]` the container, then the index; in an assignment `place = value`
+the container and indices of the place, then the value, then the store; and in a
+compound assignment `place op= value` the place is read once, before the value is
+evaluated (`x += f()` adds `f()` to the value `x` had before the call, `v[i] += f()`
+and `s.a += f()` likewise). A field or index assignment stores into the object the
+place named when it was evaluated, even if the right-hand side rebinds the variable
+to another object.
 
 ### Precedence (lowest to highest)
 
@@ -1979,6 +2036,12 @@ a literal would; it does not bind a new variable, and E0392 never applies to it.
 variable or parameter of the same name hides the constant, and then the name binds. A
 `float` constant cannot be a pattern (E0301).
 
+A destructuring `let` must be irrefutable, so a name in its pattern that names a
+constant in scope is E0397 `refutable pattern in let`: `let (LIMIT, b) = pair` with
+`const LIMIT` would have to compare the first element with `LIMIT`. Use `match` or
+`if let` to compare, or a lowercase name to bind. A local variable of the same name
+hides the constant, and then the name binds as usual.
+
 ```rust
 const LIMIT = 10
 fn at_limit(x: int) -> int { match x { LIMIT => 1, _ => 0 } }
@@ -2359,6 +2422,33 @@ println(rank(Bullet { n: 3 }, Bullet { n: 4 }))
 ```
 
 `where` is contextual, so it is still usable as an ordinary identifier.
+
+A type parameter that appears only in the arguments of a bound is deduced from the
+bound subject. In `fn drain<C: Collection<T>, T>(c: C) -> Vec<T>`, a call
+`drain(stack)` with `stack: Stack<int>` fixes `C` to `Stack<int>`, and the one impl
+of `Collection` covering `Stack<int>` (`impl<T> Collection<T> for Stack<T>`) fixes
+`T` to `int`. When no argument, return type or bound fixes a parameter, E0343 names
+that parameter.
+
+```rust
+trait Source<T> { fn first(self) -> T; }
+struct Ints { v: Vec<int> }
+impl Source<int> for Ints { fn first(self) -> int { self.v[0] } }
+
+fn head<S: Source<T>, T>(s: S) -> T { s.first() }
+
+println(head(Ints { v: vec![5, 6] }))   // 5
+```
+
+A trait cannot be implemented for a built-in type (`int`, `float`, `bool`,
+`string`, `char`, the sized integers and `f32`/`f64`): `impl Ordered for int` is
+E0112, which names the type and suggests wrapping the value in a struct. Traits
+are implemented for user structs and enums.
+
+A method declared on a user struct or enum, directly or through a trait, is
+always reachable by its name, including the names of the built-in `Option` and
+`Result` methods (`unwrap`, `expect`, `unwrap_or`, `map`, `ok`, `is_some`, and so
+on): `P { n: 3 }.expect(3)` calls `P::expect`.
 
 ### Supertraits
 
@@ -3144,6 +3234,11 @@ println(match parse("41") { Some(value) => value, None => 0 })    // 42
 println(match parse("nope") { Some(value) => value, None => 0 })  // 0
 ```
 
+The type of `expr?` is the payload type of `expr` as soon as that is known: after
+`let s = get(t)?` with `get` returning `Result<Tok, string>`, `s` is a `Tok`, so a
+following `match s { Tok::A(n) => ..., Tok::B => ... }`, a field match
+`match s.field { ... }`, or `if let Some(x) = g()?` checks against the user type.
+
 `match` on `Option` and `Result` is exhaustive. Omitting a variant is a compile
 error. A named `Option` or `Result` cannot be silently discarded: use it, return it,
 match it, call a consuming method, or write `let _ = expression` explicitly. That
@@ -3348,6 +3443,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0109 | UnknownVariant | no such variant on that type |
 | E0110 | MatchArmValueRequired | a match arm whose block ends without a value, in a match whose other arms produce a non-`unit` value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
+| E0112 | PrimitiveImplUnsupported | a trait impl for a built-in type such as `int` or `string` |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
 | E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
 
@@ -3457,6 +3553,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 | E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
 | E0396 | DuplicateConstant | a `const` declared twice in the same scope |
+| E0397 | RefutableLetPattern | a destructuring `let` whose pattern names a constant in scope, which would match its value |
 | E0390 | UndefinedLabel | a `break` or `continue` names a label no enclosing loop declares |
 | E0391 | BreakValueOutsideLoop | `break` with a value targets a `while` or `for` |
 | E0392 | CapitalizedBindingPattern | a bare capitalised name in a pattern on an enum, which would bind instead of matching a variant |

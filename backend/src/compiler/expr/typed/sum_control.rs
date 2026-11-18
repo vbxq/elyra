@@ -154,11 +154,12 @@ impl Compiler {
             if falls_through {
                 exhaustive = true;
             } else {
+                self.close_scope_upvalues();
                 end_jumps.push(self.emit_jump(OpCode::Jump, arm.span));
             }
+            let next_arm = self.current_offset();
             self.end_scope();
 
-            let next_arm = self.current_offset();
             for jump in failure_jumps {
                 self.patch_jump_to(jump, next_arm);
             }

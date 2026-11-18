@@ -29,6 +29,20 @@ impl Parser {
 
         let (trait_path, self_type) = if self.match_token(&TokenKind::For) {
             let self_type = self.parse_type_annotation()?;
+            if self_type.path.len() == 1 && is_builtin_type_name(&self_type.name) {
+                return Err(aelys_common::error::CompileError::new(
+                    CompileErrorKind::PrimitiveImplUnsupported {
+                        trait_name: match polarity {
+                            ImplPolarity::Negative => format!("!{}", first_type.name),
+                            ImplPolarity::Positive => first_type.name,
+                        },
+                        ty: self_type.name,
+                    },
+                    self_type.span,
+                    std::sync::Arc::clone(&self.source),
+                )
+                .into());
+            }
             if self_type
                 .path
                 .last()
@@ -131,4 +145,25 @@ impl Parser {
             start_span.merge(self.previous().span),
         ))
     }
+}
+
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int"
+            | "float"
+            | "bool"
+            | "string"
+            | "char"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "f32"
+            | "f64"
+    )
 }

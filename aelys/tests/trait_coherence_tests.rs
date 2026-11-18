@@ -411,11 +411,11 @@ probe()
 ",
     );
     assert!(
-        positive.contains("error[E0101]"),
+        positive.contains("error[E0112]"),
         "the positive path refuses a primitive at the parser: {positive}"
     );
     assert!(
-        negative.contains("error[E0101]"),
+        negative.contains("error[E0112]"),
         "the negative path must refuse it at the same place: {negative}"
     );
 }

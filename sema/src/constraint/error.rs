@@ -232,6 +232,9 @@ pub enum TypeErrorKind {
         name: String,
         suggestion: Option<String>,
     },
+    RefutableLetPattern {
+        name: String,
+    },
     TupleFieldOutOfRange {
         tuple: InferType,
         field: String,
@@ -1730,6 +1733,11 @@ impl TypeError {
                     name
                 ),
             },
+            TypeErrorKind::RefutableLetPattern { name } => write!(
+                f,
+                "refutable pattern in `let`: `{}` names a constant, so this position matches its value and can fail\n   = help: use `match` or `if let` to compare with the constant, or a lowercase name to bind",
+                name
+            ),
             TypeErrorKind::TupleFieldOutOfRange { tuple, field } => write!(
                 f,
                 "tuple {} has no field {}",
@@ -2036,6 +2044,7 @@ impl TypeErrorKind {
             Self::UndefinedLabel { .. } => 390,
             Self::BreakValueOutsideLoop { .. } => 391,
             Self::CapitalizedBindingPattern { .. } => 392,
+            Self::RefutableLetPattern { .. } => 397,
             Self::TupleFieldAssignment { .. } => 393,
             Self::TupleFieldOutOfRange { .. } => 363,
             Self::TuplePatternArity { .. } => 301,

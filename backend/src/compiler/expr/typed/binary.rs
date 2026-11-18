@@ -59,7 +59,12 @@ impl Compiler {
             return Ok(());
         }
 
-        if let Some(left_local_reg) = self.get_typed_local_register(left) {
+        // a call on the right can write a mutable local through a closure, so it is read first
+        let left_may_change = matches!(&left.kind, aelys_sema::TypedExprKind::Identifier(name)
+                if self.resolve_variable(name).is_some_and(|(_, mutable)| mutable))
+            && Self::typed_expr_may_have_side_effects(right);
+
+        if !left_may_change && let Some(left_local_reg) = self.get_typed_local_register(left) {
             let (right_reg, right_needs_free) =
                 if let Some(r) = self.get_typed_local_register(right) {
                     (r, false)

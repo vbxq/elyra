@@ -213,6 +213,7 @@ pub struct TypeInference {
     match_unit_residuals: Vec<(InferType, Vec<aelys_syntax::Span>)>,
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
+    bound_deductions: Vec<BoundDeduction>,
     alias_residuals: Vec<places::AliasResidual>,
     imported_constants: HashMap<String, constants::ConstValue>,
     global_constants: HashMap<String, constants::ConstValue>,
@@ -310,6 +311,12 @@ struct DynamicResidual {
     expected: InferType,
     span: aelys_syntax::Span,
     reason: ConstraintReason,
+}
+
+pub(crate) struct BoundDeduction {
+    pub(crate) subject: InferType,
+    pub(crate) trait_name: String,
+    pub(crate) trait_args: Vec<InferType>,
 }
 
 pub(crate) struct BoundResidual {

@@ -1254,8 +1254,60 @@ impl TypeInference {
             .into_iter()
             .map(|name| (name, self.type_gen.fresh()))
             .collect::<HashMap<_, _>>();
+        if let TypedExprKind::Identifier(name) = &callee.kind
+            && let Some(bounds) = self.generic_function_bounds.get(name)
+        {
+            for (subject, trait_name, trait_args) in bounds {
+                let Some(subject) = substitutions.get(subject) else {
+                    continue;
+                };
+                if trait_args.is_empty() {
+                    continue;
+                }
+                self.bound_deductions.push(crate::infer::BoundDeduction {
+                    subject: subject.clone(),
+                    trait_name: trait_name.clone(),
+                    trait_args: trait_args
+                        .iter()
+                        .map(|argument| substitute_generic_params(argument, &substitutions))
+                        .collect(),
+                });
+            }
+        }
         let ty = substitute_generic_params(&callee.ty, &substitutions);
         TypedExpr::new(callee.kind, ty, callee.span)
+    }
+
+    // a bound like `C: Collection<T>` fixes `T` once `C` is known, through the one impl covering it
+    pub(crate) fn deduce_bound_arguments(&mut self, subst: &mut crate::unify::Substitution) {
+        let deductions = std::mem::take(&mut self.bound_deductions);
+        loop {
+            let mut progress = false;
+            for deduction in &deductions {
+                let subject = subst.apply(&deduction.subject);
+                if crate::types::nominal_name(&subject).is_none() {
+                    continue;
+                }
+                let Some(impl_args) = self
+                    .type_table
+                    .unique_impl_trait_args(&deduction.trait_name, &subject)
+                else {
+                    continue;
+                };
+                for (argument, actual) in deduction.trait_args.iter().zip(&impl_args) {
+                    let argument = subst.apply(argument);
+                    if argument.has_vars()
+                        && crate::unify::unify(&argument, actual, subst).is_ok()
+                        && subst.apply(&argument) != argument
+                    {
+                        progress = true;
+                    }
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
     }
 
     fn infer_collection_method_call(
@@ -1614,7 +1666,7 @@ fn substitute_generic_params(
     }
 }
 
-fn user_method_receiver(ty: &InferType) -> bool {
+pub(crate) fn user_method_receiver(ty: &InferType) -> bool {
     matches!(
         ty,
         InferType::Struct(_) | InferType::Applied { .. } | InferType::Param(_)

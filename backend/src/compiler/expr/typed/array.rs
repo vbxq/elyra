@@ -322,9 +322,17 @@ impl Compiler {
     }
 
     /// an operand already in a local's register is read where it is
-    pub(crate) fn operand_register(&mut self, expr: &TypedExpr) -> Result<(u16, bool)> {
+    pub(crate) fn operand_register(
+        &mut self,
+        expr: &TypedExpr,
+        later: &[&TypedExpr],
+    ) -> Result<(u16, bool)> {
         if let TypedExprKind::Identifier(name) = &expr.kind
-            && let Some((register, _)) = self.resolve_variable(name)
+            && let Some((register, mutable)) = self.resolve_variable(name)
+            && !(mutable
+                && later
+                    .iter()
+                    .any(|operand| Self::typed_expr_may_have_side_effects(operand)))
         {
             return Ok((register, false));
         }
@@ -343,8 +351,8 @@ impl Compiler {
         if matches!(object.ty, InferType::Map(_, _)) {
             return self.compile_map_index(object, index, dest, span);
         }
-        let (obj_reg, obj_owned) = self.operand_register(object)?;
-        let (idx_reg, idx_owned) = self.operand_register(index)?;
+        let (obj_reg, obj_owned) = self.operand_register(object, &[index])?;
+        let (idx_reg, idx_owned) = self.operand_register(index, &[])?;
 
         let opcode = match &object.ty {
             InferType::Vec(inner) => Self::select_typed_opcode(
@@ -394,10 +402,10 @@ impl Compiler {
             };
             return self.compile_map_index_assign(object, index, value, dest, span);
         }
-        let (obj_reg, obj_owned) = self.operand_register(object)?;
-        let (idx_reg, idx_owned) = self.operand_register(index)?;
+        let (obj_reg, obj_owned) = self.operand_register(object, &[index, value])?;
+        let (idx_reg, idx_owned) = self.operand_register(index, &[value])?;
 
-        let (val_reg, val_owned) = self.operand_register(value)?;
+        let (val_reg, val_owned) = self.operand_register(value, &[])?;
 
         let opcode = match &object.ty {
             InferType::Vec(inner) => Self::select_typed_opcode(
