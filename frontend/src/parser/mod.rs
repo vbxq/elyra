@@ -18,6 +18,7 @@ pub struct Parser {
     type_depth: usize,
     legacy_collections: bool,
     no_brace_construction: bool,
+    synthetic_counter: usize,
 }
 
 impl Parser {
@@ -30,6 +31,7 @@ impl Parser {
             type_depth: 0,
             legacy_collections: false,
             no_brace_construction: false,
+            synthetic_counter: 0,
         }
     }
 
@@ -46,6 +48,7 @@ impl Parser {
             type_depth: 0,
             legacy_collections: true,
             no_brace_construction: false,
+            synthetic_counter: 0,
         }
     }
 

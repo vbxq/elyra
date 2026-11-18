@@ -477,6 +477,8 @@ let mut s = "hello"
 s += " world"       // "hello world"
 ```
 
+The target is evaluated once: in `ms[pick()].hp -= 10` or `w.ps[i + f()].x *= 2`, every index expression of the place is evaluated exactly once, left to right, before the right-hand side; the same slot is read and written.
+
 ### Increment and Decrement
 
 For the common case of adding or subtracting 1:
