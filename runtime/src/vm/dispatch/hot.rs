@@ -778,7 +778,7 @@ impl VM {
                     caller.ip = next;
                     if mapping != caller.global_mapping_id {
                         self.sync_current_function_globals();
-                        self.prepare_globals_for_function(callee);
+                        self.switch_globals(mapping, callee);
                     }
                     let mut frame = CallFrame::with_return_dest(
                         callee,
@@ -824,6 +824,7 @@ impl VM {
                     self.pop_frame_with_jit_metadata();
                     changed = true;
                     let frame = &self.frames[depth - 2];
+                    let mapping = frame.global_mapping_id;
                     ip = frame.ip;
                     base = frame.base;
                     function = frame.function;
@@ -832,10 +833,11 @@ impl VM {
                     constants = frame.constants_ptr;
                     constants_len = frame.constants_len;
                     if switch {
-                        self.prepare_globals_for_function(function);
+                        self.switch_globals(mapping, function);
                     }
                     self.registers[base + destination] = result;
                     schemas = None;
+                    loops_stay = !JIT || self.jit_ignores(function);
                     match base.checked_add(REGISTER_WINDOW) {
                         Some(end) if end <= self.registers.len() => {}
                         _ => leave!(),

@@ -69,6 +69,16 @@ impl VM {
     /// mapping ids come from a process wide counter, so an unusual number of layouts stops being cached
     const MAX_PREPARED_MAPPING: usize = 1 << 20;
 
+    #[inline]
+    pub(crate) fn switch_globals(&mut self, mapping_id: usize, function: GcRef) {
+        if mapping_id != self.current_global_mapping_id
+            && !self.install_prepared_mapping(mapping_id)
+        {
+            self.prepare_globals_for_function(function);
+        }
+    }
+
+    #[inline]
     fn install_prepared_mapping(&mut self, mapping_id: usize) -> bool {
         let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id) else {
             return false;
