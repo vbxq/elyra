@@ -129,7 +129,7 @@ fn disassembly_survives_an_invalid_wide_loop_opcode() {
     let mut func = Function::new(None, 0);
     func.num_registers = 1;
     func.set_bytecode(vec![
-        ((OpCode::LoopWideLong as u32) << 24) | (0xFEu32 << 16),
+        ((OpCode::LoopWideLong as u32) << 24) | (0xECu32 << 16),
         0,
         0,
         (OpCode::Return0 as u32) << 24,
@@ -137,7 +137,7 @@ fn disassembly_survives_an_invalid_wide_loop_opcode() {
 
     let text = disassemble_to_string(&func);
     assert!(
-        text.contains("LoopWideLong <invalid 254>"),
+        text.contains("LoopWideLong <invalid 236>"),
         "expected the raw byte to be printed, got:\n{text}"
     );
 }

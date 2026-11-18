@@ -168,7 +168,7 @@ fn describe(vm: &VM, value: Value) -> String {
 
 fn matches(vm: &VM, value: Value, expected: &InferType) -> bool {
     match expected {
-        InferType::I64 => value.is_int(),
+        InferType::I64 => vm.is_int_value(value),
         InferType::F64 => value.is_float(),
         InferType::Bool => value.is_bool(),
         InferType::Unit => value.is_unit(),

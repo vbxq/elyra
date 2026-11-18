@@ -69,14 +69,14 @@ println(sq(7))
 
 #[test]
 fn an_unused_int_shift_that_overflows_still_traps() {
-    let source = "let s = 47\nlet one = 1\nlet _u = one << s\nprintln(\"after\")\n";
+    let source = "let s = 63\nlet one = 1\nlet _u = one << s\nprintln(\"after\")\n";
     assert_traps_at_every_level(source, &[], "integer overflow");
 }
 
 #[test]
 fn an_int_shift_that_overflows_still_traps_as_an_unused_inlined_argument() {
     let source = "fn first(a: int, b: int) -> int { a }
-fn g(x: int) -> int { first(7, x << 47) }
+fn g(x: int) -> int { first(7, x << 63) }
 println(\"start\")
 println(g(1))
 ";

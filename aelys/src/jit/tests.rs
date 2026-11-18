@@ -256,12 +256,12 @@ fn optimized_translation_inlines_bounded_structural_leaf_calls() {
         JitCallResult::Returned(Value::int(61))
     );
     assert_eq!(
-        provider.try_execute(&key, &caller, &[JitArgument::Integer(Value::INT_MAX)], 2),
+        provider.try_execute(&key, &caller, &[JitArgument::Integer(Value::INLINE_INT_MAX)], 2),
         JitCallResult::Deoptimized {
             bytecode_ip: 0,
             registers: vec![(
                 0,
-                aelys_runtime::JitDeoptValue::Value(Value::int(Value::INT_MAX))
+                aelys_runtime::JitDeoptValue::Value(Value::int(Value::INLINE_INT_MAX))
             )],
         }
     );
@@ -270,7 +270,7 @@ fn optimized_translation_inlines_bounded_structural_leaf_calls() {
         overflow_provider.try_execute(
             &JitFunctionKey::root(10),
             &caller,
-            &[JitArgument::Integer(Value::INT_MAX)],
+            &[JitArgument::Integer(Value::INLINE_INT_MAX)],
             1
         ),
         JitCallResult::Unsupported

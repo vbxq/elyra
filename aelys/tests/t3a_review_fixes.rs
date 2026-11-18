@@ -384,10 +384,10 @@ fn h1_folded_int_shift_left_traps_like_the_runtime() {
         "@inline\nfn sh(a: int, b: int) -> int { a << b }\nsh(16, 63)",
         "fn c() -> int {\n    let r: int = (((-35) * 16171857) / (16 << 63))\n    r\n}\nc()",
         "fn c() -> int {\n    let r: int = (((23 * ((-140737488355328) << 27)) << 70368744177664) ^ (-18))\n    r\n}\nc()",
-        "1 << 47",
-        "(-1) << 48",
-        "3 << 46",
-        "let mut x = 1\nx = x << 60\nx",
+        "1 << 63",
+        "(-3) << 62",
+        "3 << 62",
+        "let mut x = 1\nx = x << 63\nx",
     ] {
         assert_traps_at_every_level(source, "integer overflow");
     }

@@ -153,7 +153,7 @@ fn verify_rejects_invalid_opcode() {
     let mut vm = make_vm();
     let mut func = Function::new(Some("bad_opcode".to_string()), 0);
     func.num_registers = 0;
-    func.set_bytecode(vec![0xFF00_0000]);
+    func.set_bytecode(vec![0xEC00_0000]);
 
     let err = run_function(&mut vm, func).unwrap_err();
     match err.kind {
@@ -474,12 +474,12 @@ chain()
 #[test]
 fn integer_48bit_bounds_checked() {
     use aelys_runtime::Value;
-    let max_val = Value::int(Value::INT_MAX);
-    assert_eq!(max_val.as_int(), Some(Value::INT_MAX));
-    let min_val = Value::int(Value::INT_MIN);
-    assert_eq!(min_val.as_int(), Some(Value::INT_MIN));
-    assert!(Value::int_checked(Value::INT_MAX + 1).is_err());
-    assert!(Value::int_checked(Value::INT_MIN - 1).is_err());
+    let max_val = Value::int(Value::INLINE_INT_MAX);
+    assert_eq!(max_val.as_int(), Some(Value::INLINE_INT_MAX));
+    let min_val = Value::int(Value::INLINE_INT_MIN);
+    assert_eq!(min_val.as_int(), Some(Value::INLINE_INT_MIN));
+    assert!(Value::int_checked(Value::INLINE_INT_MAX + 1).is_err());
+    assert!(Value::int_checked(Value::INLINE_INT_MIN - 1).is_err());
 }
 
 #[test]

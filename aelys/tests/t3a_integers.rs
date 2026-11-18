@@ -788,7 +788,9 @@ fn int_shift_left_traps_on_overflow_like_multiplication() {
     assert_aelys_int(&format!("{source}shl(1, 46)"), 1 << 46);
     assert_aelys_int(&format!("{source}shl(-1, 47)"), -(1 << 47));
     assert_aelys_int(&format!("{source}shl(0, 63)"), 0);
-    for call in ["shl(1, 47)", "shl(3, 46)", "shl(-3, 46)", "shl(1, 63)"] {
+    assert_aelys_int(&format!("{source}shl(1, 62) >> 60"), 4);
+    assert_aelys_int(&format!("{source}shl(-1, 63) >> 62"), -2);
+    for call in ["shl(1, 63)", "shl(3, 62)", "shl(-3, 62)", "shl(2, 62)"] {
         assert_aelys_error_contains(&format!("{source}{call}"), "integer overflow");
     }
 }

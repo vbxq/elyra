@@ -33,15 +33,15 @@ fn runtime_error(source: &str) -> String {
 fn parse_int_rejects_out_of_range_text_without_panicking() {
     assert_eq!(
         values(&[
-            "convert::parse_int(\"99999999999999999\")",
-            "convert::parse_int(\"140737488355328\")",
-            "convert::parse_int(\"-140737488355329\")",
-            "convert::parse_int(\"0xffffffffffffff\")",
-            "convert::parse_int(\"0x800000000000\")",
-            "convert::parse_int(\"0b1111111111111111111111111111111111111111111111111\")",
-            "convert::parse_int(\"0o7777777777777777\")",
-            "convert::parse_int_radix(\"ffffffffffffff\", 16)",
-            "convert::parse_int_radix(\"-zzzzzzzzzz\", 36)",
+            "convert::parse_int(\"99999999999999999999\")",
+            "convert::parse_int(\"9223372036854775808\")",
+            "convert::parse_int(\"-9223372036854775809\")",
+            "convert::parse_int(\"0x10000000000000000\")",
+            "convert::parse_int(\"0x8000000000000000\")",
+            "convert::parse_int(\"0b1111111111111111111111111111111111111111111111111111111111111111\")",
+            "convert::parse_int(\"0o2000000000000000000000\")",
+            "convert::parse_int_radix(\"8000000000000000\", 16)",
+            "convert::parse_int_radix(\"-zzzzzzzzzzzzzz\", 36)",
             "convert::parse_int(\"18446744073709551616\")",
         ]),
         ["None"; 10]
@@ -52,24 +52,24 @@ fn parse_int_rejects_out_of_range_text_without_panicking() {
 fn parse_int_accepts_the_exact_bounds() {
     assert_eq!(
         values(&[
-            "convert::parse_int(\"140737488355327\")",
-            "convert::parse_int(\"-140737488355328\")",
-            "convert::parse_int(\"0x7fffffffffff\")",
-            "convert::parse_int(\"-0x800000000000\")",
-            "convert::parse_int_radix(\"7fffffffffff\", 16)",
-            "convert::parse_int_radix(\"-800000000000\", 16)",
+            "convert::parse_int(\"9223372036854775807\")",
+            "convert::parse_int(\"-9223372036854775808\")",
+            "convert::parse_int(\"0x7fffffffffffffff\")",
+            "convert::parse_int(\"-0x8000000000000000\")",
+            "convert::parse_int_radix(\"7fffffffffffffff\", 16)",
+            "convert::parse_int_radix(\"-8000000000000000\", 16)",
             "convert::parse_int(\" +42 \")",
             "convert::parse_int(\"0b101\")",
             "convert::parse_int(\"0o17\")",
             "convert::parse_int_radix(\"zz\", 36)",
         ]),
         [
-            "Some(140737488355327)",
-            "Some(-140737488355328)",
-            "Some(140737488355327)",
-            "Some(-140737488355328)",
-            "Some(140737488355327)",
-            "Some(-140737488355328)",
+            "Some(9223372036854775807)",
+            "Some(-9223372036854775808)",
+            "Some(9223372036854775807)",
+            "Some(-9223372036854775808)",
+            "Some(9223372036854775807)",
+            "Some(-9223372036854775808)",
             "Some(42)",
             "Some(5)",
             "Some(15)",
@@ -105,7 +105,7 @@ fn to_int_refuses_nan_and_infinities() {
         ("0.0 / 0.0", "NaN"),
         ("1.0 / 0.0", "inf"),
         ("-1.0 / 0.0", "-inf"),
-        ("140737488355328.0", "140737488355328"),
+        ("9223372036854775808.0", "9223372036854775808"),
         ("1.0e300", "1000000000"),
     ] {
         let message = runtime_error(&format!("println(convert::to_int({value}))\n"));
@@ -129,7 +129,7 @@ fn to_int_truncates_finite_floats_toward_zero() {
 
 #[test]
 fn to_int_on_a_float_text_is_an_error_not_a_truncation() {
-    for text in ["3.9", "1e3", "nan", "99999999999999999"] {
+    for text in ["3.9", "1e3", "nan", "99999999999999999999"] {
         let message = runtime_error(&format!("println(convert::to_int(\"{text}\"))\n"));
         assert!(message.contains("convert.to_int"), "{text}: {message}");
         assert!(message.contains("is not an integer"), "{text}: {message}");
@@ -156,13 +156,13 @@ fn rounding_functions_refuse_nan_infinity_and_overflow() {
 
 #[test]
 fn abs_of_the_smallest_int_is_an_overflow_error() {
-    let message = runtime_error("needs std::math\nprintln(math::abs(-140737488355328))\n");
+    let message = runtime_error("needs std::math\nprintln(math::abs(-9223372036854775808))\n");
     assert!(message.contains("integer overflow"), "{message}");
     let lines = run_ok(
-        "needs std::math\nprintln(math::abs(-140737488355327))\n",
+        "needs std::math\nprintln(math::abs(-9223372036854775807))\n",
         &[],
     );
-    assert_eq!(lines, ["140737488355327"]);
+    assert_eq!(lines, ["9223372036854775807"]);
 }
 
 #[test]

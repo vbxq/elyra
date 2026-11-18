@@ -133,7 +133,7 @@ fn a_constant_initializer_must_be_a_compile_time_constant() {
         "let y = 2\nconst X = y + 1",
         "const X = [1, 2]",
         "const X = 1 / 0",
-        "const X = 100000000000000 * 100",
+        "const X = 10000000000000000 * 1000",
         "fn f() -> int {\n    let n = 2\n    const K = n\n    K\n}",
     ];
     for source in cases {

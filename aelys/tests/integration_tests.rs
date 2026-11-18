@@ -615,8 +615,11 @@ fn test_min_int_value() {
     let result = run_aelys("-140737488355328");
     assert_eq!(result.as_int(), Some(-140737488355328));
 
-    let err = run_aelys_err("-140737488355329");
-    assert!(err.contains("integer") && err.contains("exceeds") && err.contains("range"));
+    let result = run_aelys("-140737488355329 + 1");
+    assert_eq!(result.as_int(), Some(-140737488355328));
+
+    let err = run_aelys_err("-9223372036854775807 - 2");
+    assert!(err.contains("integer overflow"), "{err}");
 }
 
 #[test]

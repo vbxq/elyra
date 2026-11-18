@@ -157,8 +157,8 @@ fn sized_range_patterns_use_the_bounds_of_their_wrapping_type() {
         "E0302",
     );
     assert_rejected(
-        "fn h(x: u64) -> int { match x { 0 => 0, _ => 1 } }\nh(1)",
-        "E0461",
+        "fn h(x: u64) -> int { match x { 0..=9223372036854775807 => 0 } }\nh(1)",
+        "E0302",
     );
 }
 

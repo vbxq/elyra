@@ -6396,7 +6396,7 @@ fn the_associated_constant_diagnostics_read_the_same_under_either_declaration_or
 
 const FOLDABLE_DECLARED_CONSTANT_TYPES: [&str; 1] = ["int"];
 
-const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
+const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 19] = [
     ("float", "float"),
     ("bool", "bool"),
     ("string", "string"),
@@ -6406,6 +6406,8 @@ const UNFOLDABLE_DECLARED_CONSTANT_TYPES: [(&str, &str); 17] = [
     ("i32", "i32"),
     ("u8", "u8"),
     ("u32", "u32"),
+    ("i64", "i64"),
+    ("u64", "u64"),
     ("f32", "f32"),
     ("f64", "float"),
     ("Vec<int>", "Vec<int>"),
@@ -6424,12 +6426,10 @@ const UNFOLDABLE_DECLARED_NOMINAL_TYPES: [(&str, &str); 3] = [
 ];
 
 // refused before the declaration is typed, so e0434 never sees them
-const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 5] = [
+const UNDECLARABLE_CONSTANT_TYPES: [(&str, &str); 3] = [
     ("[int]", "E0101"),
     ("array<int>", "E0101"),
     ("dynamic", "E0347"),
-    ("i64", "E0461"),
-    ("u64", "E0461"),
 ];
 
 fn declared_constant_type_program(declared: &str) -> String {
