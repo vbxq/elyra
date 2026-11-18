@@ -359,7 +359,11 @@ under the `parse_int` rules, otherwise `to_int` is a runtime error (`to_int("3.9
 is an error, not `3`).
 
 `.to_string()` can be called as a method on a scalar, a `string` or a built-in
-aggregate; an aggregate holding a struct, an enum or a closure is E0338, as for `println`:
+aggregate; an aggregate holding a struct, an enum or a closure is E0338, as for `println`.
+On a struct or an enum it calls the type's own `to_string` method when it declares one,
+otherwise its `Display` impl, otherwise it is E0338. Inside a generic body (`fn f<T>(t: T)`,
+`impl<T> Holder<T>`) the choice is made for each concrete type the body is specialized
+with, so `t.to_string()` never prints a raw struct:
 
 ```rust
 (42).to_string()      // "42"
