@@ -411,7 +411,7 @@ pub fn peek() -> int { counter }
     let main = write(
         &dir,
         "main.aelys",
-        "needs cnt
+        "use cnt
 fn go() -> int {
     let mut s = 0
     for k in 0..12 {
@@ -540,7 +540,7 @@ run(20)
 
 #[test]
 fn natives_that_succeed_with_unit_return_one_shared_ok_and_copy_without_a_temporary() {
-    let source = "needs std::bytes
+    let source = "use std::bytes
 let buf = bytes::alloc(64)
 let mut frame: Vec<int> = vec![0; 64]
 let mut oks = 0
