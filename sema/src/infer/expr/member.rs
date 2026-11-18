@@ -610,7 +610,7 @@ impl TypeInference {
             .flatten();
         let typed_object = match &path_root {
             Some(path) => namespace_root(path, object.span),
-            None => self.infer_expr(object),
+            None => self.infer_receiver(object),
         };
 
         if separator == MemberSeparator::Dot && member == "to_string" {

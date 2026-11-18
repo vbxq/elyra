@@ -6,7 +6,7 @@ use crate::typed_ast::{
 };
 use crate::types::InferType;
 use aelys_syntax::Span;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 struct Binding {
     ty: InferType,
@@ -25,6 +25,7 @@ struct Analyzer {
     scopes: Vec<Scope>,
     bindings: Vec<Binding>,
     errors: Vec<TypeError>,
+    loop_reads: Vec<HashSet<usize>>,
 }
 
 fn direct_assignment_name(expr: &TypedExpr) -> Option<String> {
@@ -41,6 +42,7 @@ impl Analyzer {
             scopes: Vec::new(),
             bindings: Vec::new(),
             errors: Vec::new(),
+            loop_reads: Vec::new(),
         }
     }
 
@@ -109,6 +111,9 @@ impl Analyzer {
         for scope in self.scopes.iter().rev() {
             if let Some(binding_id) = scope.names.get(name) {
                 self.bindings[*binding_id].used = true;
+                for reads in &mut self.loop_reads {
+                    reads.insert(*binding_id);
+                }
                 return;
             }
         }
@@ -125,6 +130,15 @@ impl Analyzer {
                 binding.span = span;
                 return;
             }
+        }
+    }
+
+    // a value assigned late in a loop body is read by the next iteration's earlier reads
+    fn in_loop(&mut self, visit: impl FnOnce(&mut Self)) {
+        self.loop_reads.push(HashSet::new());
+        visit(self);
+        for binding_id in self.loop_reads.pop().unwrap_or_default() {
+            self.bindings[binding_id].used = true;
         }
     }
 
@@ -180,10 +194,10 @@ impl Analyzer {
             }
             TypedStmtKind::While {
                 condition, body, ..
-            } => {
-                self.visit_expr(condition);
-                self.visit_stmt(body);
-            }
+            } => self.in_loop(|this| {
+                this.visit_expr(condition);
+                this.visit_stmt(body);
+            }),
             TypedStmtKind::For {
                 start,
                 end,
@@ -199,7 +213,7 @@ impl Analyzer {
                 }
                 self.push_scope();
                 self.define(iterator, InferType::I64, stmt.span, false);
-                self.visit_stmt(body);
+                self.in_loop(|this| this.visit_stmt(body));
                 self.pop_scope();
             }
             TypedStmtKind::ForEach {
@@ -212,7 +226,7 @@ impl Analyzer {
                 self.visit_expr(iterable);
                 self.push_scope();
                 self.define(iterator, elem_type.clone(), stmt.span, false);
-                self.visit_stmt(body);
+                self.in_loop(|this| this.visit_stmt(body));
                 self.pop_scope();
             }
             TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
@@ -362,11 +376,16 @@ impl Analyzer {
                     }
                 }
             }
-            TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            TypedExprKind::Block(stmts) => {
                 self.push_scope();
                 self.visit_stmts(stmts);
                 self.pop_scope();
             }
+            TypedExprKind::Loop { body: stmts, .. } => self.in_loop(|this| {
+                this.push_scope();
+                this.visit_stmts(stmts);
+                this.pop_scope();
+            }),
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)

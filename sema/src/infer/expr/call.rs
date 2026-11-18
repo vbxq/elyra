@@ -113,6 +113,54 @@ impl TypeInference {
         args: &[Expr],
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        let ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Dot,
+            ..
+        } = &callee.kind
+        else {
+            return self.infer_call_candidates(callee, args, span);
+        };
+        let saved = self.receiver_memo.replace(super::super::ReceiverMemo {
+            object: &**object,
+            iter_allowed: self.collection_iter_allowed,
+            typed: None,
+        });
+        let typed = self.infer_call_candidates(callee, args, span);
+        self.receiver_memo = saved;
+        typed
+    }
+
+    // every speculative method handler infers the receiver, so without the memo a chain of n calls is inferred exponentially often
+    pub(in crate::infer) fn infer_receiver(&mut self, object: &Expr) -> TypedExpr {
+        let iter_allowed = self.collection_iter_allowed;
+        let Some(memo) = self.receiver_memo.as_ref() else {
+            return self.infer_expr(object);
+        };
+        if !std::ptr::eq(memo.object, object) {
+            return self.infer_expr(object);
+        }
+        if memo.iter_allowed == iter_allowed
+            && let Some(typed) = memo.typed.clone()
+        {
+            return typed;
+        }
+        let typed = self.infer_expr(object);
+        if let Some(memo) = self.receiver_memo.as_mut()
+            && std::ptr::eq(memo.object, object)
+        {
+            memo.iter_allowed = iter_allowed;
+            memo.typed = Some(typed.clone());
+        }
+        typed
+    }
+
+    fn infer_call_candidates(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        span: Span,
+    ) -> (TypedExprKind, InferType) {
         // a '.' on a namespace has its own diagnostic, so the speculative method handlers must not run
         let dot_on_namespace = matches!(
             &callee.kind,
@@ -351,7 +399,7 @@ impl TypeInference {
         if !matches!(member.as_str(), "mul_shr" | "shl_div") {
             return None;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         let receiver = typed_object.ty.clone();
         if !matches!(receiver, InferType::I32 | InferType::I64) {
             return None;
@@ -1046,7 +1094,7 @@ impl TypeInference {
         if member != "clone" || !args.is_empty() {
             return None;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         let clonable = match &typed_object.ty {
             InferType::Struct(name) | InferType::Applied { name, .. } => {
                 self.type_table.method(name, "clone").is_none()
@@ -1099,7 +1147,7 @@ impl TypeInference {
         if collection_pipeline {
             self.collection_iter_allowed = true;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         self.collection_iter_allowed = previous_iterator_context;
         if user_method_receiver(&typed_object.ty) {
             return None;
@@ -1328,7 +1376,7 @@ impl TypeInference {
         if consumes_iterator {
             self.collection_iter_allowed = true;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         self.collection_iter_allowed = previous_iterator_context;
         if member == "iter" && !previous_iterator_context {
             self.errors.push(TypeError {

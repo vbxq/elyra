@@ -235,6 +235,7 @@ pub struct TypeInference {
     known_native_signatures: HashMap<String, InferType>,
     pub(crate) current_module: ModuleId,
     collection_iter_allowed: bool,
+    receiver_memo: Option<ReceiverMemo>,
     withheld_nominals: std::collections::BTreeMap<String, String>,
     private_nominals: std::collections::BTreeMap<String, String>,
     unexported_nominals: std::collections::BTreeSet<String>,
@@ -569,4 +570,10 @@ pub(crate) use crate::types::SHADOWED_METHOD_SUFFIX;
 
 pub(crate) fn shadowed_method_param(name: &str) -> String {
     format!("{name}{SHADOWED_METHOD_SUFFIX}")
+}
+
+struct ReceiverMemo {
+    object: *const aelys_syntax::Expr,
+    iter_allowed: bool,
+    typed: Option<crate::typed_ast::TypedExpr>,
 }

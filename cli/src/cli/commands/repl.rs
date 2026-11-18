@@ -1,7 +1,7 @@
 // TODO: rustyline for history/completion would be nice
 
 use crate::cli::vm_config::parse_vm_args_or_error;
-use aelys::{new_vm_with_config, run_with_vm_and_opt};
+use aelys::{ReplSession, new_vm_with_config};
 use aelys_opt::OptimizationLevel;
 use std::io::{self, BufRead, IsTerminal, Write};
 
@@ -32,6 +32,7 @@ fn run_repl_core<R: BufRead, W: Write>(
 ) -> Result<(), String> {
     let parsed = parse_vm_args_or_error(&vm_args)?;
     let mut vm = new_vm_with_config(parsed.config, Vec::new()).map_err(|err| err.to_string())?;
+    let mut session = ReplSession::new();
 
     if interactive {
         writeln!(output, "Aelys REPL (type 'exit' to quit)").map_err(|err| err.to_string())?;
@@ -58,7 +59,7 @@ fn run_repl_core<R: BufRead, W: Write>(
             break;
         }
 
-        match run_with_vm_and_opt(&mut vm, trimmed, "<repl>", opt_level) {
+        match session.run_line(&mut vm, trimmed, "<repl>", opt_level) {
             Ok(value) => {
                 if !value.is_null() && !value.is_unit() {
                     writeln!(output, "{}", value).map_err(|err| err.to_string())?;

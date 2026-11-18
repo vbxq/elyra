@@ -1949,6 +1949,17 @@ payload field occupies one immutable value slot. The compiler assigns the
 constructor and variant IDs, checks their field count and types, and resolves
 pattern field offsets before emitting bytecode.
 
+An enum may contain itself, directly (`enum L { Nil, Cons(int, L) }`), through
+another enum (`enum A { End, Next(B) }` with `enum B { Stop, More(A) }`), through a
+generic parameter (`enum Tree<T> { Leaf, Node(Tree<T>, T, Tree<T>) }`), a `Vec` or an
+`Option` field of a struct (`struct Node { v: int, next: Option<Node> }`). Nesting
+depth is bounded only by memory: a list a hundred thousand cells deep is built,
+collected and matched like a short one. At run time a constructor checks each
+payload slot against its declared type. An enum value that a constructor built
+was checked then, so the check stops at it and building a value costs the same at
+every depth; an enum value the embedding host allocated is checked through its
+payload.
+
 Matching is exhaustive at compile time. The check is a usefulness analysis over
 the whole pattern, so it looks through every level of nesting: `Ok(_)`,
 `Err(AppE::Io(_))` and `Err(AppE::Bad(_))` together cover a
@@ -2030,6 +2041,10 @@ whose last statement is an assignment (`a = 5`, `a += 2`, `v[i] = x`, `s.f *= 2`
 declared return type. The CLI prints a script's value after it runs only when that value
 is neither unit nor null, so such a script prints nothing extra; the REPL follows the
 same rule for each line.
+A variable that is read anywhere in a loop (its condition included) and assigned
+later in the same loop body counts as used: the next iteration reads it, so
+`while let Some(n) = cur { cur = n.next }` is accepted. A value assigned in a
+loop and never read, in or after the loop, is still E0303/E0304.
 
 A bare name in a pattern that names a `const` in scope matches the constant's value, as
 a literal would; it does not bind a new variable, and E0392 never applies to it. A local
@@ -3538,7 +3553,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0365 | NotIterable | the value cannot be iterated |
 | E0366 | InvalidIndex | the value cannot be indexed that way |
 | E0367 | UntypedNativeTypeMismatch | a native signature does not match its use |
-| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree of 1024 nested nodes or more, so a chain of 1023 `+` is accepted and 1024 is rejected |
+| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree of 1024 nested nodes or more, so a chain of 1023 `+` is accepted and 1024 is rejected; a method call counts two nodes, the call and its `.` member |
 | E0369 | NamespaceIsNotAValue | a module path used where a value is required |
 | E0370 | NotANamespace | a path segment that names no module |
 | E0371 | NoSuchMember | no such member on that module |

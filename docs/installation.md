@@ -200,7 +200,13 @@ The bytecode file is corrupted or was compiled with a different Aelys version, t
 
 ### The REPL is behaving weirdly
 
-The REPL has some edge cases with multi
+The REPL reads one line at a time, so a function, struct, enum, impl or trait has to fit on
+one line. Every line sees what earlier lines defined: functions, structs, enums, impls, traits
+and constants declared before, and globals (`let`) with the type they were given. Defining a
+function or type again with the same name replaces the earlier definition for every later
+line, including functions that call it. A line that fails to compile keeps none of its
+definitions. A top-level `let` in the REPL is never an unused-value error, since a later line
+may read it.
 
 ## Running Tests
 
