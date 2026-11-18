@@ -49,7 +49,7 @@ pub use core::{MAX_FRAMES, MAX_REGISTERS, StepResult, VM};
 pub use frame::CallFrame;
 pub use jit_frame::{
     aelys_frame_call, aelys_frame_collection, aelys_frame_fmod, aelys_frame_global,
-    aelys_frame_push, aelys_frame_store_reference, aelys_frame_struct,
+    aelys_frame_push, aelys_frame_store_reference, aelys_frame_struct, aelys_frame_vec_push,
 };
 pub use native::{
     ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,

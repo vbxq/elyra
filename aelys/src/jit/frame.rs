@@ -315,6 +315,7 @@ impl Analysis<'_> {
             ArrayStoreI | ArrayStoreF | ArrayStoreB | ArrayStoreP | VecStoreI | VecStoreF
             | VecStoreB | VecStoreP => simple(vec![a, b, c], None),
             ArrayLen | VecLen => simple(vec![b], Some(a)),
+            VecPushI | VecPushF | VecPushB | VecPushP => simple(vec![a, b], None),
             StructLoad => {
                 let schema = usize::try_from(inst.imm).ok()?;
                 self.function.struct_schemas.get(schema)?.fields.get(c)?;
@@ -469,6 +470,7 @@ struct Helpers {
     collection: FuncRef,
     structure: FuncRef,
     store_reference: FuncRef,
+    vec_push: FuncRef,
     fmod: FuncRef,
     entry_signature: SigRef,
 }
@@ -491,6 +493,7 @@ struct Lowerer<'a, 'b> {
     pending_exits: Vec<(Block, usize, Live)>,
     current: Option<(usize, Live, Option<Block>)>,
     known: HashMap<ClifValue, Known>,
+    origins: HashMap<usize, usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -519,7 +522,13 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.use_var(self.variables[register])
     }
 
+    fn forget_origin(&mut self, register: usize) {
+        self.origins
+            .retain(|copy, origin| *copy != register && *origin != register);
+    }
+
     fn set(&mut self, register: usize, value: ClifValue) {
+        self.forget_origin(register);
         self.builder.def_var(self.variables[register], value);
         let kinds = self.cache_kinds.clone();
         for kind in kinds {
@@ -531,6 +540,11 @@ impl<'a, 'b> Lowerer<'a, 'b> {
     }
 
     fn set_moved(&mut self, destination: usize, source: usize) {
+        self.forget_origin(destination);
+        if destination != source {
+            let origin = self.origins.get(&source).copied().unwrap_or(source);
+            self.origins.insert(destination, origin);
+        }
         let value = self.get(source);
         self.builder.def_var(self.variables[destination], value);
         let kinds = self.cache_kinds.clone();
@@ -813,6 +827,12 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         );
         self.builder.def_var(pointer, new_pointer);
         self.builder.def_var(length, new_length);
+        if let Some(origin) = self.origins.get(&register).copied()
+            && let Some((origin_pointer, origin_length)) = self.caches.get(&(origin, kind)).copied()
+        {
+            self.builder.def_var(origin_pointer, new_pointer);
+            self.builder.def_var(origin_length, new_length);
+        }
         self.builder.ins().jump(have, &[]);
         self.builder.seal_block(have);
         self.builder.switch_to_block(have);
@@ -844,6 +864,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         let block = self.blocks[&leader];
         self.builder.switch_to_block(block);
         self.known.clear();
+        self.origins.clear();
         self.lower_block_body(leader)?;
         self.finish_exits();
         Ok(())
@@ -1471,6 +1492,18 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                     }
                 }
             }
+            VecPushI | VecPushF | VecPushB | VecPushP => {
+                let exit = self.exit();
+                let vector = self.get(inst.a);
+                let value = self.get(inst.b);
+                let call = self
+                    .builder
+                    .ins()
+                    .call(self.helpers.vec_push, &[self.context, vector, value]);
+                let pushed = self.builder.inst_results(call)[0];
+                self.guard(pushed, exit);
+                self.forget_vectors();
+            }
             ArrayLen | VecLen => {
                 let exit = self.exit();
                 let (_, length) = self.resolve(inst.b, CacheKind::Collection(LENGTH_KIND), exit);
@@ -1775,7 +1808,31 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.leave(inst.next);
         self.builder.switch_to_block(ok);
         self.set(destination, result);
+        self.forget_vectors();
         Ok(())
+    }
+
+    fn forget_vectors(&mut self) {
+        let vector_kinds = [
+            FrameCollectionKind::VecInts,
+            FrameCollectionKind::VecFloats,
+            FrameCollectionKind::VecBools,
+            FrameCollectionKind::VecObjects,
+            FrameCollectionKind::Length,
+        ];
+        let entries = self
+            .caches
+            .iter()
+            .filter(|((_, kind), _)| {
+                matches!(kind, CacheKind::Collection(kind)
+                    if vector_kinds.iter().any(|vector| *vector as u64 == *kind))
+            })
+            .map(|(_, (pointer, _))| *pointer)
+            .collect::<Vec<_>>();
+        for pointer in entries {
+            let zero = self.builder.ins().iconst(types::I64, 0);
+            self.builder.def_var(pointer, zero);
+        }
     }
 }
 
@@ -1920,7 +1977,7 @@ pub(crate) fn compile_frame(
 
     let mut jit_builder =
         JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
-    let symbols: [(&str, *const u8); 7] = [
+    let symbols: [(&str, *const u8); 8] = [
         (
             "aelys_frame_global",
             aelys_runtime::aelys_frame_global as *const u8,
@@ -1948,6 +2005,10 @@ pub(crate) fn compile_frame(
         (
             "aelys_frame_fmod",
             aelys_runtime::aelys_frame_fmod as *const u8,
+        ),
+        (
+            "aelys_frame_vec_push",
+            aelys_runtime::aelys_frame_vec_push as *const u8,
         ),
     ];
     for (name, address) in symbols {
@@ -2027,6 +2088,13 @@ pub(crate) fn compile_frame(
             &mut context.func,
             "aelys_frame_store_reference",
             &[pointer, i64t, pointer, i64t],
+            &[i64t],
+        )?,
+        vec_push: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_vec_push",
+            &[pointer, i64t, i64t],
             &[i64t],
         )?,
         fmod: declare(
@@ -2112,6 +2180,7 @@ pub(crate) fn compile_frame(
         pending_exits: Vec::new(),
         current: None,
         known: HashMap::new(),
+        origins: HashMap::new(),
     };
     let leaders = region.leaders.iter().copied().collect::<Vec<_>>();
     for leader in leaders {

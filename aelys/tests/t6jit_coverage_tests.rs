@@ -370,3 +370,37 @@ fn arithmetic_traps_match_the_interpreter_in_callees_of_compiled_code() {
         assert!(kind.starts_with(wanted), "{expression}: {kind}");
     }
 }
+
+#[test]
+fn pushes_in_a_compiled_loop_keep_every_alias_and_length_in_step() {
+    let source = r#"
+struct P { a: int }
+fn grow(n: int) -> int {
+    let mut v: Vec<int> = vec![]
+    let mut ps: Vec<P> = vec![]
+    let mut acc = 0
+    for i in 0..n {
+        v.push(i * 3)
+        if i % 100 == 0 { ps.push(P { a: i }) }
+        acc = (acc + v[i] + v.len() + ps.len()) & 0xFFFFFFF
+    }
+    let mut s = 0
+    for j in 0..ps.len() { s = s + ps[j].a }
+    return acc + s
+}
+grow(50000)
+"#;
+    let mut acc = 0i64;
+    let mut ps = 0i64;
+    let mut s = 0i64;
+    for i in 0..50_000i64 {
+        if i % 100 == 0 {
+            ps += 1;
+            s += i;
+        }
+        acc = (acc + i * 3 + (i + 1) + ps) & 0xFFF_FFFF;
+    }
+    let run = compiled(source);
+    assert_eq!(int_of(&run), acc + s);
+    assert!(run.osr >= 1);
+}

@@ -25,6 +25,7 @@ enum EntryState {
 struct OsrEntry {
     ip: u32,
     state: EntryState,
+    legacy_tried: bool,
     entries: u64,
     exits: u64,
 }
@@ -411,7 +412,14 @@ impl VM {
         let position = slot.osr.iter().position(|entry| entry.ip == ip);
         let install = match position.map(|position| &slot.osr[position].state) {
             Some(EntryState::Ready(install)) => *install,
-            Some(EntryState::Refused) => return None,
+            Some(EntryState::Refused) => {
+                let entry = &mut slot.osr[position?];
+                if entry.legacy_tried {
+                    return Some(Ok(None));
+                }
+                entry.legacy_tried = true;
+                return None;
+            }
             Some(EntryState::Pending) | None => {
                 if backedges < threshold {
                     return Some(Ok(None));
@@ -423,10 +431,14 @@ impl VM {
                     None => EntryState::Refused,
                 };
                 match position {
-                    Some(position) => slot.osr[position].state = state,
+                    Some(position) => {
+                        slot.osr[position].state = state;
+                        slot.osr[position].legacy_tried = install.is_none();
+                    }
                     None => slot.osr.push(OsrEntry {
                         ip,
                         state,
+                        legacy_tried: install.is_none(),
                         entries: 0,
                         exits: 0,
                     }),
@@ -833,6 +845,36 @@ pub unsafe extern "C" fn aelys_frame_store_reference(
     // safety: slot was derived from the owner's storage by a resolve helper during this invocation
     unsafe { *slot = value };
     1
+}
+
+/// # Safety
+/// called only by frame machine code; succeeds only when the push cannot start a collection
+pub unsafe extern "C" fn aelys_frame_vec_push(
+    context: *mut FrameJitContext,
+    vector: u64,
+    value: u64,
+) -> u64 {
+    // safety: see aelys_frame_global
+    let context = unsafe { &mut *context };
+    let vm = unsafe { &mut *context.vm.cast::<VM>() };
+    let bytes = u64::try_from(vm.heap.bytes_allocated()).unwrap_or(u64::MAX);
+    if bytes > vm.config.max_heap_bytes
+        || vm.heap.major_collection_active()
+        || vm.heap.should_collect()
+    {
+        return 0;
+    }
+    let Some(pointer) = Value::from_raw(vector).as_ptr() else {
+        return 0;
+    };
+    let reference = GcRef::new(pointer);
+    if !matches!(
+        vm.heap.get(reference).map(|object| &object.kind),
+        Some(ObjectKind::Vec(_))
+    ) {
+        return 0;
+    }
+    u64::from(vm.push_vec_value(reference, Value::from_raw(value)).is_ok())
 }
 
 pub extern "C" fn aelys_frame_fmod(left: f64, right: f64) -> f64 {
