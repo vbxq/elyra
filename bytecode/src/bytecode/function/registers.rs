@@ -172,7 +172,12 @@ pub(super) fn required_registers(bytecode: &[u32]) -> usize {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }
             OpCode::Return0 => {}
-            OpCode::MatchFail => {}
+            OpCode::MatchFail => {
+                if c & 3 != 0 {
+                    let last = b as usize + usize::from(c & 3 == 3);
+                    update_max_reg(&mut max_reg, &mut used, last, None, None);
+                }
+            }
             OpCode::GetGlobal | OpCode::SetGlobal => {
                 update_max_reg(&mut max_reg, &mut used, a as usize, None, None);
             }

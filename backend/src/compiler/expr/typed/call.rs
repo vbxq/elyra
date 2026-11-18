@@ -267,7 +267,10 @@ impl Compiler {
         }
 
         if let TypedExprKind::Identifier(name) = &callee.kind {
-            if Self::is_builtin(name) {
+            if Self::is_builtin(name)
+                && self.resolve_variable(name).is_none()
+                && self.resolve_upvalue(name).is_none()
+            {
                 return self.compile_typed_builtin_call(name, args, dest, span);
             }
 

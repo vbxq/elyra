@@ -201,12 +201,21 @@ impl VM {
                         "match reached an invalid runtime value".to_string(),
                     )));
                 }
-                let message = if c == 1 {
+                let message = if c & 1 == 1 {
                     Some(reg_get!(base + b))
                 } else {
                     None
                 };
-                return Err(self.sum_unwrap_error(u8::try_from(a).unwrap_or(u8::MAX), message));
+                let failed = if c & 2 == 2 {
+                    Some(reg_get!(base + b + (c & 1)))
+                } else {
+                    None
+                };
+                return Err(self.sum_unwrap_error(
+                    u8::try_from(a).unwrap_or(u8::MAX),
+                    message,
+                    failed,
+                ));
             }
             OpCode::Add | OpCode::AddII | OpCode::AddFF | OpCode::AddIIG | OpCode::AddFFG => {
                 let left = reg_get!(base + b);

@@ -1,5 +1,6 @@
 use crate::cli::vm_config::parse_vm_args_or_error;
 use aelys_bytecode::asm::{RequiredImport, RequiredImportKind};
+use aelys_common::error::runtime::PANIC_EXIT_CODE;
 use aelys_common::error::{AelysError, RuntimeErrorKind};
 use aelys_common::{WarningConfig, format_warnings};
 use aelys_driver::run_file_full_with_control_and_jit;
@@ -56,6 +57,10 @@ pub fn run_with_options(
                 Err(AelysError::Runtime(error)) => {
                     if let RuntimeErrorKind::Exit(code) = error.kind {
                         return Ok(code);
+                    }
+                    if let RuntimeErrorKind::Panic { .. } = error.kind {
+                        eprint!("{error}");
+                        return Ok(PANIC_EXIT_CODE);
                     }
                     return Err(error.to_string());
                 }
@@ -225,6 +230,10 @@ fn execute_file(vm: &mut VM, function: aelys_runtime::GcRef) -> Result<FileExecu
         Ok(value) => Ok(FileExecution::Returned(value)),
         Err(error) => match error.kind {
             RuntimeErrorKind::Exit(code) => Ok(FileExecution::Exited(code)),
+            RuntimeErrorKind::Panic { .. } => {
+                eprint!("{error}");
+                Ok(FileExecution::Exited(PANIC_EXIT_CODE))
+            }
             _ => Err(error.to_string()),
         },
     }

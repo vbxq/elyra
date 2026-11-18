@@ -31,6 +31,11 @@ impl Compiler {
                 | "map_err"
                 | "and_then"
                 | "or_else"
+                | "is_ok"
+                | "is_err"
+                | "is_some"
+                | "is_none"
+                | "ok_or"
         );
         if !recognized {
             return Ok(false);
@@ -66,6 +71,33 @@ impl Compiler {
                     self.compile_sum_unwrap_or_else_with_error(source, &args[0], dest, span)?;
                 }
             }
+            "is_ok" | "is_some" => {
+                let tag = if member == "is_ok" {
+                    SumTag::ResultOk as u8
+                } else {
+                    SumTag::OptionSome as u8
+                };
+                self.emit_a(OpCode::SumTest, dest, source, tag, span);
+            }
+            "is_err" => self.emit_a(OpCode::SumTest, dest, source, SumTag::ResultErr as u8, span),
+            "is_none" => {
+                let present = self.alloc_register()?;
+                self.emit_a(
+                    OpCode::SumTest,
+                    present,
+                    source,
+                    SumTag::OptionSome as u8,
+                    span,
+                );
+                self.emit_a(OpCode::Not, dest, present, 0, span);
+                self.free_register(present);
+            }
+            "ok_or" => {
+                let error = self.alloc_register()?;
+                self.compile_typed_expr(&args[0], error)?;
+                self.compile_sum_ok_or(source, error, dest, span)?;
+                self.free_register(error);
+            }
             "ok" => self.compile_sum_ok(source, dest, span)?,
             "err" => self.compile_sum_err(source, dest, span)?,
             "map" => self.compile_sum_map(source, family, &args[0], dest, span)?,
@@ -100,14 +132,25 @@ impl Compiler {
         self.emit_a(OpCode::SumPayload, dest, source, 0, span);
         let end = self.emit_jump(OpCode::Jump, span);
         self.patch_jump(failure);
-        let family_code = if family == "Option" { 1 } else { 2 };
-        self.emit_a(
-            OpCode::MatchFail,
-            family_code,
-            message.unwrap_or(0),
-            u8::from(message.is_some()),
-            span,
-        );
+        if family == "Option" {
+            self.emit_a(
+                OpCode::MatchFail,
+                1,
+                message.unwrap_or(0),
+                u8::from(message.is_some()),
+                span,
+            );
+        } else if let Some(message) = message {
+            let base = self.alloc_consecutive_registers_for_call(2, span)?;
+            self.alloc_consecutive_from(base, 2)?;
+            self.emit_a(OpCode::Move, base, message, 0, span);
+            self.emit_a(OpCode::Move, base + 1, source, 0, span);
+            self.emit_a(OpCode::MatchFail, 2, base, 3, span);
+            self.free_register(base + 1);
+            self.free_register(base);
+        } else {
+            self.emit_a(OpCode::MatchFail, 2, source, 2, span);
+        }
         self.patch_jump(end);
         Ok(())
     }
@@ -214,6 +257,28 @@ impl Compiler {
         let end = self.emit_jump(OpCode::Jump, span);
         self.patch_jump(failure);
         self.emit_a(OpCode::LoadNone, dest, 0, 0, span);
+        self.patch_jump(end);
+        Ok(())
+    }
+
+    fn compile_sum_ok_or(&mut self, source: u16, error: u16, dest: u16, span: Span) -> Result<()> {
+        let condition = self.alloc_register()?;
+        self.emit_a(
+            OpCode::SumTest,
+            condition,
+            source,
+            SumTag::OptionSome as u8,
+            span,
+        );
+        let failure = self.emit_jump_if(OpCode::JumpIfNot, condition, span);
+        self.free_register(condition);
+        let payload = self.alloc_register()?;
+        self.emit_a(OpCode::SumPayload, payload, source, 0, span);
+        self.emit_a(OpCode::MakeSum, dest, payload, SumTag::ResultOk as u8, span);
+        self.free_register(payload);
+        let end = self.emit_jump(OpCode::Jump, span);
+        self.patch_jump(failure);
+        self.emit_a(OpCode::MakeSum, dest, error, SumTag::ResultErr as u8, span);
         self.patch_jump(end);
         Ok(())
     }

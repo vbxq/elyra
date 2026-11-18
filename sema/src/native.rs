@@ -432,6 +432,11 @@ pub fn function_signature(path: &str) -> Option<InferType> {
 pub fn builtin_signature(name: &str) -> Option<InferType> {
     match name {
         "__tostring" => Some(function(1, InferType::String)),
+        "panic" => Some(function_with(vec![InferType::String], InferType::Never)),
+        "assert" => Some(function_with(
+            vec![InferType::Bool, InferType::String],
+            InferType::Unit,
+        )),
         _ => None,
     }
 }

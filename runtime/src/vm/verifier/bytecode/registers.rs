@@ -39,11 +39,14 @@ pub(super) fn verify(
             if a > 2 {
                 return Err(format!("invalid match failure family {a}"));
             }
-            if c > 1 {
+            if c > 3 {
                 return Err(format!("invalid match failure flag {c}"));
             }
-            if c == 1 {
+            if c & 1 == 1 {
                 verify_reg(b, num_regs, "MatchFail message")?;
+            }
+            if c & 2 == 2 {
+                verify_reg(b + (c & 1), num_regs, "MatchFail failed value")?;
             }
         }
         OpCode::LoadK => {

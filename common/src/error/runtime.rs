@@ -76,6 +76,9 @@ pub enum RuntimeErrorKind {
     RuntimePanic {
         message: String,
     },
+    Panic {
+        message: String,
+    },
     InstructionBudgetExceeded {
         limit: u64,
     },
@@ -87,6 +90,8 @@ pub enum RuntimeErrorKind {
         length: i64,
     },
 }
+
+pub const PANIC_EXIT_CODE: i32 = 101;
 
 impl RuntimeError {
     pub fn new(kind: RuntimeErrorKind, stack_trace: Vec<StackFrame>, source: Arc<Source>) -> Self {
@@ -190,6 +195,7 @@ impl RuntimeErrorKind {
                 "integer overflow outside the supported 48-bit range".to_string()
             }
             Self::RuntimePanic { message } => format!("runtime panic recovered: {message}"),
+            Self::Panic { message } => format!("panic: {message}"),
             Self::InstructionBudgetExceeded { limit } => {
                 format!("instruction budget exhausted after {} instructions", limit)
             }
@@ -208,7 +214,11 @@ impl RuntimeErrorKind {
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "error: {}", self.kind.message())?;
+        if matches!(self.kind, RuntimeErrorKind::Panic { .. }) {
+            writeln!(f, "{}", self.kind.message())?;
+        } else {
+            writeln!(f, "error: {}", self.kind.message())?;
+        }
 
         if let Some(frame) = self.stack_trace.first() {
             writeln!(

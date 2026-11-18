@@ -116,7 +116,7 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             if inner == OpCode::MatchFail && wide_a > 2 {
                 return Err(format!("invalid wide match failure family {wide_a}"));
             }
-            if inner == OpCode::MatchFail && wide_c > 1 {
+            if inner == OpCode::MatchFail && wide_c > 3 {
                 return Err(format!("invalid wide match failure flag {wide_c}"));
             }
             if inner == OpCode::LoadK {
