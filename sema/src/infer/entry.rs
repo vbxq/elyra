@@ -1642,7 +1642,8 @@ impl TypeInference {
 
         let mut resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
         inf.resolve_deferred_members(&mut resolved_stmts);
-        let resolved_stmts = inf.monomorphize_program(resolved_stmts);
+        let mut resolved_stmts = inf.monomorphize_program(resolved_stmts);
+        inf.validate_collection_instances(&mut resolved_stmts);
 
         inf.validate_unused_sum_bindings(&resolved_stmts);
         inf.validate_surface_type_boundaries(&resolved_stmts);

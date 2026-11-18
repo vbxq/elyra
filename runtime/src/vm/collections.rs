@@ -340,22 +340,22 @@ fn seq_index_of(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 impl VM {
-    pub(crate) fn order_values(&self, left: Value, right: Value) -> Ordering {
+    pub(crate) fn order_values(&self, left: Value, right: Value) -> Option<Ordering> {
         if let (Some(a), Some(b)) = (left.as_int(), right.as_int()) {
-            return a.cmp(&b);
+            return Some(a.cmp(&b));
         }
         if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
-            return a.total_cmp(&b);
+            return Some(a.total_cmp(&b));
         }
         if let (Some(a), Some(b)) = (left.as_char(), right.as_char()) {
-            return a.cmp(&b);
+            return Some(a.cmp(&b));
         }
         if let (Some(a), Some(b)) = (left.as_bool(), right.as_bool()) {
-            return a.cmp(&b);
+            return Some(a.cmp(&b));
         }
         match (self.string_bytes(left), self.string_bytes(right)) {
-            (Some(a), Some(b)) => a.cmp(b),
-            _ => Ordering::Equal,
+            (Some(a), Some(b)) => Some(a.cmp(b)),
+            _ => None,
         }
     }
 
@@ -395,7 +395,17 @@ fn value_bits(value: Value) -> u64 {
 fn seq_sort(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let sequence = object(vm, args[0], "sort")?;
     let mut values = sequence_values(vm, sequence, "sort")?;
-    values.sort_by(|left, right| vm.order_values(*left, *right));
+    if let Some(&first) = values.first()
+        && let Some(&bad) = values
+            .iter()
+            .find(|value| vm.order_values(first, **value).is_none())
+    {
+        return Err(type_error(vm, "sort", "elements with a built-in order", bad));
+    }
+    values.sort_by(|left, right| {
+        vm.order_values(*left, *right)
+            .expect("every element was checked against the first")
+    });
     write_sequence(vm, sequence, &values, "sort")?;
     Ok(Value::unit())
 }

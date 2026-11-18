@@ -1,6 +1,6 @@
 use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
-use crate::typed_ast::{TypedExpr, TypedExprKind};
+use crate::typed_ast::{TypedExpr, TypedExprKind, TypedStmt};
 use crate::types::InferType;
 use aelys_syntax::{Expr, ExprKind, MemberSeparator, Span};
 
@@ -86,7 +86,111 @@ impl MethodShape {
     }
 }
 
+fn invalid_map_key(ty: &InferType) -> Option<&InferType> {
+    match ty {
+        InferType::Map(key, value) => {
+            if key.is_concrete() && !map_key_types().contains(key) {
+                Some(key)
+            } else {
+                invalid_map_key(key).or_else(|| invalid_map_key(value))
+            }
+        }
+        InferType::Array(inner)
+        | InferType::FixedArray(inner, _)
+        | InferType::Vec(inner)
+        | InferType::Option(inner) => invalid_map_key(inner),
+        InferType::Result(ok, err) => invalid_map_key(ok).or_else(|| invalid_map_key(err)),
+        InferType::Tuple(elements) | InferType::Applied { args: elements, .. } => {
+            elements.iter().find_map(invalid_map_key)
+        }
+        InferType::Function { params, ret } => params
+            .iter()
+            .find_map(invalid_map_key)
+            .or_else(|| invalid_map_key(ret)),
+        _ => None,
+    }
+}
+
+fn instance_element_error(expr: &TypedExpr) -> Option<TypeErrorKind> {
+    let TypedExprKind::Call { callee, args } = &expr.kind else {
+        return None;
+    };
+    let TypedExprKind::Member {
+        object,
+        member,
+        separator: MemberSeparator::Dot,
+    } = &callee.kind
+    else {
+        return None;
+    };
+    let (InferType::Vec(element) | InferType::Array(element) | InferType::FixedArray(element, _)) =
+        &object.ty
+    else {
+        return None;
+    };
+    match (member.as_str(), args.len()) {
+        ("sort", 0) if element.is_concrete() && !ordered_element_types().contains(element) => {
+            Some(TypeErrorKind::UnorderedSortElement {
+                element: element.as_ref().clone(),
+            })
+        }
+        ("fill", 1) | ("resize", 2) if holds_aggregate(element) => {
+            Some(TypeErrorKind::SharedAggregateFill {
+                method: member.clone(),
+                element: element.as_ref().clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
 impl TypeInference {
+    // generic bodies are checked once with type parameters, so the element and key rules run again on every instance
+    pub(in crate::infer) fn validate_collection_instances(&mut self, stmts: &mut [TypedStmt]) {
+        let mut reported = self
+            .errors
+            .iter()
+            .map(|error| (error.kind.diagnostic_code(), error.span.start, error.span.end))
+            .collect::<std::collections::HashSet<_>>();
+        let mut reported_keys = self
+            .errors
+            .iter()
+            .filter_map(|error| match &error.kind {
+                TypeErrorKind::InvalidMapKey { key } => Some(key.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut found = Vec::new();
+        for stmt in stmts.iter_mut() {
+            super::super::monomorphize::visit_exprs_stmt(stmt, &mut |expr| {
+                if let Some(kind) = instance_element_error(expr) {
+                    found.push((kind, expr.span));
+                }
+            });
+        }
+        for stmt in stmts.iter() {
+            let mut types = Vec::new();
+            super::super::monomorphize::collect_stmt_types(stmt, &mut types);
+            for (ty, span) in types {
+                if let Some(key) = invalid_map_key(&ty)
+                    && !reported_keys.contains(key)
+                {
+                    reported_keys.push(key.clone());
+                    found.push((TypeErrorKind::InvalidMapKey { key: key.clone() }, span));
+                }
+            }
+        }
+        for (kind, span) in found {
+            if reported.insert((kind.diagnostic_code(), span.start, span.end)) {
+                self.errors.push(TypeError {
+                    kind,
+                    span,
+                    reason: ConstraintReason::Other("collection instance".to_string()),
+                });
+            }
+        }
+    }
+
     pub(crate) fn require_map_key(&mut self, key: &InferType, span: Span) {
         self.constraints.push(Constraint::one_of(
             key.clone(),

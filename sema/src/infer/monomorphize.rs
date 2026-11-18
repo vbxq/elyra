@@ -2474,7 +2474,7 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
     }
 }
 
-fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr)) {
+pub(super) fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr)) {
     match &mut stmt.kind {
         TypedStmtKind::Expression(expr) => visit_exprs_expr(expr, visit),
         TypedStmtKind::Let { initializer, .. } => visit_exprs_expr(initializer, visit),
