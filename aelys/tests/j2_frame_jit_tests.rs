@@ -401,3 +401,107 @@ fn osr_forms_under_gc_stress_and_verify() {
         assert_eq!(stdout, format!("{}\n", expected(form)), "{}", form.name);
     }
 }
+
+struct Reuse {
+    kind: &'static str,
+    param: &'static str,
+    read: &'static str,
+    argument: &'static str,
+    element: i64,
+}
+
+// the first loop reads a local that holds a reference, and the second loop takes that local's register for its counter
+const REUSES: &[Reuse] = &[
+    Reuse {
+        kind: "vec",
+        param: "Vec<int>",
+        read: "a[i & 63]",
+        argument: "vec![3; 64]",
+        element: 3,
+    },
+    Reuse {
+        kind: "array",
+        param: "[int; 64]",
+        read: "a[i & 63]",
+        argument: "[3; 64]",
+        element: 3,
+    },
+    Reuse {
+        kind: "struct",
+        param: "P",
+        read: "a.x",
+        argument: "P { x: 3, y: 4 }",
+        element: 3,
+    },
+    Reuse {
+        kind: "string",
+        param: "string",
+        read: "a.len()",
+        argument: "\"abc\"",
+        element: 3,
+    },
+];
+
+fn reuse_program(reuse: &Reuse, method: bool) -> String {
+    let body = format!(
+        "    let mut s = 0\n    {{\n        let a = v\n        for i in 0..n {{ s = (s + {}) & 0xFFFFFF }}\n    }}\n    for j in 0..n {{ s = (s ^ w[j & 63]) + 1 }}\n    return s",
+        reuse.read
+    );
+    let signature = format!("n: int, v: {}, w: Vec<int>", reuse.param);
+    let head = "struct P { x: int, y: int }\nlet w: Vec<int> = vec![5; 64]\n";
+    if method {
+        format!(
+            "{head}struct R {{ q: int }}\nimpl R {{\n fn work(self, {signature}) -> int {{\n{body}\n }}\n}}\nlet r = R {{ q: 0 }}\nr.work(200000, {}, w)\n",
+            reuse.argument
+        )
+    } else {
+        format!(
+            "{head}fn work({signature}) -> int {{\n{body}\n}}\nwork(200000, {}, w)\n",
+            reuse.argument
+        )
+    }
+}
+
+fn reuse_reference(element: i64) -> i64 {
+    let n = 200_000i64;
+    let mut s = 0i64;
+    for _ in 0..n {
+        s = (s + element) & 0xFF_FFFF;
+    }
+    for _ in 0..n {
+        s = (s ^ 5) + 1;
+    }
+    s
+}
+
+#[test]
+fn a_counter_register_holding_a_reference_at_an_earlier_loop_does_not_refuse_that_loop() {
+    for reuse in REUSES {
+        for method in [false, true] {
+            let source = reuse_program(reuse, method);
+            for mode in [Mode::Off, Mode::Sync] {
+                let runtime = runtime(mode);
+                let value = execute(&runtime, &source, OptimizationLevel::Standard);
+                assert_eq!(
+                    value,
+                    Value::int(reuse_reference(reuse.element)),
+                    "{} method={method} {mode:?}",
+                    reuse.kind
+                );
+                if JIT_TARGET && matches!(mode, Mode::Sync) {
+                    assert!(
+                        runtime.jit_osr_executions() >= 1,
+                        "{} method={method}: the compiled loops never returned",
+                        reuse.kind
+                    );
+                    assert!(
+                        runtime.jit_deoptimizations() < 4,
+                        "{} method={method}: {} exits",
+                        reuse.kind,
+                        runtime.jit_deoptimizations()
+                    );
+                }
+            }
+        }
+    }
+}

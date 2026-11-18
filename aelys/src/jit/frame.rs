@@ -574,23 +574,35 @@ fn integer_registers(
         .collect::<Vec<_>>();
     let mut candidate = Live::all(analysis.registers);
     let mut wanted = Live::default();
-    let mut counters = Live::default();
-    let mut entry = Live::default();
-    for ip in &region.entries {
-        if let Some(live) = region.live_in.get(ip) {
-            entry.union(live);
+    let mut loops: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    for inst in &insts {
+        let registers = match inst.op {
+            ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
+                vec![inst.a, inst.a + 1, inst.a + 2]
+            }
+            WhileLoopLt => vec![inst.a, inst.a + 1],
+            VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong => vec![inst.a + 1],
+            _ => continue,
+        };
+        if let Some(target) = inst.target
+            && target <= inst.ip
+        {
+            loops.push((target, inst.ip, registers));
         }
     }
-    for inst in &insts {
-        let loop_registers: &[usize] = match inst.op {
-            ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
-                &[inst.a, inst.a + 1, inst.a + 2]
-            }
-            WhileLoopLt => &[inst.a, inst.a + 1],
-            _ => &[],
+    // a register live at an osr entry is unboxed there only when that entry lies inside a loop that holds its int in it
+    let mut entering = Live::all(analysis.registers);
+    for ip in &region.entries {
+        let Some(live) = region.live_in.get(ip) else {
+            continue;
         };
-        for register in loop_registers {
-            counters.insert(*register);
+        for register in live.registers(analysis.registers) {
+            let inside = loops.iter().any(|(header, end, registers)| {
+                *header <= *ip && *ip <= *end && registers.contains(&register)
+            });
+            if !inside {
+                entering.remove(register);
+            }
         }
     }
     for inst in &insts {
@@ -668,7 +680,7 @@ fn integer_registers(
                             Move => {
                                 candidate.contains(inst.b)
                                     && wanted.contains(inst.b)
-                                    && (!entry.contains(inst.b) || counters.contains(inst.b))
+                                    && entering.contains(inst.b)
                             }
                             _ => false,
                         };
@@ -689,9 +701,7 @@ fn integer_registers(
     }
     let mut ints = Live::default();
     for register in 0..analysis.registers {
-        if candidate.contains(register)
-            && wanted.contains(register)
-            && (!entry.contains(register) || counters.contains(register))
+        if candidate.contains(register) && wanted.contains(register) && entering.contains(register)
         {
             ints.insert(register);
         }
