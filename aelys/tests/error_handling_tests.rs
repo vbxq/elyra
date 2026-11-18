@@ -308,11 +308,14 @@ fn incompatible_match_arm_values_are_a_compile_error() {
 }
 
 #[test]
-fn question_mark_checks_the_success_type() {
+fn question_mark_yields_the_operand_success_type() {
     let message = compile_message(
         "fn read() -> Result<int, string> { Ok(1) }\nfn convert() -> Result<string, string> { let value = read()?; Ok(value) }\nconvert()",
     );
-    assert!(message.contains("cannot propagate"), "{message}");
+    assert!(
+        message.contains("type mismatch: expected string, found int"),
+        "{message}"
+    );
 }
 
 #[test]

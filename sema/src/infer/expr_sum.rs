@@ -250,6 +250,16 @@ impl TypeInference {
                 });
                 value_type.clone()
             }
+            "is_ok" | "is_err" if family == "Result" => InferType::Bool,
+            "is_some" | "is_none" if family == "Option" => InferType::Bool,
+            "ok_or" if family == "Option" => {
+                let error = typed_args
+                    .first()
+                    .map(|arg| arg.ty.clone())
+                    .unwrap_or_else(|| self.type_gen.fresh());
+                expected_args.push(error.clone());
+                InferType::Result(Box::new(value_type.clone()), Box::new(error))
+            }
             "ok" if family == "Result" => InferType::Option(Box::new(value_type.clone())),
             "err" if family == "Result" => {
                 InferType::Option(Box::new(error_type.clone().unwrap_or(InferType::Dynamic)))
@@ -463,6 +473,19 @@ impl TypeInference {
                     ret: Box::new(value.clone()),
                 });
                 value.clone()
+            }
+            "is_ok" | "is_err" => {
+                preferred_family = Some(SumFamily::Result);
+                InferType::Bool
+            }
+            "is_some" | "is_none" => {
+                preferred_family = Some(SumFamily::Option);
+                InferType::Bool
+            }
+            "ok_or" => {
+                preferred_family = Some(SumFamily::Option);
+                expected_args.push(error.clone());
+                InferType::Result(Box::new(value.clone()), Box::new(error.clone()))
             }
             "ok" => {
                 preferred_family = Some(SumFamily::Result);
@@ -785,6 +808,29 @@ impl TypeInference {
                     );
                 }
                 Some(residual.value.clone())
+            }
+            "is_ok" | "is_err" | "is_some" | "is_none" => {
+                let expected = if matches!(residual.method.as_str(), "is_ok" | "is_err") {
+                    SumFamily::Result
+                } else {
+                    SumFamily::Option
+                };
+                if family != expected {
+                    self.push_sum_method_receiver_error(residual, receiver);
+                    return None;
+                }
+                Some(InferType::Bool)
+            }
+            "ok_or" => {
+                if family != SumFamily::Option {
+                    self.push_sum_method_receiver_error(residual, receiver);
+                    return None;
+                }
+                unify_field(self, &residual.value, &value_type);
+                Some(InferType::Result(
+                    Box::new(value_type),
+                    Box::new(residual.error.clone()),
+                ))
             }
             "ok" => {
                 if family != SumFamily::Result {
@@ -1123,24 +1169,28 @@ impl TypeInference {
         let source = typed_inner.ty.clone();
         let Some(current_return) = self.current_return_type().cloned() else {
             self.errors.push(TypeError {
-                kind: TypeErrorKind::QuestionMarkOutsideResult,
+                kind: TypeErrorKind::QuestionMarkOutsideResult { top_level: true },
                 span,
                 reason: ConstraintReason::Other("question mark".to_string()),
             });
+            let output = match &source {
+                InferType::Option(value) | InferType::Result(value, _) => value.as_ref().clone(),
+                _ => self.type_gen.fresh(),
+            };
             return (
                 TypedExprKind::Try {
                     operand: Box::new(typed_inner),
                     conversion: None,
                     conversion_target: None,
                 },
-                InferType::Dynamic,
+                output,
             );
         };
 
         let output = self.type_gen.fresh();
         let target = match (&source, &current_return) {
             (InferType::Option(source_value), InferType::Var(_)) => {
-                let target = InferType::Option(Box::new(output.clone()));
+                let target = InferType::Option(Box::new(self.type_gen.fresh()));
                 self.constraints.push(Constraint::equal(
                     source_value.as_ref().clone(),
                     output.clone(),
@@ -1157,7 +1207,7 @@ impl TypeInference {
             }
             (InferType::Result(source_value, source_error), InferType::Var(_)) => {
                 let target = InferType::Result(
-                    Box::new(output.clone()),
+                    Box::new(self.type_gen.fresh()),
                     Box::new(source_error.as_ref().clone()),
                 );
                 self.constraints.push(Constraint::equal(
@@ -1174,21 +1224,13 @@ impl TypeInference {
                 ));
                 target
             }
-            (InferType::Option(_), InferType::Option(target_value)) => {
+            (InferType::Option(source_value), InferType::Option(_))
+            | (InferType::Result(source_value, _), InferType::Result(_, _)) => {
                 self.constraints.push(Constraint::equal(
+                    source_value.as_ref().clone(),
                     output.clone(),
-                    target_value.as_ref().clone(),
                     span,
-                    ConstraintReason::Other("question mark value".to_string()),
-                ));
-                current_return.clone()
-            }
-            (InferType::Result(_, _), InferType::Result(target_value, _)) => {
-                self.constraints.push(Constraint::equal(
-                    output.clone(),
-                    target_value.as_ref().clone(),
-                    span,
-                    ConstraintReason::Other("question mark value".to_string()),
+                    ConstraintReason::Other("question mark source value".to_string()),
                 ));
                 current_return.clone()
             }
@@ -1202,13 +1244,71 @@ impl TypeInference {
                 });
                 current_return.clone()
             }
-            (_, _) => {
+            (InferType::Option(source_value) | InferType::Result(source_value, _), _) => {
                 self.errors.push(TypeError {
-                    kind: TypeErrorKind::QuestionMarkOutsideResult,
+                    kind: TypeErrorKind::QuestionMarkOutsideResult { top_level: false },
                     span,
                     reason: ConstraintReason::Other("question mark".to_string()),
                 });
-                current_return.clone()
+                self.constraints.push(Constraint::equal(
+                    source_value.as_ref().clone(),
+                    output.clone(),
+                    span,
+                    ConstraintReason::Other("question mark source value".to_string()),
+                ));
+                return (
+                    TypedExprKind::Try {
+                        operand: Box::new(typed_inner),
+                        conversion: None,
+                        conversion_target: None,
+                    },
+                    output,
+                );
+            }
+            (InferType::Var(_), InferType::Option(_) | InferType::Result(_, _)) => {
+                let expected_source = match &current_return {
+                    InferType::Option(_) => InferType::Option(Box::new(output.clone())),
+                    _ => {
+                        InferType::Result(Box::new(output.clone()), Box::new(self.type_gen.fresh()))
+                    }
+                };
+                self.constraints.push(Constraint::equal(
+                    expected_source.clone(),
+                    source.clone(),
+                    span,
+                    ConstraintReason::Other("question mark".to_string()),
+                ));
+                self.try_residuals.push(TryResidual {
+                    source: expected_source,
+                    target: current_return.clone(),
+                    span,
+                });
+                return (
+                    TypedExprKind::Try {
+                        operand: Box::new(typed_inner),
+                        conversion: None,
+                        conversion_target: None,
+                    },
+                    output,
+                );
+            }
+            (_, _) => {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::QuestionMarkTypeMismatch {
+                        source: source.clone(),
+                        target: current_return.clone(),
+                    },
+                    span,
+                    reason: ConstraintReason::Other("question mark".to_string()),
+                });
+                return (
+                    TypedExprKind::Try {
+                        operand: Box::new(typed_inner),
+                        conversion: None,
+                        conversion_target: None,
+                    },
+                    output,
+                );
             }
         };
 
@@ -1242,30 +1342,8 @@ impl TypeInference {
                 continue;
             }
             match (&source, &target) {
-                (InferType::Option(source_value), InferType::Option(target_value)) => {
-                    if source_value != target_value {
-                        errors.push(TypeError {
-                            kind: TypeErrorKind::QuestionMarkTypeMismatch { source, target },
-                            span: residual.span,
-                            reason: ConstraintReason::Other("question mark conversion".to_string()),
-                        });
-                    }
-                }
-                (
-                    InferType::Result(source_value, source_error),
-                    InferType::Result(target_value, target_error),
-                ) => {
-                    if source_value != target_value {
-                        errors.push(TypeError {
-                            kind: TypeErrorKind::QuestionMarkTypeMismatch {
-                                source: source.clone(),
-                                target: target.clone(),
-                            },
-                            span: residual.span,
-                            reason: ConstraintReason::Other("question mark conversion".to_string()),
-                        });
-                        continue;
-                    }
+                (InferType::Option(_), InferType::Option(_)) => {}
+                (InferType::Result(_, source_error), InferType::Result(_, target_error)) => {
                     match self
                         .type_table
                         .select_from_conversion(source_error, target_error)
@@ -2533,6 +2611,11 @@ fn is_sum_method(name: &str) -> bool {
             | "map_err"
             | "and_then"
             | "or_else"
+            | "is_ok"
+            | "is_err"
+            | "is_some"
+            | "is_none"
+            | "ok_or"
     )
 }
 

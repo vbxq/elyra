@@ -160,7 +160,9 @@ pub enum TypeErrorKind {
     UnmaterializedAppliedType {
         name: String,
     },
-    QuestionMarkOutsideResult,
+    QuestionMarkOutsideResult {
+        top_level: bool,
+    },
     QuestionMarkTypeMismatch {
         source: InferType,
         target: InferType,
@@ -601,6 +603,9 @@ impl TypeError {
                         alike_side(found, &found_text)
                     )?;
                 }
+                if let Some(help) = sum_wrapping_help(expected, found, &self.reason) {
+                    write!(f, "\n   = help: {help}")?;
+                }
                 Ok(())
             }
             TypeErrorKind::InfiniteType { var, ty } => {
@@ -679,8 +684,14 @@ impl TypeError {
                     missing.join(", ")
                 )
             }
-            TypeErrorKind::IgnoredResult => write!(f, "unused Result value"),
-            TypeErrorKind::IgnoredOption => write!(f, "unused Option value"),
+            TypeErrorKind::IgnoredResult => write!(
+                f,
+                "unused Result value\n   = help: use the value, propagate it with '?', handle it with match, or discard it explicitly with 'let _ = ...'"
+            ),
+            TypeErrorKind::IgnoredOption => write!(
+                f,
+                "unused Option value\n   = help: use the value, propagate it with '?', handle it with match, or discard it explicitly with 'let _ = ...'"
+            ),
             TypeErrorKind::NullIsNotInSurface => write!(
                 f,
                 "null is not part of Aelys; use Option for absence or Result for failure"
@@ -704,13 +715,22 @@ impl TypeError {
                 "generic type '{}' was not materialized before code generation",
                 name
             ),
-            TypeErrorKind::QuestionMarkOutsideResult => {
-                write!(
-                    f,
-                    "cannot use '?' here; the enclosing function must return Option or Result"
-                )
-            }
+            TypeErrorKind::QuestionMarkOutsideResult { top_level: true } => write!(
+                f,
+                "cannot use '?' at the top level of a script: there is no enclosing function to return the failure from\n   = help: move this code into a function returning Option or Result, or handle the value with match, unwrap_or, or expect"
+            ),
+            TypeErrorKind::QuestionMarkOutsideResult { top_level: false } => write!(
+                f,
+                "cannot use '?' here; the enclosing function must return Option or Result\n   = help: declare the function as returning Option or Result, or handle the value with match, unwrap_or, or expect"
+            ),
             TypeErrorKind::QuestionMarkTypeMismatch { source, target } => {
+                if !matches!(source, InferType::Option(_) | InferType::Result(_, _)) {
+                    return write!(
+                        f,
+                        "the operand of '?' must be an Option or a Result, found {}",
+                        source.source_spelling()
+                    );
+                }
                 write!(
                     f,
                     "cannot propagate {} with '?' from a function returning {}",
@@ -742,7 +762,10 @@ impl TypeError {
                 write!(
                     f,
                     "cannot propagate {} with '?' from a function returning {}: no unique From<{}> for {} conversion",
-                    source, target, source_error, target_error
+                    source.source_spelling(),
+                    target.source_spelling(),
+                    source_error.source_spelling(),
+                    target_error.source_spelling()
                 )?;
                 if !candidates.is_empty() {
                     write!(f, "; candidate impls: {}", candidates.join(", "))?;
@@ -1658,7 +1681,7 @@ impl TypeErrorKind {
             Self::UntypedNativeValue { .. } => 348,
             Self::UntypedNativeBoundary { .. } => 379,
             Self::UnmaterializedAppliedType { .. } => 349,
-            Self::QuestionMarkOutsideResult => 305,
+            Self::QuestionMarkOutsideResult { .. } => 305,
             Self::QuestionMarkTypeMismatch { .. } => 306,
             Self::UnresolvedSumType { .. } => 307,
             Self::UntypedSumValue { .. } => 308,
@@ -1769,6 +1792,67 @@ impl TypeErrorKind {
             Self::Mismatch { .. } | Self::NotOneOf { .. } | Self::UndefinedVariable { .. } => 301,
         }
     }
+}
+
+fn sum_wrapping_help(
+    expected: &InferType,
+    found: &InferType,
+    reason: &ConstraintReason,
+) -> Option<String> {
+    let carried = |ty: &InferType| match ty {
+        InferType::Option(value) => Some(("Option", "Some", value.source_spelling())),
+        InferType::Result(value, _) => Some(("Result", "Ok", value.source_spelling())),
+        _ => None,
+    };
+    let mut reason = reason;
+    while let ConstraintReason::DefinedIn { inner, .. } = reason {
+        reason = inner;
+    }
+    let operator = matches!(
+        reason,
+        ConstraintReason::BinaryOp { .. }
+            | ConstraintReason::BitwiseOp { .. }
+            | ConstraintReason::Comparison
+    );
+    let extract = |sum: &InferType, value: &str| {
+        format!(
+            "the value has type {}; get the {value} inside with '?', match, or unwrap",
+            sum.source_spelling()
+        )
+    };
+    if matches!(expected, InferType::Bool)
+        && matches!(
+            reason,
+            ConstraintReason::IfCondition | ConstraintReason::WhileCondition
+        )
+    {
+        match found {
+            InferType::Result(_, _) => {
+                return Some("test a Result with is_ok() or is_err()".to_string());
+            }
+            InferType::Option(_) => {
+                return Some("test an Option with is_some() or is_none()".to_string());
+            }
+            _ => {}
+        }
+    }
+    if let Some((_, _, value)) = carried(found)
+        && value == expected.source_spelling()
+    {
+        return Some(extract(found, &value));
+    }
+    if let Some((_, constructor, value)) = carried(expected)
+        && value == found.source_spelling()
+    {
+        if operator {
+            return Some(extract(expected, &value));
+        }
+        return Some(format!(
+            "wrap the value as {constructor}(...) to produce a {}",
+            expected.source_spelling()
+        ));
+    }
+    None
 }
 
 fn alike_side(ty: &InferType, text: &str) -> String {
