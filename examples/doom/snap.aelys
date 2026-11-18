@@ -58,3 +58,30 @@ for t in level.things {
     if t.kind == 1 { p1 = t }
 }
 view(0, p1.x, p1.y, p1.angle, pal, rgb, outdir)
+view(1, 1700, 1700, 300, pal, rgb, outdir)
+view(2, 2296, -384, 90, pal, rgb, outdir)
+view(3, 700, 1976, 180, pal, rgb, outdir)
+view(4, 1136, -424, 0, pal, rgb, outdir)
+view(5, 2200, 1500, 200, pal, rgb, outdir)
+
+let frames = 30
+let sx = p1.x << 16
+let sy = p1.y << 16
+let sz = render::floor_height_at(sx, sy) + (41 << 16)
+let sa = (p1.angle * 4294967296 / 360) & 0xFFFFFFFF
+render::reset_times()
+let t_frames = time::timer()
+let mut worst = 0.0
+for i in 0..frames {
+    let tf = time::timer()
+    render::render_frame(sx, sy, sz, sa)
+    let ms = time::elapsed(tf) * 1000.0
+    if ms > worst { worst = ms }
+}
+let total = time::elapsed(t_frames) * 1000.0
+let t_pal = time::timer()
+for i in 0..frames { render::to_rgb(pal, rgb) }
+let pal_ms = time::elapsed(t_pal) * 1000.0 / convert::to_float(frames)
+let n = convert::to_float(frames)
+println("timing {frames} frames at start view: render_frame avg {total / n} ms (worst {worst} ms)")
+println("  bsp+walls {render::time_bsp_ms() / n} ms, planes {render::time_planes_ms() / n} ms, sprites+masked {render::time_masked_ms() / n} ms, palette->rgb {pal_ms} ms")
