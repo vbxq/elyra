@@ -218,6 +218,7 @@ impl Compiler {
         self.finish_registers()?;
         self.current.global_layout = self.build_global_layout()?;
         self.current.compute_global_layout_hash();
+        unify_global_layouts(&mut self.current);
         self.current.finalize_bytecode();
         self.update_jit_eligibility();
 
@@ -262,6 +263,40 @@ impl Compiler {
             }
             Ok(GlobalLayout::new(names))
         }
+    }
+}
+
+// one layout for the whole program lets a call between two of its functions keep the current global view
+fn unify_global_layouts(main: &mut Function) {
+    fn collect(function: &Function, names: &mut Vec<String>) -> bool {
+        for (index, name) in function.global_layout.names().iter().enumerate() {
+            if name.is_empty() {
+                continue;
+            }
+            if names.len() <= index {
+                names.resize(index + 1, String::new());
+            }
+            if names[index].is_empty() {
+                names[index] = name.clone();
+            } else if names[index] != *name {
+                return false;
+            }
+        }
+        function
+            .nested_functions
+            .iter()
+            .all(|nested| collect(nested, names))
+    }
+    fn assign(function: &mut Function, layout: &Arc<GlobalLayout>) {
+        function.global_layout = Arc::clone(layout);
+        function.compute_global_layout_hash();
+        for nested in &mut function.nested_functions {
+            assign(nested, layout);
+        }
+    }
+    let mut names = Vec::new();
+    if collect(main, &mut names) && !names.is_empty() {
+        assign(main, &GlobalLayout::new(names));
     }
 }
 
