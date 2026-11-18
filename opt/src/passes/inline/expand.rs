@@ -1,14 +1,18 @@
-use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
+use crate::passes::effects::has_effects;
+use aelys_sema::{
+    TypedExpr, TypedExprKind, TypedFunction, TypedMatchArm, TypedMatchArmBody, TypedPattern,
+    TypedPatternKind, TypedStmt, TypedStmtKind,
+};
 use aelys_syntax::Span;
 use std::collections::HashMap;
 
 pub struct InlineExpander {
-    _reserved: (),
+    next_temporary: usize,
 }
 
 impl InlineExpander {
     pub fn new() -> Self {
-        Self { _reserved: () }
+        Self { next_temporary: 0 }
     }
 
     pub fn expand_call(
@@ -21,43 +25,77 @@ impl InlineExpander {
             return None;
         }
 
-        let param_map: HashMap<String, TypedExpr> = func
+        let body = match func.body.as_slice() {
+            [stmt] => match &stmt.kind {
+                TypedStmtKind::Return(Some(expr)) | TypedStmtKind::Expression(expr) => expr,
+                _ => return None,
+            },
+            _ => return None,
+        };
+
+        let param_names: HashMap<String, TypedExpr> = func
             .params
             .iter()
             .zip(args.iter())
             .map(|(p, a)| (p.name.clone(), a.clone()))
             .collect();
-
-        self.try_simple_inline(&func.body, &param_map, call_span)
-    }
-
-    fn try_simple_inline(
-        &self,
-        body: &[TypedStmt],
-        params: &HashMap<String, TypedExpr>,
-        span: Span,
-    ) -> Option<TypedExpr> {
-        if body.len() != 1 {
+        if !self.expr_has_only_params_and_literals(body, &param_names) {
             return None;
         }
 
-        match &body[0].kind {
-            TypedStmtKind::Return(Some(expr)) => {
-                if self.expr_has_only_params_and_literals(expr, params) {
-                    Some(self.substitute_expr(expr, params, span))
-                } else {
-                    None
-                }
+        let effectful: Vec<bool> = args.iter().map(has_effects).collect();
+        let last_effectful = effectful.iter().rposition(|e| *e);
+        let mut substitutions = HashMap::new();
+        let mut bindings = Vec::new();
+        for (index, (param, arg)) in func.params.iter().zip(args.iter()).enumerate() {
+            let uses = count_uses(body, &param.name);
+            let later_effects = last_effectful.is_some_and(|last| last > index);
+            let substitutable = is_literal(arg)
+                || (!effectful[index]
+                    && !later_effects
+                    && (uses <= 1 || matches!(arg.kind, TypedExprKind::Identifier(_))));
+            if substitutable {
+                substitutions.insert(param.name.clone(), arg.clone());
+                continue;
             }
-            TypedStmtKind::Expression(expr) => {
-                if self.expr_has_only_params_and_literals(expr, params) {
-                    Some(self.substitute_expr(expr, params, span))
-                } else {
-                    None
-                }
-            }
-            _ => None,
+            let temporary = format!("{}#inline{}", param.name, self.next_temporary);
+            self.next_temporary += 1;
+            substitutions.insert(
+                param.name.clone(),
+                TypedExpr::new(
+                    TypedExprKind::Identifier(temporary.clone()),
+                    arg.ty.clone(),
+                    arg.span,
+                ),
+            );
+            bindings.push((temporary, arg.clone()));
         }
+
+        let mut result = self.substitute_expr(body, &substitutions, call_span);
+        for (temporary, arg) in bindings.into_iter().rev() {
+            let ty = result.ty.clone();
+            let pattern = TypedPattern {
+                kind: TypedPatternKind::Binding(temporary),
+                ty: arg.ty.clone(),
+                span: arg.span,
+            };
+            let arm = TypedMatchArm {
+                pattern,
+                guard: None,
+                body: TypedMatchArmBody::Expr(result),
+                explicit_dynamic: false,
+                span: call_span,
+            };
+            result = TypedExpr::new(
+                TypedExprKind::Match {
+                    scrutinee: Box::new(arg),
+                    arms: vec![arm],
+                },
+                ty,
+                call_span,
+            );
+        }
+        Some(result)
     }
 
     fn expr_has_only_params_and_literals(
@@ -481,5 +519,39 @@ impl InlineExpander {
 impl Default for InlineExpander {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn is_literal(expr: &TypedExpr) -> bool {
+    matches!(
+        expr.kind,
+        TypedExprKind::Int(_)
+            | TypedExprKind::Float(_)
+            | TypedExprKind::Bool(_)
+            | TypedExprKind::String(_)
+            | TypedExprKind::Unit
+            | TypedExprKind::Null
+    )
+}
+
+fn count_uses(expr: &TypedExpr, name: &str) -> usize {
+    match &expr.kind {
+        TypedExprKind::Identifier(n) => usize::from(n == name),
+        TypedExprKind::Binary { left, right, .. }
+        | TypedExprKind::And { left, right }
+        | TypedExprKind::Or { left, right } => count_uses(left, name) + count_uses(right, name),
+        TypedExprKind::Unary { operand, .. } | TypedExprKind::Grouping(operand) => {
+            count_uses(operand, name)
+        }
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            count_uses(condition, name)
+                + count_uses(then_branch, name)
+                + count_uses(else_branch, name)
+        }
+        _ => 0,
     }
 }

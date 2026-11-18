@@ -2,6 +2,7 @@
 
 mod constant_fold;
 mod dead_code;
+mod effects;
 mod global_const_prop;
 mod inline;
 mod level;

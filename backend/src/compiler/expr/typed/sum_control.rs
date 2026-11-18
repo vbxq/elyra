@@ -128,8 +128,9 @@ impl Compiler {
         let scrutinee_reg = self.alloc_register()?;
         self.compile_typed_expr(scrutinee, scrutinee_reg)?;
         let mut end_jumps = Vec::new();
+        let mut exhaustive = false;
 
-        for arm in arms {
+        for (position, arm) in arms.iter().enumerate() {
             self.begin_scope();
             let mut binding_registers = HashMap::new();
             self.reserve_pattern_bindings(&arm.pattern, &mut binding_registers)?;
@@ -148,8 +149,13 @@ impl Compiler {
                 self.free_register(guard_reg);
             }
 
+            let falls_through = position + 1 == arms.len() && failure_jumps.is_empty();
             self.compile_typed_match_body(&arm.body, dest, arm.span)?;
-            end_jumps.push(self.emit_jump(OpCode::Jump, arm.span));
+            if falls_through {
+                exhaustive = true;
+            } else {
+                end_jumps.push(self.emit_jump(OpCode::Jump, arm.span));
+            }
             self.end_scope();
 
             let next_arm = self.current_offset();
@@ -158,7 +164,9 @@ impl Compiler {
             }
         }
 
-        self.emit_a(OpCode::MatchFail, 0, 0, 0, span);
+        if !exhaustive {
+            self.emit_a(OpCode::MatchFail, 0, 0, 0, span);
+        }
         let end = self.current_offset();
         for jump in end_jumps {
             self.patch_jump_to(jump, end);
