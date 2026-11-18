@@ -39,11 +39,11 @@ trait impl and or not pub needs as from true false null
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
 
 `loop` is contextual: it opens a loop only when a `{` follows it, so `let loop = 1`
-still declares a variable. A quote followed by a name is a label unless another
-quote closes it right after the name (`'a'` is not a label). `step` is contextual too: it is a keyword only after
-the range of a `for` header, so a function, variable or field may be named `step`. A label is an identifier written after a quote,
-`'outer`, and is only meaningful before `for`, `while` or `loop` and after `break`
-or `continue`.
+still declares a variable. `step` is contextual too: it is a keyword only after
+the range of a `for` header, so a function, variable or field may be named `step`.
+A label is an identifier written after a quote, `'outer`, and is only meaningful
+before `for`, `while` or `loop` and after `break` or `continue`. A quote, a name
+and a closing quote (`'a'`) is not a label.
 
 `where`, `dyn`, and `self` are contextual. They carry meaning in a generic
 bound, a type position, and a method receiver respectively, and they are still
