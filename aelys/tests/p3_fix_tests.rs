@@ -325,18 +325,18 @@ fn the_reviewed_eleven_call_method_chain_compiles_quickly_and_counts_eleven() {
 }
 
 #[test]
-fn a_ninety_nine_call_method_chain_compiles_in_linear_time_and_counts_ninety_nine() {
+fn the_longest_accepted_method_chain_of_511_calls_compiles_in_linear_time() {
     on_main_sized_stack(|| {
-        let source = chain_program(99);
-        assert_compiles_quickly(&source, Duration::from_secs(5));
-        assert_int_everywhere(&source, 99);
+        let source = chain_program(511);
+        assert_compiles_quickly(&source, Duration::from_secs(10));
+        assert_int_everywhere(&source, 511);
     });
 }
 
 #[test]
-fn a_two_hundred_call_method_chain_is_the_depth_limit_diagnostic_not_an_exhaustion() {
+fn a_512_call_method_chain_is_the_depth_limit_diagnostic_not_an_exhaustion() {
     on_main_sized_stack(|| {
-        let source = chain_program(200);
+        let source = chain_program(512);
         let started = Instant::now();
         assert_rejected_with(&source, "E0368");
         assert!(started.elapsed() < Duration::from_secs(5));

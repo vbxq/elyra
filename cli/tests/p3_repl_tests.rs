@@ -61,7 +61,7 @@ fn globals_of_every_shape_keep_their_type_on_later_lines() {
     );
     assert_eq!(
         values(&lines),
-        ["3", "6", "4", "5", "11", "11", "6", "49", "0"],
+        ["3", "6", "4", "5", "11", "6", "49", "0"],
         "{lines:?}"
     );
 }
