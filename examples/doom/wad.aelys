@@ -69,7 +69,8 @@ pub struct Picture {
     pub top: int,
     pub widthmask: int,
     pub heightmask: int,
-    pub pixels: Vec<int>,
+    pub cols: Vec<Vec<int>>,
+    pub mcols: Vec<Vec<int>>,
     pub colpost: Vec<int>,
     pub posts: Vec<int>,
 }

@@ -7,7 +7,7 @@ needs fixed
 needs gfx
 
 let mut fb: Vec<int> = vec![0; 64000]
-let mut cmap: Vec<int> = vec![]
+let mut cmap_rows: Vec<Vec<int>> = vec![vec![0; 256]]
 let mut segs: Vec<WallSeg> = vec![]
 let mut sides: Vec<WallSide> = vec![]
 let mut rooms: Vec<Room> = vec![]
@@ -155,8 +155,20 @@ fn iabs(a: int) -> int {
     if a < 0 { -a } else { a }
 }
 
-fn fmul(a: int, b: int) -> int { fixed::fixed_mul(a, b) }
-fn fdiv(a: int, b: int) -> int { fixed::fixed_div(a, b) }
+fn fmul(a: int, b: int) -> int {
+    let al = a & 0xFFFF
+    (a >> 16) * b + al * (b >> 16) + ((al * (b & 0xFFFF)) >> 16)
+}
+
+fn fdiv(a: int, b: int) -> int {
+    let aa = if a < 0 { -a } else { a }
+    let ab = if b < 0 { -b } else { b }
+    if (aa >> 14) >= ab {
+        if (a ^ b) < 0 { return -2147483648 }
+        return 2147483647
+    }
+    (a / b) * 65536 + ((a % b) * 65536) / b
+}
 
 fn name_slot(name: string) -> int {
     let k = wad::key_of(name)
@@ -192,7 +204,8 @@ fn texture_num(slots: Vec<int>, names: Vec<string>, name: string) -> int {
 }
 
 fn empty_picture() -> Picture {
-    Picture { width: 1, height: 1, left: 0, top: 0, widthmask: 0, heightmask: 0, pixels: vec![0; 520], colpost: vec![0], posts: vec![-1] }
+    let col: Vec<int> = vec![0; 17]
+    Picture { width: 1, height: 1, left: 0, top: 0, widthmask: 0, heightmask: 0, cols: vec![col], mcols: vec![col], colpost: vec![0], posts: vec![-1] }
 }
 
 fn pow2_mask(n: int) -> int {
@@ -214,7 +227,7 @@ fn posts_from_mask(width: int, height: int, opaque: Vec<int>) -> Picture {
                 while y < height and opaque[base + y] != 0 { y++ }
                 posts.push(top)
                 posts.push(y - top)
-                posts.push(256 + base + top)
+                posts.push(8 + top)
             } else {
                 y++
             }
@@ -222,7 +235,8 @@ fn posts_from_mask(width: int, height: int, opaque: Vec<int>) -> Picture {
         posts.push(-1)
     }
     let hm = if pow2_mask(height) + 1 == height { height - 1 } else { -1 }
-    Picture { width: width, height: height, left: 0, top: 0, widthmask: pow2_mask(width), heightmask: hm, pixels: vec![], colpost: colpost, posts: posts }
+    let none: Vec<Vec<int>> = vec![]
+    Picture { width: width, height: height, left: 0, top: 0, widthmask: pow2_mask(width), heightmask: hm, cols: none, mcols: none, colpost: colpost, posts: posts }
 }
 
 fn build_texture(w: Wad, g: Graphics, tex: TextureDef) -> Picture {
@@ -252,7 +266,19 @@ fn build_texture(w: Wad, g: Graphics, tex: TextureDef) -> Picture {
         }
     }
     let p = posts_from_mask(width, height, opaque)
-    Picture { width: width, height: height, left: 0, top: 0, widthmask: p.widthmask, heightmask: p.heightmask, pixels: pix, colpost: p.colpost, posts: p.posts }
+    let mut cols: Vec<Vec<int>> = vec![]
+    let mut mcols: Vec<Vec<int>> = vec![]
+    for x in 0..width {
+        let mut c: Vec<int> = vec![0; height]
+        let mut m: Vec<int> = vec![0; height + 16]
+        for y in 0..height {
+            c[y] = pix[256 + x * height + y]
+            m[8 + y] = c[y]
+        }
+        cols.push(c)
+        mcols.push(m)
+    }
+    Picture { width: width, height: height, left: 0, top: 0, widthmask: p.widthmask, heightmask: p.heightmask, cols: cols, mcols: mcols, colpost: p.colpost, posts: p.posts }
 }
 
 fn build_patch(w: Wad, li: int) -> Picture {
@@ -264,23 +290,25 @@ fn build_patch(w: Wad, li: int) -> Picture {
             if post.top + post.length > height { height = post.top + post.length }
         }
     }
-    let mut pix: Vec<int> = vec![0; width * height + 512]
+    let mut mcols: Vec<Vec<int>> = vec![]
     let mut colpost: Vec<int> = vec![0; width]
     let mut posts: Vec<int> = vec![]
     for x in 0..width {
         colpost[x] = posts.len()
-        let base = 256 + x * height
+        let mut m: Vec<int> = vec![0; height + 16]
         for post in patch.columns[x] {
             posts.push(post.top)
             posts.push(post.length)
-            posts.push(base + post.top)
+            posts.push(8 + post.top)
             for i in 0..post.length {
-                pix[base + post.top + i] = bytes::read_u8(w.buf, post.data + i)
+                m[8 + post.top + i] = bytes::read_u8(w.buf, post.data + i)
             }
         }
         posts.push(-1)
+        mcols.push(m)
     }
-    Picture { width: width, height: height, left: patch.left, top: patch.top, widthmask: pow2_mask(width), heightmask: -1, pixels: pix, colpost: colpost, posts: posts }
+    let none: Vec<Vec<int>> = vec![]
+    Picture { width: width, height: height, left: patch.left, top: patch.top, widthmask: pow2_mask(width), heightmask: -1, cols: none, mcols: mcols, colpost: colpost, posts: posts }
 }
 
 fn push_int(mut v: Vec<int>, x: int) { v.push(x) }
@@ -466,8 +494,8 @@ fn node_side(x: int, y: int, node: Node) -> int {
         if (ndy ^ dx) < 0 { return 1 }
         return 0
     }
-    let left = fmul(ndy, dx)
-    let right = fmul(dy, ndx)
+    let left = (ndy * dx) >> 16
+    let right = (dy * ndx) >> 16
     if right < left { 0 } else { 1 }
 }
 
@@ -492,13 +520,13 @@ fn init_lights() {
             let mut level = startmap - scale / 2
             if level < 0 { level = 0 }
             if level > 31 { level = 31 }
-            zlight[i * 128 + j] = level * 256
+            zlight[i * 128 + j] = level
         }
         for j in 0..48 {
             let mut level = startmap - j * 320 / 320 / 2
             if level < 0 { level = 0 }
             if level > 31 { level = 31 }
-            scalelight[i * 48 + j] = level * 256
+            scalelight[i * 48 + j] = level
         }
     }
     for i in 0..200 {
@@ -518,7 +546,12 @@ fn init_lights() {
 
 pub fn setup(w: Wad, g: Graphics, lv: Level) {
     let t0 = time::timer()
-    cmap = g.colormap
+    cmap_rows = vec![]
+    for m in 0..(g.colormap.len() / 256) {
+        let mut row: Vec<int> = vec![0; 256]
+        for i in 0..256 { row[i] = g.colormap[m * 256 + i] }
+        cmap_rows.push(row)
+    }
     init_lights()
     let mut tex_names: Vec<string> = vec![]
     tex_heights = vec![]
@@ -651,35 +684,68 @@ fn point_to_angle(px: int, py: int) -> int {
     let mut x = px - viewx
     let mut y = py - viewy
     if x == 0 and y == 0 { return 0 }
-    let ta = fixed::tantoangle
+    let mut base = 0
+    let mut neg = false
+    let mut num = y
+    let mut den = x
     if x >= 0 {
         if y >= 0 {
-            if x > y { return ta[slope_div(y, x)] }
-            return 0x3FFFFFFF - ta[slope_div(x, y)]
+            if x <= y {
+                base = 0x3FFFFFFF
+                neg = true
+                num = x
+                den = y
+            }
+        } else {
+            y = -y
+            num = y
+            if x > y {
+                base = 0x100000000
+                neg = true
+            } else {
+                base = 0xC0000000
+                num = x
+                den = y
+            }
         }
-        y = -y
-        if x > y { return (0x100000000 - ta[slope_div(y, x)]) & 0xFFFFFFFF }
-        return 0xC0000000 + ta[slope_div(x, y)]
+    } else {
+        x = -x
+        den = x
+        if y >= 0 {
+            if x > y {
+                base = 0x7FFFFFFF
+                neg = true
+            } else {
+                base = 0x40000000
+                num = x
+                den = y
+            }
+        } else {
+            y = -y
+            num = y
+            if x > y {
+                base = 0x80000000
+            } else {
+                base = 0xBFFFFFFF
+                neg = true
+                num = x
+                den = y
+            }
+        }
     }
-    x = -x
-    if y >= 0 {
-        if x > y { return 0x7FFFFFFF - ta[slope_div(y, x)] }
-        return 0x40000000 + ta[slope_div(x, y)]
+    let mut slope = 2048
+    if den >= 512 {
+        slope = (num << 3) / (den >> 8)
+        if slope > 2048 { slope = 2048 }
     }
-    y = -y
-    if x > y { return 0x80000000 + ta[slope_div(y, x)] }
-    0xBFFFFFFF - ta[slope_div(x, y)]
-}
-
-fn slope_div(num: int, den: int) -> int {
-    if den < 512 { return 2048 }
-    let ans = (num << 3) / (den >> 8)
-    if ans <= 2048 { ans } else { 2048 }
+    if neg { (base - fixed::tantoangle[slope]) & 0xFFFFFFFF } else { base + fixed::tantoangle[slope] }
 }
 
 fn point_to_dist(px: int, py: int) -> int {
-    let mut dx = iabs(px - viewx)
-    let mut dy = iabs(py - viewy)
+    let mut dx = px - viewx
+    let mut dy = py - viewy
+    if dx < 0 { dx = -dx }
+    if dy < 0 { dy = -dy }
     if dy > dx {
         let t = dx
         dx = dy
@@ -724,8 +790,6 @@ fn find_plane(height: int, pic: int, light: int) -> int {
     pl_light[p] = l
     pl_minx[p] = 320
     pl_maxx[p] = -1
-    let base = p * 322
-    for i in base..(base + 322) { pl_top[i] = 255 }
     p
 }
 
@@ -763,58 +827,46 @@ fn check_plane(p: int, start: int, stop: int) -> int {
     pl_light[n] = pl_light[p]
     pl_minx[n] = start
     pl_maxx[n] = stop
-    let nb = n * 322
-    for i in nb..(nb + 322) { pl_top[i] = 255 }
     n
 }
 
-fn draw_column(mut out: Vec<int>, cm_tab: Vec<int>, pix: Vec<int>, x: int, yl: int, yh: int, texturemid: int, iscale: int, colbase: int, mask: int, height: int, cm: int) {
-    if yh < yl { return () }
-    let mut frac = texturemid + (yl - 100) * iscale
-    let first = yl * 320 + x
-    let last = yh * 320 + x
-    if mask >= 0 {
-        for d in first..=last step 320 {
-            out[d] = cm_tab[cm + pix[colbase + ((frac >> 16) & mask)]]
-            frac += iscale
-        }
-    } else {
-        let hf = height << 16
-        frac = frac % hf
-        if frac < 0 { frac += hf }
-        for d in first..=last step 320 {
-            out[d] = cm_tab[cm + pix[colbase + (frac >> 16)]]
-            frac += iscale
-            if frac >= hf { frac -= hf }
+fn draw_column(mut out: Vec<int>, cmrow: Vec<int>, col: Vec<int>, x: int, yl: int, yh: int, texturemid: int, iscale: int, mask: int, height: int) {
+    if yh >= yl {
+        let mut frac = texturemid + (yl - 100) * iscale
+        if mask >= 0 {
+            for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                out[d] = cmrow[col[(frac >> 16) & mask]]
+                frac += iscale
+            }
+        } else {
+            let hf = height << 16
+            frac = frac % hf
+            if frac < 0 { frac += hf }
+            for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                out[d] = cmrow[col[frac >> 16]]
+                frac += iscale
+                if frac >= hf { frac -= hf }
+            }
         }
     }
 }
 
-fn draw_tex_column(pic: Picture, col: int, x: int, yl: int, yh: int, texturemid: int, iscale: int, cm: int) {
-    let c = col & pic.widthmask
-    draw_column(fb, cmap, pic.pixels, x, yl, yh, texturemid, iscale, 256 + c * pic.height, pic.heightmask, pic.height, cm)
-}
-
-fn draw_masked_column(pic: Picture, col: int, x: int, topscreen0: int, yscale: int, basemid: int, iscale: int, cm: int, ceilclip: int, floorclip_v: int) {
+fn draw_masked_column(pic: Picture, c: int, x: int, topscreen0: int, yscale: int, basemid: int, iscale: int, cmrow: Vec<int>, ceilclip: int, floorclip_v: int) {
     let posts = pic.posts
-    let pix = pic.pixels
-    let mut p = pic.colpost[col]
+    let col = pic.mcols[c]
+    let mut p = pic.colpost[c]
     while posts[p] >= 0 {
         let topdelta = posts[p]
-        let length = posts[p + 1]
-        let data = posts[p + 2]
         let topscreen = topscreen0 + yscale * topdelta
-        let bottomscreen = topscreen + yscale * length
         let mut yl = (topscreen + 65535) >> 16
-        let mut yh = (bottomscreen - 1) >> 16
+        let mut yh = (topscreen + yscale * posts[p + 1] - 1) >> 16
         if yh >= floorclip_v { yh = floorclip_v - 1 }
         if yl <= ceilclip { yl = ceilclip + 1 }
         if yl <= yh {
+            let data = posts[p + 2]
             let mut frac = basemid - (topdelta << 16) + (yl - 100) * iscale
-            let first = yl * 320 + x
-            let last = yh * 320 + x
-            for d in first..=last step 320 {
-                fb[d] = cmap[cm + pix[data + (frac >> 16)]]
+            for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                fb[d] = cmrow[col[data + (frac >> 16)]]
                 frac += iscale
             }
         }
@@ -1001,11 +1053,11 @@ fn store_wall_range(start: int, stop: int) {
     wall_steps(has_back)
     if w_markceiling { ceilingplane = check_plane(ceilingplane, start, stop) }
     if w_markfloor { floorplane = check_plane(floorplane, start, stop) }
-    seg_loop(start, stop + 1)
+    seg_loop(fb, start, stop + 1, 16)
     wall_finish(start, stop)
 }
 
-fn seg_loop(start: int, stopx: int) {
+fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
     let markceiling = w_markceiling
     let markfloor = w_markfloor
     let segtextured = w_segtextured
@@ -1021,7 +1073,18 @@ fn seg_loop(start: int, stopx: int) {
     let midpic = tex_pics[midtex]
     let toppic = tex_pics[toptex]
     let botpic = tex_pics[bottomtex]
-    let distance = w_distance
+    let mid_cols = midpic.cols
+    let mid_wm = midpic.widthmask
+    let mid_hm = midpic.heightmask
+    let top_cols = toppic.cols
+    let top_wm = toppic.widthmask
+    let top_hm = toppic.heightmask
+    let bot_cols = botpic.cols
+    let bot_wm = botpic.widthmask
+    let bot_hm = botpic.heightmask
+    let dist = w_distance
+    let dist_hi = dist >> 16
+    let dist_lo = dist & 0xFFFF
     let offset = w_offset
     let centerangle = w_centerangle
     let lightrow = w_lightrow
@@ -1035,15 +1098,18 @@ fn seg_loop(start: int, stopx: int) {
     let mut bottomfrac = w_bottomfrac
     let mut pixhigh = w_pixhigh
     let mut pixlow = w_pixlow
+    let midtexmid = w_midtexmid
+    let toptexmid = w_toptexmid
+    let bottomtexmid = w_bottomtexmid
     for x in start..stopx {
         let cc = ceilingclip[x]
         let fc = floorclip[x]
         let mut yl = (topfrac + 4095) >> 12
-        if yl < cc + 1 { yl = cc + 1 }
+        if yl <= cc { yl = cc + 1 }
         if markceiling {
             let mut bottom = yl - 1
             if bottom >= fc { bottom = fc - 1 }
-            if cc + 1 <= bottom {
+            if cc < bottom {
                 pl_top[cbase + x] = cc + 1
                 pl_bottom[cbase + x] = bottom
             }
@@ -1053,24 +1119,37 @@ fn seg_loop(start: int, stopx: int) {
         if markfloor {
             let mut top = yh + 1
             if top <= cc { top = cc + 1 }
-            if top <= fc - 1 {
+            if top < fc {
                 pl_top[fbase + x] = top
                 pl_bottom[fbase + x] = fc - 1
             }
         }
         let mut texcol = 0
-        let mut cm = 0
+        let mut level = 0
         let mut iscale = 0
         if segtextured {
-            let angle = ((centerangle + xtov[x]) >> 19) & 4095
-            texcol = (offset - fmul(ftan[angle], distance)) >> 16
+            let t = ftan[((centerangle + xtov[x]) >> 19) & 4095]
+            let tl = t & 0xFFFF
+            texcol = (offset - ((t >> 16) * dist + tl * dist_hi + ((tl * dist_lo) >> 16))) >> 16
             let mut index = scale >> 12
             if index >= 48 { index = 47 }
-            cm = scalelight[lightrow + index]
+            level = scalelight[lightrow + index]
             iscale = 0xFFFFFFFF / scale
         }
+        let cmrow = cmap_rows[level]
         if midtex != 0 {
-            draw_tex_column(midpic, texcol, x, yl, yh, w_midtexmid, iscale, cm)
+            if yl <= yh {
+                if mid_hm >= 0 {
+                    let col = mid_cols[texcol & mid_wm]
+                    let mut frac = midtexmid + (yl - 100) * iscale
+                    for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
+                        out[d] = cmrow[col[(frac >> sh) & mid_hm]]
+                        frac += iscale
+                    }
+                } else {
+                    draw_column(out, cmrow, mid_cols[texcol & mid_wm], x, yl, yh, midtexmid, iscale, mid_hm, midpic.height)
+                }
+            }
             ceilingclip[x] = 200
             floorclip[x] = -1
         } else {
@@ -1079,7 +1158,16 @@ fn seg_loop(start: int, stopx: int) {
                 pixhigh += pixhighstep
                 if mid >= fc { mid = fc - 1 }
                 if mid >= yl {
-                    draw_tex_column(toppic, texcol, x, yl, mid, w_toptexmid, iscale, cm)
+                    if top_hm >= 0 {
+                        let col = top_cols[texcol & top_wm]
+                        let mut frac = toptexmid + (yl - 100) * iscale
+                        for d in (yl * 320 + x)..=(mid * 320 + x) step 320 {
+                            out[d] = cmrow[col[(frac >> sh) & top_hm]]
+                            frac += iscale
+                        }
+                    } else {
+                        draw_column(out, cmrow, top_cols[texcol & top_wm], x, yl, mid, toptexmid, iscale, top_hm, toppic.height)
+                    }
                     ceilingclip[x] = mid
                 } else {
                     ceilingclip[x] = yl - 1
@@ -1092,7 +1180,16 @@ fn seg_loop(start: int, stopx: int) {
                 pixlow += pixlowstep
                 if mid <= cc { mid = cc + 1 }
                 if mid <= yh {
-                    draw_tex_column(botpic, texcol, x, mid, yh, w_bottomtexmid, iscale, cm)
+                    if bot_hm >= 0 {
+                        let col = bot_cols[texcol & bot_wm]
+                        let mut frac = bottomtexmid + (mid - 100) * iscale
+                        for d in (mid * 320 + x)..=(yh * 320 + x) step 320 {
+                            out[d] = cmrow[col[(frac >> sh) & bot_hm]]
+                            frac += iscale
+                        }
+                    } else {
+                        draw_column(out, cmrow, bot_cols[texcol & bot_wm], x, mid, yh, bottomtexmid, iscale, bot_hm, botpic.height)
+                    }
                     floorclip[x] = mid
                 } else {
                     floorclip[x] = yh + 1
@@ -1421,7 +1518,7 @@ fn render_node(n: int) {
     }
 }
 
-fn map_plane(y: int, x1: int, x2: int) {
+fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: int, s16: int, m63: int, m4032: int) {
     let mut distance = 0
     let mut xstep = 0
     let mut ystep = 0
@@ -1438,23 +1535,28 @@ fn map_plane(y: int, x1: int, x2: int) {
         xstep = cachedxstep[y]
         ystep = cachedystep[y]
     }
-    let length = fmul(distance, distscale[x1])
+    let ds = distscale[x1]
+    let dl = distance & 0xFFFF
+    let length = (distance >> 16) * ds + dl * (ds >> 16) + ((dl * (ds & 0xFFFF)) >> 16)
     let angle = ((viewangle + fixed::xtoviewangle[x1]) & 0xFFFFFFFF) >> 19
-    let mut xfrac = viewx + fmul(fixed::finesine[angle + 2048], length)
-    let mut yfrac = -viewy - fmul(fixed::finesine[angle], length)
+    let c = fixed::finesine[angle + 2048]
+    let sn = fixed::finesine[angle]
+    let ll = length & 0xFFFF
+    let lh = length >> 16
+    let cl = c & 0xFFFF
+    let sl = sn & 0xFFFF
+    let xfrac = viewx + (c >> 16) * length + cl * lh + ((cl * ll) >> 16)
+    let yfrac = -viewy - ((sn >> 16) * length + sl * lh + ((sl * ll) >> 16))
     let mut index = distance >> 20
     if index >= 128 { index = 127 }
-    let cm = zlight[plane_zrow + index]
-    draw_span(fb, cmap, plane_flat, y * 320, x1, x2, xfrac, yfrac, xstep, ystep, cm)
-}
-
-fn draw_span(mut out: Vec<int>, cm_tab: Vec<int>, flat: Vec<int>, row: int, x1: int, x2: int, xf: int, yf: int, xstep: int, ystep: int, cm: int) {
-    let mut xfrac = xf
-    let mut yfrac = yf
+    let cmrow = cmap_rows[zlight[plane_zrow + index]]
+    let mut xf = xfrac
+    let mut yf = yfrac
+    let row = y * 320
     for d in (row + x1)..=(row + x2) {
-        out[d] = cm_tab[cm + flat[((yfrac >> 10) & 4032) + ((xfrac >> 16) & 63)]]
-        xfrac += xstep
-        yfrac += ystep
+        out[d] = cmrow[flat[((yf >> s10) & m4032) + ((xf >> s16) & m63)]]
+        xf += xstep
+        yf += ystep
     }
 }
 
@@ -1466,37 +1568,44 @@ fn draw_planes() {
         let base = p * 322 + 1
         if pl_pic[p] == sky_flat {
             let sky = tex_pics[sky_tex]
+            let sky_row = cmap_rows[0]
             let xtov = fixed::xtoviewangle
             for x in minx..=maxx {
                 let yl = pl_top[base + x]
                 let yh = pl_bottom[base + x]
                 if yl <= yh {
                     let angle = ((viewangle + xtov[x]) & 0xFFFFFFFF) >> 22
-                    draw_tex_column(sky, angle, x, yl, yh, 100 << 16, 65536, 0)
+                    draw_column(fb, sky_row, sky.cols[angle & sky.widthmask], x, yl, yh, 6553600, 65536, sky.heightmask, sky.height)
                 }
             }
             continue
         }
         if pl_pic[p] < 0 { continue }
         plane_flat = flat_pix[pl_pic[p]]
-        plane_height = iabs(pl_height[p] - viewz)
+        plane_height = pl_height[p] - viewz
+        if plane_height < 0 { plane_height = -plane_height }
         let mut light = pl_light[p] >> 4
         if light < 0 { light = 0 }
         if light > 15 { light = 15 }
         plane_zrow = light * 128
         pl_top[base + maxx + 1] = 255
         pl_top[base + minx - 1] = 255
+        let mut prev_t = 255
+        let mut prev_b = 0
         for x in minx..=(maxx + 1) {
-            let mut t1 = pl_top[base + x - 1]
-            let mut b1 = pl_bottom[base + x - 1]
+            let mut t1 = prev_t
+            let mut b1 = prev_b
             let mut t2 = pl_top[base + x]
             let mut b2 = pl_bottom[base + x]
+            prev_t = t2
+            prev_b = b2
+            if t1 == t2 and b1 == b2 { continue }
             while t1 < t2 and t1 <= b1 {
-                map_plane(t1, spanstart[t1], x - 1)
+                map_plane(fb, plane_flat, t1, spanstart[t1], x - 1, 10, 16, 63, 4032)
                 t1++
             }
             while b1 > b2 and b1 >= t1 {
-                map_plane(b1, spanstart[b1], x - 1)
+                map_plane(fb, plane_flat, b1, spanstart[b1], x - 1, 10, 16, 63, 4032)
                 b1--
             }
             while t2 < t1 and t2 <= b2 {
@@ -1507,6 +1616,12 @@ fn draw_planes() {
                 spanstart[b2] = x
                 b2--
             }
+        }
+    }
+    for p in 0..num_planes {
+        let base = p * 322 + 1
+        if pl_minx[p] <= pl_maxx[p] {
+            for i in (base + pl_minx[p])..=(base + pl_maxx[p]) { pl_top[i] = 255 }
         }
     }
 }
@@ -1530,8 +1645,8 @@ fn seg_side(x: int, y: int, seg: WallSeg) -> int {
         if (ldy ^ dx) < 0 { return 1 }
         return 0
     }
-    let left = fmul(ldy >> 16, dx)
-    let right = fmul(dy, ldx >> 16)
+    let left = ((ldy >> 16) * dx) >> 16
+    let right = (dy * (ldx >> 16)) >> 16
     if right < left { 0 } else { 1 }
 }
 
@@ -1571,10 +1686,10 @@ fn render_masked_seg(d: int, x1: int, x2: int) {
         if col != 32767 {
             let mut index = yscale >> 12
             if index >= 48 { index = 47 }
-            let cm = scalelight[lightrow + index]
+            let cmrow = cmap_rows[scalelight[lightrow + index]]
             let topscreen = 6553600 - fmul(texmid, yscale)
             let iscale = 0xFFFFFFFF / yscale
-            draw_masked_column(pic, col & pic.widthmask, x, topscreen, yscale, texmid, iscale, cm, openings[tbase + x], openings[bbase + x])
+            draw_masked_column(pic, col & pic.widthmask, x, topscreen, yscale, texmid, iscale, cmrow, openings[tbase + x], openings[bbase + x])
             openings[mbase + x] = 32767
         }
         yscale += sstep
@@ -1636,12 +1751,12 @@ fn draw_sprite(v: int) {
     let topscreen = 6553600 - fmul(texmid, yscale)
     let xiscale = vs_xiscale[v]
     let iscale = iabs(xiscale)
-    let cm = vs_cm[v]
+    let cmrow = cmap_rows[vs_cm[v]]
     let mut frac = vs_startfrac[v]
     for x in sx1..=sx2 {
         let col = frac >> 16
         if col >= 0 and col < pic.width {
-            draw_masked_column(pic, col, x, topscreen, yscale, texmid, iscale, cm, cliptop[x], clipbot[x])
+            draw_masked_column(pic, col, x, topscreen, yscale, texmid, iscale, cmrow, cliptop[x], clipbot[x])
         }
         frac += xiscale
     }
