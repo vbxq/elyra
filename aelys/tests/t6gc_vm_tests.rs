@@ -515,3 +515,51 @@ fn gc_vm_flags_parse_and_reject_bad_values() {
     assert!(parse_vm_args(&args(&["-ae.gc-nursery=10"])).is_err());
     assert!(!VmConfig::default().gc_stats);
 }
+
+const MOVED_TO_LOCALS: &str = r#"
+struct Inner { v: int }
+struct Holder { inner: Inner }
+fn main_value() -> int {
+    let n = 64
+    let mut hs: Vec<Holder> = vec![]
+    for k in 0..n { hs.push(Holder { inner: Inner { v: k } }) }
+    let mut total = 0
+    let mut i = 0
+    while i < 4000 {
+        let mut h = hs[(i * 5) % n]
+        let taken = h.inner
+        h.inner = Inner { v: i + 100000 }
+        let mut pad = 0
+        for j in 0..6 {
+            let junk = Inner { v: j }
+            pad = pad + junk.v
+        }
+        let again = taken
+        total = total + again.v + pad
+        let mut back = hs[(i * 3) % n]
+        back.inner = taken
+        i = i + 1
+    }
+    for k in 0..n { total = total + hs[k].inner.v }
+    return total
+}
+main_value()
+"#;
+
+fn moved_to_locals_oracle() -> i64 {
+    let n = 64usize;
+    let mut inner: Vec<i64> = (0..n as i64).collect();
+    let mut total = 0;
+    for i in 0..4000usize {
+        let taken = inner[(i * 5) % n];
+        inner[(i * 5) % n] = i as i64 + 100000;
+        total += taken + 15;
+        inner[(i * 3) % n] = taken;
+    }
+    total + inner.iter().sum::<i64>()
+}
+
+#[test]
+fn objects_moved_from_the_heap_into_locals_during_marking_survive_the_major() {
+    assert_program(MOVED_TO_LOCALS, moved_to_locals_oracle());
+}
