@@ -139,3 +139,67 @@ fn a_user_module_named_like_a_builtin_module_is_the_one_called() {
     );
     assert_eq!(run_int(&dir, "m7.aelys", "needs time\ntime::now()\n"), 5);
 }
+
+const CNT: &str = "pub let mut n = 0\npub fn get() -> int { n }\npub fn bump() { n = n + 1 }\n";
+
+#[test]
+fn assigning_an_imported_function_is_refused_in_every_position() {
+    let dir = tree(&[
+        ("cnt.aelys", CNT),
+        (
+            "hack.aelys",
+            "needs cnt\npub fn hack() { get = fn() -> int { return 999 } }\n",
+        ),
+    ]);
+    let sources = [
+        (
+            "top.aelys",
+            "needs cnt\nget = fn() -> int { return 999 }\ncnt::get()\n",
+        ),
+        (
+            "sel.aelys",
+            "needs get from cnt\nget = fn() -> int { return 999 }\nget()\n",
+        ),
+        (
+            "infn.aelys",
+            "needs cnt\nfn f() { get = fn() -> int { return 9 } }\nf()\nget()\n",
+        ),
+        (
+            "clos.aelys",
+            "needs cnt\nlet h = fn() { bump = fn() { n = n + 100 } }\nh()\nget()\n",
+        ),
+        ("mod.aelys", "needs hack\nhack::hack()\n1\n"),
+    ];
+    for (file, source) in sources {
+        let error = run_err(&dir, file, source);
+        assert!(error.contains("E0446"), "{file}: {error}");
+        assert!(error.contains("it is a function"), "{file}: {error}");
+    }
+}
+
+#[test]
+fn a_file_own_function_shadowing_an_import_keeps_the_local_refusal() {
+    let dir = tree(&[("cnt.aelys", CNT)]);
+    let error = run_err(
+        &dir,
+        "own.aelys",
+        "needs cnt\nfn get() -> int { 4 }\nget = fn() -> int { return 9 }\nget()\n",
+    );
+    assert!(error.contains("E0203"), "{error}");
+    assert_eq!(
+        run_int(
+            &dir,
+            "read.aelys",
+            "needs cnt\nfn get() -> int { 4 }\ncnt::bump()\nget() * 10 + cnt::get()\n"
+        ),
+        41,
+    );
+    assert_eq!(
+        run_int(
+            &dir,
+            "param.aelys",
+            "needs cnt\nfn f() -> int { let mut get = 1\n get = 3\n get }\nf()\n"
+        ),
+        3,
+    );
+}

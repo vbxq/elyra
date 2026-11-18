@@ -1600,6 +1600,13 @@ impl TypeInference {
         crate::prelude::register(&mut inf.type_table);
 
         inf.install_imported_types(imported_types);
+        for stmt in &stmts {
+            if let StmtKind::Function(func) = &stmt.kind
+                && stmt.definition_module.is_none()
+            {
+                inf.immutable_imports.remove(&func.name);
+            }
+        }
         let declared_nominals = inf.declare_nominals(&stmts);
         let declared_traits = inf.declare_traits(&stmts);
         inf.collect_trait_qualified_items(&stmts);

@@ -775,7 +775,10 @@ variable, read bare or as `module::v`, reads the declaring module's slot, so it
 always shows the module's current value. Assigning to a bare imported `pub let
 mut` writes the module's variable; assigning to an imported `pub let` is E0446
 `cannot assign to 'v': it is an immutable variable of the module that declares
-it`, and `module::v = ...` is not an assignment target.
+it`. Assigning to an imported function name is E0446 too (`it is a function of
+the module that declares it`), unless the file declares its own function of that
+name, which shadows the import and keeps the local E0203. `module::v = ...` is
+not an assignment target.
 
 A `pub fn` with type parameters cannot be exported: monomorphization specializes
 it inside its own module, so no single body crosses the boundary. Importing a
@@ -2530,4 +2533,4 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
 | E0445 | AmbiguousImport | an unqualified use of a name two whole-module imports both bind |
-| E0446 | AssignToImmutableImport | an assignment to an imported `pub let` |
+| E0446 | AssignToImmutableImport | an assignment to an imported `pub let` or imported function |

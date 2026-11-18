@@ -228,7 +228,7 @@ impl ModuleLoader {
             module_info
                 .exports
                 .get(name)
-                .is_some_and(|export| !export.is_function && !export.is_mutable)
+                .is_some_and(|export| !export.is_mutable)
         };
         match kind {
             ImportKind::Module { alias: None } | ImportKind::Wildcard => module_info

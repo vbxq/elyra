@@ -149,6 +149,7 @@ pub enum TypeErrorKind {
     },
     AssignToImmutableImport {
         name: String,
+        function: bool,
     },
     RecursionLimit,
     NonExhaustiveMatch {
@@ -669,10 +670,15 @@ impl TypeError {
                     crate::unscoped_global_name(name)
                 )
             }
-            TypeErrorKind::AssignToImmutableImport { name } => write!(
+            TypeErrorKind::AssignToImmutableImport { name, function } => write!(
                 f,
-                "cannot assign to '{}': it is an immutable variable of the module that declares it",
-                name
+                "cannot assign to '{}': it is {} of the module that declares it",
+                name,
+                if *function {
+                    "a function"
+                } else {
+                    "an immutable variable"
+                }
             ),
             TypeErrorKind::AmbiguousImport { name, modules } => {
                 let qualified = modules

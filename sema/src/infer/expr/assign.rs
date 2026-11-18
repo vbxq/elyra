@@ -16,6 +16,7 @@ impl TypeInference {
             self.errors.push(TypeError {
                 kind: crate::constraint::TypeErrorKind::AssignToImmutableImport {
                     name: name.to_string(),
+                    function: matches!(self.env.lookup(name), Some(InferType::Function { .. })),
                 },
                 span,
                 reason: ConstraintReason::Other("assignment".to_string()),
