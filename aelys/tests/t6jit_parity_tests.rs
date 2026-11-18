@@ -520,7 +520,7 @@ fn integer_overflow_in_a_hot_loop_reports_the_interpreter_trap() {
     let mut x = 1
     for i in 0..n {
         x = (x * 3 + i) & 0xFFFFFF
-        if i == 40000 { x = x * 100000000000 }
+        if i == 40000 { x = (x + 1000000) * 100000000000000 }
     }
     return x
 }

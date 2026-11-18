@@ -353,10 +353,10 @@ fn stores_out_of_bounds_trap_like_the_interpreter_for_every_container() {
 #[test]
 fn arithmetic_traps_match_the_interpreter_in_callees_of_compiled_code() {
     for (expression, expected) in [
-        ("a * 10000000000", "overflow"),
+        ("a * 10000000000 * 65880", "overflow"),
         ("a / (b - 15000)", "division"),
         ("a % (b - 15000)", "division"),
-        ("((a / 1000) << 20) * ((a / 1000) << 20)", "overflow"),
+        ("((a / 1000) << 28) * ((a / 1000) << 28)", "overflow"),
     ] {
         let source = format!(
             "fn inner(a: int, b: int) -> int {{\n    let mut r = 0\n    for k in 0..1 {{ r = {expression} }}\n    return r\n}}\nfn run(n: int) -> int {{\n    let mut s = 0\n    for i in 0..n {{\n        s = (s + inner(i, i)) & 0xFFFFFF\n    }}\n    return s\n}}\nrun(20000)\n"
