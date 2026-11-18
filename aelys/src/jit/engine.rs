@@ -992,7 +992,7 @@ fn lower_function(
                 values.insert(result_id, result);
             }
         }
-        // a parameter typed Uninitialized is dead on entry and lowered as i64, whatever its predecessors left in the register
+        // a dead parameter is lowered as i64 whatever type its predecessor leaves in the register
         let mut block_arguments = |target: &BlockId, arguments: &[ValueId]| {
             let parameters = parameter_types.get(target);
             arguments

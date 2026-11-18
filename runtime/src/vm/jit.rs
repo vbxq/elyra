@@ -126,7 +126,6 @@ impl VM {
             self.globals_by_index = globals;
             self.current_global_mapping_id = previous_mapping;
         }
-        // compiled code takes numbers and integer collections only, so a function handed a struct keeps paying for nothing
         if unpassable {
             self.jit_refused.insert(function, ());
         }

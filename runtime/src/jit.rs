@@ -23,7 +23,7 @@ pub struct JitExecutionContext {
     pub controlled: bool,
 }
 
-// keys are vm handles and function keys, never attacker chosen strings, so a multiply hash is enough
+// keys are never attacker chosen, so a weak hash is safe
 #[derive(Default)]
 pub(crate) struct WordHasher(u64);
 

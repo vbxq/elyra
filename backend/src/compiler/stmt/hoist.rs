@@ -3,7 +3,6 @@ use aelys_common::Result;
 use aelys_sema::{TypedExpr, TypedExprKind, TypedStmt, TypedStmtKind};
 use aelys_syntax::ast::BinaryOp;
 
-// each loop keeps a few literal operands in registers loaded once before it, instead of reloading them every iteration
 const HOISTED_PER_LOOP: usize = 4;
 
 impl Compiler {

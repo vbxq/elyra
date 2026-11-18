@@ -412,7 +412,6 @@ impl VM {
         Ok(reference)
     }
 
-    // a pin costs a lock and a hash, and only a collection inside maybe_collect_for can need it
     fn pin_values_if_collecting(&self, additional: u64, values: &[Value]) -> Vec<HostRoot> {
         if !self.collection_pending(additional) {
             return Vec::new();

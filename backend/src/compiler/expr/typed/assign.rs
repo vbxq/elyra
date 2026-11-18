@@ -110,7 +110,6 @@ impl Compiler {
         Ok(())
     }
 
-    // a discarded assignment lets the instruction that computes the value write the variable itself
     pub(crate) fn compile_typed_assign_statement(
         &mut self,
         name: &str,

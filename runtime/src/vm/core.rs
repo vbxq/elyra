@@ -42,7 +42,6 @@ pub struct VM {
     pub(crate) globals_by_index_cache: Vec<Option<PreparedGlobals>>,
     pub(crate) global_name_ids: HashMap<String, u32>,
     pub(crate) global_names_by_id: Vec<String>,
-    /// every prepared view slot holding each named global, so a write reaches them all instead of discarding the views
     pub(crate) global_users: Vec<Vec<(usize, u32)>>,
     pub(crate) globals_by_index: Vec<Value>,
     /// set when an indexed write has not reached the name keyed table yet, so a call between two readers costs nothing
