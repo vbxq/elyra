@@ -64,6 +64,32 @@ impl Compiler {
         span: Span,
     ) {
         let (a, b, c) = (a.into_operand(), b.into_operand(), c.into_operand());
+        let wide = u8::try_from(a).is_err() || u8::try_from(b).is_err() || u8::try_from(c).is_err();
+        let callee = match op {
+            OpCode::Call => Some(b),
+            // a cached or upvalue call reads its arguments above dest, a plain call above the callee
+            OpCode::CallCached if wide => {
+                if a != b {
+                    self.emit_a(OpCode::Move, a, b, 0, span);
+                }
+                Some(a)
+            }
+            OpCode::CallUpval if wide => {
+                self.emit_a(OpCode::GetUpval, a, b, 0, span);
+                Some(a)
+            }
+            _ => None,
+        };
+        if let Some(callee) = callee {
+            self.note_call_window(OpCode::Call, a, callee, c, span);
+            self.current.emit_call(
+                Register::new(a),
+                Register::new(callee),
+                Arity::new(c),
+                self.current_line(span),
+            );
+            return;
+        }
         self.note_call_window(op, a, b, c, span);
         self.current.emit_register_abc(
             op,
@@ -121,23 +147,7 @@ impl Compiler {
         nargs: u16,
         span: Span,
     ) {
-        let func = func.into_operand();
-        if op == OpCode::Call
-            || (op == OpCode::CallCached
-                && (u8::try_from(dest).is_err()
-                    || u8::try_from(func).is_err()
-                    || u8::try_from(nargs).is_err()))
-        {
-            self.note_call_window(op, dest, func, nargs, span);
-            self.current.emit_call(
-                Register::new(dest),
-                Register::new(func),
-                Arity::new(nargs),
-                self.current_line(span),
-            );
-        } else {
-            self.emit_a(op, dest, func, nargs, span);
-        }
+        self.emit_a(op, dest, func.into_operand(), nargs, span);
     }
 
     pub fn emit_jump(&mut self, op: OpCode, span: Span) -> usize {

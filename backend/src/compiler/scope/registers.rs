@@ -109,6 +109,16 @@ impl Compiler {
             )
             .into());
         }
+        if let Some((_, line)) = self.current.own_wide_operand_fault() {
+            let start = self.source.get_line_start_offset(line);
+            let end = start + self.source.get_line(line).len();
+            return Err(CompileError::new(
+                CompileErrorKind::TooManyRegisters,
+                Span::new(start, end, line, 1),
+                self.source.clone(),
+            )
+            .into());
+        }
         Ok(())
     }
 
