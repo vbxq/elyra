@@ -1,0 +1,160 @@
+needs std::fs
+needs std::sys
+
+const BAR_WIDTH = 40
+const TOP = 10
+
+struct Entry { word: string, count: int }
+
+fn is_apostrophe(c: char) -> bool { c == '\'' or c == '\u{2019}' }
+
+fn split_words(text: string) -> Vec<string> {
+    let mut words: Vec<string> = vec![]
+    let mut current = ""
+    let mut apostrophe = false
+    for c in text {
+        if c.is_alpha() {
+            if apostrophe {
+                current.push('\'')
+                apostrophe = false
+            }
+            current.push(c.to_lower())
+        } else if is_apostrophe(c) and not current.is_empty() {
+            apostrophe = true
+        } else {
+            if not current.is_empty() {
+                words.push(current)
+            }
+            current = ""
+            apostrophe = false
+        }
+    }
+    if not current.is_empty() {
+        words.push(current)
+    }
+    words
+}
+
+fn base_letter(c: char) -> char {
+    match c {
+        'à' | 'â' | 'ä' => 'a',
+        'é' | 'è' | 'ê' | 'ë' => 'e',
+        'î' | 'ï' => 'i',
+        'ô' | 'ö' => 'o',
+        'ù' | 'û' | 'ü' => 'u',
+        'ÿ' => 'y',
+        _ => c,
+    }
+}
+
+fn by_count_then_word(a: Entry, b: Entry) -> int {
+    if a.count != b.count {
+        return b.count - a.count
+    }
+    if a.word < b.word {
+        return -1
+    }
+    if a.word > b.word {
+        return 1
+    }
+    0
+}
+
+fn longest(words: Vec<string>) -> string {
+    let mut best = ""
+    for w in words {
+        let longer = w.char_len() > best.char_len()
+        let tie_but_earlier = w.char_len() == best.char_len() and w < best
+        if longer or tie_but_earlier {
+            best = w
+        }
+    }
+    best
+}
+
+fn report(text: string) {
+    let words = split_words(text)
+    let mut counts: Map<string, int> = Map::new()
+    let mut letters: Map<char, int> = Map::new()
+    for w in words {
+        if counts.contains_key(w) {
+            counts[w] += 1
+        } else {
+            counts[w] = 1
+        }
+        for c in w {
+            if c.is_alpha() {
+                letters[c] = letters.get(c).unwrap_or(0) + 1
+            }
+        }
+    }
+
+    let best = longest(counts.keys())
+    println("words: {words.len()} total, {counts.len()} distinct")
+    println("longest: {best} ({best.char_len()} letters)")
+
+    let mut entries: Vec<Entry> = vec![]
+    for w in counts.keys() {
+        entries.push(Entry { word: w, count: counts[w] })
+    }
+    entries.sort_by(by_count_then_word)
+    entries.truncate(TOP)
+    let mut width = 0
+    for e in entries {
+        width = math::max(width, e.word.char_len())
+    }
+    println("top {TOP} words:")
+    for i in 0..entries.len() {
+        let e = entries[i]
+        println("{"{i + 1}".pad_left(3, " ")}. {e.word.pad_right(width, " ")}  {"{e.count}".pad_left(3, " ")}")
+    }
+
+    let mut total_letters = 0
+    let mut accented: Vec<char> = vec![]
+    let mut vowels: Map<char, int> = Map::new()
+    for v in "aeiouy" {
+        vowels[v] = 0
+    }
+    for c in letters.keys() {
+        let n = letters[c]
+        total_letters += n
+        let base = base_letter(c)
+        if base != c {
+            accented.push(c)
+        }
+        if vowels.contains_key(base) {
+            vowels[base] += n
+        }
+    }
+    accented.sort()
+    let mut accent_list = ""
+    for c in accented {
+        accent_list.push(c)
+    }
+    println("letters: {total_letters} total, {letters.len()} distinct, accented: {accent_list}")
+
+    let mut most = 1
+    for v in vowels.keys() {
+        most = math::max(most, vowels[v])
+    }
+    println("vowels (accents folded):")
+    for v in vowels.keys() {
+        let n = vowels[v]
+        let bar = "#".repeat(n * BAR_WIDTH / most)
+        println("  {v} {"{n}".pad_left(4, " ")} {bar}")
+    }
+}
+
+match sys::arg(0) {
+    Some(path) => match fs::read_text(path) {
+        Ok(text) => report(text),
+        Err(e) => {
+            eprintln("wordfreq: {e}")
+            sys::exit(1)
+        }
+    },
+    None => {
+        eprintln("usage: wordfreq <text-file>")
+        sys::exit(2)
+    }
+}

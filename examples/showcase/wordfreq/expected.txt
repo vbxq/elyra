@@ -1,0 +1,21 @@
+words: 267 total, 186 distinct
+longest: neighbourhood (13 letters)
+top 10 words:
+  1. a         6
+  2. of        6
+  3. ce        5
+  4. is        5
+  5. it        5
+  6. de        4
+  7. that      4
+  8. the       4
+  9. to        4
+ 10. bennet    3
+letters: 1098 total, 33 distinct, accented: àèéêùû
+vowels (accents folded):
+  a   78 ###################
+  e  160 ########################################
+  i   91 ######################
+  o   78 ###################
+  u   60 ###############
+  y   11 ##

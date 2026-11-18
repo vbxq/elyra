@@ -1,0 +1,163 @@
+trait Ordered {
+    fn compare(self, other: Self) -> int;
+
+    fn less_than(self, other: Self) -> bool { self.compare(other) < 0 }
+}
+
+trait Collection<T> {
+    fn add(mut self, x: T);
+    fn len(self) -> int;
+    fn take(mut self) -> Option<T>;
+    fn peek(self) -> Option<T>;
+
+    fn is_empty(self) -> bool { self.len() == 0 }
+}
+
+struct Task { prio: int, name: string }
+
+impl Ordered for Task {
+    fn compare(self, other: Task) -> int {
+        if self.prio != other.prio {
+            return other.prio - self.prio
+        }
+        if self.name < other.name {
+            return -1
+        }
+        if self.name > other.name {
+            return 1
+        }
+        0
+    }
+}
+
+impl Display for Task {
+    fn to_display(self) -> string { "{self.name}(p{self.prio})" }
+}
+
+struct Num { value: int }
+
+impl Ordered for Num {
+    fn compare(self, other: Num) -> int { self.value - other.value }
+}
+
+impl Display for Num {
+    fn to_display(self) -> string { "{self.value}" }
+}
+
+struct SortedVec<T> { items: Vec<T> }
+
+impl<T: Ordered> SortedVec<T> {
+    fn new() -> SortedVec<T> { SortedVec { items: vec![] } }
+
+    fn insertion_point(self, x: T) -> int {
+        let mut lo = 0
+        let mut hi = self.items.len()
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if x.less_than(self.items[mid]) {
+                hi = mid
+            } else {
+                lo = mid + 1
+            }
+        }
+        lo
+    }
+}
+
+impl<T: Ordered> Collection<T> for SortedVec<T> {
+    fn add(mut self, x: T) {
+        let at = self.insertion_point(x)
+        self.items.insert(at, x)
+    }
+
+    fn len(self) -> int { self.items.len() }
+
+    fn take(mut self) -> Option<T> {
+        if self.items.is_empty() { None } else { Some(self.items.remove(0)) }
+    }
+
+    fn peek(self) -> Option<T> { self.items.first() }
+}
+
+struct Ring<T> { slots: Vec<T>, cap: int, dropped: int }
+
+impl<T> Ring<T> {
+    fn with_capacity(cap: int) -> Ring<T> { Ring { slots: vec![], cap: cap, dropped: 0 } }
+}
+
+impl<T> Collection<T> for Ring<T> {
+    fn add(mut self, x: T) {
+        if self.slots.len() == self.cap {
+            let _ = self.slots.remove(0)
+            self.dropped++
+        }
+        self.slots.push(x)
+    }
+
+    fn len(self) -> int { self.slots.len() }
+
+    fn take(mut self) -> Option<T> {
+        if self.slots.is_empty() { None } else { Some(self.slots.remove(0)) }
+    }
+
+    fn peek(self) -> Option<T> { self.slots.first() }
+}
+
+fn fill<C: Collection<T>, T>(mut c: C, xs: Vec<T>) {
+    for x in xs {
+        c.add(x)
+    }
+}
+
+fn drain_all<C: Collection<T>, T>(mut c: C) -> Vec<T> {
+    let mut out: Vec<T> = vec![]
+    while not c.is_empty() {
+        match c.take() {
+            Some(x) => out.push(x),
+            None => (),
+        }
+    }
+    out
+}
+
+fn render<T: Display>(xs: Vec<T>) -> string {
+    "[" + xs.map(fn(x: T) -> string { "{x}" }).join(", ") + "]"
+}
+
+fn nums(values: Vec<int>) -> Vec<Num> {
+    values.map(fn(v: int) -> Num { Num { value: v } })
+}
+
+let mut sorted_nums: SortedVec<Num> = SortedVec::new()
+fill(sorted_nums, nums(vec![42, 7, 19, -3, 7, 100, 0, 56]))
+println("sorted ints: len {sorted_nums.len()}, smallest {sorted_nums.peek().unwrap()}")
+let ascending: Vec<Num> = drain_all(sorted_nums)
+println("drained ints: {render(ascending)}")
+println("after drain: empty = {sorted_nums.is_empty()}")
+
+let mut queue: SortedVec<Task> = SortedVec::new()
+fill(queue, vec![
+    Task { prio: 2, name: "write report" },
+    Task { prio: 5, name: "fix outage" },
+    Task { prio: 1, name: "water plants" },
+    Task { prio: 5, name: "call vendor" },
+    Task { prio: 5, name: "update status page" },
+    Task { prio: 3, name: "review patch" },
+])
+queue.add(Task { prio: 4, name: "deploy" })
+println("tasks queued: {queue.len()}, next up {queue.peek().unwrap()}")
+let first = queue.take().unwrap()
+println("handled {first.name}, {queue.len()} left")
+let rest: Vec<Task> = drain_all(queue)
+println("remaining by priority: {render(rest)}")
+
+let mut recent: Ring<int> = Ring::with_capacity(3)
+fill(recent, vec![1, 2, 3, 4, 5])
+println("ring keeps {recent.len()} of 5, dropped {recent.dropped}, oldest {recent.peek().unwrap()}")
+let kept: Vec<int> = drain_all(recent)
+println("ring drained: {render(kept)}")
+
+let mut log: Ring<Task> = Ring::with_capacity(2)
+fill(log, vec![Task { prio: 1, name: "boot" }, Task { prio: 9, name: "panic" }, Task { prio: 2, name: "reboot" }])
+let last_two: Vec<Task> = drain_all(log)
+println("log drained: {render(last_two)}, empty = {log.is_empty()}")
