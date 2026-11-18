@@ -721,6 +721,8 @@ The safe standard library modules are **auto-registered**, their functions are a
 
 See [Standard Library](standard-library.md) for full documentation.
 
+Native modules (shared libraries written against the aelys-native ABI, such as the SDL2 module in `modules/sdl`) are imported with `needs` like any module; how to write, build and load one, and the rules for byte buffers they borrow, are in [Native modules](native-modules.md).
+
 ### Custom Modules
 
 Any `.aelys` file is a module. If you have:
