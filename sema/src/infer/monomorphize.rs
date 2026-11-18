@@ -816,7 +816,8 @@ fn rewrite_nominal_pattern(
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }
 
@@ -1137,7 +1138,8 @@ fn collect_pattern_types(pattern: &TypedPattern, types: &mut Vec<(InferType, Spa
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }
 
@@ -4422,7 +4424,8 @@ fn rewrite_pattern(pattern: &mut TypedPattern) {
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }
 

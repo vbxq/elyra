@@ -294,7 +294,8 @@ impl GlobalConstantPropagator {
             | TypedPatternKind::String(_)
             | TypedPatternKind::Char(_)
             | TypedPatternKind::Bool(_)
-            | TypedPatternKind::Range { .. } => {}
+            | TypedPatternKind::Range { .. }
+            | TypedPatternKind::CharRange { .. } => {}
         }
     }
 }

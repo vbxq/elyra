@@ -1545,6 +1545,21 @@ impl TypeError {
                 trait_args,
                 ty,
                 ..
+            } if trait_name == crate::prelude::DISPLAY_TRAIT
+                && trait_args.is_empty()
+                && is_builtin_aggregate(ty) =>
+            {
+                write!(
+                    f,
+                    "trait 'Display' is not implemented for {}; a built-in aggregate renders only scalars, strings, chars and aggregates of them, so render each element",
+                    ty.source_spelling()
+                )
+            }
+            TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name,
+                trait_args,
+                ty,
+                ..
             } => write!(
                 f,
                 "trait '{}' is not implemented for {}; add an impl or change the bound",
@@ -2124,6 +2139,20 @@ fn differs_only_by_mut(expected: &InferType, found: &InferType) -> bool {
                     .all(|(expected, found)| expected.source_spelling() == found.source_spelling())
                 && expected_ret.source_spelling() == found_ret.source_spelling()
         }
+        _ => false,
+    }
+}
+
+fn is_builtin_aggregate(ty: &InferType) -> bool {
+    match ty {
+        InferType::Vec(_)
+        | InferType::Array(_)
+        | InferType::FixedArray(..)
+        | InferType::Option(_)
+        | InferType::Result(..)
+        | InferType::Map(..)
+        | InferType::Tuple(_) => true,
+        InferType::Applied { name, .. } => aelys_syntax::tuple_arity(name).is_some(),
         _ => false,
     }
 }

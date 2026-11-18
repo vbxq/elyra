@@ -386,6 +386,11 @@ pub enum PatternKind {
         end: Option<i64>,
         inclusive: bool,
     },
+    CharRange {
+        start: Option<char>,
+        end: Option<char>,
+        inclusive: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

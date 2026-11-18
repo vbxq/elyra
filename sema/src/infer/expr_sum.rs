@@ -1786,6 +1786,28 @@ impl TypeInference {
                 ));
                 TypedPatternKind::Char(*value)
             }
+            PatternKind::CharRange {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.constraints.push(Constraint::equal(
+                    ty.clone(),
+                    InferType::Char,
+                    pattern.span,
+                    ConstraintReason::Comparison,
+                ));
+                TypedPatternKind::CharRange {
+                    start: *start,
+                    end: end.and_then(|end| {
+                        if *inclusive {
+                            Some(end)
+                        } else {
+                            char_before(end)
+                        }
+                    }),
+                }
+            }
             PatternKind::Bool(value) => {
                 self.constraints.push(Constraint::equal(
                     ty.clone(),
@@ -2622,6 +2644,13 @@ fn collect_pattern_bindings(pattern: &TypedPattern, bindings: &mut Vec<(String, 
     }
 }
 
+pub(crate) fn char_before(value: char) -> Option<char> {
+    match value {
+        '\u{E000}' => Some('\u{D7FF}'),
+        _ => char::from_u32(u32::from(value).checked_sub(1)?),
+    }
+}
+
 fn describe_pattern(pattern: &Pattern) -> String {
     match &pattern.kind {
         PatternKind::Wildcard => "_".to_string(),
@@ -2647,6 +2676,16 @@ fn describe_pattern(pattern: &Pattern) -> String {
             start.map(|value| value.to_string()).unwrap_or_default(),
             if *inclusive { "..=" } else { ".." },
             end.map(|value| value.to_string()).unwrap_or_default()
+        ),
+        PatternKind::CharRange {
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}{}{}",
+            start.map(|value| format!("{value:?}")).unwrap_or_default(),
+            if *inclusive { "..=" } else { ".." },
+            end.map(|value| format!("{value:?}")).unwrap_or_default()
         ),
         PatternKind::Or(alternatives) => alternatives
             .iter()

@@ -252,6 +252,19 @@ impl Compiler {
                 }
                 Ok(())
             }
+            TypedPatternKind::CharRange { start, end } => {
+                for (bound, opcode) in [(start, OpCode::Ge), (end, OpCode::Le)] {
+                    let Some(bound) = bound else { continue };
+                    let literal = self.alloc_register()?;
+                    let condition = self.alloc_register()?;
+                    self.compile_literal_char(*bound, literal, pattern.span)?;
+                    self.emit_a(opcode, condition, source, literal, pattern.span);
+                    failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
+                    self.free_register(condition);
+                    self.free_register(literal);
+                }
+                Ok(())
+            }
             TypedPatternKind::Bool(value) => {
                 let literal = self.alloc_register()?;
                 let condition = self.alloc_register()?;
@@ -404,7 +417,8 @@ impl Compiler {
             | TypedPatternKind::String(_)
             | TypedPatternKind::Char(_)
             | TypedPatternKind::Bool(_)
-            | TypedPatternKind::Range { .. } => {}
+            | TypedPatternKind::Range { .. }
+            | TypedPatternKind::CharRange { .. } => {}
         }
         Ok(())
     }

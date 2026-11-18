@@ -16,6 +16,30 @@ impl VM {
         value.to_string()
     }
 
+    pub fn value_to_debug_string(&self, value: Value) -> String {
+        if let Some(c) = value.as_char() {
+            return format!("{c:?}");
+        }
+        if let Some(ptr) = value.as_ptr()
+            && let Some(obj) = self.heap.get(GcRef::new(ptr))
+            && let ObjectKind::String(s) = &obj.kind
+        {
+            return format!("{:?}", s.as_str());
+        }
+        self.value_to_string(value)
+    }
+
+    fn is_tuple_schema(&self, schema_id: aelys_bytecode::SchemaId) -> bool {
+        self.schema_registry.get(&schema_id).is_some_and(|schema| {
+            schema.fields.len() >= 2
+                && schema
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .all(|(index, field)| field.name == index.to_string())
+        })
+    }
+
     pub fn get_constant(&self, func_ref: GcRef, k: u16) -> Result<Value, RuntimeError> {
         let obj = self.heap.get(func_ref).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::TypeError {
@@ -197,21 +221,25 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
         }
         ObjectKind::Array(arr) => {
             let elements: Vec<String> = (0..arr.len())
-                .filter_map(|i| arr.get(i).map(|v| vm.value_to_string(v)))
+                .filter_map(|i| arr.get(i).map(|v| vm.value_to_debug_string(v)))
                 .collect();
             format!("[{}]", elements.join(", "))
         }
         ObjectKind::Vec(vec) => {
             let elements: Vec<String> = (0..vec.len())
-                .filter_map(|i| vec.get(i).map(|v| vm.value_to_string(v)))
+                .filter_map(|i| vec.get(i).map(|v| vm.value_to_debug_string(v)))
                 .collect();
-            format!("Vec[{}]", elements.join(", "))
+            format!("[{}]", elements.join(", "))
         }
         ObjectKind::Map(map) => {
             let entries: Vec<String> = map
                 .entries()
                 .map(|(key, value)| {
-                    format!("{}: {}", vm.value_to_string(key), vm.value_to_string(value))
+                    format!(
+                        "{}: {}",
+                        vm.value_to_debug_string(key),
+                        vm.value_to_debug_string(value)
+                    )
                 })
                 .collect();
             format!("{{{}}}", entries.join(", "))
@@ -233,7 +261,7 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
                 aelys_bytecode::object::SumTag::ResultErr => "Err",
                 aelys_bytecode::object::SumTag::ErrorMessage => "Error",
             };
-            format!("{name}({})", vm.value_to_string(sum.payload))
+            format!("{name}({})", vm.value_to_debug_string(sum.payload))
         }
         ObjectKind::Enum(value) => {
             let fields = value
@@ -243,6 +271,14 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("enum#{}::{}({fields})", value.enum_id, value.variant_id)
+        }
+        ObjectKind::Struct(structure) if vm.is_tuple_schema(structure.schema_id) => {
+            let fields: Vec<String> = structure
+                .slots
+                .iter()
+                .map(|value| vm.value_to_debug_string(*value))
+                .collect();
+            format!("({})", fields.join(", "))
         }
         ObjectKind::Struct(structure) => {
             let fields: Vec<String> = structure
