@@ -364,9 +364,12 @@ impl VM {
         executor.observe_backedge(key, &function.function, backedges);
     }
 
+    #[inline]
     pub(crate) fn pop_frame_with_jit_metadata(&mut self) -> Option<CallFrame> {
         let frame = self.frames.pop()?;
-        self.flush_jit_backedges(&frame);
+        if frame.jit_backedges_initialized && frame.jit_backedges != 0 {
+            self.flush_jit_backedges(&frame);
+        }
         Some(frame)
     }
 
