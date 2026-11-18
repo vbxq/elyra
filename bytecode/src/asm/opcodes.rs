@@ -1087,7 +1087,8 @@ fn encode_wide_operands(a: u16, b: u16, c: u16) -> [u32; 2] {
 }
 
 fn sized_binary_opcode(name: &str) -> Option<OpCode> {
-    (OpCode::AddWI8 as u8..=OpCode::DivWI32 as u8)
+    (OpCode::AddWI8 as u8..=u8::MAX)
         .filter_map(OpCode::from_u8)
+        .filter(|op| op.is_sized_binary())
         .find(|op| format!("{op:?}") == name)
 }

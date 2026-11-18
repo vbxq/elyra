@@ -192,6 +192,7 @@ fn object_type_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Sum(_) => "sum",
         ObjectKind::Enum(_) => "enum",
         ObjectKind::Struct(_) => "struct",
+        ObjectKind::Int(_) => "int",
     }
 }
 
@@ -288,5 +289,6 @@ fn object_to_string(vm: &VM, kind: &ObjectKind, _fallback: Value) -> String {
                 .collect();
             format!("struct#{} {{{}}}", structure.schema_id, fields.join(", "))
         }
+        ObjectKind::Int(boxed) => boxed.value().to_string(),
     }
 }

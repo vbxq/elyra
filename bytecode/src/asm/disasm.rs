@@ -1231,6 +1231,7 @@ impl<'a> DisasmContext<'a> {
             Constant::Null => "null".to_string(),
             Constant::Bool(value) => format!("bool {value}"),
             Constant::Int(value) => format!("int {value}"),
+            Constant::UInt(value) => format!("uint {value}"),
             Constant::Float(bits) => {
                 let value = f64::from_bits(*bits);
                 if value.is_nan() {

@@ -33,15 +33,15 @@ fn runtime_error(source: &str) -> String {
 fn parse_int_rejects_out_of_range_text_without_panicking() {
     assert_eq!(
         values(&[
-            "\"99999999999999999\".to_int()",
-            "\"140737488355328\".to_int()",
-            "\"-140737488355329\".to_int()",
-            "\"0xffffffffffffff\".to_int()",
-            "\"0x800000000000\".to_int()",
-            "\"0b1111111111111111111111111111111111111111111111111\".to_int()",
-            "\"0o7777777777777777\".to_int()",
-            "\"ffffffffffffff\".to_int_radix(16)",
-            "\"-zzzzzzzzzz\".to_int_radix(36)",
+            "\"99999999999999999999\".to_int()",
+            "\"9223372036854775808\".to_int()",
+            "\"-9223372036854775809\".to_int()",
+            "\"0x10000000000000000\".to_int()",
+            "\"0x8000000000000000\".to_int()",
+            "\"0b1111111111111111111111111111111111111111111111111111111111111111\".to_int()",
+            "\"0o2000000000000000000000\".to_int()",
+            "\"8000000000000000\".to_int_radix(16)",
+            "\"-zzzzzzzzzzzzzz\".to_int_radix(36)",
             "\"18446744073709551616\".to_int()",
         ]),
         ["None"; 10]
@@ -52,24 +52,24 @@ fn parse_int_rejects_out_of_range_text_without_panicking() {
 fn parse_int_accepts_the_exact_bounds() {
     assert_eq!(
         values(&[
-            "\"140737488355327\".to_int()",
-            "\"-140737488355328\".to_int()",
-            "\"0x7fffffffffff\".to_int()",
-            "\"-0x800000000000\".to_int()",
-            "\"7fffffffffff\".to_int_radix(16)",
-            "\"-800000000000\".to_int_radix(16)",
+            "\"9223372036854775807\".to_int()",
+            "\"-9223372036854775808\".to_int()",
+            "\"0x7fffffffffffffff\".to_int()",
+            "\"-0x8000000000000000\".to_int()",
+            "\"7fffffffffffffff\".to_int_radix(16)",
+            "\"-8000000000000000\".to_int_radix(16)",
             "\" +42 \".to_int()",
             "\"0b101\".to_int()",
             "\"0o17\".to_int()",
             "\"zz\".to_int_radix(36)",
         ]),
         [
-            "Some(140737488355327)",
-            "Some(-140737488355328)",
-            "Some(140737488355327)",
-            "Some(-140737488355328)",
-            "Some(140737488355327)",
-            "Some(-140737488355328)",
+            "Some(9223372036854775807)",
+            "Some(-9223372036854775808)",
+            "Some(9223372036854775807)",
+            "Some(-9223372036854775808)",
+            "Some(9223372036854775807)",
+            "Some(-9223372036854775808)",
             "Some(42)",
             "Some(5)",
             "Some(15)",
@@ -105,7 +105,7 @@ fn as_int_refuses_nan_and_infinities() {
         "0.0 / 0.0",
         "1.0 / 0.0",
         "-1.0 / 0.0",
-        "140737488355328.0",
+        "9223372036854775808.0",
         "1.0e300",
     ] {
         let message = runtime_error(&format!("println(({value}) as int)\n"));
@@ -128,7 +128,7 @@ fn as_int_truncates_finite_floats_toward_zero() {
 
 #[test]
 fn a_string_is_never_cast_to_an_int() {
-    for text in ["3.9", "1e3", "nan", "99999999999999999"] {
+    for text in ["3.9", "1e3", "nan", "99999999999999999999"] {
         let outcome = run(&format!("println(\"{text}\" as int)\n"));
         assert_eq!(outcome.code, Some(1), "{text}: {}", outcome.stderr);
         assert!(
@@ -159,28 +159,34 @@ fn rounding_functions_refuse_nan_infinity_and_overflow() {
 
 #[test]
 fn abs_of_the_smallest_int_is_an_overflow_error() {
-    let message = runtime_error("use std::math\nprintln(math::abs(-140737488355328))\n");
+    let message = runtime_error("use std::math\nprintln(math::abs(-9223372036854775808))\n");
     assert!(message.contains("integer overflow"), "{message}");
-    let lines = run_ok("use std::math\nprintln(math::abs(-140737488355327))\n", &[]);
-    assert_eq!(lines, ["140737488355327"]);
+    let lines = run_ok(
+        "use std::math\nprintln(math::abs(-9223372036854775807))\n",
+        &[],
+    );
+    assert_eq!(lines, ["9223372036854775807"]);
 }
 
 #[test]
 fn reading_a_64_bit_value_outside_the_int_range_is_an_error() {
-    for (fill, function) in [
-        (255, "read_u64"),
-        (255, "read_u64_be"),
-        (127, "read_i64"),
-        (127, "read_i64_be"),
-        (128, "read_u64"),
-    ] {
+    for (fill, function) in [(255, "read_u64"), (255, "read_u64_be"), (128, "read_u64")] {
         let message = runtime_error(&format!(
             "use std::bytes\nlet b = bytes::alloc(8)\nbytes::fill(b, 0, 8, {fill})\nprintln(bytes::{function}(b, 0))\n"
         ));
         assert!(
-            message.contains("exceeds the 48-bit int range"),
+            message.contains("exceeds the int range"),
             "{function} {fill}: {message}"
         );
+    }
+    for function in ["read_i64", "read_i64_be"] {
+        let lines = run_ok(
+            &format!(
+                "use std::bytes\nlet b = bytes::alloc(8)\nbytes::fill(b, 0, 8, 127)\nprintln(bytes::{function}(b, 0))\n"
+            ),
+            &[],
+        );
+        assert_eq!(lines, ["9187201950435737471"], "{function}");
     }
     let lines = run_ok(
         "use std::bytes\nlet b = bytes::alloc(8)\nbytes::fill(b, 0, 8, 255)\nprintln(bytes::read_i64(b, 0))\nbytes::fill(b, 0, 8, 0)\nbytes::write_u8(b, 0, 9)\nprintln(bytes::read_u64(b, 0))\n",

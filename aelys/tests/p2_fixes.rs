@@ -397,13 +397,13 @@ log
 #[test]
 fn constant_folding_leaves_an_overflowing_index_to_the_runtime_trap() {
     for source in [
-        "let a = [1, 2, 3, 4]\na[(140737488355327 * 2) & 255]",
-        "let a = [1, 2, 3, 4]\na[(140737488355327 + 1) & 3]",
-        "let a = [1, 2, 3, 4]\na[(-140737488355327 - 2) & 3]",
-        "let a = vec![1, 2, 3, 4]\na[(140737488355327 * 2) & 255]",
-        "let a = [1, 2, 3, 4]\na[-(-140737488355327 - 1) & 3]",
+        "let a = [1, 2, 3, 4]\na[(9223372036854775807 * 2) & 255]",
+        "let a = [1, 2, 3, 4]\na[(9223372036854775807 + 1) & 3]",
+        "let a = [1, 2, 3, 4]\na[(-9223372036854775807 - 2) & 3]",
+        "let a = vec![1, 2, 3, 4]\na[(9223372036854775807 * 2) & 255]",
+        "let a = [1, 2, 3, 4]\na[-(-9223372036854775807 - 1) & 3]",
     ] {
-        runtime_error_everywhere(source, "48-bit");
+        runtime_error_everywhere(source, "integer overflow");
     }
     let message = rejected(
         "let a = [1, 2, 3, 4]\na[(70368744177663 * 2) & 255]",

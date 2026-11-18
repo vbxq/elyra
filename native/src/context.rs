@@ -57,6 +57,14 @@ impl<'call> CallContext<'call> {
         Ok(unsafe { core::slice::from_raw_parts(pointer, length) })
     }
 
+    pub fn read_int(&self, value: AelysValue) -> Option<i64> {
+        unsafe { crate::read_int_from_value(self.raw, value) }
+    }
+
+    pub fn int(&mut self, value: i64) -> Result<AelysValue, i32> {
+        unsafe { crate::alloc_int_from_context(self.raw, value) }
+    }
+
     pub fn as_raw(&self) -> *mut NativeContext {
         self.raw
     }

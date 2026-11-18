@@ -1,5 +1,6 @@
 use super::VM;
 use super::Value;
+use aelys_bytecode::IntOp;
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 mod numbers;
@@ -9,7 +10,7 @@ impl VM {
     /// Add two values (integers, floats, or strings).
     /// Handles mixed int/float by promoting to float.
     pub fn add_values(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
-        if let Some(result) = numbers::try_add_numbers(left, right) {
+        if let Some(result) = numbers::try_numbers(self, IntOp::Add, left, right)? {
             return Ok(result);
         }
 
@@ -29,8 +30,8 @@ impl VM {
     }
 
     /// Subtract two values (integers or floats).
-    pub fn sub_values(&self, left: Value, right: Value) -> Result<Value, RuntimeError> {
-        if let Some(result) = numbers::try_sub_numbers(left, right) {
+    pub fn sub_values(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = numbers::try_numbers(self, IntOp::Sub, left, right)? {
             return Ok(result);
         }
 
@@ -46,8 +47,8 @@ impl VM {
     }
 
     /// Multiply two values (integers or floats).
-    pub fn mul_values(&self, left: Value, right: Value) -> Result<Value, RuntimeError> {
-        if let Some(result) = numbers::try_mul_numbers(left, right) {
+    pub fn mul_values(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = numbers::try_numbers(self, IntOp::Mul, left, right)? {
             return Ok(result);
         }
 
@@ -64,8 +65,8 @@ impl VM {
 
     /// Divide two values (integers or floats).
     /// Integer division truncates toward zero.
-    pub fn div_values(&self, left: Value, right: Value) -> Result<Value, RuntimeError> {
-        if let Some(result) = numbers::try_div_numbers(self, left, right)? {
+    pub fn div_values(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = numbers::try_numbers(self, IntOp::Div, left, right)? {
             return Ok(result);
         }
 
@@ -81,8 +82,8 @@ impl VM {
     }
 
     /// Modulo two values (integers or floats).
-    pub fn mod_values(&self, left: Value, right: Value) -> Result<Value, RuntimeError> {
-        if let Some(result) = numbers::try_mod_numbers(self, left, right)? {
+    pub fn mod_values(&mut self, left: Value, right: Value) -> Result<Value, RuntimeError> {
+        if let Some(result) = numbers::try_numbers(self, IntOp::Rem, left, right)? {
             return Ok(result);
         }
 
@@ -98,9 +99,9 @@ impl VM {
     }
 
     /// Negate a value (unary minus).
-    pub fn neg_value(&self, operand: Value) -> Result<Value, RuntimeError> {
-        if let Some(n) = operand.as_int() {
-            return Ok(Value::int(-n));
+    pub fn neg_value(&mut self, operand: Value) -> Result<Value, RuntimeError> {
+        if self.is_int_value(operand) {
+            return self.int_negate(operand);
         }
         if let Some(f) = operand.as_float() {
             return Ok(Value::float(-f));

@@ -160,7 +160,7 @@ while i < 100000 {
 #[test]
 fn integer_overflow_checked() {
     let code = r#"
-let max = 140737488355327
+let max = 9223372036854775807
 max + 1
 "#;
     let error = run_aelys_result(code).expect_err("integer overflow must be rejected");

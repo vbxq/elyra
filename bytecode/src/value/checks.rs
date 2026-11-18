@@ -23,6 +23,15 @@ impl Value {
     pub fn is_int(&self) -> bool {
         (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_INT)
     }
+    // only meaningful on a value statically typed as an integer: inline ints carry this bit, boxed ones do not
+    #[inline(always)]
+    pub fn has_inline_int_bit(&self) -> bool {
+        self.0 & TAG_INT != 0
+    }
+    #[inline(always)]
+    pub fn both_inline_int_bits(&self, other: &Self) -> bool {
+        self.0 & other.0 & TAG_INT != 0
+    }
     pub fn is_bool(&self) -> bool {
         (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_BOOL)
     }

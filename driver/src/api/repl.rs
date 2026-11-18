@@ -216,7 +216,7 @@ fn run_parsed(
         let Some(value) = vm.get_global(global) else {
             continue;
         };
-        let ty = if value.as_int().is_some() {
+        let ty = if vm.is_int_value(value) {
             Some(aelys_sema::types::InferType::I64)
         } else if value.as_float().is_some() {
             Some(aelys_sema::types::InferType::F64)

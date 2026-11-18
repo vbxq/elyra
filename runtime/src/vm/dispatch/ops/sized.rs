@@ -1,6 +1,6 @@
 use super::super::decode::decode_abc;
 use crate::vm::{VM, Value};
-use aelys_bytecode::{FixedKind, OpCode, SizedInt};
+use aelys_bytecode::{FixedKind, IntOp, OpCode, SizedInt};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 // only 202 to 228, the ops that cannot fail: any other byte is read as ShrW32
@@ -66,6 +66,25 @@ pub(crate) fn sized_unary_value(opcode: OpCode, kind: SizedInt, value: i64) -> i
     }
 }
 
+pub(crate) fn wide_parts(opcode_byte: u8) -> (IntOp, SizedInt) {
+    let kind =
+        if (opcode_byte - OpCode::AddWI64 as u8) & 1 == 0 && opcode_byte != OpCode::ModWU64 as u8 {
+            SizedInt::I64
+        } else {
+            SizedInt::U64
+        };
+    let op = match (opcode_byte - OpCode::AddWI64 as u8) / 2 {
+        0 => IntOp::Add,
+        1 => IntOp::Sub,
+        2 => IntOp::Mul,
+        3 => IntOp::Shl,
+        4 => IntOp::Shr,
+        5 => IntOp::Div,
+        _ => IntOp::Rem,
+    };
+    (op, kind)
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn execute(
@@ -95,15 +114,21 @@ pub(crate) fn execute(
                 "invalid integer width {right}"
             ))));
         };
+        let negate = opcode_byte == OpCode::NegW as u8;
         // safety: bounds checked above
-        let value = unsafe { (*registers.add(left)).as_int_unchecked() };
-        let opcode = if opcode_byte == OpCode::NegW as u8 {
-            OpCode::NegW
-        } else {
-            OpCode::NotW
-        };
+        let operand = unsafe { *registers.add(left) };
+        if kind.bits() == 64 {
+            vm.frames[current_frame_idx].ip = ip;
+            let result = vm.sized_unary(negate, kind, operand)?;
+            unsafe {
+                *registers.add(dest) = result;
+            }
+            return Ok(());
+        }
+        let opcode = if negate { OpCode::NegW } else { OpCode::NotW };
         unsafe {
-            *registers.add(dest) = Value::int_wrapping(sized_unary_value(opcode, kind, value));
+            *registers.add(dest) =
+                Value::int_wrapping(sized_unary_value(opcode, kind, operand.as_int_unchecked()));
         }
         return Ok(());
     }
@@ -132,7 +157,42 @@ pub(crate) fn execute(
     Ok(())
 }
 
-// none is a division by zero, some(none) a result outside the 48-bit range
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_wide64(
+    vm: &mut VM,
+    ip: usize,
+    base: usize,
+    current_frame_idx: usize,
+    registers: *mut Value,
+    registers_len: usize,
+    opcode_byte: u8,
+    instr: u32,
+) -> Result<(), RuntimeError> {
+    let (dest, left, right) = decode_abc(instr);
+    let (dest, left, right) = (
+        base + usize::from(dest),
+        base + usize::from(left),
+        base + usize::from(right),
+    );
+    if dest >= registers_len || left >= registers_len || right >= registers_len {
+        vm.frames[current_frame_idx].ip = ip;
+        return Err(vm.runtime_error(RuntimeErrorKind::InvalidRegister {
+            reg: dest.max(left).max(right),
+            max: registers_len,
+        }));
+    }
+    // safety: bounds checked above
+    let (l, r) = unsafe { (*registers.add(left), *registers.add(right)) };
+    let (op, kind) = wide_parts(opcode_byte);
+    vm.frames[current_frame_idx].ip = ip;
+    let result = vm.sized_binary(op, kind, l, r)?;
+    unsafe {
+        *registers.add(dest) = result;
+    }
+    Ok(())
+}
+
+// none is a division by zero, some(none) a result outside the int range
 pub(crate) fn fixed_value(
     opcode: OpCode,
     kind: FixedKind,
@@ -141,6 +201,19 @@ pub(crate) fn fixed_value(
     shift: i64,
 ) -> Option<Option<i64>> {
     let shift = (shift & 63) as u32;
+    if matches!(kind, FixedKind::Sized(SizedInt::U64)) {
+        let (left, right) = (u128::from(left as u64), u128::from(right as u64));
+        let exact = match opcode {
+            OpCode::MulShr => (left * right) >> shift,
+            _ => {
+                if right == 0 {
+                    return None;
+                }
+                (left << shift) / right
+            }
+        };
+        return Some(Some(exact as u64 as i64));
+    }
     let exact = match opcode {
         OpCode::MulShr => (i128::from(left) * i128::from(right)) >> shift,
         _ => {
@@ -152,13 +225,7 @@ pub(crate) fn fixed_value(
     };
     Some(match kind {
         FixedKind::Sized(kind) => Some(kind.wrap(exact as i64)),
-        FixedKind::Int => {
-            if exact >= i128::from(Value::INT_MIN) && exact <= i128::from(Value::INT_MAX) {
-                Some(exact as i64)
-            } else {
-                None
-            }
-        }
+        FixedKind::Int => i64::try_from(exact).ok(),
     })
 }
 
@@ -201,34 +268,42 @@ pub(crate) fn execute_fixed(
     // safety: bounds checked above
     let (l, r, shift) = unsafe {
         (
-            (*registers.add(left)).as_int_unchecked(),
-            (*registers.add(right)).as_int_unchecked(),
+            *registers.add(left),
+            *registers.add(right),
             if mode == 0 {
-                i64::from(immediate)
+                Value::int(i64::from(immediate))
             } else {
-                (*registers.add(shift_register)).as_int_unchecked()
+                *registers.add(shift_register)
             },
         )
+    };
+    let operands = (vm.int_bits(l), vm.int_bits(r), vm.int_bits(shift));
+    let (Some(l), Some(r), Some(shift)) = operands else {
+        vm.frames[current_frame_idx].ip = ip;
+        return Err(vm.runtime_error(RuntimeErrorKind::TypeError {
+            operation: "fixed-point method",
+            expected: "integer",
+            got: vm.value_type_name(l).to_string(),
+        }));
     };
     let opcode = if opcode_byte == OpCode::MulShr as u8 {
         OpCode::MulShr
     } else {
         OpCode::ShlDiv
     };
+    vm.frames[current_frame_idx].ip = ip;
     match fixed_value(opcode, kind, l, r, shift) {
         Some(Some(result)) => {
+            let value = match kind {
+                FixedKind::Sized(kind) => vm.make_sized(kind, result)?,
+                FixedKind::Int => vm.make_int(result)?,
+            };
             unsafe {
-                *registers.add(dest) = Value::int_wrapping(result);
+                *registers.add(dest) = value;
             }
             Ok(())
         }
-        Some(None) => {
-            vm.frames[current_frame_idx].ip = ip;
-            Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow))
-        }
-        None => {
-            vm.frames[current_frame_idx].ip = ip;
-            Err(vm.runtime_error(RuntimeErrorKind::DivisionByZero))
-        }
+        Some(None) => Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow)),
+        None => Err(vm.runtime_error(RuntimeErrorKind::DivisionByZero)),
     }
 }

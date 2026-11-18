@@ -3,6 +3,7 @@
 mod access;
 mod alloc;
 mod gc;
+mod ints;
 mod strings;
 
 use crate::object::{GcObject, GcRef};
@@ -92,6 +93,7 @@ pub struct Heap {
     minor_collections: u64,
     major_collections: u64,
     allocation_count: u64,
+    boxed_ints: bool,
 }
 
 impl Heap {
@@ -144,6 +146,7 @@ impl Heap {
             minor_collections: 0,
             major_collections: 0,
             allocation_count: 0,
+            boxed_ints: false,
         };
         heap.update_next_event();
         heap

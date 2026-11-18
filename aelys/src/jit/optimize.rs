@@ -561,7 +561,7 @@ fn fold(kind: &IrInstructionKind, constants: &HashMap<ValueId, Constant>) -> Opt
         _ => None,
     };
     let in_range = |value: i64| {
-        (aelys_bytecode::Value::INT_MIN..=aelys_bytecode::Value::INT_MAX)
+        (aelys_bytecode::Value::INLINE_INT_MIN..=aelys_bytecode::Value::INLINE_INT_MAX)
             .contains(&value)
             .then_some(Constant::Integer(value))
     };

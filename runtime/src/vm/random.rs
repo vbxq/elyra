@@ -37,9 +37,26 @@ impl VM {
     }
 
     pub(crate) fn random_i64_inclusive(&mut self, min: i64, max: i64) -> i64 {
-        let width = u64::try_from(i128::from(max) - i128::from(min) + 1)
-            .expect("random range width fits u64");
-        min + i64::try_from(self.random_below(width)).expect("random offset fits i64")
+        let width = u128::try_from(i128::from(max) - i128::from(min) + 1)
+            .expect("random range width is positive");
+        let offset = match u64::try_from(width) {
+            Ok(narrow) if narrow <= STATE_RANGE => u128::from(self.random_below(narrow)),
+            _ => self.random_wide_below(width),
+        };
+        i64::try_from(i128::from(min) + offset as i128).expect("random value stays in its range")
+    }
+
+    // two draws give 96 bits, enough to sample any i64 range without bias
+    fn random_wide_below(&mut self, bound: u128) -> u128 {
+        let range: u128 = 1 << 96;
+        let limit = range - range % bound;
+        loop {
+            let value =
+                (u128::from(self.next_random_u48()) << 48) | u128::from(self.next_random_u48());
+            if value < limit {
+                return value % bound;
+            }
+        }
     }
 
     fn next_random_u48(&mut self) -> u64 {

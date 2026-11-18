@@ -96,8 +96,11 @@ fn native_cbrt(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_abs(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if let Some(i) = args[0].as_int() {
-        Value::int_checked(i.abs()).map_err(|_| vm.runtime_error(RuntimeErrorKind::IntegerOverflow))
+    if let Some(i) = vm.int64_value(args[0]) {
+        match i.checked_abs() {
+            Some(abs) => vm.make_int(abs),
+            None => Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow)),
+        }
     } else if let Some(f) = args[0].as_float() {
         Ok(Value::float(f.abs()))
     } else {
@@ -110,7 +113,7 @@ fn native_abs(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_sign(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if let Some(i) = args[0].as_int() {
+    if let Some(i) = vm.int64_value(args[0]) {
         Ok(Value::int(i.signum()))
     } else if let Some(f) = args[0].as_float() {
         if f.is_nan() {
@@ -219,8 +222,8 @@ fn native_trunc(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_min(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    match (args[0].as_int(), args[1].as_int()) {
-        (Some(a), Some(b)) => Ok(Value::int(a.min(b))),
+    match (vm.int64_value(args[0]), vm.int64_value(args[1])) {
+        (Some(a), Some(b)) => Ok(if b < a { args[1] } else { args[0] }),
         _ => {
             let a = get_number(vm, args[0], "min")?;
             let b = get_number(vm, args[1], "min")?;
@@ -230,8 +233,8 @@ fn native_min(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_max(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if let (Some(a), Some(b)) = (args[0].as_int(), args[1].as_int()) {
-        return Ok(Value::int(a.max(b)));
+    if let (Some(a), Some(b)) = (vm.int64_value(args[0]), vm.int64_value(args[1])) {
+        return Ok(if b > a { args[1] } else { args[0] });
     }
     Ok(Value::float(
         get_number(vm, args[0], "max")?.max(get_number(vm, args[1], "max")?),
@@ -239,8 +242,12 @@ fn native_max(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_clamp(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    if let (Some(x), Some(lo), Some(hi)) = (args[0].as_int(), args[1].as_int(), args[2].as_int()) {
-        return Ok(Value::int(x.max(lo).min(hi)));
+    if let (Some(x), Some(lo), Some(hi)) = (
+        vm.int64_value(args[0]),
+        vm.int64_value(args[1]),
+        vm.int64_value(args[2]),
+    ) {
+        return vm.make_int(x.max(lo).min(hi));
     }
     let x = get_number(vm, args[0], "clamp")?;
     let lo = get_number(vm, args[1], "clamp")?;
@@ -274,7 +281,7 @@ fn native_fmod(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_is_nan(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_nan()))
-    } else if args[0].as_int().is_some() {
+    } else if vm.is_int_value(args[0]) {
         Ok(Value::bool(false)) // Integers are never NaN
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -288,7 +295,7 @@ fn native_is_nan(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_is_inf(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_infinite()))
-    } else if args[0].as_int().is_some() {
+    } else if vm.is_int_value(args[0]) {
         Ok(Value::bool(false)) // Integers are never infinite
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -303,7 +310,7 @@ fn native_is_inf(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_is_finite(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_finite()))
-    } else if args[0].as_int().is_some() {
+    } else if vm.is_int_value(args[0]) {
         Ok(Value::bool(true)) // Integers are always finite
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -315,7 +322,7 @@ fn native_is_finite(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 }
 
 fn native_randint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let debut = args[0].as_int().ok_or_else(|| {
+    let debut = vm.int64_value(args[0]).ok_or_else(|| {
         vm.runtime_error(RuntimeErrorKind::TypeError {
             operation: "randint",
             expected: "int",
@@ -323,7 +330,7 @@ fn native_randint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         })
     })?;
 
-    let fin = args[1].as_int().ok_or_else(|| {
+    let fin = vm.int64_value(args[1]).ok_or_else(|| {
         vm.runtime_error(RuntimeErrorKind::TypeError {
             operation: "randint",
             expected: "int",
@@ -339,5 +346,6 @@ fn native_randint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         }));
     }
 
-    Ok(Value::int(vm.random_i64_inclusive(debut, fin)))
+    let value = vm.random_i64_inclusive(debut, fin);
+    vm.make_int(value)
 }

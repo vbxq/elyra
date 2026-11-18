@@ -6,12 +6,13 @@ use std::hash::{BuildHasherDefault, Hasher};
 pub enum MapKey {
     Scalar(u64),
     Text(Box<[u8]>),
+    Wide(i128),
 }
 
 impl MapKey {
     fn heap_bytes(&self) -> usize {
         match self {
-            Self::Scalar(_) => 0,
+            Self::Scalar(_) | Self::Wide(_) => 0,
             Self::Text(bytes) => bytes.len(),
         }
     }

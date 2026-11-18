@@ -1,4 +1,5 @@
 mod array;
+mod boxed_int;
 mod closure;
 mod function;
 mod gc_object;
@@ -14,6 +15,7 @@ mod upvalue;
 mod vec;
 
 pub use array::{AelysArray, ArrayData, TypeTag};
+pub use boxed_int::BoxedInt;
 pub use closure::{AelysClosure, ClosureCache};
 pub use function::{AelysFunction, FunctionSchemas};
 pub use gc_object::GcObject;

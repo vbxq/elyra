@@ -141,6 +141,7 @@ fn is_foreign_impl_target(ty: &InferType, type_table: &crate::types::TypeTable) 
         | InferType::U8
         | InferType::U16
         | InferType::U32
+        | InferType::Int64
         | InferType::U64
         | InferType::F32
         | InferType::F64

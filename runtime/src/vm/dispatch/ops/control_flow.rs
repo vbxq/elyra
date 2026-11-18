@@ -111,24 +111,12 @@ macro_rules! execute_control_flow {
 
                 match inner {
                     29 | 30 => {
-                        let iter = $reg_ref!(first).as_int_unchecked();
-                        let end = $reg_ref!(first + 1).as_int_unchecked();
-                        let step = $reg_ref!(first + 2).as_int_unchecked();
-                        let new_iter = iter.wrapping_add(step);
-                        $reg_set!(first, $int_value!(new_iter));
-                        let inclusive = inner == 30;
-                        let should_continue = if step > 0 {
-                            if inclusive {
-                                new_iter <= end
-                            } else {
-                                new_iter < end
-                            }
-                        } else if inclusive {
-                            new_iter >= end
-                        } else {
-                            new_iter > end
-                        };
-                        if should_continue {
+                        let iter = *$reg_ref!(first);
+                        let end = *$reg_ref!(first + 1);
+                        let step = *$reg_ref!(first + 2);
+                        $vm.frames[$current_frame_idx].ip = $ip;
+                        if let Some(next) = $vm.for_loop_next(iter, end, step, inner == 30)? {
+                            $reg_set!(first, next);
                             $ip = ($ip as isize + offset as isize) as usize;
                         }
                     }
@@ -212,66 +200,108 @@ macro_rules! execute_control_flow {
                 };
                 let iter_idx = $base + a as usize;
 
-                let iter = $reg_ref!(iter_idx).as_int_unchecked();
-                let end = $reg_ref!(iter_idx + 1).as_int_unchecked();
-                let step = $reg_ref!(iter_idx + 2).as_int_unchecked();
-
-                let new_iter = iter.wrapping_add(step);
-                $reg_set!(iter_idx, $int_value!(new_iter));
-
+                let iter = *$reg_ref!(iter_idx);
+                let end = *$reg_ref!(iter_idx + 1);
+                let step = *$reg_ref!(iter_idx + 2);
                 let inclusive = matches!($opcode_byte, 30 | 41);
-                let should_continue = if step > 0 {
-                    if inclusive {
-                        new_iter <= end
+
+                if iter.both_inline_int_bits(&end) && step.has_inline_int_bit() {
+                    let (iter, end, step) = (
+                        iter.as_int_unchecked(),
+                        end.as_int_unchecked(),
+                        step.as_int_unchecked(),
+                    );
+                    let new_iter = iter + step;
+                    $reg_set!(iter_idx, $int_value!(new_iter));
+                    let should_continue = if step > 0 {
+                        if inclusive {
+                            new_iter <= end
+                        } else {
+                            new_iter < end
+                        }
                     } else {
-                        new_iter < end
+                        if inclusive {
+                            new_iter >= end
+                        } else {
+                            new_iter > end
+                        }
+                    };
+                    if should_continue {
+                        $ip = ($ip as isize + imm as isize) as usize;
                     }
                 } else {
-                    if inclusive {
-                        new_iter >= end
-                    } else {
-                        new_iter > end
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    if let Some(next) = $vm.for_loop_next(iter, end, step, inclusive)? {
+                        $reg_set!(iter_idx, next);
+                        $ip = ($ip as isize + imm as isize) as usize;
                     }
-                };
-                if should_continue {
-                    $ip = ($ip as isize + imm as isize) as usize;
                 }
             }
 
             // LtImm (44)
             44 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l < c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() < c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), "<")?.is_lt()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             // LeImm (45)
             45 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l <= c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() <= c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), "<=")?.is_le()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             // GtImm (46)
             46 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l > c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() > c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), ">")?.is_gt()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             // GeImm (47)
             47 => {
                 let (a, b, c) = decode_abc($instr);
-                let l = $reg_ref!($base + b as usize).as_int_unchecked();
-                $reg_set!($base + a as usize, Value::bool(l >= c as i64));
+                let left = *$reg_ref!($base + b as usize);
+                let result = if left.has_inline_int_bit() {
+                    left.as_int_unchecked() >= c as i64
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(left, Value::int(c as i64), ">=")?.is_ge()
+                };
+                $reg_set!($base + a as usize, Value::bool(result));
             }
 
             // WhileLoopLt (48)
             48 => {
                 let (a, imm) = decode_aimm($instr);
-                let iter = $reg_ref!($base + a as usize).as_int_unchecked();
-                let limit = $reg_ref!($base + a as usize + 1).as_int_unchecked();
-                if iter < limit {
+                let iter = *$reg_ref!($base + a as usize);
+                let limit = *$reg_ref!($base + a as usize + 1);
+                let below = if iter.both_inline_int_bits(&limit) {
+                    iter.as_int_unchecked() < limit.as_int_unchecked()
+                } else {
+                    $vm.frames[$current_frame_idx].ip = $ip;
+                    $vm.int_compare(iter, limit, "<")?.is_lt()
+                };
+                if below {
                     $ip = ($ip as isize + imm as isize) as usize;
                 }
             }

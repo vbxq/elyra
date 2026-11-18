@@ -8,7 +8,7 @@ macro_rules! execute_arrays {
             130 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                let count_value = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(0);
                 if count_value < 0 {
                     return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "array allocation",
@@ -37,7 +37,7 @@ macro_rules! execute_arrays {
             131 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                let count_value = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(0);
                 if count_value < 0 {
                     return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "array allocation",
@@ -66,7 +66,7 @@ macro_rules! execute_arrays {
             132 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                let count_value = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(0);
                 if count_value < 0 {
                     return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "array allocation",
@@ -95,7 +95,7 @@ macro_rules! execute_arrays {
             133 => {
                 let (a, b, _) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let count_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                let count_value = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(0);
                 if count_value < 0 {
                     return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "array allocation",
@@ -154,7 +154,11 @@ macro_rules! execute_arrays {
                     }
                 } else {
                     let first = $reg_get!(start);
-                    let array = if first.is_int() {
+                    let mut packed_ints = first.is_int();
+                    for i in 1..count {
+                        packed_ints &= $reg_get!(start + i).is_int();
+                    }
+                    let array = if packed_ints {
                         let mut data = Vec::with_capacity(count);
                         for i in 0..count {
                             data.push($reg_get!(start + i).as_int().unwrap_or(0));
@@ -192,7 +196,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -232,7 +236,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -272,7 +276,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -312,7 +316,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -352,7 +356,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.array_get_option(arr_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -361,7 +365,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.array_get_option(arr_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -370,7 +374,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.array_get_option(arr_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -379,7 +383,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let arr_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.array_get_option(arr_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -387,7 +391,7 @@ macro_rules! execute_arrays {
             143 => {
                 let (a, b, c) = decode_abc($instr);
                 let arr_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -409,6 +413,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -440,7 +445,7 @@ macro_rules! execute_arrays {
             144 => {
                 let (a, b, c) = decode_abc($instr);
                 let arr_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -462,6 +467,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -493,7 +499,7 @@ macro_rules! execute_arrays {
             145 => {
                 let (a, b, c) = decode_abc($instr);
                 let arr_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -515,6 +521,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -546,7 +553,7 @@ macro_rules! execute_arrays {
             146 => {
                 let (a, b, c) = decode_abc($instr);
                 let arr_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -568,6 +575,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -706,7 +714,11 @@ macro_rules! execute_arrays {
                     }
                 } else {
                     let first = $reg_get!(start);
-                    let vec = if first.is_int() {
+                    let mut packed_ints = first.is_int();
+                    for i in 1..count {
+                        packed_ints &= $reg_get!(start + i).is_int();
+                    }
+                    let vec = if packed_ints {
                         let mut data = Vec::with_capacity(count);
                         for i in 0..count {
                             data.push($reg_get!(start + i).as_int().unwrap_or(0));
@@ -878,7 +890,7 @@ macro_rules! execute_arrays {
             163 => {
                 let (a, b, _) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
-                let additional_value = $reg_get!($base + b as usize).as_int().unwrap_or(0);
+                let additional_value = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(0);
                 if additional_value < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
                     return Err($vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -905,7 +917,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -945,7 +957,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -985,7 +997,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -1025,7 +1037,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 if idx < 0 {
                     $vm.frames[$current_frame_idx].ip = $ip;
@@ -1086,7 +1098,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.vec_get_option(vec_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -1095,7 +1107,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.vec_get_option(vec_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -1104,7 +1116,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.vec_get_option(vec_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -1113,7 +1125,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let vec_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
                 let value = $vm.vec_get_option(vec_val, idx)?;
                 $reg_set!(dest, value);
             }
@@ -1121,7 +1133,7 @@ macro_rules! execute_arrays {
             172 => {
                 let (a, b, c) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -1143,6 +1155,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1174,7 +1187,7 @@ macro_rules! execute_arrays {
             173 => {
                 let (a, b, c) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -1196,6 +1209,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1227,7 +1241,7 @@ macro_rules! execute_arrays {
             174 => {
                 let (a, b, c) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -1249,6 +1263,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1280,7 +1295,7 @@ macro_rules! execute_arrays {
             175 => {
                 let (a, b, c) = decode_abc($instr);
                 let vec_val = $reg_get!($base + a as usize);
-                let idx = $reg_get!($base + b as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + b as usize)).unwrap_or(-1);
                 let value = $reg_get!($base + c as usize);
 
                 if idx < 0 {
@@ -1300,6 +1315,7 @@ macro_rules! execute_arrays {
 
                 match container_len {
                     Some((true, len)) => {
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1313,6 +1329,7 @@ macro_rules! execute_arrays {
                         $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     Some((false, len)) => {
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -1345,7 +1362,7 @@ macro_rules! execute_arrays {
                 let (a, b, c) = decode_abc($instr);
                 let dest = $base + a as usize;
                 let str_val = $reg_get!($base + b as usize);
-                let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
+                let idx = $vm.int64_value($reg_get!($base + c as usize)).unwrap_or(-1);
 
                 let str_ref = GcRef::new(str_val.as_ptr().unwrap_or(0));
                 if let Some(obj) = $vm.heap.get(str_ref) {
@@ -1430,7 +1447,7 @@ impl VM {
         if value.is_none() {
             return Ok(None);
         }
-        value.as_int().map(Some).ok_or_else(|| {
+        self.int64_value(value).map(Some).ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::TypeError {
                 operation: "range construction",
                 expected: "integer or Option::None",

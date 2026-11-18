@@ -741,7 +741,32 @@ fn translate_function(
         deopt_maps,
     };
     ir.verify().ok()?;
+    if calls_and_checks_integers(&ir) {
+        return None;
+    }
     Some(ir)
+}
+
+// an int leaving the inline range reruns the call in the interpreter, which must not repeat a call's effects; a call may also return a boxed int
+fn calls_and_checks_integers(ir: &FunctionIr) -> bool {
+    let instructions = || ir.blocks.iter().flat_map(|block| block.instructions.iter());
+    let call = |instruction: &IrInstruction| {
+        matches!(instruction.kind, IrInstructionKind::NativeCall { .. })
+    };
+    if instructions().any(|instruction| {
+        call(instruction) && matches!(instruction.result, Some((_, IrType::I64)))
+    }) {
+        return true;
+    }
+    instructions().any(call)
+        && instructions().any(|instruction| {
+            matches!(
+                instruction.kind,
+                IrInstructionKind::Iadd(..)
+                    | IrInstructionKind::Isub(..)
+                    | IrInstructionKind::Imul(..)
+            ) && matches!(instruction.result, Some((_, IrType::I64)))
+        })
 }
 
 // eligibility is per function, so a nested function's schema opcodes must not
@@ -842,6 +867,7 @@ fn inline_integer_leaf(
                 else {
                     return None;
                 };
+                aelys_bytecode::Value::inline_int(*value)?;
                 emit_value(
                     &mut registers,
                     instructions,
@@ -920,7 +946,10 @@ fn constant_index(function: &Function, instruction: DecodedInstruction) -> Optio
 fn constant_ir(constant: &Constant) -> Option<(IrType, IrInstructionKind)> {
     match constant {
         Constant::Bool(value) => Some((IrType::Bool, IrInstructionKind::Bconst(*value))),
-        Constant::Int(value) => Some((IrType::I64, IrInstructionKind::Iconst(*value))),
+        Constant::Int(value) if aelys_bytecode::Value::inline_int(*value).is_some() => {
+            Some((IrType::I64, IrInstructionKind::Iconst(*value)))
+        }
+        Constant::Int(_) | Constant::UInt(_) => None,
         Constant::Float(bits) => Some((
             IrType::F64,
             IrInstructionKind::Iconst(i64::from_ne_bytes(bits.to_ne_bytes())),
@@ -1399,9 +1428,15 @@ fn transfer_types(
             match function.constants.get(index)? {
                 Constant::NestedFunction(_) => *registers.get_mut(destination)? = None,
                 Constant::Bool(_) => *registers.get_mut(destination)? = Some(IrType::Bool),
-                Constant::Int(_) => *registers.get_mut(destination)? = Some(IrType::I64),
+                Constant::Int(value) if aelys_bytecode::Value::inline_int(*value).is_some() => {
+                    *registers.get_mut(destination)? = Some(IrType::I64)
+                }
                 Constant::Float(_) => *registers.get_mut(destination)? = Some(IrType::F64),
-                Constant::Null | Constant::Char(_) | Constant::String(_) => return None,
+                Constant::Int(_)
+                | Constant::UInt(_)
+                | Constant::Null
+                | Constant::Char(_)
+                | Constant::String(_) => return None,
             }
         }
         OpCode::ArrayLen => {

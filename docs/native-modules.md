@@ -66,7 +66,7 @@ be the file name the library is copied to (`pixels.so`).
 
 | Rust parameter | Elyra argument | notes |
 |---|---|---|
-| `i64` | `int` | 48-bit range |
+| `i64` | `int` | the whole i64 range |
 | `f64` | `float` | |
 | `bool` | `bool` | |
 | `String` | `string` | copied into the native |
@@ -82,8 +82,12 @@ be the file name the library is copied to (`pixels.so`).
 
 A byte buffer is the handle returned by `bytes::alloc`, `bytes::from_string`,
 `fs::read_bytes` or `fs::read_file_bytes`. Structs, arrays, `Vec`, maps,
-closures and raw pointers do not cross. Returning an `i64` outside the 48-bit
-range is error code 2.
+closures and raw pointers do not cross. An `int` crosses as an `i64`: the generated
+wrapper reads a value in -2^47..2^47 from the NaN-boxed argument itself and a larger
+one, which the VM keeps on its heap, through the `read_int` slot of the VM API;
+a result outside -2^47..2^47 is allocated through the `alloc_int` slot (API
+version 5). A `u64` above `9223372036854775807` is not an `int` and does not
+cross as one.
 
 ### The call context
 
@@ -94,6 +98,11 @@ range is error code 2.
   the call allocates after it (the raw `alloc_string_from_context` behaves the
   same way);
 - `read_string(AelysValue) -> Option<String>` copies an Elyra string out;
+- `read_int(AelysValue) -> Option<i64>` reads an `int` argument, inline or boxed
+  (the raw `read_int_from_value`; `value_as_int` alone only reads an inline one
+  and gives `0` for a boxed value);
+- `int(i64) -> Result<AelysValue, i32>` makes an `int` result of any size (the
+  raw `alloc_int_from_context`), alive until the native function returns;
 - `borrow_bytes(handle) -> Result<&'call mut [u8], i32>` and
   `borrow_bytes_ref(handle) -> Result<&'call [u8], i32>` borrow a byte buffer
   from its raw handle value.
@@ -107,7 +116,7 @@ in a `static`, or that asks for `CallContext<'static>`, does not compile.
 A function can take the raw ABI arguments itself:
 
 ```rust
-use aelys_native::{AelysValue, NativeContext, value_as_int, value_int, with_call_context};
+use aelys_native::{AelysValue, NativeContext, with_call_context};
 
 #[aelys_export(params = [Int, Bytes], result = Int)]
 pub unsafe extern "C" fn peek(
@@ -120,8 +129,9 @@ pub unsafe extern "C" fn peek(
     let found = unsafe {
         with_call_context(context, |call| {
             let bytes = call.borrow_bytes_ref(handle)?;
-            let byte = *bytes.get(value_as_int(index) as usize).ok_or(1)?;
-            value_int(i64::from(byte)).ok_or(1)
+            let index = call.read_int(index).ok_or(1)?;
+            let byte = *bytes.get(usize::try_from(index).map_err(|_| 1)?).ok_or(1)?;
+            call.int(i64::from(byte))
         })
     };
     match found {
@@ -147,7 +157,7 @@ The return status of a raw function is `0` on success, with the result in
 | status | constant | meaning |
 |---|---|---|
 | 1 | `AELYS_NATIVE_INVALID_ARGUMENT` | bad argument or handle |
-| 2 | `AELYS_NATIVE_INTEGER_OVERFLOW` | an int result outside 48 bits |
+| 2 | `AELYS_NATIVE_INTEGER_OVERFLOW` | an int result the host cannot allocate (a host older than API version 5 boxes nothing) |
 | 3 | `AELYS_NATIVE_RESULT_ERROR` | `Err`: `*out` holds the message string |
 | 4 | `AELYS_NATIVE_OPTION_NONE` | `None` |
 | 5 | `AELYS_NATIVE_BORROW_CONFLICT` | a byte buffer borrowed mutably while another borrow of it is live in the call |
@@ -183,8 +193,10 @@ A native function cannot call Elyra code: there is no way to call a closure,
 and the `register_function` / `register_constant` / `register_type` slots of the
 VM API are empty. Design APIs that Elyra polls (`sdl::poll()` returns one event
 per call) instead of callbacks. The VM API functions (`alloc_string`,
-`read_string`, `borrow_bytes`, `borrow_bytes_shared`) may only be called during
-a native call, with the context of that call.
+`read_string`, `borrow_bytes`, `borrow_bytes_shared`, `read_int`, `alloc_int`)
+may only be called during a native call, with the context of that call. The
+`size` field of the table tells a module which slots its host provides:
+`read_int` and `alloc_int` were added at the end in API version 5.
 
 ## Threads
 

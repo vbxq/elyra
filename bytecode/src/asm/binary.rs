@@ -347,6 +347,10 @@ impl BinaryWriter {
                 self.write_u8(2);
                 self.write_i64(*value);
             }
+            Constant::UInt(value) => {
+                self.write_u8(7);
+                self.write_u64(*value);
+            }
             Constant::Float(bits) => {
                 self.write_u8(3);
                 self.write_u64(*bits);
@@ -1197,6 +1201,13 @@ impl<'a> BinaryReader<'a> {
                 let scalar = self.read_u32()?;
                 char::from_u32(scalar).ok_or(BinaryError::InvalidConstantType(tag))?;
                 Ok(Constant::Char(scalar))
+            }
+            7 => {
+                let value = self.read_u64()?;
+                if value <= i64::MAX as u64 {
+                    return Err(BinaryError::InvalidConstantType(tag));
+                }
+                Ok(Constant::UInt(value))
             }
             _ => Err(BinaryError::InvalidConstantType(tag)),
         }

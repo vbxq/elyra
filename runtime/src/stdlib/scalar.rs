@@ -47,15 +47,16 @@ fn parse_digits(digits: &str, radix: u32, negative: bool) -> Option<i64> {
     }
     let magnitude = i128::from(u64::from_str_radix(digits, radix).ok()?);
     let value = if negative { -magnitude } else { magnitude };
-    i64::try_from(value)
-        .ok()
-        .filter(|value| Value::int_checked(*value).is_ok())
+    i64::try_from(value).ok()
 }
 
 fn native_parse_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.to_int")?;
     match parse_int_text(s) {
-        Some(n) => option_some(vm, Value::int(n)),
+        Some(n) => {
+            let value = vm.make_int(n)?;
+            option_some(vm, value)
+        }
         None => Ok(Value::none()),
     }
 }
@@ -79,7 +80,10 @@ fn native_parse_int_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
     match parse_digits(digits, radix, negative) {
-        Some(n) => option_some(vm, Value::int(n)),
+        Some(n) => {
+            let value = vm.make_int(n)?;
+            option_some(vm, value)
+        }
         None => Ok(Value::none()),
     }
 }
@@ -102,8 +106,18 @@ fn native_parse_bool(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     }
 }
 
+fn get_wide_int(vm: &VM, value: Value, op: &'static str) -> Result<i128, RuntimeError> {
+    vm.int_value(value).ok_or_else(|| {
+        vm.runtime_error(RuntimeErrorKind::TypeError {
+            operation: op,
+            expected: "int",
+            got: vm.value_type_name(value).to_string(),
+        })
+    })
+}
+
 fn native_to_hex(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let n = get_int(vm, args[0], "int.to_hex")?;
+    let n = get_wide_int(vm, args[0], "int.to_hex")?;
     let s = if n < 0 {
         format!("-{:x}", n.unsigned_abs())
     } else {
@@ -113,7 +127,7 @@ fn native_to_hex(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_to_binary(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let n = get_int(vm, args[0], "int.to_binary")?;
+    let n = get_wide_int(vm, args[0], "int.to_binary")?;
     make_string(
         vm,
         &if n >= 0 {
@@ -125,7 +139,7 @@ fn native_to_binary(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 }
 
 fn native_to_octal(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let n = get_int(vm, args[0], "int.to_octal")?;
+    let n = get_wide_int(vm, args[0], "int.to_octal")?;
     if n >= 0 {
         make_string(vm, &format!("{:o}", n))
     } else {
@@ -135,7 +149,7 @@ fn native_to_octal(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 /// to_radix(n, radix) - Convert integer to string in given radix (2-36).
 fn native_to_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let n = get_int(vm, args[0], "int.to_radix")?;
+    let n = get_wide_int(vm, args[0], "int.to_radix")?;
     let radix = get_int(vm, args[1], "int.to_radix")?;
 
     if !(2..=36).contains(&radix) {
@@ -148,8 +162,8 @@ fn native_to_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
     let digits = "0123456789abcdefghijklmnopqrstuvwxyz";
     let mut result = String::new();
-    let mut num = if n < 0 { -(n as i128) } else { n as i128 };
-    let radix = radix as i128;
+    let mut num = n.unsigned_abs();
+    let radix = radix as u128;
 
     if num == 0 {
         return make_string(vm, "0");

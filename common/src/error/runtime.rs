@@ -200,7 +200,7 @@ impl RuntimeErrorKind {
             ),
             Self::NativeError { code } => match code {
                 1 => "native error: code 1 (invalid argument)".to_string(),
-                2 => "native error: code 2 (integer outside the 48-bit int range)".to_string(),
+                2 => "native error: code 2 (integer outside the int range)".to_string(),
                 5 => "native error: code 5 (byte buffer borrowed mutably while another borrow of it is live in the same native call)"
                     .to_string(),
                 _ => format!("native error: code {}", code),
@@ -214,7 +214,7 @@ impl RuntimeErrorKind {
                 format!("{family}::unwrap failed: value was not the success variant")
             }),
             Self::IntegerOverflow => {
-                "integer overflow outside the supported 48-bit range".to_string()
+                "integer overflow outside the int range (i64)".to_string()
             }
             Self::NonFiniteCast { value, target } => format!("cannot convert {value} to {target}"),
             Self::RuntimePanic { message } => format!("runtime panic recovered: {message}"),

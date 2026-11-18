@@ -51,7 +51,7 @@ fn write(dir: &TempDir, name: &str, content: &str) -> PathBuf {
 fn u64_ranges_are_checked_against_the_full_int_range() {
     rejected_with(
         "fn sign(x: u64) -> int { match x { 0 => 0, 1.. => 1, _ => 2 } }\nsign(3)",
-        "E0461",
+        "E0356",
     );
     rejected_with(
         "fn sign(x: int) -> int { match x { 0 => 0, 1.. => 1 } }\nsign(3)",

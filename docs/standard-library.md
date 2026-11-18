@@ -164,8 +164,10 @@ All functions work in radians.
 | `trunc(x)` | Truncate toward zero |
 
 The four rounding functions return an `int`. A NaN, an infinity, or a result outside
-the 48-bit `int` range is a runtime error, never a saturated or zero value.
-`abs` of the smallest `int` (-140737488355328) is an integer overflow error.
+the `int` range (-9223372036854775808 to 9223372036854775807) is a runtime error,
+never a saturated or zero value. `abs` of the smallest `int` (-9223372036854775808)
+is an integer overflow error. `min`, `max`, `clamp` and `abs` take and return `int`
+values of any size.
 
 ### Special
 
@@ -343,7 +345,7 @@ character conversions are `as` casts.
 `s.to_int()` accepts an optional sign followed by decimal digits or a `0x`, `0o`, or
 `0b` prefix, with surrounding whitespace ignored. Anything else is `None`: it never
 panics and never truncates, so `"3.9"`, `"1e3"`, `"-2.5"`, `"nan"`, and a value
-outside the 48-bit `int` range (-140737488355328 to 140737488355327) all give
+outside the `int` range (-9223372036854775808 to 9223372036854775807) all give
 `None`. `s.to_int_radix(radix)` follows the same rules for its base, without a
 prefix; a radix outside 2-36 is a runtime error.
 
@@ -358,7 +360,7 @@ match "42".to_int() {
 
 `x as int`, `x as float` and the sized integer types convert between numbers (see
 Conversions with `as` in the language spec): `as int` truncates a float toward
-zero, and a NaN, an infinity, or a float outside the 48-bit range is a runtime
+zero, and a NaN, an infinity, or a float outside the `int` range is a runtime
 error. A string is never cast; parse it with `s.to_int()` or `s.to_float()`.
 
 `.to_string()` can be called as a method on a scalar, a `string` or a built-in
@@ -420,9 +422,9 @@ Time operations and measurement. Auto-registered -- no `use` required.
 | Function | Description |
 |----------|-------------|
 | `now()` | Unix timestamp in seconds (float) |
-| `now_ms()` | Timestamp in milliseconds |
-| `now_us()` | Timestamp in microseconds |
-| `now_ns()` | Timestamp in nanoseconds |
+| `now_ms()` | Timestamp in milliseconds (int) |
+| `now_us()` | Timestamp in microseconds (int) |
+| `now_ns()` | Timestamp in nanoseconds (int, exact) |
 
 ### High-Precision Timers
 
@@ -797,7 +799,7 @@ use std::bytes
 | `write_u16(buf, offset, value)` | Write 16-bit unsigned int |
 | `read_u32(buf, offset)` | Read 32-bit unsigned int |
 | `write_u32(buf, offset, value)` | Write 32-bit unsigned int |
-| `read_u64(buf, offset)` | Read 64-bit unsigned int; a value above the 48-bit `int` range is an error |
+| `read_u64(buf, offset)` | Read 64-bit unsigned int; a value above `9223372036854775807` is an error |
 | `write_u64(buf, offset, value)` | Write 64-bit unsigned int |
 
 ### Signed Integer Operations (Little-Endian)
@@ -810,7 +812,7 @@ use std::bytes
 | `write_i16(buf, offset, value)` | Write 16-bit signed int |
 | `read_i32(buf, offset)` | Read 32-bit signed int |
 | `write_i32(buf, offset, value)` | Write 32-bit signed int |
-| `read_i64(buf, offset)` | Read 64-bit signed int; a value outside the 48-bit `int` range is an error |
+| `read_i64(buf, offset)` | Read 64-bit signed int |
 | `write_i64(buf, offset, value)` | Write 64-bit signed int |
 
 ### Big-Endian Operations

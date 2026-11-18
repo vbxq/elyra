@@ -12,6 +12,8 @@ pub fn sized_kind(ty: &ResolvedType) -> Option<SizedInt> {
         ResolvedType::U8 => Some(SizedInt::U8),
         ResolvedType::U16 => Some(SizedInt::U16),
         ResolvedType::U32 => Some(SizedInt::U32),
+        ResolvedType::Int64 => Some(SizedInt::I64),
+        ResolvedType::U64 => Some(SizedInt::U64),
         _ => None,
     }
 }
@@ -83,6 +85,7 @@ fn select_sized_opcode(op: BinaryOp, kind: SizedInt) -> OpCode {
         BinaryOp::Shl => OpCode::wrapping(WrappingOp::Shl, kind),
         BinaryOp::Shr => OpCode::wrapping_shr(kind),
         BinaryOp::Div => OpCode::wrapping_div(kind).unwrap_or(OpCode::DivII),
+        BinaryOp::Mod => OpCode::wrapping_rem(kind).unwrap_or(OpCode::ModII),
         other => select_typed_int_opcode(other),
     }
 }

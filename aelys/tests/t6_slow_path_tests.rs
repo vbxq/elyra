@@ -77,7 +77,7 @@ fn bump(x: int) -> int {
     return G
 }
 fn main_body() -> int {
-    let f = 1e15
+    let f = 1e19
     let a = bump(1)
     let mut w = 0
     while w < 3 {
@@ -100,7 +100,7 @@ fn a_failing_cast_inside_a_closure_reports_its_own_line() {
         r#"
 fn run() -> int {
     let mut k = 0
-    let scale = 1e14
+    let scale = 2e18
     let f = fn(x: int) -> int {
         k = k + x
         return (scale * (k as float)) as int
@@ -124,7 +124,7 @@ struct Acc { total: int }
 impl Acc {
     fn add(mut self, x: int) -> int {
         self.total = self.total + x
-        let f = 3e13 * (self.total as float)
+        let f = 4e18 * (self.total as float)
         return f as int
     }
 }

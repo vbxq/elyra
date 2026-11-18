@@ -63,8 +63,8 @@ impl Lexer {
                 }
             }
         } else {
-            match text.parse::<i64>() {
-                Ok(n) => self.add_token(TokenKind::Int(n)),
+            match text.parse::<u64>() {
+                Ok(n) => self.add_integer(n),
                 Err(_) => {
                     return Err(AelysError::Compile(
                         self.error(CompileErrorKind::InvalidNumber(text)),
@@ -74,6 +74,14 @@ impl Lexer {
         }
 
         Ok(())
+    }
+
+    // a literal above i64::MAX only fits u64; the parser types it so
+    fn add_integer(&mut self, value: u64) {
+        match i64::try_from(value) {
+            Ok(value) => self.add_token(TokenKind::Int(value)),
+            Err(_) => self.add_token(TokenKind::UInt(value)),
+        }
     }
 
     fn hex_number(&mut self) -> Result<()> {
@@ -86,8 +94,8 @@ impl Lexer {
             .filter(|&&c| c != '_')
             .collect();
 
-        match i64::from_str_radix(&text, 16) {
-            Ok(n) => self.add_token(TokenKind::Int(n)),
+        match u64::from_str_radix(&text, 16) {
+            Ok(n) => self.add_integer(n),
             Err(_) => {
                 let full: String = self.chars[self.start..self.current].iter().collect();
                 return Err(AelysError::Compile(
@@ -109,8 +117,8 @@ impl Lexer {
             .filter(|&&c| c != '_')
             .collect();
 
-        match i64::from_str_radix(&text, 2) {
-            Ok(n) => self.add_token(TokenKind::Int(n)),
+        match u64::from_str_radix(&text, 2) {
+            Ok(n) => self.add_integer(n),
             Err(_) => {
                 let full: String = self.chars[self.start..self.current].iter().collect();
                 return Err(AelysError::Compile(
@@ -132,8 +140,8 @@ impl Lexer {
             .filter(|&&c| c != '_')
             .collect();
 
-        match i64::from_str_radix(&text, 8) {
-            Ok(n) => self.add_token(TokenKind::Int(n)),
+        match u64::from_str_radix(&text, 8) {
+            Ok(n) => self.add_integer(n),
             Err(_) => {
                 let full: String = self.chars[self.start..self.current].iter().collect();
                 return Err(AelysError::Compile(

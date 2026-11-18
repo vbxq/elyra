@@ -106,7 +106,7 @@ impl CompileErrorKind {
                 format!("cannot assign to loop variable '{}'", name)
             }
             Self::IntegerOverflow { value, min, max } => format!(
-                "integer literal '{}' exceeds 48-bit signed range ({} to {})",
+                "integer literal '{}' exceeds the int range ({} to {})",
                 value, min, max
             ),
             Self::ModuleNotFound {

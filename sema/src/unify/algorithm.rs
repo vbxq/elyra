@@ -17,6 +17,7 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         | (InferType::U8, InferType::U8)
         | (InferType::U16, InferType::U16)
         | (InferType::U32, InferType::U32)
+        | (InferType::Int64, InferType::Int64)
         | (InferType::U64, InferType::U64)
         | (InferType::F32, InferType::F32)
         | (InferType::F64, InferType::F64)

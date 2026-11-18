@@ -1162,10 +1162,10 @@ fn check_integer_result(
     use cranelift_codegen::ir::condcodes::IntCC;
     let minimum = builder
         .ins()
-        .iconst(types::I64, aelys_bytecode::Value::INT_MIN);
+        .iconst(types::I64, aelys_bytecode::Value::INLINE_INT_MIN);
     let maximum = builder
         .ins()
-        .iconst(types::I64, aelys_bytecode::Value::INT_MAX);
+        .iconst(types::I64, aelys_bytecode::Value::INLINE_INT_MAX);
     let below = builder.ins().icmp(IntCC::SignedLessThan, result, minimum);
     let above = builder
         .ins()
