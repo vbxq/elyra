@@ -196,7 +196,7 @@ impl TypeInference {
         if collection_pipeline {
             self.collection_iter_allowed = true;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         self.collection_iter_allowed = previous_iterator_context;
         if collection_pipeline
             && matches!(

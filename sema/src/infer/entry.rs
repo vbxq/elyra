@@ -91,6 +91,7 @@ impl Default for TypeInference {
             known_native_signatures: HashMap::new(),
             current_module: ModuleId::new("<unknown>"),
             collection_iter_allowed: false,
+            receiver_memo: None,
             withheld_nominals: std::collections::BTreeMap::new(),
             private_nominals: std::collections::BTreeMap::new(),
             unexported_nominals: std::collections::BTreeSet::new(),

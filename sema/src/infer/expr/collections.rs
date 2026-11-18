@@ -205,7 +205,7 @@ impl TypeInference {
         if !container_method_name(member) {
             return None;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         let receiver = typed_object.ty.clone();
         let shape = match &receiver {
             InferType::Vec(element) => {
