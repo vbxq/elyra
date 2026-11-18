@@ -1090,12 +1090,11 @@ fn store_wall_range(start: int, stop: int) {
     wall_steps(has_back)
     if w_markceiling { ceilingplane = check_plane(ceilingplane, start, stop) }
     if w_markfloor { floorplane = check_plane(floorplane, start, stop) }
-    seg_loop(fb, start, stop + 1, 16)
+    seg_loop(fb, start, stop + 1)
     wall_finish(start, stop)
 }
 
-// shifts and masks arrive as parameters: literals are reloaded on every pixel
-fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
+fn seg_loop(mut out: Vec<int>, start: int, stopx: int) {
     let markceiling = w_markceiling
     let markfloor = w_markfloor
     let segtextured = w_segtextured
@@ -1177,7 +1176,7 @@ fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
                     let col = mid_cols[texcol & mid_wm]
                     let mut frac = midtexmid + (yl - 100) * iscale
                     for d in (yl * 320 + x)..=(yh * 320 + x) step 320 {
-                        out[d] = cmrow[col[(frac >> sh) & mid_hm]]
+                        out[d] = cmrow[col[(frac >> 16) & mid_hm]]
                         frac += iscale
                     }
                 } else {
@@ -1196,7 +1195,7 @@ fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
                         let col = top_cols[texcol & top_wm]
                         let mut frac = toptexmid + (yl - 100) * iscale
                         for d in (yl * 320 + x)..=(mid * 320 + x) step 320 {
-                            out[d] = cmrow[col[(frac >> sh) & top_hm]]
+                            out[d] = cmrow[col[(frac >> 16) & top_hm]]
                             frac += iscale
                         }
                     } else {
@@ -1218,7 +1217,7 @@ fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
                         let col = bot_cols[texcol & bot_wm]
                         let mut frac = bottomtexmid + (mid - 100) * iscale
                         for d in (mid * 320 + x)..=(yh * 320 + x) step 320 {
-                            out[d] = cmrow[col[(frac >> sh) & bot_hm]]
+                            out[d] = cmrow[col[(frac >> 16) & bot_hm]]
                             frac += iscale
                         }
                     } else {
@@ -1552,6 +1551,7 @@ fn render_node(n: int) {
     }
 }
 
+// the span loop keeps its shifts and masks in parameters: literals there measured 2% more instructions per frame
 fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: int, s16: int, m63: int, m4032: int) {
     let mut distance = 0
     let mut xstep = 0
