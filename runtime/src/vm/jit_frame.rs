@@ -399,9 +399,7 @@ impl VM {
         let index = self.frame_slot(function)?;
         let ip = u32::try_from(bytecode_ip).ok()?;
         let threshold = crate::JIT_TIER1_BACKEDGE_THRESHOLD;
-        if self.frame_jit.slots[index].key.is_none() {
-            return None;
-        }
+        self.frame_jit.slots[index].key.as_ref()?;
         let counters = &mut self.frame_jit.counters[self.frame_jit.slots[index].counters];
         counters.backedges = counters.backedges.saturating_add(1);
         let backedges = counters.backedges;

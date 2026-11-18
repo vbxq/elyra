@@ -52,7 +52,9 @@ fn in_context(context: &str, body: &str, n: i64) -> String {
     }
 }
 
-fn check_forms(forms: &[(&str, fn(i64, i64) -> i64)]) {
+type Form = (&'static str, fn(i64, i64) -> i64);
+
+fn check_forms(forms: &[Form]) {
     for (body, reference) in forms {
         let n = 30_000;
         let mut expected = 7i64;
@@ -317,8 +319,7 @@ fn trap(source: &str) -> String {
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     let compiled = isolate
         .execute(&module, RunOptions::default())
-        .err()
-        .expect("compiled trap");
+        .expect_err("compiled trap");
     let (AelysError::Runtime(left), AelysError::Runtime(right)) = (&interpreted, &compiled) else {
         panic!("expected runtime errors, got {interpreted:?} and {compiled:?}");
     };
