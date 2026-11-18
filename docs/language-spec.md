@@ -1175,8 +1175,8 @@ dynamic count. There is no runtime-sized array constructor; use a Vec when the
 count is not known at compile time.
 
 The element is evaluated once. A scalar or string element is stored in every
-slot. An aggregate element (a struct, enum, `Option`/`Result`, array or `Vec`)
-is deep-copied into each slot, as by `clone()`, so every slot holds its own
+slot. An aggregate element (a struct, enum, `Option`/`Result`, array, `Vec` or
+`Map`) is deep-copied into each slot, as by `clone()`, so every slot holds its own
 object, including when the element is an existing binding:
 
 ```rust
@@ -1296,14 +1296,14 @@ lexicographically by scalar value, chars by scalar value, and `false` before
 comparator that changes the length of the Vec it is sorting traps with
 `vector changed length while sort_by was running its comparator`.
 
-`resize` and `fill` store one value in many slots. Because structs, arrays, Vecs
-and Maps are reference types, doing that with an aggregate element would make
-every slot share one object, so it is E0472; push a fresh value per slot instead.
-Scalars, strings, chars and closures are fine.
+`resize` and `fill` store one value in many slots. Like a repeat literal, an
+aggregate value (a struct, enum, `Option`/`Result`, array, `Vec` or `Map`) is
+deep-copied into each slot, as by `clone()`, so every slot holds its own
+object. Scalars, strings, chars and closures are stored as they are.
 
-Inside a generic function the element type may be a type parameter. E0471 and
-E0472 are then checked on every instantiation, and reported at the `sort`,
-`fill` or `resize` call when one instantiation's element type breaks the rule.
+Inside a generic function the element type may be a type parameter. E0471 is
+then checked on every instantiation, and reported at the `sort` call when one
+instantiation's element type breaks the rule.
 
 ### Maps
 
@@ -1359,7 +1359,9 @@ Unicode scalar value` outside `0..=0x10FFFF` or inside the surrogate range.
 `is_whitespace()` (Unicode properties), and `to_upper()`, `to_lower()`, which
 return the character unchanged when its case mapping is not a single character
 (`'ß'.to_upper()` is `'ß'`). `string::from_char(c)` makes a one-character
-string, and `s.push(c)` on a mutable string variable appends one.
+string, and `s.push(c)` appends one to a string variable or to a string place
+reached from a mutable root (`p.name.push(c)`, `v[i].push(c)`, `m[k].push(c)`),
+evaluating each index of the place once; on an immutable root it is E0318.
 
 ### String Indexing
 
@@ -1517,9 +1519,9 @@ one shared object. `let b = a`, passing `a` to a function, `v.push(a)`,
 closures and scalars are values or immutable, so sharing them is unobservable.
 A value returned from a function is treated as a fresh binding.
 
-`x.clone()` makes a deep copy of a struct, enum, `Option`/`Result`, array or
-`Vec`: every nested struct, enum payload, array and `Vec` is copied too, while
-strings and closures are shared. A structure with cycles or shared children is
+`x.clone()` makes a deep copy of a struct, enum, `Option`/`Result`, array,
+`Vec` or `Map`: every nested struct, enum payload, array, `Vec` and `Map` value
+is copied too, while strings, closures and `Map` keys are shared. A structure with cycles or shared children is
 copied with the same shape, and a cycle does not make `clone` loop. A user
 method named `clone` takes precedence over the built-in one.
 
@@ -2876,4 +2878,3 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
 | E0470 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
 | E0471 | UnorderedSortElement | `sort` on elements with no built-in order |
-| E0472 | SharedAggregateFill | `resize` or `fill` with an aggregate value every slot would share |

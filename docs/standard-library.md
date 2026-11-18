@@ -219,7 +219,7 @@ This distinction matters for non-ASCII text.
 | `s.chars()` | `Vec<char>` of the characters |
 | `s.bytes()` | `Vec<int>` of the UTF-8 bytes |
 | `string::from_char(c)` | One-character string from a `char` |
-| `s.push(c)` | Append a `char` to a mutable string variable |
+| `s.push(c)` | Append a `char` to a string variable or place with a mutable root (`p.name.push(c)`) |
 
 ```rust
 "hello".char_at(0)    // "h"
