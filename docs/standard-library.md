@@ -833,9 +833,11 @@ for i in 0..4 { packet[8 + i] = name[i] }
 ```
 
 A `Vec<u8>` is handed to a native function as `&v`, or `&mut v` when the native
-writes into it; see [Native modules](native-modules.md). In the current VM a
-`Vec<u8>` stores each element in an 8-byte integer slot, like `Vec<int>`, so a
-file read with `fs::read_bytes` takes eight bytes of heap per byte of file.
+writes into it; see [Native modules](native-modules.md). A `Vec<u8>` stores one
+byte per element, however it was made (`vec![0; n]`, a literal, `push`,
+`to_bytes`, `fs::read_bytes`, a slice, `clone`, `collect`), so a file read with
+`fs::read_bytes` takes one byte of heap per byte of file and `v[i]` reads or
+writes that byte directly. A `[u8; N]` array keeps an 8-byte slot per element.
 
 ---
 

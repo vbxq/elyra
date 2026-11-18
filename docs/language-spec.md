@@ -1905,6 +1905,9 @@ A fixed array `[T; N]` has the methods that keep its length: `swap`, `reverse`,
 `insert`, `remove`, `swap_remove`, `clear`, `extend`, `append`, `truncate` and
 `resize` on an array are E0311.
 
+A `Vec<u8>` stores one byte per element (8 bytes for the other integer
+types); its elements behave exactly like those of any other `Vec`.
+
 A `Vec<u8>` also has the binary methods `read_u8` ... `read_f64_be`, `write_u8`
 ... `write_f64_be`, `to_utf8` and `copy_within`, which read and write wider
 values at a byte offset; they are listed in the standard library reference under

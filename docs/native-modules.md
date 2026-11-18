@@ -106,12 +106,11 @@ keeps on its heap, through the `read_int` slot of the VM API; a result outside
 -2^47..2^47 is allocated through the `alloc_int` slot (API version 5). A `u64`
 above `9223372036854775807` is not an `int` and does not cross as one.
 
-In the current VM a `Vec<u8>` keeps each element in an 8-byte slot, so a byte
-parameter is copied into a contiguous byte scratch buffer that the VM keeps
-between calls (no allocation once it is large enough), and a `&mut [u8]`
-parameter is copied back into the Vec when the native returns, whatever its
-status. The copy is linear in the length of the Vec: a 64000-byte frame costs
-tens of microseconds.
+A `Vec<u8>` stores one byte per element, so a byte parameter is the Vec's own
+storage, not a copy: borrowing costs the same for a 16-byte header and a 28 MB
+file, and a write through `&mut [u8]` lands in the Vec directly. The slice is
+valid only during the call; the Vec cannot grow or shrink while a native holds
+it, because no Elyra code runs until the native returns.
 
 ### The call context
 
