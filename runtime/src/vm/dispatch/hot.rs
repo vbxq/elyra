@@ -1,9 +1,11 @@
 use super::ops::structs::integer_fits;
+use super::ops::sums::NONE_TAG;
 use crate::vm::{CallFrame, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
+use aelys_bytecode::object::{SumTag, UpvalueLocation};
 use aelys_bytecode::{FunctionSchemas, OpCode, TypeDescriptor};
 use std::sync::Arc;
 
-// any 8-bit operand plus the two companions of ForLoopI stays inside this window, even on words a jump reaches unverified
+// an 8-bit operand plus the two ForLoopI companions stays below this, even on unverified jump targets
 const REGISTER_WINDOW: usize = 258;
 
 const MOVE: u8 = OpCode::Move as u8;
@@ -92,6 +94,117 @@ const STRUCT_STORE: u8 = OpCode::StructStore as u8;
 const CALL_GLOBAL: u8 = OpCode::CallGlobal as u8;
 const RETURN: u8 = OpCode::Return as u8;
 const RETURN0: u8 = OpCode::Return0 as u8;
+const GET_UPVAL: u8 = OpCode::GetUpval as u8;
+const SET_UPVAL: u8 = OpCode::SetUpval as u8;
+const CALL_CACHED: u8 = OpCode::CallCached as u8;
+const LOAD_NONE: u8 = OpCode::LoadNone as u8;
+const SUM_TEST: u8 = OpCode::SumTest as u8;
+const SUM_PAYLOAD: u8 = OpCode::SumPayload as u8;
+
+const HOT_OPCODES: &[u8] = &[
+    MOVE,
+    LOAD_I,
+    LOAD_K,
+    LOAD_NULL,
+    LOAD_BOOL,
+    LOAD_UNIT,
+    ADD,
+    SUB,
+    MUL,
+    ADD_I,
+    SUB_I,
+    ADD_II,
+    SUB_II,
+    MUL_II,
+    DIV_II,
+    MOD_II,
+    ADD_FF,
+    SUB_FF,
+    MUL_FF,
+    DIV_FF,
+    LT,
+    LE,
+    GT,
+    GE,
+    LT_II,
+    LE_II,
+    GT_II,
+    GE_II,
+    EQ_II,
+    NE_II,
+    LT_FF,
+    LE_FF,
+    GT_FF,
+    GE_FF,
+    LT_IMM,
+    LE_IMM,
+    GT_IMM,
+    GE_IMM,
+    LT_I_IMM,
+    LE_I_IMM,
+    GT_I_IMM,
+    GE_I_IMM,
+    SHL,
+    SHR,
+    BIT_AND,
+    BIT_OR,
+    BIT_XOR,
+    SHL_II,
+    SHR_II,
+    AND_II,
+    OR_II,
+    XOR_II,
+    SHL_I_IMM,
+    SHR_I_IMM,
+    AND_I_IMM,
+    OR_I_IMM,
+    XOR_I_IMM,
+    JUMP,
+    JUMP_IF,
+    JUMP_IF_NOT,
+    JUMP_LONG,
+    JUMP_IF_LONG,
+    JUMP_IF_NOT_LONG,
+    FOR_LOOP_I,
+    FOR_LOOP_I_INC,
+    WHILE_LOOP_LT,
+    GET_GLOBAL_IDX,
+    ARRAY_LOAD_I,
+    ARRAY_LOAD_F,
+    ARRAY_LOAD_B,
+    ARRAY_LOAD_P,
+    ARRAY_STORE_I,
+    ARRAY_STORE_F,
+    ARRAY_LEN,
+    VEC_LEN,
+    VEC_LOAD_I,
+    VEC_LOAD_F,
+    VEC_LOAD_B,
+    VEC_LOAD_P,
+    VEC_STORE_I,
+    VEC_STORE_F,
+    STRUCT_LOAD,
+    STRUCT_STORE,
+    CALL_GLOBAL,
+    RETURN,
+    RETURN0,
+    GET_UPVAL,
+    SET_UPVAL,
+    CALL_CACHED,
+    LOAD_NONE,
+    SUM_TEST,
+    SUM_PAYLOAD,
+];
+
+pub(super) static HOT: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut index = 0;
+    while index < HOT_OPCODES.len() {
+        table[HOT_OPCODES[index] as usize] = true;
+        index += 1;
+    }
+    table
+};
 
 #[inline(always)]
 fn int48(value: i64) -> Option<Value> {
@@ -117,14 +230,26 @@ fn exact_shl(value: i64, count: u32) -> Option<Value> {
     int48(shifted)
 }
 
-// the last word being a return means sequential flow can never run off the end of the code
+// a final word the hot loop returns on or leaves at keeps sequential flow from running off the code
 #[inline(always)]
-fn ends_in_return(code: *const u32, code_len: usize) -> bool {
-    code_len > 0
-        && matches!(
-            (unsafe { *code.add(code_len - 1) } >> 24) as u8,
-            RETURN | RETURN0
-        )
+fn ends_safely(code: *const u32, code_len: usize) -> bool {
+    code_len > 0 && {
+        let last = (unsafe { *code.add(code_len - 1) } >> 24) as u8;
+        matches!(last, RETURN | RETURN0) || !HOT[last as usize]
+    }
+}
+
+struct HotCall {
+    function: GcRef,
+    code: *const u32,
+    code_len: usize,
+    constants: *const Value,
+    constants_len: usize,
+    upvalues: *const GcRef,
+    upvalues_len: usize,
+    registers: u32,
+    mapping: usize,
+    loops_stay: bool,
 }
 
 fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
@@ -139,7 +264,6 @@ fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
 }
 
 impl VM {
-    // once a frame has passed its back-edge threshold, recording further back edges changes nothing the jit reads
     fn jit_loops_settled(&self, function: GcRef) -> bool {
         self.jit_ignores(function)
             || self.frames.last().is_some_and(|frame| {
@@ -165,7 +289,183 @@ impl VM {
         (schemas.runtime_ids.len() == schemas.structs.len()).then_some(schemas)
     }
 
-    // returns the ip of the first instruction it does not finish, before any of its effects, for the general loop to run
+    #[inline(always)]
+    fn hot_global_callee<const JIT: bool>(&self, global: usize, arity: usize) -> Option<HotCall> {
+        let callee = GcRef::new(self.globals_by_index.get(global)?.as_ptr()?);
+        let ObjectKind::Function(target) = &self.heap.get(callee)?.kind else {
+            return None;
+        };
+        if !target.verified || target.arity() != arity as u16 {
+            return None;
+        }
+        let ignored = !JIT
+            || target.function.jit_unsupported_struct
+            || self.jit_refused.get(&callee).is_some();
+        ignored.then(|| HotCall {
+            function: callee,
+            code: target.function.bytecode.as_ptr(),
+            code_len: target.function.bytecode.len(),
+            constants: target.constants.as_ptr(),
+            constants_len: target.constants.len(),
+            upvalues: std::ptr::null(),
+            upvalues_len: 0,
+            registers: target.num_registers(),
+            mapping: target.function.global_layout.id(),
+            loops_stay: true,
+        })
+    }
+
+    fn hot_value_callee<const JIT: bool>(&self, value: Value, arity: usize) -> Option<HotCall> {
+        let callee = GcRef::new(value.as_ptr()?);
+        match &self.heap.get(callee)?.kind {
+            ObjectKind::Function(target) => {
+                if !target.verified || target.arity() != arity as u16 {
+                    return None;
+                }
+                Some(HotCall {
+                    function: callee,
+                    code: target.function.bytecode.as_ptr(),
+                    code_len: target.function.bytecode.len(),
+                    constants: target.constants.as_ptr(),
+                    constants_len: target.constants.len(),
+                    upvalues: std::ptr::null(),
+                    upvalues_len: 0,
+                    registers: target.num_registers(),
+                    mapping: target.function.global_layout.id(),
+                    loops_stay: !JIT || self.jit_ignores(callee),
+                })
+            }
+            ObjectKind::Closure(closure) => {
+                let inner = closure.function;
+                let ObjectKind::Function(target) = &self.heap.get(inner)?.kind else {
+                    return None;
+                };
+                if !target.verified || closure.arity != arity as u16 {
+                    return None;
+                }
+                Some(HotCall {
+                    function: inner,
+                    code: closure.bytecode_ptr,
+                    code_len: closure.bytecode_len,
+                    constants: closure.constants_ptr,
+                    constants_len: closure.constants_len,
+                    upvalues: closure.upvalues.as_ptr(),
+                    upvalues_len: closure.upvalues.len(),
+                    registers: closure.num_registers,
+                    mapping: target.function.global_layout.id(),
+                    loops_stay: !JIT || self.jit_ignores(inner),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    #[inline(never)]
+    fn hot_closure_and_sum(&mut self, instr: u32, regs: *mut Value, base: usize) -> bool {
+        let a = ((instr >> 16) & 0xff) as usize;
+        let b = ((instr >> 8) & 0xff) as usize;
+        let c = (instr & 0xff) as u8;
+        let value = match (instr >> 24) as u8 {
+            GET_UPVAL => match self.upvalue_location(b) {
+                Some(UpvalueLocation::Open {
+                    frame_base,
+                    register,
+                }) => {
+                    let index = frame_base + register as usize;
+                    if index >= self.registers.len() {
+                        return false;
+                    }
+                    unsafe { *regs.sub(base).add(index) }
+                }
+                Some(UpvalueLocation::Closed(value)) => value,
+                None => return false,
+            },
+            SET_UPVAL => {
+                let value = unsafe { *regs.add(b) };
+                let Some(frame) = self.frames.last() else {
+                    return false;
+                };
+                if a >= frame.upvalues_len {
+                    return false;
+                }
+                let cell = unsafe { *frame.upvalues_ptr.add(a) };
+                let registers = self.registers.len();
+                let Some(ObjectKind::Upvalue(cell)) = self
+                    .heap
+                    .get_mut_for_scalar_write(cell)
+                    .map(|object| &mut object.kind)
+                else {
+                    return false;
+                };
+                match &mut cell.location {
+                    UpvalueLocation::Open {
+                        frame_base,
+                        register,
+                    } => {
+                        let index = *frame_base + *register as usize;
+                        if index >= registers {
+                            return false;
+                        }
+                        unsafe { *regs.sub(base).add(index) = value }
+                    }
+                    UpvalueLocation::Closed(slot) => {
+                        if value.as_ptr().is_some() {
+                            return false;
+                        }
+                        *slot = value;
+                    }
+                }
+                return true;
+            }
+            LOAD_NONE => Value::none(),
+            SUM_TEST => {
+                let value = unsafe { *regs.add(b) };
+                Value::bool(if c == NONE_TAG {
+                    value.is_none()
+                } else {
+                    let Some(expected) = SumTag::from_u8(c) else {
+                        return false;
+                    };
+                    match value.as_ptr() {
+                        Some(raw) => match self.heap.get(GcRef::new(raw)) {
+                            Some(object) => {
+                                matches!(&object.kind, ObjectKind::Sum(sum) if sum.tag == expected)
+                            }
+                            None => return false,
+                        },
+                        None => false,
+                    }
+                })
+            }
+            SUM_PAYLOAD => {
+                let value = unsafe { *regs.add(b) };
+                let Some(raw) = value.as_ptr() else {
+                    return false;
+                };
+                match self.heap.get(GcRef::new(raw)).map(|object| &object.kind) {
+                    Some(ObjectKind::Sum(sum)) => sum.payload,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+        unsafe { *regs.add(a) = value };
+        true
+    }
+
+    fn upvalue_location(&self, index: usize) -> Option<UpvalueLocation> {
+        let frame = self.frames.last()?;
+        if index >= frame.upvalues_len {
+            return None;
+        }
+        let cell = unsafe { *frame.upvalues_ptr.add(index) };
+        match &self.heap.get(cell)?.kind {
+            ObjectKind::Upvalue(cell) => Some(cell.location.clone()),
+            _ => None,
+        }
+    }
+
+    // leaves before any effect of the instruction at the returned ip
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(super) fn run_hot<const JIT: bool>(
@@ -188,7 +488,7 @@ impl VM {
             Some(end) if end <= self.registers.len() && ip < code_len => {}
             _ => leave!(),
         }
-        if !ends_in_return(code, code_len) {
+        if !ends_safely(code, code_len) {
             leave!();
         }
         let mut regs = unsafe { self.registers.as_mut_ptr().add(base) };
@@ -305,6 +605,55 @@ impl VM {
             let b = ((instr >> 8) & 0xff) as usize;
             let c = (instr & 0xff) as usize;
             let next = ip + 1;
+            macro_rules! enter {
+                ($target:expr) => {{
+                    let target: HotCall = $target;
+                    if !ends_safely(target.code, target.code_len) {
+                        leave!();
+                    }
+                    let callee_base = base + a + 1;
+                    match callee_base.checked_add((target.registers as usize).max(REGISTER_WINDOW))
+                    {
+                        Some(end) if end <= self.registers.len() => {}
+                        _ => leave!(),
+                    }
+                    let depth = self.frames.len();
+                    if depth >= MAX_FRAMES {
+                        leave!();
+                    }
+                    let caller = &mut self.frames[depth - 1];
+                    caller.ip = next;
+                    if target.mapping != caller.global_mapping_id {
+                        self.sync_current_function_globals();
+                        self.switch_globals(target.mapping, target.function);
+                    }
+                    let mut frame = CallFrame::with_upvalues(
+                        target.function,
+                        callee_base,
+                        a as u16,
+                        target.code,
+                        target.code_len,
+                        target.constants,
+                        target.constants_len,
+                        target.upvalues,
+                        target.upvalues_len,
+                        target.registers,
+                    );
+                    frame.global_mapping_id = target.mapping;
+                    self.frames.push(frame);
+                    changed = true;
+                    base = callee_base;
+                    function = target.function;
+                    code = target.code;
+                    code_len = target.code_len;
+                    constants = target.constants;
+                    constants_len = target.constants_len;
+                    regs = unsafe { self.registers.as_mut_ptr().add(base) };
+                    schemas = None;
+                    loops_stay = target.loops_stay;
+                    0
+                }};
+            }
             ip = match (instr >> 24) as u8 {
                 MOVE => {
                     set!(a, get!(b));
@@ -760,72 +1109,13 @@ impl VM {
                     *or_leave!(structure.slots.get_mut(field)) = value;
                     next + 2
                 }
-                CALL_GLOBAL => {
-                    let callee = GcRef::new(or_leave!(
-                        self.globals_by_index
-                            .get(b)
-                            .and_then(|value| value.as_ptr())
-                    ));
-                    let ObjectKind::Function(target) = &or_leave!(self.heap.get(callee)).kind
-                    else {
-                        leave!();
-                    };
-                    if !target.verified || target.arity() != c as u16 {
+                CALL_GLOBAL => enter!(or_leave!(self.hot_global_callee::<JIT>(b, c))),
+                CALL_CACHED => enter!(or_leave!(self.hot_value_callee::<JIT>(get!(b), c))),
+                GET_UPVAL | SET_UPVAL | LOAD_NONE | SUM_TEST | SUM_PAYLOAD => {
+                    if !self.hot_closure_and_sum(instr, regs, base) {
                         leave!();
                     }
-                    let callee_ignored = !JIT
-                        || target.function.jit_unsupported_struct
-                        || self.jit_refused.get(&callee).is_some();
-                    if !callee_ignored {
-                        leave!();
-                    }
-                    let callee_code = target.function.bytecode.as_ptr();
-                    let callee_code_len = target.function.bytecode.len();
-                    let callee_constants = target.constants.as_ptr();
-                    let callee_constants_len = target.constants.len();
-                    let registers = target.num_registers();
-                    let mapping = target.function.global_layout.id();
-                    if !ends_in_return(callee_code, callee_code_len) {
-                        leave!();
-                    }
-                    let callee_base = base + a + 1;
-                    match callee_base.checked_add((registers as usize).max(REGISTER_WINDOW)) {
-                        Some(end) if end <= self.registers.len() => {}
-                        _ => leave!(),
-                    }
-                    let depth = self.frames.len();
-                    if depth >= MAX_FRAMES {
-                        leave!();
-                    }
-                    let caller = &mut self.frames[depth - 1];
-                    caller.ip = next;
-                    if mapping != caller.global_mapping_id {
-                        self.sync_current_function_globals();
-                        self.switch_globals(mapping, callee);
-                    }
-                    let mut frame = CallFrame::with_return_dest(
-                        callee,
-                        callee_base,
-                        a as u16,
-                        callee_code,
-                        callee_code_len,
-                        callee_constants,
-                        callee_constants_len,
-                        registers,
-                    );
-                    frame.global_mapping_id = mapping;
-                    self.frames.push(frame);
-                    changed = true;
-                    base = callee_base;
-                    function = callee;
-                    code = callee_code;
-                    code_len = callee_code_len;
-                    constants = callee_constants;
-                    constants_len = callee_constants_len;
-                    regs = unsafe { self.registers.as_mut_ptr().add(base) };
-                    schemas = None;
-                    loops_stay = callee_ignored;
-                    0
+                    next
                 }
                 RETURN | RETURN0 => {
                     let depth = self.frames.len();
@@ -865,7 +1155,7 @@ impl VM {
                         Some(end)
                             if end <= self.registers.len()
                                 && ip < code_len
-                                && ends_in_return(code, code_len) => {}
+                                && ends_safely(code, code_len) => {}
                         _ => leave!(),
                     }
                     regs = unsafe { self.registers.as_mut_ptr().add(base) };

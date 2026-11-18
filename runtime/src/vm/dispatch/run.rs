@@ -85,7 +85,11 @@ impl VM {
         }
 
         loop {
-            if !CONTROL && !REPORT {
+            if !CONTROL
+                && !REPORT
+                && ip < bytecode_len
+                && super::hot::HOT[(unsafe { *bytecode_ptr.add(ip) } >> 24) as usize]
+            {
                 let (hot_ip, changed) = self.run_hot::<JIT>(
                     ip,
                     base,
