@@ -1,0 +1,209 @@
+needs std::fs as fs
+needs std::bytes
+needs std::convert as convert
+needs println from std::io
+
+pub struct Lump { pub name: string, pub filepos: int, pub size: int, pub key_lo: int, pub key_hi: int }
+
+pub struct NameKey { pub lo: int, pub hi: int }
+
+pub struct Wad { pub buf: int, pub ident: string, pub lumps: Vec<Lump>, pub table: Vec<int> }
+
+pub struct Vertex { pub x: int, pub y: int }
+
+pub struct Linedef { pub v1: int, pub v2: int, pub flags: int, pub special: int, pub tag: int, pub front: int, pub back: int }
+
+pub struct Sidedef { pub xoff: int, pub yoff: int, pub upper: string, pub lower: string, pub middle: string, pub sector: int }
+
+pub struct Sector { pub floor_h: int, pub ceil_h: int, pub floor_flat: string, pub ceil_flat: string, pub light: int, pub special: int, pub tag: int }
+
+pub struct Seg { pub v1: int, pub v2: int, pub angle: int, pub linedef: int, pub direction: int, pub offset: int }
+
+pub struct Subsector { pub count: int, pub first_seg: int }
+
+pub enum Child { Node(int), Leaf(int) }
+
+pub struct Node { pub x: int, pub y: int, pub dx: int, pub dy: int, pub bbox_right: [int; 4], pub bbox_left: [int; 4], pub right: Child, pub left: Child }
+
+pub struct Thing { pub x: int, pub y: int, pub angle: int, pub kind: int, pub flags: int }
+
+pub struct Blockmap { pub origin_x: int, pub origin_y: int, pub columns: int, pub rows: int, pub offsets: Vec<int>, pub lists: Vec<Vec<int>> }
+
+pub struct Level {
+    pub name: string,
+    pub vertexes: Vec<Vertex>,
+    pub linedefs: Vec<Linedef>,
+    pub sidedefs: Vec<Sidedef>,
+    pub sectors: Vec<Sector>,
+    pub segs: Vec<Seg>,
+    pub subsectors: Vec<Subsector>,
+    pub nodes: Vec<Node>,
+    pub things: Vec<Thing>,
+    pub reject_size: int,
+    pub blockmap: Blockmap,
+}
+
+pub struct Post { pub top: int, pub length: int, pub data: int }
+
+pub struct Patch { pub width: int, pub height: int, pub left: int, pub top: int, pub columns: Vec<Vec<Post>> }
+
+pub struct PatchRef { pub origin_x: int, pub origin_y: int, pub patch: int }
+
+pub struct TextureDef { pub name: string, pub width: int, pub height: int, pub patches: Vec<PatchRef> }
+
+pub struct Flat { pub name: string, pub lump: int }
+
+pub struct Graphics {
+    pub playpal: Vec<int>,
+    pub colormap: Vec<int>,
+    pub pnames: Vec<string>,
+    pub patch_lumps: Vec<int>,
+    pub textures: Vec<TextureDef>,
+    pub flats: Vec<Flat>,
+}
+
+pub fn u8(buf: int, off: int) -> int { bytes::read_u8(buf, off) }
+pub fn u16(buf: int, off: int) -> int { bytes::read_u16(buf, off) }
+pub fn i16(buf: int, off: int) -> int { bytes::read_i16(buf, off) }
+pub fn i32(buf: int, off: int) -> int { bytes::read_i32(buf, off) }
+pub fn u32(buf: int, off: int) -> int { bytes::read_u32(buf, off) }
+
+fn upper_byte(b: int) -> int {
+    if b >= 97 and b <= 122 { b - 32 } else { b }
+}
+
+pub fn name8(buf: int, off: int) -> string {
+    let mut end = bytes::find(buf, off, off + 8, 0)
+    if end < 0 { end = off + 8 }
+    let mut s = ""
+    for i in off..end {
+        s += convert::chr(upper_byte(bytes::read_u8(buf, i)))
+    }
+    s
+}
+
+pub fn key_of_buf(buf: int, off: int) -> NameKey {
+    let mut lo = 0
+    let mut hi = 0
+    let mut done = false
+    for i in 0..8 {
+        let mut b = bytes::read_u8(buf, off + i)
+        if b == 0 { done = true }
+        if done { b = 0 }
+        b = upper_byte(b)
+        if i < 4 { lo = lo | (b << (8 * i)) } else { hi = hi | (b << (8 * (i - 4))) }
+    }
+    NameKey { lo: lo, hi: hi }
+}
+
+pub fn key_of(name: string) -> NameKey {
+    let mut lo = 0
+    let mut hi = 0
+    let n = name.len()
+    for i in 0..8 {
+        let mut b = 0
+        if i < n { b = upper_byte(name.byte_at(i)) }
+        if i < 4 { lo = lo | (b << (8 * i)) } else { hi = hi | (b << (8 * (i - 4))) }
+    }
+    NameKey { lo: lo, hi: hi }
+}
+
+fn slot_of(k: NameKey) -> int {
+    ((k.lo * 31 + k.hi) % 8191 + 8191) % 8191
+}
+
+fn read_file(path: string) -> int {
+    let total = match fs::size(path) {
+        Ok(n) => n,
+        Err(e) => { println("wad: {e}"); return -1 },
+    }
+    let f = match fs::open(path, "r") {
+        Ok(h) => h,
+        Err(e) => { println("wad: {e}"); return -1 },
+    }
+    let buf = bytes::alloc(total)
+    let mut pos = 0
+    while pos < total {
+        let chunk = match fs::read_bytes(f, 1048576) {
+            Ok(h) => h,
+            Err(e) => { println("wad: {e}"); return -1 },
+        }
+        let got = bytes::size(chunk)
+        if got == 0 { break }
+        bytes::copy(chunk, 0, buf, pos, got)
+        bytes::free(chunk)
+        pos += got
+    }
+    let _ = fs::close(f)
+    buf
+}
+
+pub fn open_wad(path: string) -> Wad {
+    let buf = read_file(path)
+    let ident = bytes::decode(buf, 0, 4)
+    let count = bytes::read_i32(buf, 4)
+    let dirofs = bytes::read_i32(buf, 8)
+    let mut lumps: Vec<Lump> = vec![]
+    lumps.reserve(count)
+    let mut table = vec![0; 8192]
+    for i in 0..count {
+        let e = dirofs + 16 * i
+        let k = key_of_buf(buf, e + 8)
+        lumps.push(Lump {
+            name: name8(buf, e + 8),
+            filepos: bytes::read_i32(buf, e),
+            size: bytes::read_i32(buf, e + 4),
+            key_lo: k.lo,
+            key_hi: k.hi,
+        })
+        let mut s = slot_of(k)
+        while true {
+            let cur = table[s]
+            if cur == 0 { table[s] = i + 1; break }
+            let other = lumps[cur - 1]
+            if other.key_lo == k.lo and other.key_hi == k.hi { table[s] = i + 1; break }
+            s = (s + 1) % 8192
+        }
+    }
+    Wad { buf: buf, ident: ident, lumps: lumps, table: table }
+}
+
+impl Wad {
+    fn open(path: string) -> Wad { open_wad(path) }
+
+    fn num_lumps(self) -> int { self.lumps.len() }
+
+    fn find_lump(self, name: string) -> int {
+        let k = key_of(name)
+        let mut s = slot_of(k)
+        while true {
+            let cur = self.table[s]
+            if cur == 0 { return -1 }
+            let l = self.lumps[cur - 1]
+            if l.key_lo == k.lo and l.key_hi == k.hi { return cur - 1 }
+            s = (s + 1) % 8192
+        }
+        -1
+    }
+
+    fn find_lump_linear(self, name: string) -> int {
+        let mut i = self.lumps.len() - 1
+        while i >= 0 {
+            if self.lumps[i].name == name { return i }
+            i--
+        }
+        -1
+    }
+
+    fn find_lump_after(self, name: string, start: int) -> int {
+        let k = key_of(name)
+        for i in start..self.lumps.len() {
+            let l = self.lumps[i]
+            if l.key_lo == k.lo and l.key_hi == k.hi { return i }
+        }
+        -1
+    }
+
+    fn lump_pos(self, index: int) -> int { self.lumps[index].filepos }
+    fn lump_size(self, index: int) -> int { self.lumps[index].size }
+}

@@ -1,0 +1,140 @@
+needs std::bytes
+needs wad
+
+fn lump_bytes(w: Wad, index: int) -> Vec<int> {
+    let l = w.lumps[index]
+    let mut out: Vec<int> = vec![0; l.size]
+    for i in 0..l.size {
+        out[i] = bytes::read_u8(w.buf, l.filepos + i)
+    }
+    out
+}
+
+fn load_pnames(w: Wad) -> Vec<string> {
+    let l = w.lumps[w.find_lump("PNAMES")]
+    let n = bytes::read_i32(w.buf, l.filepos)
+    let mut out: Vec<string> = vec![]
+    out.reserve(n)
+    for i in 0..n {
+        out.push(wad::name8(w.buf, l.filepos + 4 + 8 * i))
+    }
+    out
+}
+
+fn load_texture_lump(w: Wad, index: int, mut out: Vec<TextureDef>) -> Vec<TextureDef> {
+    let buf = w.buf
+    let base = w.lumps[index].filepos
+    let n = bytes::read_i32(buf, base)
+    for i in 0..n {
+        let p = base + bytes::read_i32(buf, base + 4 + 4 * i)
+        let count = bytes::read_i16(buf, p + 20)
+        let mut patches: Vec<PatchRef> = vec![]
+        for j in 0..count {
+            let q = p + 22 + 10 * j
+            patches.push(PatchRef {
+                origin_x: bytes::read_i16(buf, q),
+                origin_y: bytes::read_i16(buf, q + 2),
+                patch: bytes::read_i16(buf, q + 4),
+            })
+        }
+        out.push(TextureDef {
+            name: wad::name8(buf, p),
+            width: bytes::read_i16(buf, p + 12),
+            height: bytes::read_i16(buf, p + 14),
+            patches: patches,
+        })
+    }
+    out
+}
+
+fn load_flats(w: Wad) -> Vec<Flat> {
+    let first = w.find_lump("F_START")
+    let last = w.find_lump("F_END")
+    let mut out: Vec<Flat> = vec![]
+    for i in (first + 1)..last {
+        let l = w.lumps[i]
+        if l.size == 4096 { out.push(Flat { name: l.name, lump: i }) }
+    }
+    out
+}
+
+pub fn load_graphics(w: Wad) -> Graphics {
+    let pnames = load_pnames(w)
+    let mut patch_lumps: Vec<int> = vec![]
+    patch_lumps.reserve(pnames.len())
+    for name in pnames {
+        patch_lumps.push(w.find_lump(name))
+    }
+    let mut textures: Vec<TextureDef> = vec![]
+    let t1 = w.find_lump("TEXTURE1")
+    if t1 >= 0 { textures = load_texture_lump(w, t1, textures) }
+    let t2 = w.find_lump("TEXTURE2")
+    if t2 >= 0 { textures = load_texture_lump(w, t2, textures) }
+    Graphics {
+        playpal: lump_bytes(w, w.find_lump("PLAYPAL")),
+        colormap: lump_bytes(w, w.find_lump("COLORMAP")),
+        pnames: pnames,
+        patch_lumps: patch_lumps,
+        textures: textures,
+        flats: load_flats(w),
+    }
+}
+
+pub fn decode_patch(w: Wad, index: int) -> Patch {
+    let buf = w.buf
+    let base = w.lumps[index].filepos
+    let width = bytes::read_u16(buf, base)
+    let mut columns: Vec<Vec<Post>> = vec![]
+    columns.reserve(width)
+    for x in 0..width {
+        let mut p = base + bytes::read_u32(buf, base + 8 + 4 * x)
+        let mut posts: Vec<Post> = vec![]
+        let mut prev = -1
+        while bytes::read_u8(buf, p) != 0xFF {
+            let delta = bytes::read_u8(buf, p)
+            let length = bytes::read_u8(buf, p + 1)
+            let top = if delta <= prev { prev + delta } else { delta }
+            prev = top
+            posts.push(Post { top: top, length: length, data: p + 3 })
+            p += length + 4
+        }
+        columns.push(posts)
+    }
+    Patch {
+        width: width,
+        height: bytes::read_u16(buf, base + 2),
+        left: bytes::read_i16(buf, base + 4),
+        top: bytes::read_i16(buf, base + 6),
+        columns: columns,
+    }
+}
+
+pub fn compose_texture(w: Wad, g: Graphics, tex: TextureDef) -> Vec<int> {
+    let width = tex.width
+    let height = tex.height
+    let mut pixels: Vec<int> = vec![0; width * height]
+    for pr in tex.patches {
+        let li = g.patch_lumps[pr.patch]
+        if li < 0 { continue }
+        let patch = decode_patch(w, li)
+        for x in 0..patch.width {
+            let tx = pr.origin_x + x
+            if tx < 0 or tx >= width { continue }
+            let col = tx * height
+            for post in patch.columns[x] {
+                let y0 = pr.origin_y + post.top
+                for i in 0..post.length {
+                    let ty = y0 + i
+                    if ty >= 0 and ty < height {
+                        pixels[col + ty] = bytes::read_u8(w.buf, post.data + i)
+                    }
+                }
+            }
+        }
+    }
+    pixels
+}
+
+pub fn flat_pixels(w: Wad, f: Flat) -> Vec<int> {
+    lump_bytes(w, f.lump)
+}

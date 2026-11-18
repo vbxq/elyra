@@ -1,0 +1,202 @@
+needs std::bytes
+needs wad
+
+fn none_or(v: int) -> int {
+    if v == 0xFFFF { -1 } else { v }
+}
+
+fn child_of(v: int) -> Child {
+    if (v & 0x8000) != 0 { Child::Leaf(v & 0x7FFF) } else { Child::Node(v) }
+}
+
+fn map_lump(w: Wad, marker: int, name: string) -> Lump {
+    let i = w.find_lump_after(name, marker + 1)
+    w.lumps[i]
+}
+
+fn load_vertexes(buf: int, l: Lump) -> Vec<Vertex> {
+    let mut out: Vec<Vertex> = vec![]
+    let n = l.size / 4
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 4 * i
+        out.push(Vertex { x: bytes::read_i16(buf, p), y: bytes::read_i16(buf, p + 2) })
+    }
+    out
+}
+
+fn load_linedefs(buf: int, l: Lump) -> Vec<Linedef> {
+    let mut out: Vec<Linedef> = vec![]
+    let n = l.size / 14
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 14 * i
+        out.push(Linedef {
+            v1: bytes::read_u16(buf, p),
+            v2: bytes::read_u16(buf, p + 2),
+            flags: bytes::read_u16(buf, p + 4),
+            special: bytes::read_u16(buf, p + 6),
+            tag: bytes::read_u16(buf, p + 8),
+            front: none_or(bytes::read_u16(buf, p + 10)),
+            back: none_or(bytes::read_u16(buf, p + 12)),
+        })
+    }
+    out
+}
+
+fn load_sidedefs(buf: int, l: Lump) -> Vec<Sidedef> {
+    let mut out: Vec<Sidedef> = vec![]
+    let n = l.size / 30
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 30 * i
+        out.push(Sidedef {
+            xoff: bytes::read_i16(buf, p),
+            yoff: bytes::read_i16(buf, p + 2),
+            upper: wad::name8(buf, p + 4),
+            lower: wad::name8(buf, p + 12),
+            middle: wad::name8(buf, p + 20),
+            sector: bytes::read_i16(buf, p + 28),
+        })
+    }
+    out
+}
+
+fn load_sectors(buf: int, l: Lump) -> Vec<Sector> {
+    let mut out: Vec<Sector> = vec![]
+    let n = l.size / 26
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 26 * i
+        out.push(Sector {
+            floor_h: bytes::read_i16(buf, p),
+            ceil_h: bytes::read_i16(buf, p + 2),
+            floor_flat: wad::name8(buf, p + 4),
+            ceil_flat: wad::name8(buf, p + 12),
+            light: bytes::read_i16(buf, p + 20),
+            special: bytes::read_i16(buf, p + 22),
+            tag: bytes::read_i16(buf, p + 24),
+        })
+    }
+    out
+}
+
+fn load_segs(buf: int, l: Lump) -> Vec<Seg> {
+    let mut out: Vec<Seg> = vec![]
+    let n = l.size / 12
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 12 * i
+        out.push(Seg {
+            v1: bytes::read_u16(buf, p),
+            v2: bytes::read_u16(buf, p + 2),
+            angle: bytes::read_i16(buf, p + 4),
+            linedef: bytes::read_u16(buf, p + 6),
+            direction: bytes::read_i16(buf, p + 8),
+            offset: bytes::read_i16(buf, p + 10),
+        })
+    }
+    out
+}
+
+fn load_subsectors(buf: int, l: Lump) -> Vec<Subsector> {
+    let mut out: Vec<Subsector> = vec![]
+    let n = l.size / 4
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 4 * i
+        out.push(Subsector { count: bytes::read_u16(buf, p), first_seg: bytes::read_u16(buf, p + 2) })
+    }
+    out
+}
+
+fn bbox_at(buf: int, p: int) -> [int; 4] {
+    [bytes::read_i16(buf, p), bytes::read_i16(buf, p + 2), bytes::read_i16(buf, p + 4), bytes::read_i16(buf, p + 6)]
+}
+
+fn load_nodes(buf: int, l: Lump) -> Vec<Node> {
+    let mut out: Vec<Node> = vec![]
+    let n = l.size / 28
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 28 * i
+        out.push(Node {
+            x: bytes::read_i16(buf, p),
+            y: bytes::read_i16(buf, p + 2),
+            dx: bytes::read_i16(buf, p + 4),
+            dy: bytes::read_i16(buf, p + 6),
+            bbox_right: bbox_at(buf, p + 8),
+            bbox_left: bbox_at(buf, p + 16),
+            right: child_of(bytes::read_u16(buf, p + 24)),
+            left: child_of(bytes::read_u16(buf, p + 26)),
+        })
+    }
+    out
+}
+
+fn load_things(buf: int, l: Lump) -> Vec<Thing> {
+    let mut out: Vec<Thing> = vec![]
+    let n = l.size / 10
+    out.reserve(n)
+    for i in 0..n {
+        let p = l.filepos + 10 * i
+        out.push(Thing {
+            x: bytes::read_i16(buf, p),
+            y: bytes::read_i16(buf, p + 2),
+            angle: bytes::read_i16(buf, p + 4),
+            kind: bytes::read_i16(buf, p + 6),
+            flags: bytes::read_i16(buf, p + 8),
+        })
+    }
+    out
+}
+
+fn load_blockmap(buf: int, l: Lump) -> Blockmap {
+    let base = l.filepos
+    let columns = bytes::read_i16(buf, base + 4)
+    let rows = bytes::read_i16(buf, base + 6)
+    let count = columns * rows
+    let mut offsets: Vec<int> = vec![]
+    let mut lists: Vec<Vec<int>> = vec![]
+    offsets.reserve(count)
+    lists.reserve(count)
+    for b in 0..count {
+        let off = bytes::read_u16(buf, base + 8 + 2 * b)
+        offsets.push(off)
+        let mut list: Vec<int> = vec![]
+        let mut p = base + off * 2
+        while true {
+            let v = bytes::read_u16(buf, p)
+            p += 2
+            if v == 0xFFFF { break }
+            list.push(v)
+        }
+        lists.push(list)
+    }
+    Blockmap {
+        origin_x: bytes::read_i16(buf, base),
+        origin_y: bytes::read_i16(buf, base + 2),
+        columns: columns,
+        rows: rows,
+        offsets: offsets,
+        lists: lists,
+    }
+}
+
+pub fn load_level(w: Wad, name: string) -> Level {
+    let m = w.find_lump(name)
+    let buf = w.buf
+    Level {
+        name: name,
+        vertexes: load_vertexes(buf, map_lump(w, m, "VERTEXES")),
+        linedefs: load_linedefs(buf, map_lump(w, m, "LINEDEFS")),
+        sidedefs: load_sidedefs(buf, map_lump(w, m, "SIDEDEFS")),
+        sectors: load_sectors(buf, map_lump(w, m, "SECTORS")),
+        segs: load_segs(buf, map_lump(w, m, "SEGS")),
+        subsectors: load_subsectors(buf, map_lump(w, m, "SSECTORS")),
+        nodes: load_nodes(buf, map_lump(w, m, "NODES")),
+        things: load_things(buf, map_lump(w, m, "THINGS")),
+        reject_size: map_lump(w, m, "REJECT").size,
+        blockmap: load_blockmap(buf, map_lump(w, m, "BLOCKMAP")),
+    }
+}
