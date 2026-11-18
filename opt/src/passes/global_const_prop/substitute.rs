@@ -155,6 +155,7 @@ impl GlobalConstantPropagator {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::Unit
             | TypedExprKind::Null
             | TypedExprKind::AssociatedConst { .. } => {}
@@ -272,6 +273,7 @@ impl GlobalConstantPropagator {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
+            | TypedPatternKind::Char(_)
             | TypedPatternKind::Bool(_) => {}
         }
     }

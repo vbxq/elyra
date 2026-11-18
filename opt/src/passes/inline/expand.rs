@@ -363,6 +363,7 @@ impl InlineExpander {
             TypedExprKind::Float(f) => TypedExprKind::Float(*f),
             TypedExprKind::Bool(b) => TypedExprKind::Bool(*b),
             TypedExprKind::String(s) => TypedExprKind::String(s.clone()),
+            TypedExprKind::Char(s) => TypedExprKind::Char(*s),
             TypedExprKind::Unit => TypedExprKind::Unit,
             TypedExprKind::AssociatedConst {
                 param,

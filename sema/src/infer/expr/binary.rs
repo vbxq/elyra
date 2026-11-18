@@ -131,9 +131,11 @@ impl TypeInference {
                     ));
                 }
 
+                let mut ordered = InferType::all_numeric_types();
+                ordered.extend([InferType::String, InferType::Char]);
                 self.constraints.push(Constraint::one_of(
                     left.ty.clone(),
-                    InferType::all_numeric_types(),
+                    ordered,
                     span,
                     ConstraintReason::Comparison,
                 ));
@@ -341,6 +343,7 @@ impl TypeInference {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::FmtString(_)
             | TypedExprKind::Unit
             | TypedExprKind::AssociatedConst { .. }
@@ -354,7 +357,7 @@ impl TypeInference {
             | InferType::FixedArray(inner, _)
             | InferType::Vec(inner)
             | InferType::Option(inner) => Self::explicit_dynamic_value(inner),
-            InferType::Result(ok, err) => {
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
                 Self::explicit_dynamic_value(ok) || Self::explicit_dynamic_value(err)
             }
             InferType::Tuple(elements) => elements.iter().any(Self::explicit_dynamic_value),

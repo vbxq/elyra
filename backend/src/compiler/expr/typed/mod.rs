@@ -4,6 +4,7 @@ mod binary;
 mod call;
 mod call_helpers;
 mod cast;
+mod containers;
 mod control;
 mod dispatch;
 mod fmt_string;

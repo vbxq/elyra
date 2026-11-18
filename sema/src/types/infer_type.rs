@@ -15,6 +15,7 @@ pub enum InferType {
     F32,
     F64,
     Bool,
+    Char,
     String,
     Unit,
     Null,
@@ -34,6 +35,7 @@ pub enum InferType {
     Array(Box<InferType>),
     FixedArray(Box<InferType>, usize),
     Vec(Box<InferType>),
+    Map(Box<InferType>, Box<InferType>),
     Tuple(Vec<InferType>),
     Range,
 
@@ -88,6 +90,10 @@ impl InferType {
                 InferType::Option(Box::new(inner.substitute_params(substitutions)))
             }
             InferType::Result(ok, err) => InferType::Result(
+                Box::new(ok.substitute_params(substitutions)),
+                Box::new(err.substitute_params(substitutions)),
+            ),
+            InferType::Map(ok, err) => InferType::Map(
                 Box::new(ok.substitute_params(substitutions)),
                 Box::new(err.substitute_params(substitutions)),
             ),
@@ -163,7 +169,7 @@ impl InferType {
                 inner.has_vars()
             }
             InferType::FixedArray(inner, _) => inner.has_vars(),
-            InferType::Result(ok, err) => ok.has_vars() || err.has_vars(),
+            InferType::Result(ok, err) | InferType::Map(ok, err) => ok.has_vars() || err.has_vars(),
             InferType::Tuple(elems) => elems.iter().any(|e| e.has_vars()),
             InferType::Applied { args, .. } => args.iter().any(|arg| arg.has_vars()),
             _ => false,
@@ -180,7 +186,9 @@ impl InferType {
                 inner.contains_dynamic()
             }
             InferType::FixedArray(inner, _) => inner.contains_dynamic(),
-            InferType::Result(ok, err) => ok.contains_dynamic() || err.contains_dynamic(),
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
+                ok.contains_dynamic() || err.contains_dynamic()
+            }
             InferType::Tuple(elements) => elements.iter().any(Self::contains_dynamic),
             InferType::Applied { args, .. } => args.iter().any(InferType::contains_dynamic),
             _ => false,
@@ -197,7 +205,9 @@ impl InferType {
                 inner.contains_poison()
             }
             InferType::FixedArray(inner, _) => inner.contains_poison(),
-            InferType::Result(ok, err) => ok.contains_poison() || err.contains_poison(),
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
+                ok.contains_poison() || err.contains_poison()
+            }
             InferType::Tuple(elements) => elements.iter().any(Self::contains_poison),
             InferType::Applied { args, .. } => args.iter().any(Self::contains_poison),
             InferType::Projection { self_ty, .. } => self_ty.contains_poison(),
@@ -227,7 +237,9 @@ impl InferType {
                 inner.any_param(matches)
             }
             InferType::FixedArray(inner, _) => inner.any_param(matches),
-            InferType::Result(ok, err) => ok.any_param(matches) || err.any_param(matches),
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
+                ok.any_param(matches) || err.any_param(matches)
+            }
             InferType::Tuple(elements) => elements.iter().any(|el| el.any_param(matches)),
             InferType::Applied { args, .. } => args.iter().any(|arg| arg.any_param(matches)),
             InferType::Projection { self_ty, .. } => self_ty.any_param(matches),
@@ -264,7 +276,9 @@ impl InferType {
             | InferType::FixedArray(inner, _)
             | InferType::Vec(inner)
             | InferType::Option(inner) => inner.is_rigid(),
-            InferType::Result(ok, error) => ok.is_rigid() && error.is_rigid(),
+            InferType::Result(ok, error) | InferType::Map(ok, error) => {
+                ok.is_rigid() && error.is_rigid()
+            }
             InferType::Tuple(elements) => elements.iter().all(InferType::is_rigid),
             InferType::Applied { args, .. } => args.iter().all(InferType::is_rigid),
             InferType::Numeric => false,
@@ -281,7 +295,9 @@ impl InferType {
             | InferType::FixedArray(inner, _)
             | InferType::Vec(inner)
             | InferType::Option(inner) => inner.is_concrete(),
-            InferType::Result(ok, error) => ok.is_concrete() && error.is_concrete(),
+            InferType::Result(ok, error) | InferType::Map(ok, error) => {
+                ok.is_concrete() && error.is_concrete()
+            }
             InferType::Tuple(elements) => elements.iter().all(InferType::is_concrete),
             InferType::Applied { args, .. } => args.iter().all(InferType::is_concrete),
             InferType::UntypedNative(_)
@@ -301,6 +317,7 @@ impl InferType {
             | InferType::F32
             | InferType::F64
             | InferType::Bool
+            | InferType::Char
             | InferType::String
             | InferType::Unit
             | InferType::Null
@@ -495,6 +512,7 @@ impl fmt::Display for InferType {
             InferType::F32 => write!(f, "f32"),
             InferType::F64 => write!(f, "f64"),
             InferType::Bool => write!(f, "bool"),
+            InferType::Char => write!(f, "char"),
             InferType::String => write!(f, "string"),
             InferType::Unit => write!(f, "unit"),
             InferType::Null => write!(f, "null"),
@@ -517,6 +535,7 @@ impl fmt::Display for InferType {
             InferType::Array(inner) => write!(f, "[{}]", inner),
             InferType::FixedArray(inner, length) => write!(f, "[{}; {}]", inner, length),
             InferType::Vec(inner) => write!(f, "vec[{}]", inner),
+            InferType::Map(key, value) => write!(f, "Map<{}, {}>", key, value),
             InferType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
@@ -562,6 +581,11 @@ impl InferType {
             InferType::I64 => "int".to_string(),
             InferType::F64 => "float".to_string(),
             InferType::Vec(inner) => format!("Vec<{}>", inner.source_spelling()),
+            InferType::Map(key, value) => format!(
+                "Map<{}, {}>",
+                key.source_spelling(),
+                value.source_spelling()
+            ),
             InferType::Option(inner) => format!("Option<{}>", inner.source_spelling()),
             InferType::Result(ok, err) => format!(
                 "Result<{}, {}>",
@@ -608,6 +632,7 @@ impl InferType {
             | InferType::U64
             | InferType::F32
             | InferType::Bool
+            | InferType::Char
             | InferType::String
             | InferType::Unit
             | InferType::Null

@@ -693,7 +693,7 @@ fn mentions_nominal(ty: &aelys_sema::InferType, type_table: &TypeTable) -> Optio
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner) => mentions_nominal(inner, type_table),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             mentions_nominal(ok, type_table).or_else(|| mentions_nominal(err, type_table))
         }
         InferType::Tuple(elements) => elements

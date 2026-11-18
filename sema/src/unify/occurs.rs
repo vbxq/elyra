@@ -10,7 +10,9 @@ pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
             occurs_check(var, inner)
         }
         InferType::FixedArray(inner, _) => occurs_check(var, inner),
-        InferType::Result(ok, err) => occurs_check(var, ok) || occurs_check(var, err),
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
+            occurs_check(var, ok) || occurs_check(var, err)
+        }
         InferType::Tuple(elems) => elems.iter().any(|e| occurs_check(var, e)),
         InferType::Applied { args, .. } => args.iter().any(|arg| occurs_check(var, arg)),
         InferType::Projection { self_ty, .. } => occurs_check(var, self_ty),
@@ -25,6 +27,7 @@ pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
         | InferType::F32
         | InferType::F64
         | InferType::Bool
+        | InferType::Char
         | InferType::String
         | InferType::Unit
         | InferType::Null

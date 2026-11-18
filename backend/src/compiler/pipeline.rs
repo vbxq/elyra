@@ -322,6 +322,7 @@ fn type_descriptor_bounded(
         InferType::F64 => TypeDescriptor::Float(FloatWidth::F64),
         InferType::Bool => TypeDescriptor::Bool,
         InferType::String => TypeDescriptor::String,
+        InferType::Char => TypeDescriptor::Char,
         InferType::Unit => TypeDescriptor::Unit,
         InferType::Null => return None,
         InferType::Applied { name, args } => {
@@ -391,6 +392,20 @@ fn type_descriptor_bounded(
             projection_hops,
             remaining,
         )?)),
+        InferType::Map(key, value) => TypeDescriptor::Map(
+            Box::new(type_descriptor_bounded(
+                key,
+                type_table,
+                projection_hops,
+                remaining,
+            )?),
+            Box::new(type_descriptor_bounded(
+                value,
+                type_table,
+                projection_hops,
+                remaining,
+            )?),
+        ),
         InferType::Tuple(_) | InferType::Never => return None,
         InferType::Function { params, ret } => TypeDescriptor::Function {
             params: params

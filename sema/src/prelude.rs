@@ -78,6 +78,12 @@ pub fn provides(trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> b
     if trait_name == DISPLAY_TRAIT && trait_args.is_empty() && is_display_scalar(ty) {
         return true;
     }
+    if trait_name == DISPLAY_TRAIT
+        && trait_args.is_empty()
+        && let InferType::Map(key, value) = ty
+    {
+        return is_display_scalar(key) && is_display_scalar(value);
+    }
     trait_name == FROM_TRAIT && matches!(trait_args, [source] if source == ty)
 }
 
@@ -101,6 +107,7 @@ fn is_display_scalar(ty: &InferType) -> bool {
             | InferType::F32
             | InferType::F64
             | InferType::Bool
+            | InferType::Char
             | InferType::String
     )
 }

@@ -59,6 +59,9 @@ impl Substitution {
             InferType::Result(ok, err) => {
                 InferType::Result(Box::new(self.apply(ok)), Box::new(self.apply(err)))
             }
+            InferType::Map(key, value) => {
+                InferType::Map(Box::new(self.apply(key)), Box::new(self.apply(value)))
+            }
             InferType::Tuple(elems) => {
                 InferType::Tuple(elems.iter().map(|e| self.apply(e)).collect())
             }
@@ -86,6 +89,7 @@ impl Substitution {
             | InferType::F32
             | InferType::F64
             | InferType::Bool
+            | InferType::Char
             | InferType::String
             | InferType::Unit
             | InferType::Null

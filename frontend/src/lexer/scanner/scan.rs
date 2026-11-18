@@ -165,6 +165,7 @@ impl Lexer {
             '~' => self.add_token(TokenKind::Tilde),
 
             '"' => self.string()?,
+            '\'' => self.char_literal()?,
 
             c if c.is_ascii_digit() => self.number()?,
 

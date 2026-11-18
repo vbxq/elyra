@@ -231,6 +231,16 @@ impl Compiler {
                 self.free_register(literal);
                 Ok(())
             }
+            TypedPatternKind::Char(value) => {
+                let literal = self.alloc_register()?;
+                let condition = self.alloc_register()?;
+                self.compile_literal_char(*value, literal, pattern.span)?;
+                self.emit_a(OpCode::Eq, condition, source, literal, pattern.span);
+                failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
+                self.free_register(condition);
+                self.free_register(literal);
+                Ok(())
+            }
             TypedPatternKind::String(value) => {
                 let literal = self.alloc_register()?;
                 let condition = self.alloc_register()?;
@@ -391,6 +401,7 @@ impl Compiler {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
+            | TypedPatternKind::Char(_)
             | TypedPatternKind::Bool(_) => {}
         }
         Ok(())

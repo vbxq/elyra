@@ -325,7 +325,24 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             vec![InferType::String, InferType::String, InferType::String],
             InferType::String,
         ),
-        ("string", "split" | "join" | "concat") => function_with(
+        ("string", "split") => function_with(
+            vec![InferType::String, InferType::String],
+            InferType::Vec(Box::new(InferType::String)),
+        ),
+        ("string", "lines") => function_with(
+            vec![InferType::String],
+            InferType::Vec(Box::new(InferType::String)),
+        ),
+        ("string", "chars") => function_with(
+            vec![InferType::String],
+            InferType::Vec(Box::new(InferType::Char)),
+        ),
+        ("string", "bytes") => function_with(
+            vec![InferType::String],
+            InferType::Vec(Box::new(InferType::I64)),
+        ),
+        ("string", "from_char") => function_with(vec![InferType::Char], InferType::String),
+        ("string", "join" | "concat") => function_with(
             vec![InferType::String, InferType::String],
             InferType::String,
         ),
@@ -338,8 +355,7 @@ pub fn function_signature(path: &str) -> Option<InferType> {
         ),
         (
             "string",
-            "chars" | "bytes" | "to_upper" | "to_lower" | "capitalize" | "reverse" | "trim"
-            | "trim_start" | "trim_end" | "lines",
+            "to_upper" | "to_lower" | "capitalize" | "reverse" | "trim" | "trim_start" | "trim_end",
         ) => function_with(vec![InferType::String], InferType::String),
         ("string", "contains" | "starts_with" | "ends_with") => {
             function_with(vec![InferType::String, InferType::String], InferType::Bool)

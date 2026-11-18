@@ -265,6 +265,7 @@ impl TypeInference {
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
             | TypedExprKind::String(_)
+            | TypedExprKind::Char(_)
             | TypedExprKind::Unit
             | TypedExprKind::AssociatedConst { .. }
             | TypedExprKind::Null => {}
@@ -291,6 +292,7 @@ fn collect_pattern_bindings(pattern: &crate::typed_ast::TypedPattern, bound: &mu
         TypedPatternKind::Wildcard
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
+        | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_) => {}
     }
 }

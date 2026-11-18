@@ -153,7 +153,7 @@ impl TypeInference {
 
         let expected = match ann.name.to_lowercase().as_str() {
             "array" | "vec" | "option" => Some(1),
-            "result" => Some(2),
+            "result" | "map" => Some(2),
             name if KNOWN_TYPE_NAMES.contains(&name) => Some(0),
             _ => self
                 .type_table
@@ -416,6 +416,21 @@ impl TypeInference {
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
             "string" => InferType::String,
+            "char" => InferType::Char,
+            "map" => {
+                let key = ann
+                    .type_params
+                    .first()
+                    .map(|param| self.type_from_annotation_argument(param))
+                    .unwrap_or(InferType::Poison);
+                let value = ann
+                    .type_params
+                    .get(1)
+                    .map(|param| self.type_from_annotation_argument(param))
+                    .unwrap_or(InferType::Poison);
+                self.require_map_key(&key, ann.span);
+                InferType::Map(Box::new(key), Box::new(value))
+            }
             "unit" | "void" => InferType::Unit,
             "dynamic" => InferType::Dynamic,
             "array" => {
@@ -575,7 +590,7 @@ impl TypeInference {
         if KNOWN_TYPE_NAMES.contains(&name_lower.as_str()) {
             let expected = match name_lower.as_str() {
                 "array" | "vec" | "option" => Some(1),
-                "result" => Some(2),
+                "result" | "map" => Some(2),
                 _ => Some(0),
             };
             if let Some(expected) = expected
@@ -1855,7 +1870,7 @@ fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
         | InferType::Vec(inner)
         | InferType::Option(inner)
         | InferType::FixedArray(inner, _) => collect_type_params(inner, out),
-        InferType::Result(ok, error) => {
+        InferType::Result(ok, error) | InferType::Map(ok, error) => {
             collect_type_params(ok, out);
             collect_type_params(error, out);
         }

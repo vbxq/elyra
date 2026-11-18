@@ -129,6 +129,7 @@ fn rename_pattern(pattern: &mut Pattern, renames: &BTreeMap<String, String>) {
         | PatternKind::Binding(_)
         | PatternKind::Int(_)
         | PatternKind::String(_)
+        | PatternKind::Char(_)
         | PatternKind::Bool(_) => {}
     }
 }
@@ -314,6 +315,7 @@ fn rename_expr(expr: &mut Expr, renames: &BTreeMap<String, String>) {
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::String(_)
+        | ExprKind::Char(_)
         | ExprKind::Bool(_)
         | ExprKind::Null
         | ExprKind::Unit
@@ -523,7 +525,7 @@ pub fn collect_infer_names(ty: &aelys_sema::InferType, out: &mut HashSet<String>
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner) => collect_infer_names(inner, out),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_infer_names(ok, out);
             collect_infer_names(err, out);
         }

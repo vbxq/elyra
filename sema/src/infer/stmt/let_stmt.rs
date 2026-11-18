@@ -159,6 +159,9 @@ fn collection_binding_name(expr: &Expr) -> Option<&str> {
 fn is_collection_type(ty: &InferType) -> bool {
     matches!(
         ty,
-        InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_)
+        InferType::Array(_)
+            | InferType::FixedArray(_, _)
+            | InferType::Vec(_)
+            | InferType::Map(_, _)
     )
 }

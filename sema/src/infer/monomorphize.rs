@@ -160,6 +160,7 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
         InferType::F32 => push_len_prefixed(result, "f32"),
         InferType::F64 => push_len_prefixed(result, "f64"),
         InferType::Bool => push_len_prefixed(result, "bool"),
+        InferType::Char => push_len_prefixed(result, "char"),
         InferType::String => push_len_prefixed(result, "string"),
         InferType::Unit => push_len_prefixed(result, "unit"),
         InferType::Null => push_len_prefixed(result, "null"),
@@ -203,6 +204,11 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
             push_len_prefixed(result, "result");
             encode_type_key(ok, result);
             encode_type_key(err, result);
+        }
+        InferType::Map(key, value) => {
+            push_len_prefixed(result, "map");
+            encode_type_key(key, result);
+            encode_type_key(value, result);
         }
         InferType::Array(inner) => {
             push_len_prefixed(result, "array");
@@ -268,7 +274,7 @@ fn is_structural_subterm(candidate: &InferType, parent: &InferType) -> bool {
         | InferType::Option(inner) => {
             candidate == inner.as_ref() || is_structural_subterm(candidate, inner)
         }
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             candidate == ok.as_ref()
                 || candidate == err.as_ref()
                 || is_structural_subterm(candidate, ok)
@@ -331,7 +337,7 @@ fn collect_nominal_applications(
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_nominal_applications(inner, type_table, applications),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_nominal_applications(ok, type_table, applications);
             collect_nominal_applications(err, type_table, applications);
         }
@@ -351,6 +357,7 @@ fn collect_nominal_applications(
         | InferType::F32
         | InferType::F64
         | InferType::Bool
+        | InferType::Char
         | InferType::String
         | InferType::Unit
         | InferType::Null
@@ -402,6 +409,10 @@ fn replace_nominal_type(ty: &InferType, replacements: &HashMap<String, String>) 
             InferType::Option(Box::new(replace_nominal_type(inner, replacements)))
         }
         InferType::Result(ok, err) => InferType::Result(
+            Box::new(replace_nominal_type(ok, replacements)),
+            Box::new(replace_nominal_type(err, replacements)),
+        ),
+        InferType::Map(ok, err) => InferType::Map(
             Box::new(replace_nominal_type(ok, replacements)),
             Box::new(replace_nominal_type(err, replacements)),
         ),
@@ -724,6 +735,7 @@ fn rewrite_nominal_expr(
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -792,6 +804,7 @@ fn rewrite_nominal_pattern(
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
+        | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_) => {}
     }
 }
@@ -1080,6 +1093,7 @@ fn collect_expr_types(expr: &TypedExpr, types: &mut Vec<(InferType, Span)>) {
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -1104,6 +1118,7 @@ fn collect_pattern_types(pattern: &TypedPattern, types: &mut Vec<(InferType, Spa
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
+        | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_) => {}
     }
 }
@@ -1121,7 +1136,7 @@ fn collect_type(ty: &InferType, span: Span, types: &mut Vec<(InferType, Span)>) 
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_type(inner, span, types),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_type(ok, span, types);
             collect_type(err, span, types);
         }
@@ -1153,7 +1168,7 @@ fn contains_open_generic_type(ty: &InferType) -> bool {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => contains_open_generic_type(inner),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             contains_open_generic_type(ok) || contains_open_generic_type(err)
         }
         InferType::Tuple(elements) => elements.iter().any(contains_open_generic_type),
@@ -2451,6 +2466,7 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -2644,6 +2660,7 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -3297,6 +3314,7 @@ fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> I
         InferType::Result(ok, err) => {
             InferType::Result(Box::new(settle(ok)), Box::new(settle(err)))
         }
+        InferType::Map(ok, err) => InferType::Map(Box::new(settle(ok)), Box::new(settle(err))),
         InferType::Tuple(elements) => InferType::Tuple(elements.iter().map(settle).collect()),
         other => other.clone(),
     }
@@ -3360,7 +3378,8 @@ fn fits_call_site(
         (InferType::FixedArray(formal, formal_len), InferType::FixedArray(actual, actual_len)) => {
             formal_len == actual_len && fits_call_site(formal, actual, own_params, bound)
         }
-        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err)) => {
+        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err))
+        | (InferType::Map(formal_ok, formal_err), InferType::Map(actual_ok, actual_err)) => {
             fits_call_site(formal_ok, actual_ok, own_params, bound)
                 && fits_call_site(formal_err, actual_err, own_params, bound)
         }
@@ -4180,6 +4199,7 @@ fn rewrite_expr(
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::Null
         | TypedExprKind::AssociatedConst { .. }
@@ -4203,6 +4223,7 @@ fn rewrite_pattern(pattern: &mut TypedPattern) {
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
+        | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_) => {}
     }
 }
@@ -4701,7 +4722,8 @@ pub(crate) fn match_types(
         {
             match_types(formal, actual, mapping)
         }
-        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err)) => {
+        (InferType::Result(formal_ok, formal_err), InferType::Result(actual_ok, actual_err))
+        | (InferType::Map(formal_ok, formal_err), InferType::Map(actual_ok, actual_err)) => {
             match_types(formal_ok, actual_ok, mapping)?;
             match_types(formal_err, actual_err, mapping)
         }

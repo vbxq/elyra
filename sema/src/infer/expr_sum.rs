@@ -1505,6 +1505,15 @@ impl TypeInference {
                 ));
                 TypedPatternKind::String(value.clone())
             }
+            PatternKind::Char(value) => {
+                self.constraints.push(Constraint::equal(
+                    ty.clone(),
+                    InferType::Char,
+                    pattern.span,
+                    ConstraintReason::Comparison,
+                ));
+                TypedPatternKind::Char(*value)
+            }
             PatternKind::Bool(value) => {
                 self.constraints.push(Constraint::equal(
                     ty.clone(),
@@ -2255,7 +2264,7 @@ impl TypeInference {
             PatternKind::Bool(value) => covering
                 .iter()
                 .any(|pattern| pattern_covers_literal(pattern, *value)),
-            PatternKind::Int(_) | PatternKind::String(_) => covering
+            PatternKind::Int(_) | PatternKind::Char(_) | PatternKind::String(_) => covering
                 .iter()
                 .any(|pattern| literal_patterns_match(pattern, candidate)),
             _ => self.constructor_is_covered(ty, covering, candidate),
@@ -2511,7 +2520,9 @@ fn contains_dynamic_type(ty: &InferType) -> bool {
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner) => contains_dynamic_type(inner),
-        InferType::Result(ok, error) => contains_dynamic_type(ok) || contains_dynamic_type(error),
+        InferType::Result(ok, error) | InferType::Map(ok, error) => {
+            contains_dynamic_type(ok) || contains_dynamic_type(error)
+        }
         InferType::Tuple(elements) => elements.iter().any(contains_dynamic_type),
         InferType::Function { params, ret } => {
             params.iter().any(contains_dynamic_type) || contains_dynamic_type(ret)
@@ -2713,6 +2724,7 @@ fn literal_patterns_match(pattern: &Pattern, candidate: &Pattern) -> bool {
     match (&pattern.kind, &candidate.kind) {
         (PatternKind::Int(left), PatternKind::Int(right)) => left == right,
         (PatternKind::String(left), PatternKind::String(right)) => left == right,
+        (PatternKind::Char(left), PatternKind::Char(right)) => left == right,
         (PatternKind::Or(alternatives), _) => alternatives
             .iter()
             .any(|alternative| literal_patterns_match(alternative, candidate)),
@@ -2726,6 +2738,7 @@ fn describe_pattern(pattern: &Pattern) -> String {
         PatternKind::Binding(name) => name.clone(),
         PatternKind::Int(value) => value.to_string(),
         PatternKind::String(value) => format!("\"{value}\""),
+        PatternKind::Char(value) => format!("{value:?}"),
         PatternKind::Bool(value) => value.to_string(),
         PatternKind::Variant { path, fields, .. } => {
             if fields.is_empty() {
@@ -2857,7 +2870,9 @@ fn type_is_unresolved(ty: &InferType) -> bool {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => type_is_unresolved(inner),
-        InferType::Result(ok, error) => type_is_unresolved(ok) || type_is_unresolved(error),
+        InferType::Result(ok, error) | InferType::Map(ok, error) => {
+            type_is_unresolved(ok) || type_is_unresolved(error)
+        }
         InferType::Tuple(elements) => elements.iter().any(type_is_unresolved),
         _ => false,
     }

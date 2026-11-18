@@ -12,6 +12,9 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
+        if self.compile_char_cast(inner, target, dest, span)? {
+            return Ok(());
+        }
         let target = if target.is_integer() {
             CastTarget::Int
         } else if target.is_float() {

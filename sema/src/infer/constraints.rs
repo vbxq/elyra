@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{Constraint, TypeError, TypeErrorKind};
+use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::types::InferType;
 use crate::unify::{Substitution, UnifyError, unify, unify_error_to_type_error};
 use aelys_syntax::Span;
@@ -20,7 +20,7 @@ fn type_node_count(ty: &InferType) -> usize {
             | InferType::FixedArray(inner, _)
             | InferType::Vec(inner)
             | InferType::Projection { self_ty: inner, .. } => walk(inner, count),
-            InferType::Result(ok, err) => {
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
                 walk(ok, count);
                 walk(err, count);
             }
@@ -167,6 +167,10 @@ impl TypeInference {
                 Box::new(self.normalize_projection_types_bounded(ok, state)),
                 Box::new(self.normalize_projection_types_bounded(err, state)),
             ),
+            InferType::Map(ok, err) => InferType::Map(
+                Box::new(self.normalize_projection_types_bounded(ok, state)),
+                Box::new(self.normalize_projection_types_bounded(err, state)),
+            ),
             InferType::Tuple(elements) => InferType::Tuple(
                 elements
                     .iter()
@@ -268,6 +272,7 @@ impl TypeInference {
 
                 match &resolved {
                     InferType::Var(_) | InferType::Dynamic | InferType::Poison => {}
+                    InferType::Param(_) if matches!(reason, ConstraintReason::MapKey) => {}
                     concrete => {
                         let solutions = options
                             .iter()
@@ -281,6 +286,16 @@ impl TypeInference {
                             .collect::<Vec<_>>();
 
                         match solutions.len() {
+                            0 if matches!(reason, ConstraintReason::MapKey) => {
+                                self.errors.push(TypeError {
+                                    kind: TypeErrorKind::InvalidMapKey {
+                                        key: concrete.clone(),
+                                    },
+                                    span,
+                                    reason,
+                                });
+                                self.poison(&resolved, &mut subst);
+                            }
                             0 => {
                                 self.errors.push(TypeError::not_one_of(
                                     concrete.clone(),
@@ -339,7 +354,9 @@ fn contains_open_projection(ty: &InferType) -> bool {
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner) => contains_open_projection(inner),
-        InferType::Result(ok, err) => contains_open_projection(ok) || contains_open_projection(err),
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
+            contains_open_projection(ok) || contains_open_projection(err)
+        }
         InferType::Tuple(elements) => elements.iter().any(contains_open_projection),
         InferType::Applied { args, .. } => args.iter().any(contains_open_projection),
         InferType::Function { params, ret } => {

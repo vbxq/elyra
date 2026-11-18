@@ -298,6 +298,9 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
+        if matches!(object.ty, InferType::Map(_, _)) {
+            return self.compile_map_index(object, index, dest, span);
+        }
         let (obj_reg, obj_owned) = self.operand_register(object)?;
         let (idx_reg, idx_owned) = self.operand_register(index)?;
 
@@ -340,6 +343,9 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
+        if matches!(object.ty, InferType::Map(_, _)) {
+            return self.compile_map_index_assign(object, index, value, dest, span);
+        }
         let (obj_reg, obj_owned) = self.operand_register(object)?;
         let (idx_reg, idx_owned) = self.operand_register(index)?;
 
