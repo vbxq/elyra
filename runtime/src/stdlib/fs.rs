@@ -272,12 +272,19 @@ fn native_read_file_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
 }
 
 fn read_whole_file(path: &str) -> std::io::Result<Vec<u8>> {
-    let mut file = fs::File::open(path)?;
+    let limit = crate::stdlib::bytes::MAX_ALLOC;
+    let file = fs::File::open(path)?;
     let expected = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
     let mut data = Vec::new();
-    data.try_reserve_exact(expected.saturating_add(1))
+    data.try_reserve_exact(expected.min(limit).saturating_add(1))
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::OutOfMemory, e.to_string()))?;
-    file.read_to_end(&mut data)?;
+    file.take(limit as u64 + 1).read_to_end(&mut data)?;
+    if data.len() > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("larger than the {limit}-byte limit of a byte buffer"),
+        ));
+    }
     Ok(data)
 }
 

@@ -475,7 +475,7 @@ needs std::fs
 | `read(handle)` | Read as `Result<string, string>` |
 | `read_line(handle)` | Read as `Result<Option<string>, string>` |
 | `read_bytes(handle, n)` | Read up to `n` bytes (at most 16 MiB) into a new byte buffer, `Result<int, string>`; fewer than `n` only at end of file |
-| `read_file_bytes(path)` | Read a whole file into one new byte buffer, no size cap, `Result<int, string>` |
+| `read_file_bytes(path)` | Read a whole file into one new byte buffer, `Result<int, string>`; a file larger than the 256 MiB (268435456-byte) byte-buffer limit, or an endless one such as `/dev/zero`, is an `Err` after reading at most one byte past the limit |
 | `close(handle)` | Close as `Result<unit, string>` |
 
 Modes: `"r"` (read), `"w"` (write), `"a"` (append), `"rw"` (read+write).
