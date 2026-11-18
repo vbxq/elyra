@@ -298,7 +298,18 @@ fn collect_required_modules_rec(
     modules: &mut HashSet<String>,
 ) {
     for name in function.global_layout.names() {
-        if aelys_sema::is_mangled_symbol(name) || aelys_sema::is_module_scoped_global(name) {
+        if aelys_sema::is_mangled_symbol(name) {
+            continue;
+        }
+        if aelys_sema::is_module_scoped_global(name) {
+            // a module's functions live in slots named after the module, so the slot still names it
+            if let Some((module, _)) = name
+                .strip_prefix(aelys_common::MODULE_GLOBAL_PREFIX)
+                .and_then(|tail| tail.rsplit_once("::"))
+                && !module.contains('.')
+            {
+                modules.insert(module.to_string());
+            }
             continue;
         }
         if let Some(module_name) = name.split("::").next()
