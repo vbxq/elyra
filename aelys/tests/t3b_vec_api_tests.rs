@@ -246,16 +246,16 @@ fn growing_methods_are_rejected_on_fixed_arrays() {
 #[test]
 fn sort_rejects_elements_without_an_order() {
     let err = run_aelys_err("struct P { x: int }\nlet mut v = vec![P { x: 1 }]\nv.sort()\n0");
-    assert!(err.contains("E0392") && err.contains("sort_by"), "{err}");
+    assert!(err.contains("E0471") && err.contains("sort_by"), "{err}");
 }
 
 #[test]
 fn fill_and_resize_with_an_aggregate_are_rejected() {
     let err =
         run_aelys_err("struct P { x: int }\nlet mut v = vec![P { x: 1 }]\nv.fill(P { x: 2 })\n0");
-    assert!(err.contains("E0393"), "{err}");
+    assert!(err.contains("E0472"), "{err}");
     let err = run_aelys_err("let mut v = vec![vec![1]]\nv.resize(3, vec![0])\n0");
-    assert!(err.contains("E0393"), "{err}");
+    assert!(err.contains("E0472"), "{err}");
 }
 
 #[test]

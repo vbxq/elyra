@@ -116,7 +116,7 @@ fn invalid_key_types_are_rejected_with_a_named_error() {
     ] {
         let err = run_aelys_err(program);
         assert!(
-            err.contains("E0391") && err.contains("cannot be a Map key"),
+            err.contains("E0470") && err.contains("cannot be a Map key"),
             "{program}: {err}"
         );
     }

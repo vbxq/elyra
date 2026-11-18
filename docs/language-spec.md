@@ -1176,21 +1176,21 @@ A fixed array `[T; N]` has the methods that keep its length: `swap`, `reverse`,
 
 `sort` orders integers and floats numerically (NaN after every number), strings
 lexicographically by scalar value, chars by scalar value, and `false` before
-`true`; any other element type is E0392, which names `sort_by` as the way out.
+`true`; any other element type is E0471, which names `sort_by` as the way out.
 `sort_by` is a merge sort: it calls the comparator O(n log n) times, and a
 comparator that changes the length of the Vec it is sorting traps with
 `vector changed length while sort_by was running its comparator`.
 
 `resize` and `fill` store one value in many slots. Because structs, arrays, Vecs
 and Maps are reference types, doing that with an aggregate element would make
-every slot share one object, so it is E0393; push a fresh value per slot instead.
+every slot share one object, so it is E0472; push a fresh value per slot instead.
 Scalars, strings, chars and closures are fine.
 
 ### Maps
 
 `Map<K, V>` is a built-in hash map with reference semantics, like `Vec`. The key
 type is `int`, a sized integer, `string`, `char` or `bool`; any other key type,
-written or inferred, is E0391.
+written or inferred, is E0470.
 
 ```rust
 let mut ages: Map<string, int> = Map::new()
@@ -2553,9 +2553,6 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
-| E0391 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
-| E0392 | UnorderedSortElement | `sort` on elements with no built-in order |
-| E0393 | SharedAggregateFill | `resize` or `fill` with an aggregate value every slot would share |
 
 ### E04xx, modules, visibility, borrows, and associated items
 
@@ -2602,3 +2599,6 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0442 | UnorderedSpecialization | two impls of one trait for one type are equally specific |
 | E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
+| E0470 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
+| E0471 | UnorderedSortElement | `sort` on elements with no built-in order |
+| E0472 | SharedAggregateFill | `resize` or `fill` with an aggregate value every slot would share |
