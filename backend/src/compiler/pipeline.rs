@@ -158,12 +158,26 @@ impl Compiler {
             }
         }
 
-        if program.stmts.is_empty() {
+        let is_hoisted = |stmt: &&aelys_sema::TypedStmt| match &stmt.kind {
+            TypedStmtKind::Function(func) => func.captures.is_empty(),
+            TypedStmtKind::ImplDecl { methods, .. } => {
+                methods.iter().all(|method| method.captures.is_empty())
+            }
+            _ => false,
+        };
+        let ordered: Vec<&aelys_sema::TypedStmt> = program
+            .stmts
+            .iter()
+            .filter(is_hoisted)
+            .chain(program.stmts.iter().filter(|stmt| !is_hoisted(stmt)))
+            .collect();
+
+        if ordered.is_empty() {
             self.emit_return0(aelys_syntax::Span::dummy());
         } else {
-            let last_idx = program.stmts.len() - 1;
+            let last_idx = ordered.len() - 1;
 
-            for stmt in &program.stmts[..last_idx] {
+            for stmt in &ordered[..last_idx] {
                 let restore = self.enter_definition_module(stmt);
                 let compiled = self.compile_typed_stmt(stmt);
                 if let Some(source) = restore {
@@ -172,7 +186,7 @@ impl Compiler {
                 compiled?;
             }
 
-            let last_stmt = &program.stmts[last_idx];
+            let last_stmt = ordered[last_idx];
             let restore_last = self.enter_definition_module(last_stmt);
             match &last_stmt.kind {
                 TypedStmtKind::Expression(expr) => {

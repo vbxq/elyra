@@ -193,3 +193,61 @@ v[0] * 10000 + v[1] * 100 + v[2]
         8 * 100 + 13,
     );
 }
+
+#[test]
+fn a_user_function_named_like_a_native_wins_before_its_declaration_at_top_level() {
+    assert_int_everywhere(
+        r#"
+let top = sqrt(4)
+fn sqrt(t: int) -> int { t + 100 }
+top
+"#,
+        104,
+    );
+}
+
+#[test]
+fn a_user_function_named_like_a_native_wins_before_its_declaration_in_every_position() {
+    assert_int_everywhere(
+        r#"
+fn second(a: int, b: int) -> int { b }
+fn early() -> int { second(0, sqrt(4)) + sqrt(4) }
+fn use_min() -> int { min(5) }
+let top = second(0, sqrt(4)) + sqrt(4)
+let first = early()
+let m = use_min()
+fn sqrt(t: int) -> int { t + 100 }
+fn min(t: int) -> int { t + 200 }
+let f = sqrt
+top * 1000000 + first * 1000 + f(1) + m * 1000000000
+"#,
+        205 * 1000000000 + 208 * 1000000 + 208 * 1000 + 101,
+    );
+}
+
+#[test]
+fn a_user_function_named_like_a_native_wins_before_its_declaration_in_a_method() {
+    assert_int_everywhere(
+        r#"
+struct H { v: int }
+impl H { fn go(self) -> int { len(self.v) } }
+let r = H { v: 3 }.go()
+fn len(x: int) -> int { x * 1000 }
+r
+"#,
+        3000,
+    );
+}
+
+#[test]
+fn a_function_called_before_its_declaration_runs() {
+    assert_int_everywhere(
+        r#"
+let a = later(1)
+fn later(t: int) -> int { t + helper() }
+fn helper() -> int { 40 }
+a
+"#,
+        41,
+    );
+}

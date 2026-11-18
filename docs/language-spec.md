@@ -766,7 +766,10 @@ A declaration of your own always takes precedence over an auto-registered name.
 A program that defines `fn sqrt(t: int) -> int`, `fn min(...)`, `fn find(...)`
 or `fn len(...)` calls its own function in every position: a direct call, an
 argument, a collection element, a field initializer, a return value, a closure
-body, a method body, a nested function and a function value. The qualified
+body, a method body, a nested function and a function value, including a use
+that comes before the declaration: every top-level `fn` and `impl` is defined
+before the first statement of the script runs, so `let top = sqrt(4)` followed
+by `fn sqrt` calls the user function. The qualified
 `math::sqrt` and `math::min` still name the standard library functions. In the
 same way, a method declared on a user type, directly or through a trait, takes
 precedence over a built-in string or collection method of the same name:
