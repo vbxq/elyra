@@ -706,7 +706,7 @@ With an alias (`needs std::math as m`), only the aliased form works: `m::sqrt()`
 
 After `needs sqrt from std::math`, you call `sqrt()` directly without the module prefix.
 
-Two whole-module imports may export the same name, as `std::fs` and `std::bytes` both export `size` and `copy`. The qualified forms `fs::size` and `bytes::size` both work; only a bare use of `size` is rejected, at the use, with E0410 `symbol 'size' is exported by multiple modules: fs, bytes` and the hint `write the qualified name: fs::size or bytes::size`. A declaration of the importing file with that name shadows both imports.
+Two or more whole-module imports may export the same name, as `std::fs` and `std::bytes` both export `size` and `copy`. The qualified forms `fs::size` and `bytes::size` both work; only a bare use of `size` is rejected, at the use, with E0410 `symbol 'size' is exported by multiple modules: fs, bytes` and the hint `write the qualified name: fs::size or bytes::size`. A declaration of the importing file with that name shadows both imports.
 
 ### Standard Library Modules
 

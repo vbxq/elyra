@@ -426,6 +426,9 @@ fn load_modules(
                         if let Some(owners) = ambiguous_globals.get_mut(name) {
                             owners.push(qualified.clone());
                             known_globals.insert(qualified.clone());
+                            if let Some(signature) = module_info.native_signatures.get(&qualified) {
+                                native_signatures.insert(qualified.clone(), signature.clone());
+                            }
                             continue;
                         }
                         if let Some(existing) = whole_module_names.get(name).cloned() {
