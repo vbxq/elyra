@@ -49,7 +49,7 @@ pub fn flag_value(name: string, fallback: string) -> string {
     fallback
 }
 
-fn skill_bit() -> int {
+fn skill_from_args() -> int {
     let s = flag_value("--skill", "3")
     if s == "1" or s == "2" { return 1 }
     if s == "3" { return 2 }
@@ -65,7 +65,7 @@ pub fn load(path: string) -> Graphics {
     let w = wad::open_wad(path)
     let level = map::load_level(w, "E1M1")
     let g = gfx::load_graphics(w)
-    let skill = skill_bit()
+    let skill = skill_from_args()
     let nomonsters = not has_flag("--monsters")
     render::set_skill_bit(skill)
     render::set_no_monsters(nomonsters)
