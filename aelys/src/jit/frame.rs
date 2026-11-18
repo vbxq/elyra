@@ -63,6 +63,7 @@ struct Inst {
     b: usize,
     c: usize,
     imm: i64,
+    d: usize,
     target: Option<usize>,
     valid: bool,
 }
@@ -146,6 +147,7 @@ fn decode(function: &Function) -> Option<Vec<Inst>> {
             b: byte(8),
             c: byte(0),
             imm: 0,
+            d: 0,
             target: None,
             valid: true,
         };
@@ -171,7 +173,9 @@ fn decode(function: &Function) -> Option<Vec<Inst>> {
                 inst.a = usize::try_from(first >> 16).ok()?;
                 inst.b = usize::try_from(first & 0xffff).ok()?;
                 inst.c = usize::try_from(second >> 16).ok()?;
-                inst.valid = word & 0x00ff_0000 == 0 && second & 0xffff == 0;
+                inst.d = usize::try_from(second & 0xffff).ok()?;
+                inst.valid = word & 0x00ff_0000 == 0
+                    && (inst.d == 0 || matches!(op, OpCode::EnumLoad | OpCode::EnumNew));
             }
             _ => inst.valid = false,
         }
@@ -200,6 +204,12 @@ fn is_jump(op: OpCode) -> bool {
             | OpCode::ForLoopILong
             | OpCode::ForLoopIIncLong
             | OpCode::WhileLoopLt
+            | OpCode::StringForLoop
+            | OpCode::VecForLoop
+            | OpCode::ArrayForLoop
+            | OpCode::StringForLoopLong
+            | OpCode::VecForLoopLong
+            | OpCode::ArrayForLoopLong
     )
 }
 
@@ -342,6 +352,24 @@ impl Analysis<'_> {
                 self.field_check(schema, c)?;
                 simple(vec![a, b], None)
             }
+            EnumTest => {
+                let schema = usize::try_from(inst.imm).ok()?;
+                self.function.enum_schemas.get(schema)?.variants.get(c)?;
+                simple(vec![b], Some(a))
+            }
+            EnumLoad => {
+                let schema = usize::try_from(inst.imm).ok()?;
+                let variant = self.function.enum_schemas.get(schema)?.variants.get(c)?;
+                if variant.fields.get(inst.d)?.offset != u16::try_from(inst.d).ok()? {
+                    return None;
+                }
+                simple(vec![b], Some(a))
+            }
+            VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong => Effect {
+                uses: vec![a + 1, a + 2],
+                def: None,
+                flow: Flow::Branch(inst.target?),
+            },
             _ => return None,
         };
         if effect
@@ -475,6 +503,142 @@ impl Analysis<'_> {
     }
 }
 
+// registers whose every definition in the region is an integer, so machine code keeps them unboxed
+fn integer_registers(
+    analysis: &Analysis<'_>,
+    region: &Region,
+    instructions: &[Inst],
+    by_ip: &HashMap<usize, usize>,
+) -> Live {
+    use OpCode::*;
+    let insts = region
+        .order
+        .iter()
+        .filter(|ip| matches!(region.effects.get(ip), Some(Some(_))))
+        .filter_map(|ip| by_ip.get(ip).map(|index| instructions[*index]))
+        .collect::<Vec<_>>();
+    let mut candidate = Live::all(analysis.registers);
+    let mut wanted = Live::default();
+    let mut counters = Live::default();
+    for inst in &insts {
+        let loop_registers: &[usize] = match inst.op {
+            ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
+                &[inst.a, inst.a + 1, inst.a + 2]
+            }
+            WhileLoopLt => &[inst.a, inst.a + 1],
+            _ => &[],
+        };
+        for register in loop_registers {
+            counters.insert(*register);
+        }
+    }
+    for inst in &insts {
+        let int_uses: &[usize] = match inst.op {
+            AddII | SubII | MulII | DivII | ModII | LtII | LeII | GtII | GeII | EqII | NeII
+            | ShlII | ShrII | AndII | OrII | XorII => &[inst.b, inst.c],
+            NotI | AddI | SubI | LtIImm | LeIImm | GtIImm | GeIImm | ShlIImm | ShrIImm
+            | AndIImm | OrIImm | XorIImm => &[inst.b],
+            ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
+                &[inst.a, inst.a + 1, inst.a + 2]
+            }
+            WhileLoopLt => &[inst.a, inst.a + 1],
+            ArrayLoadI | ArrayLoadF | ArrayLoadB | ArrayLoadP | VecLoadI | VecLoadF | VecLoadB
+            | VecLoadP => &[inst.c],
+            ArrayStoreI | VecStoreI => &[inst.b, inst.c],
+            ArrayStoreF | ArrayStoreB | ArrayStoreP | VecStoreF | VecStoreB | VecStoreP => {
+                &[inst.b]
+            }
+            _ => &[],
+        };
+        for register in int_uses {
+            wanted.insert(*register);
+        }
+    }
+    for inst in &insts {
+        match inst.op {
+            VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong => {
+                wanted.insert(inst.a);
+                wanted.insert(inst.a + 1);
+            }
+            _ => {
+                if let Some(def) = analysis.effect(inst).and_then(|effect| effect.def)
+                    && def < analysis.registers
+                {
+                    wanted.insert(def);
+                }
+            }
+        }
+    }
+    loop {
+        let mut changed = false;
+        for inst in &insts {
+            let Some(effect) = analysis.effect(inst) else {
+                continue;
+            };
+            let mut defs = Vec::new();
+            match inst.op {
+                VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong => {
+                    defs.push((inst.a, false));
+                    defs.push((inst.a + 1, true));
+                }
+                _ => {
+                    if let Some(def) = effect.def {
+                        let integer = match inst.op {
+                            LoadI | AddII | SubII | MulII | DivII | ModII | Add | Sub | Mul
+                            | AddIIG | SubIIG | MulIIG | DivIIG | ModIIG | AddI | SubI | Shl
+                            | Shr | BitAnd | BitOr | BitXor | ShlII | ShrII | AndII | OrII
+                            | XorII | NotI | BitNot | ShlIImm | ShrIImm | AndIImm | OrIImm
+                            | XorIImm | ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong
+                            | VecLoadI | ArrayLoadI | VecLen | ArrayLen | AddGlobalI => true,
+                            LoadK | LoadKWide => constant_index(inst).is_some_and(|index| {
+                                matches!(
+                                    analysis.function.constants.get(index),
+                                    Some(Constant::Int(_))
+                                )
+                            }),
+                            StructLoad => usize::try_from(inst.imm).is_ok_and(|schema| {
+                                matches!(
+                                    analysis.field_check(schema, inst.c),
+                                    Some(FieldCheck::Int(_))
+                                )
+                            }),
+                            Move => candidate.contains(inst.b) && wanted.contains(inst.b),
+                            _ => false,
+                        };
+                        defs.push((def, integer));
+                    }
+                }
+            }
+            for (register, integer) in defs {
+                if register < analysis.registers {
+                    if !integer && candidate.contains(register) {
+                        candidate.remove(register);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let entry = region
+        .live_in
+        .get(&region.entry)
+        .copied()
+        .unwrap_or_default();
+    let mut ints = Live::default();
+    for register in 0..analysis.registers {
+        if candidate.contains(register)
+            && wanted.contains(register)
+            && (!entry.contains(register) || counters.contains(register))
+        {
+            ints.insert(register);
+        }
+    }
+    ints
+}
+
 #[derive(Clone, Debug)]
 struct LiveEffect {
     uses: Option<Vec<usize>>,
@@ -555,6 +719,7 @@ fn constant_index(inst: &Inst) -> Option<usize> {
 }
 
 struct Region {
+    entry: usize,
     order: Vec<usize>,
     effects: HashMap<usize, Option<Effect>>,
     live_in: HashMap<usize, Live>,
@@ -609,6 +774,7 @@ fn region(
     leaders.retain(|ip| effects.contains_key(ip));
     let (live_in, live_out) = function_liveness(analysis, instructions, by_ip);
     Some(Region {
+        entry,
         order,
         effects,
         live_in,
@@ -618,6 +784,8 @@ fn region(
 }
 
 struct Helpers {
+    enumeration: FuncRef,
+    element: FuncRef,
     view: FuncRef,
     set_global: FuncRef,
     call: FuncRef,
@@ -638,7 +806,7 @@ struct Lowerer<'a, 'b> {
     by_ip: &'a HashMap<usize, usize>,
     blocks: HashMap<usize, Block>,
     variables: Vec<Variable>,
-    caches: HashMap<(usize, CacheKind), (Variable, Variable)>,
+    caches: HashMap<(usize, CacheKind), CacheVars>,
     cache_kinds: Vec<CacheKind>,
     sites: Vec<FrameSiteKind>,
     helpers: Helpers,
@@ -651,7 +819,18 @@ struct Lowerer<'a, 'b> {
     origins: HashMap<usize, usize>,
     progress: Variable,
     uses_globals: bool,
+    ints: Live,
 }
+
+// a resolved storage address stays valid while the register still holds the object it was resolved for
+#[derive(Clone, Copy)]
+struct CacheVars {
+    owner: Variable,
+    pointer: Variable,
+    length: Variable,
+}
+
+const NO_OWNER: i64 = -1;
 
 #[derive(Clone, Copy, Default)]
 struct Known {
@@ -676,7 +855,11 @@ impl<'a, 'b> Lowerer<'a, 'b> {
     }
 
     fn get(&mut self, register: usize) -> ClifValue {
-        self.builder.use_var(self.variables[register])
+        let value = self.builder.use_var(self.variables[register]);
+        if self.ints.contains(register) {
+            return self.box_int_in_range(value);
+        }
+        value
     }
 
     fn forget_origin(&mut self, register: usize) {
@@ -686,14 +869,12 @@ impl<'a, 'b> Lowerer<'a, 'b> {
 
     fn set(&mut self, register: usize, value: ClifValue) {
         self.forget_origin(register);
+        let value = if self.ints.contains(register) {
+            self.unbox_int(value)
+        } else {
+            value
+        };
         self.builder.def_var(self.variables[register], value);
-        let kinds = self.cache_kinds.clone();
-        for kind in kinds {
-            if let Some((pointer, _)) = self.caches.get(&(register, kind)).copied() {
-                let zero = self.builder.ins().iconst(types::I64, 0);
-                self.builder.def_var(pointer, zero);
-            }
-        }
     }
 
     fn set_moved(&mut self, destination: usize, source: usize) {
@@ -702,22 +883,31 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             let origin = self.origins.get(&source).copied().unwrap_or(source);
             self.origins.insert(destination, origin);
         }
-        let value = self.get(source);
+        let value = if self.ints.contains(destination) && self.ints.contains(source) {
+            self.builder.use_var(self.variables[source])
+        } else {
+            let boxed = self.get(source);
+            if self.ints.contains(destination) {
+                self.unbox_int(boxed)
+            } else {
+                boxed
+            }
+        };
         self.builder.def_var(self.variables[destination], value);
         let kinds = self.cache_kinds.clone();
         for kind in kinds {
-            let Some((pointer, length)) = self.caches.get(&(destination, kind)).copied() else {
+            let Some(target) = self.caches.get(&(destination, kind)).copied() else {
                 continue;
             };
-            if let Some((source_pointer, source_length)) = self.caches.get(&(source, kind)).copied()
-            {
-                let copied_pointer = self.builder.use_var(source_pointer);
-                let copied_length = self.builder.use_var(source_length);
-                self.builder.def_var(pointer, copied_pointer);
-                self.builder.def_var(length, copied_length);
-            } else {
-                let zero = self.builder.ins().iconst(types::I64, 0);
-                self.builder.def_var(pointer, zero);
+            if let Some(origin) = self.caches.get(&(source, kind)).copied() {
+                for (to, from) in [
+                    (target.owner, origin.owner),
+                    (target.pointer, origin.pointer),
+                    (target.length, origin.length),
+                ] {
+                    let copied = self.builder.use_var(from);
+                    self.builder.def_var(to, copied);
+                }
             }
         }
     }
@@ -825,6 +1015,31 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             .call(self.helpers.set_global, &[self.context, index, value]);
         let stored = self.builder.inst_results(call)[0];
         self.guard(stored, exit);
+    }
+
+    // registers kept as raw integers must hold an integer when machine code is entered
+    fn unbox_entry(&mut self, live: &Live, loaded: &Live, entry_ip: usize) {
+        let mut exit = None;
+        for register in self
+            .ints
+            .registers(self.analysis.registers)
+            .collect::<Vec<_>>()
+        {
+            let value = self.builder.use_var(self.variables[register]);
+            if live.contains(register) && loaded.contains(register) {
+                let block = *exit.get_or_insert_with(|| {
+                    let block = self.builder.create_block();
+                    self.builder.set_cold_block(block);
+                    self.pending_exits.push((block, entry_ip, Live::default()));
+                    block
+                });
+                let is_int = self.tag_is(value, int_value(0) & TAG_BITS);
+                self.guard(is_int, block);
+            }
+            let shifted = self.builder.ins().ishl_imm_s(value, 16);
+            let raw = self.builder.ins().sshr_imm_s(shifted, 16);
+            self.builder.def_var(self.variables[register], raw);
+        }
     }
 
     // the view holds every name of this function once its generation matches the one recorded in the data block
@@ -1030,20 +1245,18 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.ins().band(left, right)
     }
 
-    fn cache(&mut self, register: usize, kind: CacheKind) -> (Variable, Variable) {
-        self.caches[&(register, kind)]
-    }
-
     fn resolve(&mut self, register: usize, kind: CacheKind, exit: Block) -> (ClifValue, ClifValue) {
-        let (pointer, length) = self.cache(register, kind);
-        let current = self.builder.use_var(pointer);
+        let cache = self.caches[&(register, kind)];
+        let (pointer, length) = (cache.pointer, cache.length);
+        let value = self.get(register);
+        let owner = self.builder.use_var(cache.owner);
+        let hit = self.builder.ins().icmp(IntCC::Equal, owner, value);
         let miss = self.builder.create_block();
         let have = self.builder.create_block();
         self.builder.set_cold_block(miss);
-        self.builder.ins().brif(current, have, &[], miss, &[]);
+        self.builder.ins().brif(hit, have, &[], miss, &[]);
         self.builder.seal_block(miss);
         self.builder.switch_to_block(miss);
-        let value = self.get(register);
         let status = match kind {
             CacheKind::Collection(kind) => {
                 let kind = self
@@ -1086,11 +1299,13 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         );
         self.builder.def_var(pointer, new_pointer);
         self.builder.def_var(length, new_length);
+        self.builder.def_var(cache.owner, value);
         if let Some(origin) = self.origins.get(&register).copied()
-            && let Some((origin_pointer, origin_length)) = self.caches.get(&(origin, kind)).copied()
+            && let Some(origin_cache) = self.caches.get(&(origin, kind)).copied()
         {
-            self.builder.def_var(origin_pointer, new_pointer);
-            self.builder.def_var(origin_length, new_length);
+            self.builder.def_var(origin_cache.pointer, new_pointer);
+            self.builder.def_var(origin_cache.length, new_length);
+            self.builder.def_var(origin_cache.owner, value);
         }
         self.builder.ins().jump(have, &[]);
         self.builder.seal_block(have);
@@ -1657,7 +1872,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                             .load(types::I64, Self::trusted(), address, 0);
                         match kind {
                             FrameCollectionKind::ArrayInts | FrameCollectionKind::VecInts => {
-                                self.box_int(raw)
+                                self.box_int_in_range(raw)
                             }
                             FrameCollectionKind::ArrayFloats | FrameCollectionKind::VecFloats => {
                                 let float = self.unbox_float(raw);
@@ -1748,6 +1963,95 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 let (_, length) = self.resolve(inst.b, CacheKind::Collection(LENGTH_KIND), exit);
                 let boxed = self.box_int_in_range(length);
                 self.set(inst.a, boxed);
+            }
+            EnumTest | EnumLoad => {
+                let exit = self.exit();
+                let source = self.get(inst.b);
+                let schema = self
+                    .builder
+                    .ins()
+                    .iconst(types::I64, i64::try_from(inst.imm).unwrap_or(i64::MAX));
+                let call = self.builder.ins().call(
+                    self.helpers.enumeration,
+                    &[self.context, self.data, source, schema],
+                );
+                let tag = self.builder.inst_results(call)[0];
+                let expected = i64::try_from(inst.c + 1).map_err(|_| FrameRefusal::Decode)?;
+                if inst.op == EnumTest {
+                    let invalid = self.constant(aelys_runtime::FRAME_ENUM_INVALID);
+                    let valid = self.builder.ins().icmp(IntCC::NotEqual, tag, invalid);
+                    self.guard(valid, exit);
+                    let matches = self.builder.ins().icmp_imm_s(IntCC::Equal, tag, expected);
+                    let boxed = self.box_bool(matches);
+                    self.set(inst.a, boxed);
+                } else {
+                    let matches = self.builder.ins().icmp_imm_s(IntCC::Equal, tag, expected);
+                    self.guard(matches, exit);
+                    let slots = self.builder.ins().load(
+                        types::I64,
+                        Self::trusted(),
+                        self.context,
+                        FrameJitContext::SCRATCH0,
+                    );
+                    let count = self.builder.ins().load(
+                        types::I64,
+                        Self::trusted(),
+                        self.context,
+                        FrameJitContext::SCRATCH1,
+                    );
+                    let inside = self.builder.ins().icmp_imm_s(
+                        IntCC::UnsignedGreaterThan,
+                        count,
+                        i64::try_from(inst.d).unwrap_or(i64::MAX),
+                    );
+                    self.guard(inside, exit);
+                    let offset = i32::try_from(inst.d * 8).map_err(|_| FrameRefusal::Decode)?;
+                    let value = self
+                        .builder
+                        .ins()
+                        .load(types::I64, Self::trusted(), slots, offset);
+                    self.set(inst.a, value);
+                }
+            }
+            VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong => {
+                let Flow::Branch(target) = effect.flow else {
+                    return Err(FrameRefusal::Decode);
+                };
+                let exit = self.exit();
+                let collection = self.get(inst.a + 2);
+                let counter = self.get(inst.a + 1);
+                let is_int = self.is_int(counter);
+                let raw = self.unbox_int(counter);
+                let zero = self.builder.ins().iconst(types::I64, 0);
+                let index = self.builder.ins().select(is_int, raw, zero);
+                let array = self.builder.ins().iconst(
+                    types::I64,
+                    i64::from(matches!(inst.op, ArrayForLoop | ArrayForLoopLong)),
+                );
+                let call = self.builder.ins().call(
+                    self.helpers.element,
+                    &[self.context, collection, index, array],
+                );
+                let found = self.builder.inst_results(call)[0];
+                let body = self.builder.create_block();
+                let done = self.block_for(inst.next);
+                self.builder.ins().brif(found, body, &[], done, &[]);
+                self.builder.seal_block(body);
+                self.builder.switch_to_block(body);
+                let element = self.builder.ins().load(
+                    types::I64,
+                    Self::trusted(),
+                    self.context,
+                    FrameJitContext::SCRATCH0,
+                );
+                let next = self.builder.ins().iadd_imm_s(index, 1);
+                let boxed = self.box_int_checked(next, exit);
+                self.set(inst.a, element);
+                self.set(inst.a + 1, boxed);
+                self.count_backedge(inst, target);
+                let taken = self.block_for(target);
+                self.builder.ins().jump(taken, &[]);
+                return Ok(true);
             }
             StructLoad => {
                 let exit = self.exit();
@@ -2078,11 +2382,11 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 matches!(kind, CacheKind::Collection(kind)
                     if vector_kinds.iter().any(|vector| *vector as u64 == *kind))
             })
-            .map(|(_, (pointer, _))| *pointer)
+            .map(|(_, cache)| cache.owner)
             .collect::<Vec<_>>();
-        for pointer in entries {
-            let zero = self.builder.ins().iconst(types::I64, 0);
-            self.builder.def_var(pointer, zero);
+        for owner in entries {
+            let none = self.builder.ins().iconst(types::I64, NO_OWNER);
+            self.builder.def_var(owner, none);
         }
     }
 }
@@ -2141,6 +2445,15 @@ fn cache_kind_of(inst: &Inst) -> Option<(usize, CacheKind)> {
         StructLoad => Some((inst.b, CacheKind::Struct(usize::try_from(inst.imm).ok()?))),
         StructStore => Some((inst.a, CacheKind::Struct(usize::try_from(inst.imm).ok()?))),
         _ => None,
+    }
+}
+
+// profilers show machine code under this name
+fn entry_name(function: &Function, osr_ip: Option<u32>) -> String {
+    let name = function.name.as_deref().unwrap_or("<script>");
+    match osr_ip {
+        Some(ip) => format!("aelys:{name}@{ip}"),
+        None => format!("aelys:{name}"),
     }
 }
 
@@ -2232,7 +2545,15 @@ pub(crate) fn compile_frame(
 
     let mut jit_builder =
         JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
-    let symbols: [(&str, *const u8); 9] = [
+    let symbols: [(&str, *const u8); 11] = [
+        (
+            "aelys_frame_enum",
+            aelys_runtime::aelys_frame_enum as *const u8,
+        ),
+        (
+            "aelys_frame_element",
+            aelys_runtime::aelys_frame_element as *const u8,
+        ),
         (
             "aelys_frame_view",
             aelys_runtime::aelys_frame_view as *const u8,
@@ -2285,7 +2606,11 @@ pub(crate) fn compile_frame(
     context.func.signature = entry_signature.clone();
     context.func.name = UserFuncName::user(0, 0);
     let function_id = module
-        .declare_function("aelys_frame_entry", Linkage::Local, &entry_signature)
+        .declare_function(
+            &entry_name(function, osr_ip),
+            Linkage::Local,
+            &entry_signature,
+        )
         .map_err(|error| FrameRefusal::Codegen(error.to_string()))?;
     let declare = |module: &mut JITModule,
                    func: &mut cranelift_codegen::ir::Function,
@@ -2307,6 +2632,20 @@ pub(crate) fn compile_frame(
     };
     let i64t = types::I64;
     let helpers = Helpers {
+        enumeration: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_enum",
+            &[pointer, pointer, i64t, i64t],
+            &[i64t],
+        )?,
+        element: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_element",
+            &[pointer, i64t, i64t, i64t],
+            &[i64t],
+        )?,
         view: declare(
             &mut module,
             &mut context.func,
@@ -2395,15 +2734,32 @@ pub(crate) fn compile_frame(
             cache_kinds.push(kind);
         }
     }
+    let mut cached = std::collections::HashSet::new();
+    for ip in &region.order {
+        if let Some(Some(_)) = region.effects.get(ip)
+            && let Some(index) = by_ip.get(ip)
+            && let Some(pair) = cache_kind_of(&instructions[*index])
+        {
+            cached.insert(pair);
+        }
+    }
     let mut caches = HashMap::new();
     for register in 0..registers {
-        for kind in &cache_kinds {
-            let pointer_variable = builder.declare_var(types::I64);
-            let length_variable = builder.declare_var(types::I64);
+        for kind in cache_kinds
+            .iter()
+            .filter(|kind| cached.contains(&(register, **kind)))
+        {
+            let cache = CacheVars {
+                owner: builder.declare_var(types::I64),
+                pointer: builder.declare_var(types::I64),
+                length: builder.declare_var(types::I64),
+            };
             let zero = builder.ins().iconst(types::I64, 0);
-            builder.def_var(pointer_variable, zero);
-            builder.def_var(length_variable, zero);
-            caches.insert((register, *kind), (pointer_variable, length_variable));
+            let none = builder.ins().iconst(types::I64, NO_OWNER);
+            builder.def_var(cache.owner, none);
+            builder.def_var(cache.pointer, zero);
+            builder.def_var(cache.length, zero);
+            caches.insert((register, *kind), cache);
         }
     }
     let null = builder.ins().iconst(
@@ -2422,6 +2778,7 @@ pub(crate) fn compile_frame(
         };
         builder.def_var(*variable, value);
     }
+    let ints = integer_registers(&analysis, &region, &instructions, &by_ip);
     let progress = builder.declare_var(types::I64);
     let zero = builder.ins().iconst(types::I64, 0);
     builder.def_var(progress, zero);
@@ -2457,7 +2814,17 @@ pub(crate) fn compile_frame(
         origins: HashMap::new(),
         progress,
         uses_globals,
+        ints: Live::default(),
     };
+    lowerer.ints = ints;
+    let entry_live = region.live_in.get(&entry_ip).copied().unwrap_or_default();
+    let mut loaded = Live::default();
+    for register in 0..registers {
+        if osr_ip.is_some() || register < usize::from(function.arity) {
+            loaded.insert(register);
+        }
+    }
+    lowerer.unbox_entry(&entry_live, &loaded, entry_ip);
     lowerer.ensure_view();
     lowerer.builder.ins().jump(first, &[]);
     let leaders = region.leaders.iter().copied().collect::<Vec<_>>();

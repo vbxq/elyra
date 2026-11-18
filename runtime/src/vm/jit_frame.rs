@@ -976,6 +976,77 @@ pub unsafe extern "C" fn aelys_frame_struct(
     1
 }
 
+pub const FRAME_ENUM_INVALID: u64 = u64::MAX;
+
+// returns the variant id plus one for an enum of this schema, 0 for any other value, FRAME_ENUM_INVALID where the interpreter reports a malformed object
+pub unsafe extern "C" fn aelys_frame_enum(
+    context: *mut FrameJitContext,
+    data: *mut u64,
+    value: u64,
+    schema_index: u64,
+) -> u64 {
+    let (context, vm) = context_vm(context);
+    let Some(pointer) = Value::from_raw(value).as_ptr() else {
+        return 0;
+    };
+    let Some(ObjectKind::Enum(value)) = vm.heap.get(GcRef::new(pointer)).map(|object| &object.kind)
+    else {
+        return 0;
+    };
+    let function = unsafe { *data.add(1) } as usize;
+    let Some(ObjectKind::Function(function)) =
+        vm.heap.get(GcRef::new(function)).map(|object| &object.kind)
+    else {
+        return FRAME_ENUM_INVALID;
+    };
+    let schemas = function.schemas();
+    let Some(schema) = schemas.enums.get(usize::from(value.enum_id)) else {
+        return FRAME_ENUM_INVALID;
+    };
+    let Some(variant) = schema.variants.get(usize::from(value.variant_id)) else {
+        return FRAME_ENUM_INVALID;
+    };
+    if usize::from(value.slot_count) != value.slots.len()
+        || value.slots.len() != variant.fields.len()
+        || schema.schema_id != value.enum_id
+        || variant.variant_id != value.variant_id
+    {
+        return FRAME_ENUM_INVALID;
+    }
+    if u64::from(value.enum_id) != schema_index {
+        return 0;
+    }
+    context.scratch0 = value.slots.as_ptr() as u64;
+    context.scratch1 = value.slots.len() as u64;
+    u64::from(value.variant_id) + 1
+}
+
+// the element a vec or array for-loop binds next, or 0 once the index has passed the end
+pub unsafe extern "C" fn aelys_frame_element(
+    context: *mut FrameJitContext,
+    collection: u64,
+    index: u64,
+    array: u64,
+) -> u64 {
+    let (context, vm) = context_vm(context);
+    let Some(pointer) = Value::from_raw(collection).as_ptr() else {
+        return 0;
+    };
+    let Ok(index) = usize::try_from(index) else {
+        return 0;
+    };
+    let element = match vm.heap.get(GcRef::new(pointer)).map(|object| &object.kind) {
+        Some(ObjectKind::Vec(vector)) if array == 0 && index < vector.len() => vector.get(index),
+        Some(ObjectKind::Array(values)) if array != 0 && index < values.len() => values.get(index),
+        _ => None,
+    };
+    let Some(element) = element else {
+        return 0;
+    };
+    context.scratch0 = element.raw();
+    1
+}
+
 impl VM {
     // the only write barrier machine code reaches: element stores and pushes into an existing Vec or Array slot
     fn frame_element_barrier(&mut self, owner: GcRef, index: usize, value: Value) {
