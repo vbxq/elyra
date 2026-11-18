@@ -693,7 +693,6 @@ impl VM {
     ) -> Result<Value, RuntimeError> {
         let mut arguments = SmallVec::<[Value; 8]>::new();
         for index in 0..argument_count {
-            // the arguments were stored into the window by the caller just before this call
             arguments.push(Value::from_raw(unsafe { *window.add(index) }));
         }
         let previous_ceiling = self.frame_jit.root_ceiling;
@@ -711,7 +710,6 @@ impl VM {
 }
 
 fn site_words(data: *mut u64, site: usize) -> *mut u64 {
-    // callers pass a site index taken from the info that sized this block
     unsafe { data.add(FrameData::HEADER_WORDS + site * FrameData::SITE_WORDS) }
 }
 
@@ -1021,7 +1019,6 @@ pub unsafe extern "C" fn aelys_frame_enum(
     u64::from(value.variant_id) + 1
 }
 
-// the element a vec or array for-loop binds next, or 0 once the index has passed the end
 pub unsafe extern "C" fn aelys_frame_element(
     context: *mut FrameJitContext,
     collection: u64,

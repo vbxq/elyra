@@ -409,7 +409,6 @@ impl Analysis<'_> {
         )
     }
 
-    // what the interpreter may read and write from this instruction on: an exit resumes it here
     fn live_effect(&self, inst: &Inst) -> LiveEffect {
         use OpCode::*;
         if let Some(effect) = self.effect(inst) {
@@ -1017,7 +1016,6 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.guard(stored, exit);
     }
 
-    // registers kept as raw integers must hold an integer when machine code is entered
     fn unbox_entry(&mut self, live: &Live, loaded: &Live, entry_ip: usize) {
         let mut exit = None;
         for register in self
@@ -2448,7 +2446,6 @@ fn cache_kind_of(inst: &Inst) -> Option<(usize, CacheKind)> {
     }
 }
 
-// profilers show machine code under this name
 fn entry_name(function: &Function, osr_ip: Option<u32>) -> String {
     let name = function.name.as_deref().unwrap_or("<script>");
     match osr_ip {

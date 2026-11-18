@@ -131,7 +131,6 @@ impl VM {
         mapping_id
     }
 
-    // adds the layout's names to the view when no index already names another global
     fn merge_global_layout(&mut self, layout: &GlobalLayout) -> bool {
         let names = layout.names();
         let merged = &self.global_view.names;
