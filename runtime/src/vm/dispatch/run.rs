@@ -573,7 +573,9 @@ impl VM {
                                         );
                                     }
                                     self.frames.push(new_frame);
-                                    self.push_pending_jit_frames()?;
+                                    if JIT {
+                                        self.push_pending_jit_frames()?;
+                                    }
                                     reload_frame_state!();
                                 }
 
@@ -1016,7 +1018,9 @@ impl VM {
                                         );
                                     }
                                     self.frames.push(new_frame);
-                                    self.push_pending_jit_frames()?;
+                                    if JIT {
+                                        self.push_pending_jit_frames()?;
+                                    }
                                     reload_frame_state!();
                                 }
                                 CallData::Native { native } => {
