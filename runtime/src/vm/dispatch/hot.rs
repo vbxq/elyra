@@ -310,7 +310,11 @@ impl VM {
     }
 
     #[inline(always)]
-    fn hot_global_callee<const JIT: bool>(&self, global: usize, arity: usize) -> Option<HotCall> {
+    fn hot_global_callee<const JIT: bool>(
+        &mut self,
+        global: usize,
+        arity: usize,
+    ) -> Option<HotCall> {
         let callee = GcRef::new(self.globals_by_index.get(global)?.as_ptr()?);
         let ObjectKind::Function(target) = &self.heap.get(callee)?.kind else {
             return None;
@@ -318,8 +322,7 @@ impl VM {
         if !target.verified || target.arity() != arity as u16 {
             return None;
         }
-        let ignored = !JIT || self.jit_ignores(callee);
-        ignored.then(|| HotCall {
+        let call = HotCall {
             function: callee,
             code: target.function.bytecode.as_ptr(),
             code_len: target.function.bytecode.len(),
@@ -329,7 +332,9 @@ impl VM {
             upvalues_len: 0,
             registers: target.num_registers(),
             mapping: target.function.global_layout.id(),
-        })
+        };
+        let ignored = !JIT || self.jit_ignores(callee) || self.frame_call_stays(callee);
+        ignored.then_some(call)
     }
 
     fn hot_value_callee(&self, value: Value, arity: usize) -> Option<HotCall> {
@@ -376,12 +381,21 @@ impl VM {
     }
 
     #[inline(always)]
-    fn hot_call_callee<const JIT: bool>(&self, value: Value, arity: usize) -> Option<HotCall> {
+    fn hot_call_callee<const JIT: bool>(&mut self, value: Value, arity: usize) -> Option<HotCall> {
         let target = self.hot_value_callee(value, arity)?;
-        if JIT && target.function.index() == value.as_ptr()? && !self.jit_ignores(target.function) {
+        if JIT
+            && target.function.index() == value.as_ptr()?
+            && !self.jit_ignores(target.function)
+            && !self.frame_call_stays(target.function)
+        {
             return None;
         }
         Some(target)
+    }
+
+    #[inline(never)]
+    fn hot_backedge_stays(&mut self, function: GcRef, target: usize) -> bool {
+        self.frame_jit_quiet_at(target) || self.frame_backedge_stays(function, target)
     }
 
     #[inline(never)]
@@ -685,7 +699,8 @@ impl VM {
         macro_rules! branch {
             ($target:expr) => {{
                 let target = $target;
-                if (target <= ip && !(settled!() || self.frame_jit_quiet_at(target)))
+                if (target <= ip
+                    && !(!JIT || settled!() || self.hot_backedge_stays(function, target)))
                     || target >= code_len
                 {
                     leave!();
@@ -1057,7 +1072,11 @@ impl VM {
                         advanced > end
                     };
                     let target = next.wrapping_add_signed(isize::from(instr as u16 as i16));
-                    if again && ((target <= ip && !settled!()) || target >= code_len) {
+                    if again
+                        && ((target <= ip
+                            && !(!JIT || settled!() || self.hot_backedge_stays(function, target)))
+                            || target >= code_len)
+                    {
                         leave!();
                     }
                     set!(a, value);

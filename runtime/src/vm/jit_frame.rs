@@ -241,6 +241,79 @@ impl VM {
                 })
     }
 
+    fn known_frame_slot(&self, function: GcRef) -> Option<usize> {
+        let ObjectKind::Function(object) = &self.heap.get(function)?.kind else {
+            return None;
+        };
+        let index = usize::try_from(object.jit_slot().checked_sub(1)?).ok()?;
+        let entry = self.frame_jit.slots.get(index)?;
+        (entry.live && entry.function == function).then_some(index)
+    }
+
+    // the interpreter's fast loop counts this back-edge itself and stays, only when the jit would do nothing else with it
+    pub(crate) fn frame_backedge_stays(&mut self, function: GcRef, bytecode_ip: usize) -> bool {
+        if !self.frame_jit_usable() {
+            return true;
+        }
+        if self.frame_jit.sink.has_results() {
+            return false;
+        }
+        let (Some(index), Ok(ip)) = (self.known_frame_slot(function), u32::try_from(bytecode_ip))
+        else {
+            return false;
+        };
+        let installs = self.frame_jit.installs;
+        let slot = &mut self.frame_jit.slots[index];
+        if slot.key.is_none() {
+            return true;
+        }
+        let counter = slot.counters;
+        let backedges = self.frame_jit.counters[counter].backedges.saturating_add(1);
+        let stays = match slot.osr.iter_mut().find(|entry| entry.ip == ip) {
+            None => backedges < crate::JIT_TIER1_BACKEDGE_THRESHOLD,
+            Some(entry) => match entry.state {
+                EntryState::Pending => backedges < crate::JIT_TIER1_BACKEDGE_THRESHOLD,
+                EntryState::Compiling => true,
+                EntryState::Ready(_) => entry.budget.paused(installs),
+                EntryState::Refused => false,
+            },
+        };
+        if stays {
+            self.frame_jit.counters[counter].backedges = backedges;
+        }
+        stays
+    }
+
+    // the fast loop may enter the callee in the interpreter, after counting the call, only when the jit would do nothing else with it
+    pub(crate) fn frame_call_stays(&mut self, function: GcRef) -> bool {
+        if !self.frame_jit_usable() {
+            return true;
+        }
+        if self.frame_jit.sink.has_results() {
+            return false;
+        }
+        let Some(index) = self.known_frame_slot(function) else {
+            return false;
+        };
+        match self.frame_jit.slots[index].call {
+            EntryState::Refused | EntryState::Compiling => true,
+            EntryState::Ready(_) => false,
+            EntryState::Pending => {
+                let threshold = self
+                    .jit_executor
+                    .as_ref()
+                    .map_or(u64::MAX, |executor| executor.frame_call_threshold());
+                let counter = self.frame_jit.slots[index].counters;
+                let calls = self.frame_jit.counters[counter].calls.saturating_add(1);
+                if calls >= threshold {
+                    return false;
+                }
+                self.frame_jit.counters[counter].calls = calls;
+                true
+            }
+        }
+    }
+
     fn frame_jit_usable(&self) -> bool {
         !self.frame_jit.disabled
             && self.jit_executor.is_some()
