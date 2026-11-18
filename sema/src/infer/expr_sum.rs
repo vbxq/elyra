@@ -1218,7 +1218,10 @@ impl TypeInference {
             );
         };
 
-        let output = self.type_gen.fresh();
+        let output = match &source {
+            InferType::Option(value) | InferType::Result(value, _) => value.as_ref().clone(),
+            _ => self.type_gen.fresh(),
+        };
         let target = match (&source, &current_return) {
             (InferType::Option(source_value), InferType::Var(_)) => {
                 let target = InferType::Option(Box::new(self.type_gen.fresh()));
