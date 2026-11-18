@@ -127,111 +127,77 @@ fn byte_of(value: Value) -> Option<u8> {
 pub struct AelysVec {
     pub data: VecData,
     accounted_capacity: usize,
+    accounted_tag: TypeTag,
 }
 
 impl AelysVec {
-    pub fn new_ints() -> Self {
+    fn accounted(data: VecData, accounted_capacity: usize) -> Self {
+        let accounted_tag = data.type_tag();
         Self {
-            data: VecData::Ints(Vec::new()),
-            accounted_capacity: 0,
-        }
-    }
-    pub fn new_floats() -> Self {
-        Self {
-            data: VecData::Floats(Vec::new()),
-            accounted_capacity: 0,
-        }
-    }
-    pub fn new_bools() -> Self {
-        Self {
-            data: VecData::Bools(Vec::new()),
-            accounted_capacity: 0,
-        }
-    }
-    pub fn new_objects() -> Self {
-        Self {
-            data: VecData::Objects(Vec::new()),
-            accounted_capacity: 0,
+            data,
+            accounted_capacity,
+            accounted_tag,
         }
     }
 
+    pub fn new_ints() -> Self {
+        Self::accounted(VecData::Ints(Vec::new()), 0)
+    }
+    pub fn new_floats() -> Self {
+        Self::accounted(VecData::Floats(Vec::new()), 0)
+    }
+    pub fn new_bools() -> Self {
+        Self::accounted(VecData::Bools(Vec::new()), 0)
+    }
+    pub fn new_objects() -> Self {
+        Self::accounted(VecData::Objects(Vec::new()), 0)
+    }
     pub fn new_bytes() -> Self {
-        Self {
-            data: VecData::Bytes(Vec::new()),
-            accounted_capacity: 0,
-        }
+        Self::accounted(VecData::Bytes(Vec::new()), 0)
     }
 
     pub fn with_capacity_ints(cap: usize) -> Self {
-        Self {
-            data: VecData::Ints(Vec::with_capacity(cap)),
-            accounted_capacity: cap,
-        }
+        Self::accounted(VecData::Ints(Vec::with_capacity(cap)), cap)
     }
     pub fn with_capacity_floats(cap: usize) -> Self {
-        Self {
-            data: VecData::Floats(Vec::with_capacity(cap)),
-            accounted_capacity: cap,
-        }
+        Self::accounted(VecData::Floats(Vec::with_capacity(cap)), cap)
     }
     pub fn with_capacity_bools(cap: usize) -> Self {
-        Self {
-            data: VecData::Bools(Vec::with_capacity(cap)),
-            accounted_capacity: cap,
-        }
+        Self::accounted(VecData::Bools(Vec::with_capacity(cap)), cap)
     }
     pub fn with_capacity_objects(cap: usize) -> Self {
-        Self {
-            data: VecData::Objects(Vec::with_capacity(cap)),
-            accounted_capacity: cap,
-        }
+        Self::accounted(VecData::Objects(Vec::with_capacity(cap)), cap)
     }
 
     pub fn from_ints(data: Vec<i64>) -> Self {
         let accounted_capacity = data.len();
-        Self {
-            data: VecData::Ints(data),
-            accounted_capacity,
-        }
+        Self::accounted(VecData::Ints(data), accounted_capacity)
     }
     pub fn from_floats(data: Vec<f64>) -> Self {
         let accounted_capacity = data.len();
-        Self {
-            data: VecData::Floats(data),
-            accounted_capacity,
-        }
+        Self::accounted(VecData::Floats(data), accounted_capacity)
     }
     pub fn from_bools(data: Vec<bool>) -> Self {
         let data: Vec<u8> = data.iter().copied().map(u8::from).collect();
         let accounted_capacity = data.len();
-        Self {
-            data: VecData::Bools(data),
-            accounted_capacity,
-        }
+        Self::accounted(VecData::Bools(data), accounted_capacity)
     }
     pub fn from_objects(data: Vec<Value>) -> Self {
         let accounted_capacity = data.len();
-        Self {
-            data: VecData::Objects(data),
-            accounted_capacity,
-        }
+        Self::accounted(VecData::Objects(data), accounted_capacity)
     }
     pub fn from_bytes(data: Vec<u8>) -> Self {
         let accounted_capacity = data.len();
-        Self {
-            data: VecData::Bytes(data),
-            accounted_capacity,
-        }
+        Self::accounted(VecData::Bytes(data), accounted_capacity)
     }
 
     pub fn from_array(array: &AelysArray) -> Self {
         match &array.data {
             ArrayData::Ints(values) => Self::from_ints(values.to_vec()),
             ArrayData::Floats(values) => Self::from_floats(values.to_vec()),
-            ArrayData::Bools(values) => Self {
-                data: VecData::Bools(values.to_vec()),
-                accounted_capacity: values.len(),
-            },
+            ArrayData::Bools(values) => {
+                Self::accounted(VecData::Bools(values.to_vec()), values.len())
+            }
             ArrayData::Objects(values) => Self::from_objects(values.to_vec()),
         }
     }
@@ -252,10 +218,7 @@ impl AelysVec {
             VecData::Bytes(values) => VecData::Bytes(values[start..end].to_vec()),
         };
         let accounted_capacity = data.len();
-        Self {
-            data,
-            accounted_capacity,
-        }
+        Self::accounted(data, accounted_capacity)
     }
 
     pub fn capacity(&self) -> usize {
@@ -314,6 +277,7 @@ impl AelysVec {
         match packed {
             Some(bytes) => {
                 self.data = VecData::Bytes(bytes);
+                self.accounted_tag = TypeTag::Byte;
                 true
             }
             None => false,
@@ -366,14 +330,17 @@ impl AelysVec {
                 v[index] = value;
                 true
             }
-            VecData::Bytes(v) => {
-                if let Some(byte) = byte_of(value) {
+            VecData::Bytes(v) => match byte_of(value) {
+                Some(byte) => {
                     v[index] = byte;
                     true
-                } else {
-                    false
                 }
-            }
+                None if value.as_int().is_some() => {
+                    self.widen_bytes_to_ints();
+                    self.set(index, value)
+                }
+                None => false,
+            },
         }
     }
 
@@ -407,14 +374,17 @@ impl AelysVec {
                 v.push(value);
                 true
             }
-            VecData::Bytes(v) => {
-                if let Some(byte) = byte_of(value) {
+            VecData::Bytes(v) => match byte_of(value) {
+                Some(byte) => {
                     v.push(byte);
                     true
-                } else {
-                    false
                 }
-            }
+                None if value.as_int().is_some() => {
+                    self.widen_bytes_to_ints();
+                    return self.push(value);
+                }
+                None => false,
+            },
         };
         if pushed {
             self.accounted_capacity = self.accounted_capacity.max(self.len());
@@ -483,6 +453,7 @@ impl AelysVec {
         };
         if reserved && let Some(target) = target {
             self.accounted_capacity = self.accounted_capacity.max(target);
+            self.accounted_tag = self.type_tag();
         }
         reserved
     }
@@ -500,6 +471,7 @@ impl AelysVec {
         };
         if reserved {
             self.accounted_capacity = self.accounted_capacity.max(target);
+            self.accounted_tag = self.type_tag();
         }
         reserved
     }
@@ -523,6 +495,7 @@ impl AelysVec {
             VecData::Bytes(v) => v.shrink_to_fit(),
         }
         self.accounted_capacity = self.capacity();
+        self.accounted_tag = self.type_tag();
     }
 
     pub fn to_array(&self) -> AelysArray {
@@ -553,7 +526,7 @@ impl AelysVec {
     }
 
     pub fn try_size_bytes(&self) -> Option<usize> {
-        Self::size_bytes_for(self.type_tag(), self.accounted_capacity)
+        Self::size_bytes_for(self.accounted_tag, self.accounted_capacity)
     }
 
     pub fn size_bytes(&self) -> usize {

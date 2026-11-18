@@ -125,7 +125,7 @@ impl VM {
         vector_ref: GcRef,
         value: Value,
     ) -> Result<(), RuntimeError> {
-        self.admit_element(vector_ref, value);
+        self.admit_boxed_int(vector_ref, value);
         let accepts = match self.heap.get(vector_ref) {
             Some(object) => match &object.kind {
                 ObjectKind::Vec(vector) => vector.accepts(value),

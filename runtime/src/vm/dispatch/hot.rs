@@ -1014,12 +1014,12 @@ impl VM {
                     let ObjectKind::Vec(vector) = object!(get!(b)) else {
                         leave!();
                     };
-                    let value = match &vector.data {
-                        VecData::Ints(items) => or_leave!(int48(*or_leave!(items.get(index)))),
-                        VecData::Bytes(items) => {
-                            Value::int(i64::from(*or_leave!(items.get(index))))
-                        }
-                        _ => leave!(),
+                    let value = if let VecData::Ints(items) = &vector.data {
+                        or_leave!(int48(*or_leave!(items.get(index))))
+                    } else if let VecData::Bytes(items) = &vector.data {
+                        Value::int(i64::from(*or_leave!(items.get(index))))
+                    } else {
+                        leave!();
                     };
                     set!(a, value);
                     next
@@ -1058,12 +1058,12 @@ impl VM {
                     let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
                         leave!();
                     };
-                    match &mut vector.data {
-                        VecData::Ints(items) => *or_leave!(items.get_mut(index)) = value,
-                        VecData::Bytes(items) => {
-                            *or_leave!(items.get_mut(index)) = or_leave!(u8::try_from(value).ok())
-                        }
-                        _ => leave!(),
+                    if let VecData::Ints(items) = &mut vector.data {
+                        *or_leave!(items.get_mut(index)) = value;
+                    } else if let VecData::Bytes(items) = &mut vector.data {
+                        *or_leave!(items.get_mut(index)) = or_leave!(u8::try_from(value).ok());
+                    } else {
+                        leave!();
                     }
                     next
                 }

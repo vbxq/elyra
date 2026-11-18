@@ -141,7 +141,7 @@ fn write_sequence(
     operation: &'static str,
 ) -> Result<(), RuntimeError> {
     for value in values {
-        vm.admit_element(sequence, *value);
+        vm.admit_boxed_int(sequence, *value);
     }
     let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
         Some(ObjectKind::Vec(vector)) => values
@@ -191,7 +191,7 @@ fn vec_insert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         .filter(|position| *position <= length)
         .ok_or_else(|| out_of_bounds(vm, index, length))?;
     vm.reserve_vec(vector, 1)?;
-    vm.admit_element(vector, args[2]);
+    vm.admit_boxed_int(vector, args[2]);
     if with_vec(vm, vector, "vec insert", |inner| {
         inner.insert(position, args[2])
     })? {
@@ -246,7 +246,7 @@ fn push_all(
 ) -> Result<(), RuntimeError> {
     vm.reserve_vec(vector, values.len())?;
     for value in values {
-        vm.admit_element(vector, *value);
+        vm.admit_boxed_int(vector, *value);
     }
     let start = sequence_len(vm, vector, operation)?;
     let pushed = with_vec(vm, vector, operation, |inner| {
@@ -622,7 +622,7 @@ fn seq_set(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let index = int_arg(vm, args[1], "set")?;
     let length = sequence_len(vm, sequence, "set")?;
     let position = checked_index(vm, index, length)?;
-    vm.admit_element(sequence, args[2]);
+    vm.admit_boxed_int(sequence, args[2]);
     let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
         Some(ObjectKind::Vec(inner)) => inner.set(position, args[2]),
         Some(ObjectKind::Array(inner)) => inner.set(position, args[2]),
@@ -684,7 +684,7 @@ fn write_sequence_slot(
     value: Value,
     operation: &'static str,
 ) -> Result<(), RuntimeError> {
-    vm.admit_element(sequence, value);
+    vm.admit_boxed_int(sequence, value);
     let written = match vm.heap.get_mut(sequence).map(|object| &mut object.kind) {
         Some(ObjectKind::Vec(vector)) => vector.set(index, value),
         Some(ObjectKind::Array(array)) => array.set(index, value),

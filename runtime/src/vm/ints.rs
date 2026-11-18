@@ -76,13 +76,9 @@ impl VM {
 
     // packed int storage holds only inline values: a boxed int turns the container into objects
     #[inline]
-    pub(crate) fn admit_element(&mut self, container: GcRef, value: Value) {
-        if value.is_ptr() {
-            if self.heap.boxed_ints_seen() {
-                self.admit_boxed_int_slow(container, value);
-            }
-        } else if value.as_int().is_some_and(|int| u8::try_from(int).is_err()) {
-            self.widen_byte_storage(container);
+    pub(crate) fn admit_boxed_int(&mut self, container: GcRef, value: Value) {
+        if value.is_ptr() && self.heap.boxed_ints_seen() {
+            self.admit_boxed_int_slow(container, value);
         }
     }
 
@@ -92,37 +88,10 @@ impl VM {
         if self.heap.boxed_int(value).is_none() {
             return;
         }
-        let resized = match self.heap.get_mut(container).map(|object| &mut object.kind) {
-            Some(ObjectKind::Vec(vector)) => {
-                let before = vector.size_bytes();
-                vector.promote_ints_to_objects();
-                Some((before, vector.size_bytes()))
-            }
-            Some(ObjectKind::Array(array)) => {
-                array.promote_ints_to_objects();
-                None
-            }
-            _ => None,
-        };
-        if let Some((before, after)) = resized {
-            self.heap.account_reallocation(before, after);
-        }
-    }
-
-    // packed bytes hold only 0..=255: a wider int turns the vector into ints
-    #[cold]
-    #[inline(never)]
-    fn widen_byte_storage(&mut self, container: GcRef) {
-        let resized = match self.heap.get_mut(container).map(|object| &mut object.kind) {
-            Some(ObjectKind::Vec(vector)) if vector.data.as_bytes().is_some() => {
-                let before = vector.size_bytes();
-                vector.widen_bytes_to_ints();
-                Some((before, vector.size_bytes()))
-            }
-            _ => None,
-        };
-        if let Some((before, after)) = resized {
-            self.heap.account_reallocation(before, after);
+        match self.heap.get_mut(container).map(|object| &mut object.kind) {
+            Some(ObjectKind::Vec(vector)) => vector.promote_ints_to_objects(),
+            Some(ObjectKind::Array(array)) => array.promote_ints_to_objects(),
+            _ => {}
         }
     }
 

@@ -413,7 +413,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_element(arr_ref, value);
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -467,7 +467,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_element(arr_ref, value);
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -521,7 +521,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_element(arr_ref, value);
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -575,7 +575,7 @@ macro_rules! execute_arrays {
 
                 match arr_len {
                     Some(len) => {
-                        $vm.admit_element(arr_ref, value);
+                        $vm.admit_boxed_int(arr_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(arr_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)
@@ -1159,7 +1159,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
-                        $vm.admit_element(vec_ref, value);
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1213,7 +1213,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
-                        $vm.admit_element(vec_ref, value);
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1267,7 +1267,7 @@ macro_rules! execute_arrays {
 
                 match vec_len {
                     Some(len) => {
-                        $vm.admit_element(vec_ref, value);
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1319,7 +1319,7 @@ macro_rules! execute_arrays {
 
                 match container_len {
                     Some((true, len)) => {
-                        $vm.admit_element(vec_ref, value);
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Vec(vec) = &mut obj.kind
                             && !vec.set(idx as usize, value)
@@ -1333,7 +1333,7 @@ macro_rules! execute_arrays {
                         $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     Some((false, len)) => {
-                        $vm.admit_element(vec_ref, value);
+                        $vm.admit_boxed_int(vec_ref, value);
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
                             && let ObjectKind::Array(arr) = &mut obj.kind
                             && !arr.set(idx as usize, value)

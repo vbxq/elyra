@@ -13,10 +13,8 @@ fn packed_storage_keeps_exactly_the_values_0_to_255() {
     for value in [0, 1, 127, 128, 255] {
         assert!(vector.push(Value::int(value)));
     }
-    assert!(!vector.push(Value::int(256)));
-    assert!(!vector.push(Value::int(-1)));
     assert!(!vector.push(Value::float(1.0)));
-    assert!(!vector.set(0, Value::int(256)));
+    assert!(!vector.set(0, Value::bool(true)));
     assert!(vector.set(0, Value::int(42)));
     assert_eq!(vector.type_tag(), TypeTag::Byte);
     assert_eq!(vector.data.as_bytes(), Some(&[42u8, 1, 127, 128, 255][..]));
@@ -24,6 +22,26 @@ fn packed_storage_keeps_exactly_the_values_0_to_255() {
     assert!(vector.insert(1, Value::int(9)));
     assert_eq!(ints(&vector), [42, 9, 1, 127, 128]);
     assert!(vector.data.as_ints().is_none());
+}
+
+// the heap is charged for the storage it was told about: a widening counts at the next reserve
+#[test]
+fn an_int_outside_0_to_255_widens_the_storage_and_keeps_every_value() {
+    let mut vector = AelysVec::from_bytes(vec![1, 2, 3]);
+    let charged = vector.size_bytes();
+    assert!(vector.set(1, Value::int(256)));
+    assert!(matches!(vector.data, VecData::Ints(_)));
+    assert_eq!(ints(&vector), [1, 256, 3]);
+    assert_eq!(vector.size_bytes(), charged);
+    assert!(vector.try_reserve_exact(0));
+    assert_eq!(vector.size_bytes() - charged, 21);
+
+    let mut vector = AelysVec::from_bytes(vec![7]);
+    assert!(vector.push(Value::int(-1)));
+    assert_eq!(ints(&vector), [7, -1]);
+    let mut vector = AelysVec::from_bytes(vec![7]);
+    assert!(vector.insert(0, Value::int(1000)));
+    assert_eq!(ints(&vector), [1000, 7]);
 }
 
 #[test]

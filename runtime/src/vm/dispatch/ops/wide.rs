@@ -533,7 +533,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
-                self.admit_element(array_ref, value);
+                self.admit_boxed_int(array_ref, value);
                 let stored =
                     self.heap
                         .get_mut(array_ref)
@@ -799,7 +799,7 @@ impl VM {
                         return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle));
                     }
                 };
-                self.admit_element(vec_ref, value);
+                self.admit_boxed_int(vec_ref, value);
                 let stored =
                     self.heap
                         .get_mut(vec_ref)
