@@ -162,6 +162,15 @@ impl TypeInference {
         {
             self.register_receiver_borrow(object, reference, callee.span);
         }
+        let param_types = match &typed_callee.ty {
+            InferType::Function { params, .. }
+                if params.len() == args.len()
+                    && !matches!(&typed_callee.kind, TypedExprKind::StructMethod { .. }) =>
+            {
+                params.clone()
+            }
+            _ => Vec::new(),
+        };
         let mut typed_args: Vec<TypedExpr> = args
             .iter()
             .enumerate()
@@ -171,7 +180,10 @@ impl TypeInference {
                 } else {
                     reference_modes.get(index).copied().flatten()
                 };
-                self.infer_call_argument(arg, expected)
+                self.nominal_expectation = param_types.get(index).cloned();
+                let typed = self.infer_call_argument(arg, expected);
+                self.nominal_expectation = None;
+                typed
             })
             .collect();
         let argument_indices = effective_argument_indices(&typed_args);
@@ -472,6 +484,7 @@ impl TypeInference {
         callee: &Expr,
         args: &[Expr],
     ) -> Option<(TypedExprKind, InferType)> {
+        let expectation = self.constructor_expectation.take();
         let ExprKind::Member {
             object,
             member,
@@ -481,7 +494,10 @@ impl TypeInference {
             return None;
         };
         let (enum_name, explicit_type_args) = match &object.kind {
-            ExprKind::Identifier(enum_name) => (enum_name.clone(), Vec::new()),
+            ExprKind::Identifier(enum_name) => (
+                enum_name.clone(),
+                Self::expected_type_args(expectation, enum_name),
+            ),
             ExprKind::GenericApply { callee, type_args } => {
                 let ExprKind::Identifier(enum_name) = &callee.kind else {
                     return None;
@@ -578,7 +594,8 @@ impl TypeInference {
                     .zip(expected.iter())
                     .map(|(arg, expected)| {
                         let expected = expected.substitute_params(&substitutions);
-                        let typed = self.infer_expr(arg);
+                        let mut typed = self.infer_expr(arg);
+                        self.fit_int_literal(&mut typed, &expected);
                         if !self.reject_dynamic(
                             &typed.ty,
                             &expected,

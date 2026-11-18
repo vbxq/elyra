@@ -30,6 +30,7 @@ impl TypeInference {
 
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
         let callee_position = std::mem::take(&mut self.callee_position);
+        let expectation = self.nominal_expectation.take();
         self.depth += 1;
         if self.depth > super::MAX_INFERENCE_DEPTH {
             self.errors.push(TypeError::recursion_limit(expr.span));
@@ -107,7 +108,12 @@ impl TypeInference {
             }
             ExprKind::And { left, right } => self.infer_logical_expr("and", left, right, expr),
             ExprKind::Or { left, right } => self.infer_logical_expr("or", left, right, expr),
-            ExprKind::Call { callee, args } => self.infer_call_expr(callee, args, expr.span),
+            ExprKind::Call { callee, args } => {
+                self.constructor_expectation = expectation;
+                let typed = self.infer_call_expr(callee, args, expr.span);
+                self.constructor_expectation = None;
+                typed
+            }
             ExprKind::GenericApply { callee, type_args } => {
                 self.callee_position = callee_position;
                 self.infer_generic_apply(callee, type_args, expr.span)
@@ -167,15 +173,15 @@ impl TypeInference {
                 name,
                 type_args,
                 fields,
-            } => self.infer_struct_literal(name, type_args, fields, expr.span),
+            } => self.infer_struct_literal(name, type_args, fields, expr.span, expectation),
             ExprKind::EnumLiteral { path, fields } => {
-                self.infer_enum_literal(path, &[], fields, expr.span)
+                self.infer_enum_literal(path, &[], fields, expr.span, expectation)
             }
             ExprKind::GenericEnumLiteral {
                 path,
                 type_args,
                 fields,
-            } => self.infer_enum_literal(path, type_args, fields, expr.span),
+            } => self.infer_enum_literal(path, type_args, fields, expr.span, expectation),
             ExprKind::Cast {
                 expr: inner,
                 target,
@@ -236,7 +242,43 @@ impl TypeInference {
         }
     }
 
-    /// the other operand's type is still open, so the literal follows it and is checked once the constraints are solved
+    pub(crate) fn infer_expr_expecting(&mut self, expr: &Expr, expected: &InferType) -> TypedExpr {
+        self.nominal_expectation = Some(expected.clone());
+        let typed = self.infer_expr(expr);
+        self.nominal_expectation = None;
+        typed
+    }
+
+    pub(crate) fn expected_type_args(expected: Option<InferType>, name: &str) -> Vec<InferType> {
+        match expected {
+            Some(InferType::Applied {
+                name: applied,
+                args,
+            }) if applied == name => args,
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn unify_branch_literals(&mut self, branches: &mut [&mut TypedExpr]) {
+        let target = branches
+            .iter()
+            .filter(|branch| !literal_shaped(branch))
+            .map(|branch| branch.ty.clone())
+            .find(|ty| ty.is_sized_integer() || matches!(ty, InferType::Var(_)));
+        let Some(target) = target else {
+            return;
+        };
+        for branch in branches.iter_mut() {
+            if literal_shaped(branch) {
+                if target.is_sized_integer() {
+                    self.retype_int_literal(branch, &target);
+                } else {
+                    self.defer_int_literal(branch, target.clone());
+                }
+            }
+        }
+    }
+
     fn defer_int_literal(&mut self, expr: &mut TypedExpr, target: InferType) {
         let mut values = Vec::new();
         retype_open_literal(expr, &target, &mut values);
@@ -284,7 +326,6 @@ impl TypeInference {
         }
     }
 
-    /// an integer literal takes the sized type its context expects; the literal's own constraints only ever said int == int
     pub(crate) fn fit_int_literal(&mut self, expr: &mut TypedExpr, expected: &InferType) {
         match expected {
             target if target.is_sized_integer() => {
@@ -357,6 +398,13 @@ impl TypeInference {
                 self.retype_int_literal(then_branch, target);
                 self.retype_int_literal(else_branch, target);
             }
+            TypedExprKind::Match { arms, .. } => {
+                for arm in arms.iter_mut() {
+                    if let crate::typed_ast::TypedMatchArmBody::Expr(body) = &mut arm.body {
+                        self.retype_int_literal(body, target);
+                    }
+                }
+            }
             _ => return,
         }
         expr.ty = target.clone();
@@ -428,7 +476,6 @@ impl TypeInference {
     }
 }
 
-/// a tree built only from integer literals and operators, whose int type nothing else has seen yet
 pub(crate) fn literal_shaped(expr: &TypedExpr) -> bool {
     match &expr.kind {
         TypedExprKind::Int(_) => expr.ty == InferType::I64,
@@ -454,6 +501,13 @@ pub(crate) fn literal_shaped(expr: &TypedExpr) -> bool {
             else_branch,
             ..
         } => literal_shaped(then_branch) && literal_shaped(else_branch),
+        TypedExprKind::Match { arms, .. } => {
+            !arms.is_empty()
+                && arms.iter().all(|arm| match &arm.body {
+                    crate::typed_ast::TypedMatchArmBody::Expr(body) => literal_shaped(body),
+                    crate::typed_ast::TypedMatchArmBody::Block(_) => false,
+                })
+        }
         _ => false,
     }
 }
@@ -479,6 +533,13 @@ fn retype_open_literal(
         } => {
             retype_open_literal(then_branch, target, values);
             retype_open_literal(else_branch, target, values);
+        }
+        TypedExprKind::Match { arms, .. } => {
+            for arm in arms.iter_mut() {
+                if let crate::typed_ast::TypedMatchArmBody::Expr(body) = &mut arm.body {
+                    retype_open_literal(body, target, values);
+                }
+            }
         }
         _ => return,
     }

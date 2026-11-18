@@ -14,13 +14,15 @@ impl TypeInference {
         initializer: &Expr,
         is_pub: bool,
     ) -> TypedStmtKind {
-        let mut typed_init = self.infer_expr(initializer);
-        let read_only_alias = collection_binding_name(initializer)
-            .is_some_and(|source| self.env.is_read_only(source));
-
         let declared_type = type_annotation
             .as_ref()
             .map(|ann| self.type_from_annotation(ann));
+        let mut typed_init = match &declared_type {
+            Some(declared) => self.infer_expr_expecting(initializer, declared),
+            None => self.infer_expr(initializer),
+        };
+        let read_only_alias = collection_binding_name(initializer)
+            .is_some_and(|source| self.env.is_read_only(source));
 
         let var_type = if let Some(decl) = &declared_type {
             self.fit_int_literal(&mut typed_init, decl);

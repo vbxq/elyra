@@ -1222,6 +1222,7 @@ impl TypeInference {
         type_args: &[aelys_syntax::TypeAnnotation],
         fields: &[StructFieldInit],
         _span: Span,
+        expectation: Option<InferType>,
     ) -> (TypedExprKind, InferType) {
         if let Some(error) = self.private_nominal_error(name, _span) {
             self.errors.push(error);
@@ -1242,10 +1243,13 @@ impl TypeInference {
                 },
             });
         }
-        let explicit_type_args = type_args
+        let mut explicit_type_args = type_args
             .iter()
             .map(|annotation| self.type_from_annotation(annotation))
             .collect::<Vec<_>>();
+        if explicit_type_args.is_empty() {
+            explicit_type_args = Self::expected_type_args(expectation, name);
+        }
         if let Some(definition) = &def
             && !explicit_type_args.is_empty()
             && explicit_type_args.len() != definition.type_params.len()
@@ -1556,6 +1560,7 @@ impl TypeInference {
         type_args: &[aelys_syntax::TypeAnnotation],
         fields: &[StructFieldInit],
         span: Span,
+        expectation: Option<InferType>,
     ) -> (TypedExprKind, InferType) {
         let enum_name = path.first().cloned().unwrap_or_default();
         let variant_name = path.last().cloned().unwrap_or_default();
@@ -1601,10 +1606,13 @@ impl TypeInference {
                 InferType::Poison,
             );
         }
-        let explicit_types = type_args
+        let mut explicit_types = type_args
             .iter()
             .map(|annotation| self.type_from_annotation(annotation))
             .collect::<Vec<_>>();
+        if explicit_types.is_empty() {
+            explicit_types = Self::expected_type_args(expectation, &enum_name);
+        }
         if explicit_types.len() != def.type_params.len() {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::GenericArityMismatch {
@@ -1697,7 +1705,7 @@ impl TypeInference {
         let mut field_visibility_error = false;
         let mut typed_by_name = std::collections::HashMap::new();
         for field in fields {
-            let typed_value = self.infer_expr(&field.value);
+            let mut typed_value = self.infer_expr(&field.value);
             if !seen.insert(field.name.clone()) {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::DuplicateStructField {
@@ -1726,6 +1734,7 @@ impl TypeInference {
                     var_name: format!("{}::{}.{}", enum_name, variant_name, field.name),
                 };
                 let expected_ty = expected.ty.substitute_params(&substitutions);
+                self.fit_int_literal(&mut typed_value, &expected_ty);
                 if !self.reject_dynamic(&typed_value.ty, &expected_ty, field.span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,

@@ -12,7 +12,7 @@ impl TypeInference {
     ) -> TypedStmt {
         match &stmt.kind {
             aelys_syntax::StmtKind::Expression(expr) => {
-                let mut typed_expr = self.infer_expr(expr);
+                let mut typed_expr = self.infer_expr_expecting(expr, return_type);
                 self.fit_int_literal(&mut typed_expr, return_type);
 
                 if let crate::typed_ast::TypedExprKind::Float(value) = &typed_expr.kind

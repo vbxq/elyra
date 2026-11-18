@@ -1372,19 +1372,6 @@ impl TypeInference {
                 MatchArmBody::Expr(expr) => {
                     let typed_expr = self.infer_expr(expr);
                     dynamic_result |= matches!(typed_expr.ty, InferType::Dynamic);
-                    if !self.reject_dynamic(
-                        &typed_expr.ty,
-                        &result_type,
-                        expr.span,
-                        ConstraintReason::IfBranches,
-                    ) {
-                        self.constraints.push(Constraint::equal(
-                            result_type.clone(),
-                            typed_expr.ty.clone(),
-                            expr.span,
-                            ConstraintReason::IfBranches,
-                        ));
-                    }
                     TypedMatchArmBody::Expr(typed_expr)
                 }
                 MatchArmBody::Block(stmts) => {
@@ -1446,6 +1433,32 @@ impl TypeInference {
                 explicit_dynamic,
                 span: arm.span,
             });
+        }
+
+        let mut bodies: Vec<&mut TypedExpr> = typed_arms
+            .iter_mut()
+            .filter_map(|arm| match &mut arm.body {
+                TypedMatchArmBody::Expr(expr) => Some(expr),
+                TypedMatchArmBody::Block(_) => None,
+            })
+            .collect();
+        self.unify_branch_literals(&mut bodies);
+        for arm in &typed_arms {
+            if let TypedMatchArmBody::Expr(typed_expr) = &arm.body
+                && !self.reject_dynamic(
+                    &typed_expr.ty,
+                    &result_type,
+                    typed_expr.span,
+                    ConstraintReason::IfBranches,
+                )
+            {
+                self.constraints.push(Constraint::equal(
+                    result_type.clone(),
+                    typed_expr.ty.clone(),
+                    typed_expr.span,
+                    ConstraintReason::IfBranches,
+                ));
+            }
         }
 
         self.match_exhaustivity_residuals

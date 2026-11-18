@@ -409,3 +409,203 @@ fn h1_folded_int_shift_counts_are_masked_like_the_runtime() {
     }
     assert_traps_at_every_level("1 << -1", "integer overflow");
 }
+
+#[test]
+fn m1_literals_take_the_sized_type_of_an_enum_payload() {
+    let prelude = "enum E { A(u8), B { x: i16 } }\n";
+    let cases: [(&str, i64); 8] = [
+        (
+            "let e = E::A(200)\nmatch e { E::A(v) => (v + v) as int, E::B { x } => 0 }",
+            144,
+        ),
+        (
+            "let f = E::B { x: -32768 }\nmatch f { E::A(v) => 0, E::B { x } => (x - 1) as int }",
+            32767,
+        ),
+        (
+            "fn mk() -> E { E::A(255) }\nmatch mk() { E::A(v) => (v + 1) as int, E::B { x } => 9 }",
+            0,
+        ),
+        (
+            "let v = vec![E::A(1), E::A(255)]\nlet mut t = 0\nfor e in v { t += match e { E::A(x) => x as int, E::B { x } => 0 } }\nt",
+            256,
+        ),
+        (
+            "struct S { e: E }\nimpl S { fn get(self) -> u8 { match self.e { E::A(v) => v + 6, E::B { x } => 0 } } }\nS { e: E::A(250) }.get() as int",
+            0,
+        ),
+        (
+            "let f = fn() -> E { E::B { x: 32767 } }\nmatch f() { E::A(v) => 0, E::B { x } => (x + 1) as int }",
+            -32768,
+        ),
+        (
+            "fn g<T>(t: T) -> E { E::A(128) }\nmatch g(1) { E::A(v) => (v + v) as int, E::B { x } => 0 }",
+            0,
+        ),
+        (
+            "let e = E::A(255 - 1)\nmatch e { E::A(v) => v as int, E::B { x } => 0 }",
+            254,
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_int_at_every_level(&format!("{prelude}{body}"), expected);
+    }
+    for (body, message) in [
+        ("E::A(256)", "integer literal 256 does not fit in u8"),
+        ("E::A(-1)", "integer literal -1 does not fit in u8"),
+        (
+            "E::B { x: 40000 }",
+            "integer literal 40000 does not fit in i16",
+        ),
+    ] {
+        let error = run_aelys_err(&format!("{prelude}{body}"));
+        assert!(
+            error.contains("E0301") && error.contains(message),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn m2_explicit_generic_instantiations_type_their_literals() {
+    let holder = "enum Holder<T> { Full(T), Empty }\n";
+    let boxed = "struct Box<T> { value: T }\n";
+    let named = "enum G<T> { P { v: T }, Q }\n";
+    let cases: [(String, i64); 9] = [
+        (
+            format!(
+                "{holder}let h = Holder::<u8>::Full(200)\nmatch h {{ Holder::Full(v) => (v + v) as int, Holder::Empty => 0 }}"
+            ),
+            144,
+        ),
+        (
+            format!(
+                "{holder}let h: Holder<u8> = Holder::Full(200)\nmatch h {{ Holder::Full(v) => (v + v) as int, Holder::Empty => 0 }}"
+            ),
+            144,
+        ),
+        (
+            format!(
+                "{holder}fn take(h: Holder<i8>) -> i8 {{ match h {{ Holder::Full(v) => v, Holder::Empty => 0 }} }}\n(take(Holder::Full(-128)) - 1) as int"
+            ),
+            127,
+        ),
+        (
+            format!(
+                "{holder}let h = Holder::Full(200)\nmatch h {{ Holder::Full(v) => v * 1000000, Holder::Empty => 0 }}"
+            ),
+            200000000,
+        ),
+        (
+            format!("{boxed}let b: Box<u8> = Box {{ value: 200 }}\n(b.value + b.value) as int"),
+            144,
+        ),
+        (
+            format!("{boxed}let c = Box::<i8> {{ value: 100 }}\n(c.value + c.value) as int"),
+            -56,
+        ),
+        (
+            format!(
+                "{boxed}fn mk() -> Box<u16> {{ Box {{ value: 65535 }} }}\n(mk().value + 1) as int"
+            ),
+            0,
+        ),
+        (
+            format!(
+                "{boxed}fn mk() -> Box<u16> {{\n    return Box {{ value: 65535 }}\n}}\n(mk().value + 2) as int"
+            ),
+            1,
+        ),
+        (format!("{named}let g: G<i8> = G::P {{ v: -128 }}\n7"), 7),
+    ];
+    for (source, expected) in cases {
+        assert_int_at_every_level(&source, expected);
+    }
+    for (source, message) in [
+        (
+            format!("{holder}Holder::<u8>::Full(300)"),
+            "integer literal 300 does not fit in u8",
+        ),
+        (
+            format!("{holder}let h: Holder<i8> = Holder::Full(128)"),
+            "integer literal 128 does not fit in i8",
+        ),
+        (
+            format!("{boxed}let b: Box<u8> = Box {{ value: 300 }}"),
+            "integer literal 300 does not fit in u8",
+        ),
+        (
+            format!("{holder}let h: Holder<string> = Holder::Full(200)"),
+            "expected string, found int",
+        ),
+        (
+            format!("{named}let g: G<i8> = G::P {{ v: -129 }}"),
+            "integer literal -129 does not fit in i8",
+        ),
+        (
+            format!("{holder}fn take(h: Holder<u16>) -> int {{ 0 }}\ntake(Holder::Full(65536))"),
+            "integer literal 65536 does not fit in u16",
+        ),
+    ] {
+        let error = run_aelys_err(&source);
+        assert!(
+            error.contains("E0301") && error.contains(message),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn l1_branch_literals_take_the_sized_type_of_a_sibling_or_the_context() {
+    let cases: [(&str, i64); 8] = [
+        (
+            "enum E { A(u8), B { x: i16 } }\nlet e = E::A(200)\nmatch e { E::A(v) => v + v, E::B { x } => 0 } as int",
+            144,
+        ),
+        (
+            "enum E { A(u8), B { x: i16 } }\nlet f = E::B { x: -32768 }\nlet g: i16 = match f { E::A(v) => 0, E::B { x } => x - 1 }\ng as int",
+            32767,
+        ),
+        ("let w: i16 = match 3 { 1 => 5, _ => -7 }\nw as int", -7),
+        (
+            "let y: u8 = 7\nlet z = match 3 { 1 => 0, _ => y }\n(z - 8) as int",
+            255,
+        ),
+        (
+            "fn g(c: int) -> u8 { match c { 1 => 9, _ => 0 } }\n(g(2) - 1) as int",
+            255,
+        ),
+        (
+            "let y: u8 = 7\nlet z = if true { 250 } else { y }\n(z + z) as int",
+            244,
+        ),
+        (
+            "let x: u8 = 3\nlet z: u8 = if false { x } else { 0 }\n(z - 1) as int",
+            255,
+        ),
+        ("let q: u8 = 200\nmatch q { 200 => 1, _ => 2 }", 1),
+    ];
+    for (source, expected) in cases {
+        assert_int_at_every_level(source, expected);
+    }
+    for (source, message) in [
+        (
+            "let y: u8 = 7\nlet z = match 3 { 1 => 300, _ => y }",
+            "integer literal 300 does not fit in u8",
+        ),
+        (
+            "fn g(c: int) -> u8 { match c { 1 => 9, _ => 300 } }",
+            "integer literal 300 does not fit in u8",
+        ),
+        (
+            "let y: i8 = 7\nlet z = if true { y } else { -129 }",
+            "integer literal -129 does not fit in i8",
+        ),
+    ] {
+        let error = run_aelys_err(source);
+        assert!(
+            error.contains("E0301") && error.contains(message),
+            "{error}"
+        );
+    }
+}

@@ -63,6 +63,8 @@ impl Default for TypeInference {
             bound_residuals: Vec::new(),
             surface_dynamic_spans: HashSet::new(),
             pending_int_literals: Vec::new(),
+            nominal_expectation: None,
+            constructor_expectation: None,
             sum_type_residuals: Vec::new(),
             explicit_dynamic_functions: HashSet::new(),
             module_aliases: HashSet::new(),
