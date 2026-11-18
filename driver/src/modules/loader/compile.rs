@@ -112,6 +112,7 @@ impl ModuleLoader {
             std::collections::BTreeMap::new();
         let mut global_renames: std::collections::HashMap<String, String> =
             prelude.symbol_origins.clone();
+        let mut bare_imports = super::types::BareImports::default();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -151,11 +152,17 @@ impl ModuleLoader {
                         wanted,
                         nested_needs.span,
                     );
-                    global_renames.extend(self.import_renames(
-                        nested_needs,
-                        &effective_kind,
-                        &nested_module_path,
-                    ));
+                    for (name, target) in
+                        self.import_renames(nested_needs, &effective_kind, &nested_module_path)
+                    {
+                        let explicit_elsewhere =
+                            !matches!(effective_kind, aelys_syntax::ImportKind::Symbols(_))
+                                && !name.contains("::")
+                                && bare_imports.is_explicit(&name);
+                        if !explicit_elsewhere {
+                            global_renames.insert(name, target);
+                        }
+                    }
 
                     match &effective_kind {
                         aelys_syntax::ImportKind::Module { alias: None }
@@ -167,6 +174,10 @@ impl ModuleLoader {
                                     qualified_imports.insert(qualified.clone(), ty.clone());
                                 }
                                 known_globals.insert(qualified);
+                                bare_imports.note_bare(name, &nested_module_path, &module_alias);
+                                if bare_imports.is_explicit(name) {
+                                    continue;
+                                }
                                 known_globals.insert(name.clone());
                                 if let Some(signature) = module_info
                                     .native_signatures
@@ -207,6 +218,24 @@ impl ModuleLoader {
                                 if !module_info.exports.contains_key(symbol) {
                                     continue;
                                 }
+                                if let Some(previous) =
+                                    bare_imports.note_explicit(symbol, &nested_module_path)
+                                {
+                                    return Err(AelysError::Compile(CompileError::new(
+                                        CompileErrorKind::SymbolConflict {
+                                            symbol: symbol.clone(),
+                                            modules: vec![
+                                                previous.replace('.', "::"),
+                                                nested_module_path.replace('.', "::"),
+                                            ],
+                                            carried_by: Vec::new(),
+                                            repair:
+                                                aelys_common::error::SymbolConflictRepair::Alias,
+                                        },
+                                        nested_needs.span,
+                                        module_source.clone(),
+                                    )));
+                                }
                                 let internal_qualified =
                                     format!("{}::{}", module_info.name, symbol);
                                 if let Some(ty) = module_info.exported_types.globals.get(symbol) {
@@ -228,6 +257,15 @@ impl ModuleLoader {
                     }
                 }
             }
+        }
+
+        let ambiguous_imports = bare_imports.ambiguous();
+        for name in ambiguous_imports.keys() {
+            known_globals.remove(name);
+            known_native_globals.remove(name);
+            native_signatures.remove(name);
+            global_renames.remove(name);
+            qualified_imports.remove(name);
         }
 
         for entry in &nominal_scopes {
@@ -359,6 +397,7 @@ impl ModuleLoader {
             seen_impls.insert((module, stmt.span.start, stmt.span.end))
         });
         let private_types = imported_types.clone();
+        imported_types.ambiguous_imports = ambiguous_imports;
         let private_impls = imported_impl_stmts.clone();
         let private_nominals: std::collections::BTreeMap<String, String> = inherited_nominals
             .iter()
@@ -425,7 +464,9 @@ impl ModuleLoader {
                         message: format!("{}", err),
                     },
                     err.span,
-                    module_source.clone(),
+                    err.defining_module()
+                        .and_then(|module| module_sources.get(module).cloned())
+                        .unwrap_or_else(|| module_source.clone()),
                 ))
             } else {
                 AelysError::Compile(CompileError::new(

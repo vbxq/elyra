@@ -143,6 +143,10 @@ pub enum TypeErrorKind {
     UndefinedFunction {
         name: String,
     },
+    AmbiguousImport {
+        name: String,
+        modules: Vec<String>,
+    },
     RecursionLimit,
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -660,6 +664,21 @@ impl TypeError {
                     f,
                     "undefined variable: {}",
                     crate::unscoped_global_name(name)
+                )
+            }
+            TypeErrorKind::AmbiguousImport { name, modules } => {
+                let qualified = modules
+                    .iter()
+                    .map(|module| format!("'{module}::{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                write!(
+                    f,
+                    "symbol '{}' is exported by multiple modules: {}\n   = hint: qualify it as {}, or import it by name with a 'needs {} from ...' line",
+                    name,
+                    modules.join(", "),
+                    qualified,
+                    name
                 )
             }
             TypeErrorKind::UndefinedFunction { name } => {
@@ -1746,6 +1765,7 @@ impl TypeErrorKind {
             Self::NotCallable { .. } => 360,
             Self::InfiniteType { .. } => 361,
             Self::UndefinedFunction { .. } => 362,
+            Self::AmbiguousImport { .. } => 410,
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,
             Self::NotIterable { .. } => 365,

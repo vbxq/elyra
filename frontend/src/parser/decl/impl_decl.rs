@@ -54,6 +54,8 @@ impl Parser {
             if self.match_token(&TokenKind::Semicolon) {
                 continue;
             }
+            // a method is reachable wherever its type is, so `pub` on an impl item changes nothing
+            self.match_token(&TokenKind::Pub);
             let placement = if polarity == ImplPolarity::Negative {
                 super::trait_decl::DefaultPlacement::Deferred
             } else if trait_path.is_some() && !type_params.is_empty() {

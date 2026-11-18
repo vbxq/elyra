@@ -100,3 +100,47 @@ pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
         }
     }
 }
+
+// a bare name two whole-module imports both bring in names neither, so only a use of it
+// is refused; a name imported by name always wins over the whole-module ones
+#[derive(Debug, Default)]
+pub struct BareImports {
+    bare: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    explicit: HashMap<String, String>,
+}
+
+impl BareImports {
+    pub fn note_bare(&mut self, name: &str, module: &str, alias: &str) {
+        self.bare
+            .entry(name.to_string())
+            .or_default()
+            .insert(module.to_string(), alias.to_string());
+    }
+
+    pub fn is_explicit(&self, name: &str) -> bool {
+        self.explicit.contains_key(name)
+    }
+
+    pub fn note_explicit(&mut self, name: &str, module: &str) -> Option<String> {
+        match self.explicit.get(name) {
+            Some(previous) if previous != module => Some(previous.clone()),
+            Some(_) => None,
+            None => {
+                self.explicit.insert(name.to_string(), module.to_string());
+                None
+            }
+        }
+    }
+
+    pub fn ambiguous(&self) -> std::collections::BTreeMap<String, Vec<String>> {
+        self.bare
+            .iter()
+            .filter(|(name, modules)| modules.len() > 1 && !self.explicit.contains_key(*name))
+            .map(|(name, modules)| {
+                let aliases: std::collections::BTreeSet<String> =
+                    modules.values().cloned().collect();
+                (name.clone(), aliases.into_iter().collect())
+            })
+            .collect()
+    }
+}

@@ -123,14 +123,16 @@ fn field_types(def: &aelys_sema::types::EnumVariantFieldsDef) -> Vec<String> {
     }
 }
 
-fn names_the_impls_reach(exported: &ExportedTypes, impls: &[Stmt]) -> HashSet<String> {
-    let mut reached = HashSet::new();
-    let Some(source) = exported.source.as_ref() else {
-        return reached;
-    };
-    for stmt in impls {
-        if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
-            collect_identifiers(text, &mut reached);
+fn names_the_impls_reach(
+    exported: &ExportedTypes,
+    impls: &[Stmt],
+    mut reached: HashSet<String>,
+) -> HashSet<String> {
+    if let Some(source) = exported.source.as_ref() {
+        for stmt in impls {
+            if let Some(text) = source.content.get(stmt.span.start..stmt.span.end) {
+                collect_identifiers(text, &mut reached);
+            }
         }
     }
     loop {
@@ -177,19 +179,29 @@ pub fn select_exported_nominals(
     let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
     let exported_names: HashSet<String> = exported.types.nominal_names().into_iter().collect();
 
+    // a type an imported signature returns is reachable though never named, and its own
+    // methods travel with it
+    let mut signature_seed = HashSet::new();
+    for name in &wanted {
+        if let Some(ty) = exported.globals.get(*name) {
+            collect_identifiers(&ty.to_string(), &mut signature_seed);
+        }
+    }
+    let signature_reached = names_the_impls_reach(exported, &[], signature_seed);
     let in_scope = |name: &String| !exported_names.contains(name) || wanted.contains(name.as_str());
     let impls: Vec<Stmt> = exported
         .impl_stmts
         .iter()
         .filter(|stmt| match impl_ends(stmt) {
             Some((target, trait_name)) => {
-                in_scope(&target) && trait_name.as_ref().is_none_or(in_scope)
+                (in_scope(&target) || signature_reached.contains(&target))
+                    && trait_name.as_ref().is_none_or(in_scope)
             }
             None => false,
         })
         .cloned()
         .collect();
-    let reached = names_the_impls_reach(exported, &impls);
+    let reached = names_the_impls_reach(exported, &impls, signature_reached);
 
     let mut selected = ImportedTypes::default();
     let surface_path = module_path.replace('.', "::");
