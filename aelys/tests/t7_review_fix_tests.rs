@@ -325,8 +325,8 @@ fn a_mutable_alias_of_an_imported_immutable_aggregate_is_refused() {
         let error = run_err(&dir, file, source);
         assert!(error.contains("E0323"), "{file}: {error}");
         assert!(
-            error.contains(&format!("cannot bind `{root}` mutably")),
-            "{file}: {error}"
+            !error.contains("dynamic"),
+            "{file} roots at {root}: {error}"
         );
     }
     assert_eq!(

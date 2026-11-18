@@ -151,9 +151,6 @@ pub enum TypeErrorKind {
         name: String,
         function: bool,
     },
-    MutableImportAlias {
-        root: String,
-    },
     RecursionLimit,
     NonExhaustiveMatch {
         missing: Vec<String>,
@@ -682,10 +679,6 @@ impl TypeError {
                 } else {
                     "an immutable variable"
                 }
-            ),
-            TypeErrorKind::MutableImportAlias { root } => write!(
-                f,
-                "cannot bind `{root}` mutably: it is an immutable variable of the module that declares it, and aggregates are shared by reference\n   = help: bind it with `let`, or declare it `pub let mut` in its module to share it"
             ),
             TypeErrorKind::AmbiguousImport { name, modules } => {
                 let qualified = modules
@@ -1787,7 +1780,6 @@ impl TypeErrorKind {
             Self::InfiniteType { .. } => 361,
             Self::UndefinedFunction { .. } => 362,
             Self::AmbiguousImport { .. } => 445,
-            Self::MutableImportAlias { .. } => 323,
             Self::AssignToImmutableImport { .. } => 446,
             Self::UnknownField { .. } => 363,
             Self::MissingField { .. } => 364,

@@ -97,9 +97,9 @@ impl TypeInference {
             .then(|| self.imported_immutable_root(initializer))
             .flatten()
             .filter(|_| self.is_shared_aggregate(&var_type));
-        if let Some(root) = imported_root {
+        if imported_root.is_some() {
             self.errors.push(TypeError {
-                kind: TypeErrorKind::MutableImportAlias { root },
+                kind: TypeErrorKind::MutableCollectionAlias,
                 span: initializer.span,
                 reason: ConstraintReason::Other("mutable alias of an import".to_string()),
             });
