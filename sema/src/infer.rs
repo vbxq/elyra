@@ -43,6 +43,15 @@ pub use aelys_common::naming::{
     MODULE_GLOBAL_PREFIX, is_module_scoped_global, module_scoped_global, unscoped_global_name,
 };
 
+// a vec grows through push and through any `mut` parameter it is handed, and a mutable array binding can be replaced from another function or closure
+pub(crate) fn length_is_fixed(ty: &InferType, mutable: bool) -> bool {
+    match ty {
+        InferType::FixedArray(_, _) => true,
+        InferType::Array(_) => !mutable,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod mangled_symbol_tests {
     use super::is_mangled_symbol;

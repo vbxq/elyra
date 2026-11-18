@@ -1748,10 +1748,13 @@ impl TypeInference {
                 .as_ref()
                 .map(|annotation| self.type_from_annotation(annotation))
                 .unwrap_or_else(|| self.global_initializer_type(initializer));
-            let known_length = self.constant_collection_length(initializer).or(match &ty {
-                InferType::FixedArray(_, length) => Some(*length),
-                _ => None,
-            });
+            let known_length = self
+                .constant_collection_length(initializer)
+                .or(match &ty {
+                    InferType::FixedArray(_, length) => Some(*length),
+                    _ => None,
+                })
+                .filter(|_| crate::infer::length_is_fixed(&ty, *mutable));
             if type_annotation.is_some() && ty.contains_dynamic() {
                 self.env.define_explicit_dynamic_local(name.clone(), ty);
             } else if let Some(length) = known_length {
