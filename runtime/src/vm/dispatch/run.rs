@@ -134,6 +134,7 @@ impl VM {
 
             let instr = unsafe { *bytecode_ptr.add(ip) };
             ip += 1;
+            self.frames[current_frame_idx].ip = ip;
 
             let opcode_byte = u8::try_from(instr >> 24).expect("opcode occupies one byte");
             if REPORT {
