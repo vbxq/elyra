@@ -74,7 +74,7 @@ fn parse(line: string) -> Result<Cmd, string> {
         "light" => Ok(Cmd::Light),
         "read" => Ok(Cmd::Read),
         "look" | "l" => Ok(Cmd::Look),
-        "wait" => match convert::parse_int(arg) {
+        "wait" => match arg.to_int() {
             Some(n) if n > 0 => Ok(Cmd::Wait(n)),
             Some(_) => Err("wait must be positive"),
             None => Ok(Cmd::Wait(1)),
@@ -142,7 +142,7 @@ impl Game {
         let mut found = -1
         let pile = self.floor[here]
         for i in 0..pile.len() {
-            if found < 0 and kind(pile[i]) == name { found = i }
+            if found < 0 && kind(pile[i]) == name { found = i }
         }
         if found < 0 { return "no {name} here" }
         let it = self.floor[here].remove(found)

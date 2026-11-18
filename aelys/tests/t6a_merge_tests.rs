@@ -197,7 +197,7 @@ pub let early = read_later()
 pub let later = 7
 ",
     );
-    let main = write(&dir, "main.aelys", "needs m\nm::early\n");
+    let main = write(&dir, "main.aelys", "use m\nm::early\n");
     let error = run_file(&main).expect_err("the module reads `later` before it is set");
     let text = error.to_string();
     assert!(text.contains(&format!("global `later` {UNINIT}")), "{text}");
@@ -394,7 +394,7 @@ pub fn bump(n: int) {
     let main = write(
         &dir,
         "main.aelys",
-        "needs cnt
+        "use cnt
 fn go() -> int {
     let mut s = 0
     for k in 0..10 {

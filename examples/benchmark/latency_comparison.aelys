@@ -1,6 +1,5 @@
-needs std::io
-needs std::time
-needs std::convert
+use std::io
+use std::time
 
 fn create_garbage() -> string {
     let a = "aaaaaaaaaa"
@@ -35,8 +34,8 @@ while i < 20000 {
     if p > max1 { max1 = p }
     i = i + 1
 }
-io::print("Total: " + convert::to_string(time::elapsed_ms(t1)) + "ms")
-io::print("Max pause: " + convert::to_string(max1) + "us")
+io::print("Total: " + time::elapsed_ms(t1).to_string() + "ms")
+io::print("Max pause: " + max1.to_string() + "us")
 
 io::print("")
 io::print("=== @no_gc version ===")
@@ -51,5 +50,5 @@ while i < 5000 {
     if p > max2 { max2 = p }
     i = i + 1
 }
-io::print("Total: " + convert::to_string(time::elapsed_ms(t2)) + "ms")
-io::print("Max pause: " + convert::to_string(max2) + "us")
+io::print("Total: " + time::elapsed_ms(t2).to_string() + "ms")
+io::print("Max pause: " + max2.to_string() + "us")

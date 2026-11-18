@@ -235,7 +235,7 @@ fn inline_returning_float() {
 fn inline_with_bool() {
     let src = r#"
         @inline
-        fn negate(b: bool) -> bool { not b }
+        fn negate(b: bool) -> bool { !b }
         negate(true)
     "#;
     assert_eq!(

@@ -1,5 +1,4 @@
-needs std::io
-needs std::convert
+use std::io
 
 fn stack_demo() {
     let mut stack = vec![]
@@ -8,14 +7,14 @@ fn stack_demo() {
     stack.push(10)
     stack.push(20)
     stack.push(30)
-    io::print("Stack size: " + convert::to_string(stack.len()))
+    io::print("Stack size: " + stack.len().to_string())
 
     io::print("Pop all:")
     while stack.len() > 0 {
         let val = stack.pop().unwrap_or(0)
-        io::print("  Popped: " + convert::to_string(val))
+        io::print("  Popped: " + val.to_string())
     }
-    io::print("Stack size: " + convert::to_string(stack.len()))
+    io::print("Stack size: " + stack.len().to_string())
 }
 
 stack_demo()

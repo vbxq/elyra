@@ -1,8 +1,8 @@
 // should handle stackoverflow
 // crashes if everything is good
 
-needs std.io
-needs std.convert
+use std.io
+use std.convert
 
 fn recurse(n: int) -> int {
     if n <= 0 {

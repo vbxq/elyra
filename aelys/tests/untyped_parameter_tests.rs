@@ -33,7 +33,7 @@ fn count_frequency(data, num_bins: int) {
     }
     for i in 0..data.len() {
         let bin_idx = data[i]
-        if bin_idx >= 0 and bin_idx < num_bins {
+        if bin_idx >= 0 && bin_idx < num_bins {
             bins[bin_idx] = bins[bin_idx] + 1
         }
     }

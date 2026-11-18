@@ -40,8 +40,8 @@ impl<T: Prio> BinHeap<T> {
             let l = 2 * i + 1
             let r = l + 1
             let mut best = i
-            if l < n and self.data[l].before(self.data[best]) { best = l }
-            if r < n and self.data[r].before(self.data[best]) { best = r }
+            if l < n && self.data[l].before(self.data[best]) { best = l }
+            if r < n && self.data[r].before(self.data[best]) { best = r }
             if best == i { break }
             self.data.swap(i, best)
             self.swaps++
@@ -152,7 +152,7 @@ q.put(Event::Alarm { at: 33, msg: "bed" })
 let mut processed = 0
 let mut ticks = 0
 let mut trace: Vec<string> = vec![]
-'run: while not q.empty() {
+'run: while !q.empty() {
     let ev = match q.take() { Some(e) => e, None => break }
     processed++
     match ev {

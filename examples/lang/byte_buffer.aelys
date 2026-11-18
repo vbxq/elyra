@@ -1,6 +1,5 @@
-needs std::io
-needs std::bytes
-needs std::convert
+use std::io
+use std::bytes
 
 @no_gc
 fn parse_packet() {
@@ -25,9 +24,9 @@ fn parse_packet() {
     let c2 = bytes::read_u8(packet, 7)
     let c3 = bytes::read_u8(packet, 8)
 
-    io::print("Magic: " + convert::to_string(magic))
-    io::print("Length: " + convert::to_string(len))
-    io::print("Data: " + convert::to_string(c1) + " " + convert::to_string(c2) + " " + convert::to_string(c3))
+    io::print("Magic: " + magic.to_string())
+    io::print("Length: " + len.to_string())
+    io::print("Data: " + c1.to_string() + " " + c2.to_string() + " " + c3.to_string())
 
     bytes::free(packet)
 }

@@ -1,12 +1,11 @@
-needs std::io
-needs std::bytes
-needs std::time
-needs std::sys
-needs std::convert
+use std::io
+use std::bytes
+use std::time
+use std::sys
 
 let W = 60
 let H = 30
-let ESC = convert::chr(27)
+let ESC = (27 as char).to_string()
 
 @no_gc
 fn run() {
@@ -34,7 +33,7 @@ fn run() {
 
     for gen in 0..300 {
         io::print_inline(ESC + "[H")
-        io::print_inline(ESC + "[97mGen " + convert::to_string(gen) + ESC + "[0m")
+        io::print_inline(ESC + "[97mGen " + gen.to_string() + ESC + "[0m")
         io::print("")
 
         for y in 0..H {
@@ -55,7 +54,7 @@ fn run() {
                 let mut n = 0
                 for dy in -1..2 {
                     for dx in -1..2 {
-                        if dx != 0 or dy != 0 {
+                        if dx != 0 || dy != 0 {
                             let nx = (x + dx + W) % W
                             let ny = (y + dy + H) % H
                             n = n + bytes::read_u8(grid, ny * W + nx)
@@ -65,10 +64,10 @@ fn run() {
 
                 let alive = bytes::read_u8(grid, y * W + x)
                 let mut new_state = 0
-                if alive == 1 and (n == 2 or n == 3) {
+                if alive == 1 && (n == 2 || n == 3) {
                     new_state = 1
                 }
-                if alive == 0 and n == 3 {
+                if alive == 0 && n == 3 {
                     new_state = 1
                 }
                 bytes::write_u8(next, y * W + x, new_state)

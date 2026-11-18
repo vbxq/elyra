@@ -483,8 +483,7 @@ impl G {
 }
 ";
     std::fs::write(dir.path().join("holder.aelys"), module).expect("the module is written");
-    let main = "\
-needs holder
+    let main = "use holder
 
 fn probe() -> int {
     let g = G { n: 7 }

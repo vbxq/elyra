@@ -164,7 +164,7 @@ fn string_foreach_with_conditional() {
     let code = r#"
 let mut count = 0
 for c in "aAbBcC" {
-    if c == 'a' or c == 'b' or c == 'c' {
+    if c == 'a' || c == 'b' || c == 'c' {
         count++
     }
 }

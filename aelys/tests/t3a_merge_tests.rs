@@ -282,7 +282,7 @@ pub fn first<T>(v: Vec<T>) -> T { v[0] }
 fn imported_sized_constants_and_generic_templates_keep_the_width() {
     let value = run_module_int(
         &[("bits.aelys", BITS)],
-        r#"needs bits
+        r#"use bits
 let x: u32 = 0xFFFFFFF0
 let mut s: Stack<u8> = new_stack()
 s.push(200)

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 const KNOWN_FAILING: &[(&str, &str)] = &[
     (
         "examples/aelys-http-server/lib/router.aelys",
-        "E0401: a library fragment, `needs config` resolves next to the fragment and not to the server root",
+        "E0401: a library fragment, `use config` resolves next to the fragment and not to the server root",
     ),
     (
         "examples/doom/game_sdl.aelys",

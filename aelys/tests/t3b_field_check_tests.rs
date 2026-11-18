@@ -25,7 +25,7 @@ fn timings(source: &str) -> (i64, i64) {
 
 fn assert_constant_time(field: &str, build: &str, use_site: &str) {
     let source = format!(
-        "needs std::time as time\nstruct H {{ f: {field}, n: int }}\nenum E {{ Holds({field}) }}\n{build}\nlet big = make(200000)\nlet small = make(1)\nlet mut h = H {{ f: make(1), n: 0 }}\nfn spin(x: {field}, rounds: int, mut h: H) -> int {{\n    let mut total = 0\n    for i in 0..rounds {{\n        {use_site}\n    }}\n    total\n}}\nlet t0 = time::now_ms()\nlet a = spin(big, 60, h)\nlet t1 = time::now_ms()\nlet b = spin(small, 60, h)\nlet t2 = time::now_ms()\n\"{{t1 - t0}} {{t2 - t1}}\"\n"
+        "use std::time as time\nstruct H {{ f: {field}, n: int }}\nenum E {{ Holds({field}) }}\n{build}\nlet big = make(200000)\nlet small = make(1)\nlet mut h = H {{ f: make(1), n: 0 }}\nfn spin(x: {field}, rounds: int, mut h: H) -> int {{\n    let mut total = 0\n    for i in 0..rounds {{\n        {use_site}\n    }}\n    total\n}}\nlet t0 = time::now_ms()\nlet a = spin(big, 60, h)\nlet t1 = time::now_ms()\nlet b = spin(small, 60, h)\nlet t2 = time::now_ms()\n\"{{t1 - t0}} {{t2 - t1}}\"\n"
     );
     let (big, small) = timings(&source);
     assert!(

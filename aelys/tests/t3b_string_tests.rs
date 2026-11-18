@@ -91,7 +91,7 @@ for i in 0..3000 {
     s += "ab"
     if i % 1000 == 0 { kept.push(s) }
 }
-kept[0] == "ab" and kept[1].len() == 2002 and kept[2].len() == 4002 and s.len() == 6000
+kept[0] == "ab" && kept[1].len() == 2002 && kept[2].len() == 4002 && s.len() == 6000
 "#,
         true,
     );

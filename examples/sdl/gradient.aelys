@@ -1,7 +1,7 @@
 // build the module and copy it here as sdl.so first, see docs/native-modules.md
-needs std::bytes as bytes
-needs std::sys as sys
-needs sdl
+use std::bytes as bytes
+use std::sys as sys
+use sdl
 
 let W = 320
 let H = 200
@@ -9,7 +9,7 @@ let FRAME_NS = 16666667
 
 fn frame_count() -> int {
     match sys::arg(0) {
-        Some(text) => match convert::parse_int(text) {
+        Some(text) => match text.to_int() {
             Some(n) => n,
             None => 600,
         },
@@ -52,7 +52,7 @@ let escape = sdl::scancode("Escape")
 let start = sdl::now_ns()
 let mut shown = 0
 let mut quit = false
-while shown < frames and not quit {
+while shown < frames && !quit {
     paint_palette(palette, shown)
     match sdl::present_indexed(pixels, palette) {
         Ok(_) => (),
@@ -64,7 +64,7 @@ while shown < frames and not quit {
     shown += 1
     let mut event = sdl::poll()
     while event != 0 {
-        if event == 1 or (event == 2 and sdl::event_key() == escape) {
+        if event == 1 || (event == 2 && sdl::event_key() == escape) {
             quit = true
         }
         event = sdl::poll()

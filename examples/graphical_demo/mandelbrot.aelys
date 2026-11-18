@@ -1,15 +1,14 @@
-needs std::io
-needs std::bytes
-needs std::time
-needs std::math
-needs std::convert
+use std::io
+use std::bytes
+use std::time
+use std::math
 
 let W = 160
 let H = 90
 let ROWS = H / 2
 let MAX_ITER = 80
-let ESC = convert::chr(27)
-let HALF = convert::chr(9600)
+let ESC = (27 as char).to_string()
+let HALF = (9600 as char).to_string()
 
 fn run() {
     let fb = bytes::alloc(W * H)
@@ -48,18 +47,18 @@ fn run() {
     let mut zoom = 0.4
 
     for frame in 0..250 {
-        let scale = 2.0 / zoom / convert::to_float(H)
-        let ox = cx - (convert::to_float(W) / 2.0) * scale
-        let oy = cy - (convert::to_float(H) / 2.0) * scale
+        let scale = 2.0 / zoom / (H as float)
+        let ox = cx - (W as float / 2.0) * scale
+        let oy = cy - (H as float / 2.0) * scale
 
         for py in 0..H {
-            let y0 = oy + convert::to_float(py) * scale
+            let y0 = oy + py as float * scale
             for px in 0..W {
-                let x0 = ox + convert::to_float(px) * scale
+                let x0 = ox + px as float * scale
                 let mut x = 0.0
                 let mut y = 0.0
                 let mut i = 0
-                while i < MAX_ITER and x * x + y * y <= 4.0 {
+                while i < MAX_ITER && x * x + y * y <= 4.0 {
                     let xt = x * x - y * y + x0
                     y = 2.0 * x * y + y0
                     x = xt
@@ -82,7 +81,7 @@ fn run() {
                 let r2 = bytes::read_u8(pal_r, i2)
                 let g2 = bytes::read_u8(pal_g, i2)
                 let b2 = bytes::read_u8(pal_b, i2)
-                print_inline(ESC + "[38;2;" + convert::to_string(r1) + ";" + convert::to_string(g1) + ";" + convert::to_string(b1) + ";48;2;" + convert::to_string(r2) + ";" + convert::to_string(g2) + ";" + convert::to_string(b2) + "m" + HALF)
+                print_inline(ESC + "[38;2;" + r1.to_string() + ";" + g1.to_string() + ";" + b1.to_string() + ";48;2;" + r2.to_string() + ";" + g2.to_string() + ";" + b2.to_string() + "m" + HALF)
             }
             print_inline(ESC + "[0m")
             println("")

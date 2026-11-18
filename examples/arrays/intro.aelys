@@ -1,28 +1,27 @@
-needs std::io
-needs std::convert
+use std::io
 
 io::print("=== Arrays ===")
 
 let arr = [1, 2, 3, 4, 5]
 io::print("Array: [1, 2, 3, 4, 5]")
-io::print("arr[0] = " + convert::to_string(arr[0]))
-io::print("arr[4] = " + convert::to_string(arr[4]))
-io::print("Length: " + convert::to_string(arr.len()))
+io::print("arr[0] = " + arr[0].to_string())
+io::print("arr[4] = " + arr[4].to_string())
+io::print("Length: " + arr.len().to_string())
 
 io::print("")
 io::print("=== Vectors ===")
 
 let mut v = vec![]
-io::print("Empty vec, length = " + convert::to_string(v.len()))
+io::print("Empty vec, length = " + v.len().to_string())
 
 v.push(10)
 v.push(20)
 v.push(30)
-io::print("After 3 pushes, length = " + convert::to_string(v.len()))
+io::print("After 3 pushes, length = " + v.len().to_string())
 
 let val = v.pop().unwrap_or(0)
-io::print("Popped: " + convert::to_string(val))
-io::print("After pop, length = " + convert::to_string(v.len()))
+io::print("Popped: " + val.to_string())
+io::print("After pop, length = " + v.len().to_string())
 
 io::print("")
 io::print("=== Iteration ===")
@@ -31,5 +30,5 @@ let mut numbers = [5, 10, 15, 20, 25]
 io::print("Doubling each element:")
 for i in 0..numbers.len() {
     numbers[i] = numbers[i] * 2
-    io::print("  " + convert::to_string(numbers[i]))
+    io::print("  " + numbers[i].to_string())
 }

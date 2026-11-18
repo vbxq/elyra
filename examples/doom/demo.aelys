@@ -1,7 +1,7 @@
-needs std::sys
-needs println from std::io
-needs wad
-needs play
+use std::sys
+use std::io::{println}
+use wad
+use play
 
 let mut wp_x: Vec<int> = vec![0]
 let mut wp_y: Vec<int> = vec![0]
@@ -168,8 +168,8 @@ pub fn advance() {
     let y = play::player_y()
     let dx = wp_x[cur] - x
     let dy = wp_y[cur] - y
-    let near = dx > -1048576 and dx < 1048576 and dy > -1048576 and dy < 1048576
-    if mode == 0 and near {
+    let near = dx > -1048576 && dx < 1048576 && dy > -1048576 && dy < 1048576
+    if mode == 0 && near {
         let f = wp_flag[cur]
         if f == 1 { mode = 1 }
         if f == 3 { mode = 3 }
@@ -189,7 +189,7 @@ pub fn advance() {
     if mode == 1 {
         let ahead = cur + 1
         let d = signed_angle(play::angle_to(wp_x[ahead] - x, wp_y[ahead] - y) - play::player_angle())
-        let pressed = d > -0x01000000 and d < 0x01000000
+        let pressed = d > -0x01000000 && d < 0x01000000
         play::tic(0, 0, turn_toward(d), pressed)
         if pressed {
             println("demo use at tic {play::level_time()} pos {x >> 16},{y >> 16} doors {play::door_count()} lifts {play::lift_count()}")
@@ -226,7 +226,7 @@ pub fn advance() {
     let ny = play::player_y()
     let ddx = nx - last_x
     let ddy = ny - last_y
-    if ddx > -524288 and ddx < 524288 and ddy > -524288 and ddy < 524288 and not holding {
+    if ddx > -524288 && ddx < 524288 && ddy > -524288 && ddy < 524288 && !holding {
         still++
         if still >= 70 {
             println("demo STUCK at tic {play::level_time()} pos {nx >> 16},{ny >> 16} waypoint {cur} target {wp_x[cur] >> 16},{wp_y[cur] >> 16}")

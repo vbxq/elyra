@@ -1,11 +1,10 @@
-needs std::bytes
-needs std::fs as fs
-needs std::convert as convert
-needs println from std::io
-needs std::time as time
-needs wad
-needs fixed
-needs gfx
+use std::bytes
+use std::fs as fs
+use std::io::{println}
+use std::time as time
+use wad
+use fixed
+use gfx
 
 let mut fb: Vec<int> = vec![0; 64000]
 let mut cmap_rows: Vec<Vec<int>> = vec![vec![0; 256]]
@@ -184,7 +183,7 @@ fn build_index(names: Vec<string>) -> Vec<int> {
     let mut slots: Vec<int> = vec![0; 4096]
     for i in 0..names.len() {
         let mut s = name_slot(names[i])
-        while slots[s] != 0 and names[slots[s] - 1] != names[i] {
+        while slots[s] != 0 && names[slots[s] - 1] != names[i] {
             s = (s + 1) % 4096
         }
         if slots[s] == 0 { slots[s] = i + 1 }
@@ -229,7 +228,7 @@ fn posts_from_mask(width: int, height: int, opaque: Vec<int>) -> Picture {
         while y < height {
             if opaque[base + y] != 0 {
                 let top = y
-                while y < height and opaque[base + y] != 0 { y++ }
+                while y < height && opaque[base + y] != 0 { y++ }
                 posts.push(top)
                 posts.push(y - top)
                 posts.push(8 + top)
@@ -256,13 +255,13 @@ fn build_texture(w: Wad, g: Graphics, tex: TextureDef) -> Picture {
         let patch = gfx::decode_patch(w, li)
         for x in 0..patch.width {
             let tx = pr.origin_x + x
-            if tx < 0 or tx >= width { continue }
+            if tx < 0 || tx >= width { continue }
             let col = tx * height
             for post in patch.columns[x] {
                 let y0 = pr.origin_y + post.top
                 for i in 0..post.length {
                     let ty = y0 + i
-                    if ty >= 0 and ty < height {
+                    if ty >= 0 && ty < height {
                         pix[256 + col + ty] = bytes::read_u8(w.buf, post.data + i)
                         opaque[col + ty] = 1
                     }
@@ -450,7 +449,7 @@ fn find_sprite_def(w: Wad, first: int, last: int, sprite: string, frame: int, mu
     let fchar = frame + 65
     for li in (first + 1)..last {
         let name = w.lumps[li].name
-        if name.len() < 6 or name.substr(0, 4) != sprite { continue }
+        if name.len() < 6 || name.substr(0, 4) != sprite { continue }
         if name.byte_at(4) == fchar {
             let rot = name.byte_at(5) - 48
             let pic = sprite_picture(w, li, lump_pic)
@@ -458,17 +457,17 @@ fn find_sprite_def(w: Wad, first: int, last: int, sprite: string, frame: int, mu
                 rotate = false
                 for r in 0..8 { pics[r] = pic; flips[r] = 0 }
             } else {
-                if rot >= 1 and rot <= 8 { pics[rot - 1] = pic; flips[rot - 1] = 0 }
+                if rot >= 1 && rot <= 8 { pics[rot - 1] = pic; flips[rot - 1] = 0 }
             }
         }
-        if name.len() >= 8 and name.byte_at(6) == fchar {
+        if name.len() >= 8 && name.byte_at(6) == fchar {
             let rot = name.byte_at(7) - 48
             let pic = sprite_picture(w, li, lump_pic)
             if rot == 0 {
                 rotate = false
                 for r in 0..8 { pics[r] = pic; flips[r] = 1 }
             } else {
-                if rot >= 1 and rot <= 8 { pics[rot - 1] = pic; flips[rot - 1] = 1 }
+                if rot >= 1 && rot <= 8 { pics[rot - 1] = pic; flips[rot - 1] = 1 }
             }
         }
     }
@@ -618,8 +617,8 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
         rm_light.push(s.light)
         let fresh: Vec<int> = vec![]
         sector_actors.push(fresh)
-        if fp >= 0 and flat_pix[fp].len() == 0 { flat_pix[fp] = gfx::flat_pixels(w, g.flats[fp]); nflat++ }
-        if cp >= 0 and flat_pix[cp].len() == 0 { flat_pix[cp] = gfx::flat_pixels(w, g.flats[cp]); nflat++ }
+        if fp >= 0 && flat_pix[fp].len() == 0 { flat_pix[fp] = gfx::flat_pixels(w, g.flats[fp]); nflat++ }
+        if cp >= 0 && flat_pix[cp].len() == 0 { flat_pix[cp] = gfx::flat_pixels(w, g.flats[cp]); nflat++ }
     }
     let sky = tex_pics[sky_tex]
     sky_lit = vec![]
@@ -639,7 +638,7 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
         for j in 0..128 {
             let level = zlight[light * 128 + j]
             if rm_floorpic[s] >= 0 { let _ = lit_flat(rm_floorpic[s] * 32 + level) }
-            if rm_ceilpic[s] >= 0 and rm_ceilpic[s] != sky_flat { let _ = lit_flat(rm_ceilpic[s] * 32 + level) }
+            if rm_ceilpic[s] >= 0 && rm_ceilpic[s] != sky_flat { let _ = lit_flat(rm_ceilpic[s] * 32 + level) }
         }
     }
     sg_x1 = vec![]
@@ -665,7 +664,7 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
         let sdi = if s.direction == 0 { ld.front } else { ld.back }
         let other = if s.direction == 0 { ld.back } else { ld.front }
         let mut back = -1
-        if (ld.flags & 4) != 0 and other >= 0 { back = sides[other].sector }
+        if (ld.flags & 4) != 0 && other >= 0 { back = sides[other].sector }
         let v1 = lv.vertexes[s.v1]
         let v2 = lv.vertexes[s.v2]
         let side = sides[sdi]
@@ -720,11 +719,11 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
     actors = vec![]
     skipped_things = 0
     for t in lv.things {
-        if t.kind >= 1 and t.kind <= 4 { continue }
+        if t.kind >= 1 && t.kind <= 4 { continue }
         if t.kind == 11 { continue }
         if (t.flags & 16) != 0 { continue }
         if (t.flags & skill_bit) == 0 { continue }
-        if no_monsters and is_monster(t.kind) { continue }
+        if no_monsters && is_monster(t.kind) { continue }
         let kind = t.kind & 4095
         if kind_def[kind] == -2 {
             let k = thing_kind(t.kind)
@@ -755,7 +754,7 @@ pub fn set_skill_bit(b: int) { skill_bit = b }
 pub fn set_no_monsters(on: bool) { no_monsters = on }
 
 fn is_monster(kind: int) -> bool {
-    kind == 3004 or kind == 9 or kind == 3001 or kind == 3002 or kind == 58 or kind == 3006 or kind == 3005 or kind == 3003 or kind == 16 or kind == 7
+    kind == 3004 || kind == 9 || kind == 3001 || kind == 3002 || kind == 58 || kind == 3006 || kind == 3005 || kind == 3003 || kind == 16 || kind == 7
 }
 
 pub fn set_sector_ceiling(s: int, h: int) { rm_ceil[s] = h }
@@ -769,7 +768,7 @@ pub fn floor_height_at(x: int, y: int) -> int {
 fn point_to_angle(px: int, py: int) -> int {
     let mut x = px - viewx
     let mut y = py - viewy
-    if x == 0 and y == 0 { return 0 }
+    if x == 0 && y == 0 { return 0 }
     let mut base = 0
     let mut neg = false
     let mut num = y
@@ -883,7 +882,7 @@ fn find_plane(height: int, pic: int, light: int) -> int {
     let mut slot = ((h >> 16) * 7 + pic * 13 + l * 3) & 255
     while hs[slot] == fno {
         let i = hpl[slot]
-        if ph[i] == h and pp[i] == pic and pli[i] == l { return i }
+        if ph[i] == h && pp[i] == pic && pli[i] == l { return i }
         slot = (slot + 1) & 255
     }
     if num_planes >= 128 { return -1 }
@@ -1040,12 +1039,12 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
         worldhigh = bceil - viewz
         worldlow = bfloor - viewz
         let bceilpic = rm_ceilpic[back]
-        if fceilpic == sky_flat and bceilpic == sky_flat { worldtop = worldhigh }
+        if fceilpic == sky_flat && bceilpic == sky_flat { worldtop = worldhigh }
         let flight = rm_light[front]
         let blight = rm_light[back]
-        markfloor = worldlow != worldbottom or rm_floorpic[back] != rm_floorpic[front] or blight != flight
-        markceiling = worldhigh != worldtop or bceilpic != fceilpic or blight != flight
-        if bceil <= ffloor or bfloor >= fceil {
+        markfloor = worldlow != worldbottom || rm_floorpic[back] != rm_floorpic[front] || blight != flight
+        markceiling = worldhigh != worldtop || bceilpic != fceilpic || blight != flight
+        if bceil <= ffloor || bfloor >= fceil {
             markceiling = true
             markfloor = true
         }
@@ -1083,7 +1082,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
         bsil = 2147483647
         tsil = -2147483648
     }
-    let segtextured = midtex != 0 or toptex != 0 or bottomtex != 0 or masked
+    let segtextured = midtex != 0 || toptex != 0 || bottomtex != 0 || masked
     let mut offset = 0
     let mut centerangle = 0
     let mut lightrow = 0
@@ -1102,7 +1101,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
         lightrow = lightnum * 48
     }
     if ffloor >= viewz { markfloor = false }
-    if fceil <= viewz and fceilpic != sky_flat { markceiling = false }
+    if fceil <= viewz && fceilpic != sky_flat { markceiling = false }
     let mut floorplane = st[RS_FLOOR]
     let mut ceilingplane = st[RS_CEIL]
     if floorplane < 0 { markfloor = false }
@@ -1265,29 +1264,29 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
     }
     if phases_on { ph_walls += time::elapsed_us(phase_clock) - tw }
     let shift = start - lastop
-    if ((sil & 2) != 0 or masked) and topclip == -1000000 {
+    if ((sil & 2) != 0 || masked) && topclip == -1000000 {
         for o in lastop..(lastop + stopx - start) { opn[o] = cclip[o + shift] }
         topclip = lastop - start
         lastop += stopx - start
     }
-    if ((sil & 1) != 0 or masked) and botclip == -1000000 {
+    if ((sil & 1) != 0 || masked) && botclip == -1000000 {
         let shift2 = start - lastop
         for o in lastop..(lastop + stopx - start) { opn[o] = fclip[o + shift2] }
         botclip = lastop - start
         lastop += stopx - start
     }
-    if masked and (sil & 2) == 0 {
+    if masked && (sil & 2) == 0 {
         sil = sil | 2
         tsil = -2147483648
     }
-    if masked and (sil & 1) == 0 {
+    if masked && (sil & 1) == 0 {
         sil = sil | 1
         bsil = 2147483647
     }
     st[RS_DS] = d + 1
     st[RS_OPEN] = lastop
     ds_x1[d] = start
-    ds_cx1[d] = if sil == 0 and masked_base == -1000000 { 1000000 } else { start }
+    ds_cx1[d] = if sil == 0 && masked_base == -1000000 { 1000000 } else { start }
     ds_x2[d] = stop
     ds_scale1[d] = scale1
     ds_scale2[d] = scale2
@@ -1333,7 +1332,7 @@ fn clip_solid(si: int, front: int, rw: int, first: int, last: int) {
             break
         }
     }
-    if not crunch {
+    if !crunch {
         store_wall_range(si, front, rw, ss_last[next] + 1, last)
         ss_last[start] = last
     }
@@ -1422,15 +1421,15 @@ fn add_line(si: int, front: int) {
     let ffloor = rm_floor[front]
     let bceil = rm_ceil[back]
     let bfloor = rm_floor[back]
-    if bceil <= ffloor or bfloor >= fceil {
+    if bceil <= ffloor || bfloor >= fceil {
         clip_solid(si, front, rw, x1, x2 - 1)
         return
     }
-    if bceil != fceil or bfloor != ffloor {
+    if bceil != fceil || bfloor != ffloor {
         clip_pass(si, front, rw, x1, x2 - 1)
         return
     }
-    if rm_ceilpic[back] == rm_ceilpic[front] and rm_floorpic[back] == rm_floorpic[front] and rm_light[back] == rm_light[front] and sg_mid[si] == 0 {
+    if rm_ceilpic[back] == rm_ceilpic[front] && rm_floorpic[back] == rm_floorpic[front] && rm_light[back] == rm_light[front] && sg_mid[si] == 0 {
         return
     }
     clip_pass(si, front, rw, x1, x2 - 1)
@@ -1485,7 +1484,7 @@ fn check_bbox(b: int) -> bool {
     sx2--
     let mut start = 0
     while ss_last[start] < sx2 { start++ }
-    if sx1 >= ss_first[start] and sx2 <= ss_last[start] { return false }
+    if sx1 >= ss_first[start] && sx2 <= ss_last[start] { return false }
     true
 }
 
@@ -1571,7 +1570,7 @@ fn render_subsector(num: int) {
     } else {
         st[RS_FLOOR] = -1
     }
-    if ceil > viewz or ceilpic == sky_flat {
+    if ceil > viewz || ceilpic == sky_flat {
         st[RS_CEIL] = find_plane(ceil, ceilpic, light)
     } else {
         st[RS_CEIL] = -1
@@ -1678,11 +1677,11 @@ fn draw_planes() {
                 pv = v
                 while true {
                     let mut y = 0
-                    if t1 < t2 and t1 <= b1 {
+                    if t1 < t2 && t1 <= b1 {
                         y = t1
                         t1++
                     } else {
-                        if b1 > b2 and b1 >= t1 {
+                        if b1 > b2 && b1 >= t1 {
                             y = b1
                             b1--
                         } else {
@@ -1723,11 +1722,11 @@ fn draw_planes() {
                         pos = (pos + step) & 0x3FFFFF3FFFFF
                     }
                 }
-                while t2 < t1 and t2 <= b2 {
+                while t2 < t1 && t2 <= b2 {
                     starts[t2] = x
                     t2++
                 }
-                while b2 > b1 and b2 >= t2 {
+                while b2 > b1 && b2 >= t2 {
                     starts[b2] = x
                     b2--
                 }
@@ -1853,7 +1852,7 @@ fn draw_sprite(v: int) {
     while d >= 0 {
         let dx1 = cx1[d]
         let dx2 = dsx2[d]
-        if dx1 > sx2 or dx2 < sx1 {
+        if dx1 > sx2 || dx2 < sx1 {
             d--
             continue
         }
@@ -1865,7 +1864,7 @@ fn draw_sprite(v: int) {
             lowscale = scale
             scale = ds_scale1[d]
         }
-        if scale < vscale or (lowscale < vscale and seg_side(vs_gx[v], vs_gy[v], ds_seg[d]) == 0) {
+        if scale < vscale || (lowscale < vscale && seg_side(vs_gx[v], vs_gy[v], ds_seg[d]) == 0) {
             if ds_masked[d] != -1000000 { render_masked_seg(d, r1, r2) }
             d--
             continue
@@ -1906,7 +1905,7 @@ fn draw_sprite(v: int) {
         if fclip == -2 { fclip = 200 }
         if cclip == -2 { cclip = -1 }
         let col = frac >> 16
-        if col >= 0 and col < pw {
+        if col >= 0 && col < pw {
             let mc = mcols[col]
             let mut p = colpost[col]
             let mut topdelta = posts[p]
@@ -1937,7 +1936,7 @@ fn draw_masked() {
         let cur = vs_order[i]
         let s = vs_scale[cur]
         let mut j = i - 1
-        while j >= 0 and vs_scale[vs_order[j]] > s {
+        while j >= 0 && vs_scale[vs_order[j]] > s {
             vs_order[j + 1] = vs_order[j]
             j--
         }
@@ -1995,9 +1994,9 @@ pub fn render_frame(view_x: int, view_y: int, view_z: int, angle: int) {
     let t3 = time::elapsed_us(phase_clock)
     ph_bsp = t1 - t0 - ph_walls
     ph_planes = t2 - t1
-    time_bsp += convert::to_float(t1 - t0) / 1000.0
-    time_planes += convert::to_float(t2 - t1) / 1000.0
-    time_masked += convert::to_float(t3 - t2) / 1000.0
+    time_bsp += (t1 - t0) as float / 1000.0
+    time_planes += (t2 - t1) as float / 1000.0
+    time_masked += (t3 - t2) as float / 1000.0
 }
 
 pub fn set_phase_timers(on: bool) { phases_on = on }

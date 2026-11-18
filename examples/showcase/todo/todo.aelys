@@ -1,5 +1,5 @@
-needs std::fs
-needs std::sys
+use std::fs
+use std::sys
 
 const ID_WIDTH = 3
 const PRIO_WIDTH = 4
@@ -45,7 +45,7 @@ impl Display for TodoError {
 }
 
 fn number(what: string, word: string) -> Result<int, TodoError> {
-    convert::parse_int(word).ok_or(TodoError::NotANumber { what: what, got: word })
+    word.to_int().ok_or(TodoError::NotANumber { what: what, got: word })
 }
 
 fn task_id(command: string, words: Vec<string>) -> Result<int, TodoError> {
@@ -201,7 +201,7 @@ fn run(path: string) -> Result<int, string> {
     let lines = text.lines()
     for n in 0..lines.len() {
         let line = lines[n].trim()
-        if line.is_empty() or line.starts_with("#") {
+        if line.is_empty() || line.starts_with("#") {
             continue
         }
         if let Err(e) = project.run_line(line) {

@@ -320,7 +320,7 @@ fn test_and_short_circuit() {
     // false and X should return false without evaluating X
     let result = run_aelys(
         r#"
-let r = false and true
+let r = false && true
 r
 "#,
     );
@@ -332,7 +332,7 @@ fn test_or_short_circuit() {
     // true or X should return true without evaluating X
     let result = run_aelys(
         r#"
-let r = true or false
+let r = true || false
 r
 "#,
     );
@@ -341,13 +341,13 @@ r
 
 #[test]
 fn test_complex_boolean() {
-    let result = run_aelys("true and false or true");
+    let result = run_aelys("true && false || true");
     assert_eq!(result.as_bool(), Some(true));
 }
 
 #[test]
 fn test_grouped_boolean() {
-    let result = run_aelys("(true or false) and (false or true)");
+    let result = run_aelys("(true || false) && (false || true)");
     assert_eq!(result.as_bool(), Some(true));
 }
 
@@ -525,7 +525,7 @@ fn test_double_negation() {
 
 #[test]
 fn test_not_not() {
-    let result = run_aelys("not not true");
+    let result = run_aelys("!!true");
     assert_eq!(result.as_bool(), Some(true));
 }
 

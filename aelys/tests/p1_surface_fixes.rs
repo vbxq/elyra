@@ -493,7 +493,6 @@ fn the_cli_prints_nothing_for_a_script_ending_in_an_assignment_or_a_unit_value()
 fn aggregates_of_displayable_elements_render_in_debug_form_in_every_position() {
     assert_string_everywhere(
         r#"
-needs std::convert
 fn show<T: Display>(x: T) -> string { "<{x}>" }
 let v = vec![1, 2, 3]
 let a = [4, 5]
@@ -517,7 +516,7 @@ let b: u8 = 200
 let bytes = vec![b]
 let empty: Vec<int> = vec![]
 let mut out = "{v}|{a}|{s}|{t}|{t3}|{some}|{none}|{ss}|{ok}|{err}|{nested}|{chars}|{m}|{im}|{deep}|{bytes}|{empty}"
-out = out + "|" + show(vec![1]) + show((1, 2)) + convert::to_string(vec![true]) + __tostring(Some(1.5)) + [(1, 'z')].to_string()
+out = out + "|" + show(vec![1]) + show((1, 2)) + (vec![true]).to_string() + __tostring(Some(1.5)) + [(1, 'z')].to_string()
 let word = "s"
 let ch = 'c'
 out + "|{word}|{ch}"

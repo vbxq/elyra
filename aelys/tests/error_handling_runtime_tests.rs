@@ -190,7 +190,7 @@ fn unwrap_and_expect_fail_with_structured_messages() {
 #[test]
 fn native_null_is_normalized_to_option_none() {
     assert_aelys_int(
-        "needs std::convert\nlet parsed: Option<int> = convert::parse_int(\"not an integer\")\nmatch parsed { Some(_) => 0, None => 1 }",
+        "let parsed: Option<int> = \"not an integer\".to_int()\nmatch parsed { Some(_) => 0, None => 1 }",
         1,
     );
 }
@@ -198,7 +198,7 @@ fn native_null_is_normalized_to_option_none() {
 #[test]
 fn successful_native_option_is_wrapped_in_some() {
     assert_aelys_int(
-        "needs std::convert\nmatch convert::parse_int(\"42\") { Some(value) => value, None => 0 }",
+        "match \"42\".to_int() { Some(value) => value, None => 0 }",
         42,
     );
 }

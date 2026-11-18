@@ -1,11 +1,10 @@
-needs std::sys
-needs std::fs as fs
-needs std::time as time
-needs std::convert as convert
-needs println from std::io
-needs render
-needs demo
-needs engine
+use std::sys
+use std::fs as fs
+use std::time as time
+use std::io::{println}
+use render
+use demo
+use engine
 
 let gate_tics = 2100
 let tic_us = 1000000 / 35
@@ -45,7 +44,7 @@ fn rss_kb() -> int {
         Ok(text) => {
             let fields = text.split(" ")
             if fields.len() < 2 { return -1 }
-            match convert::parse_int(fields[1]) {
+            match fields[1].to_int() {
                 Some(pages) => pages * 4,
                 None => -1,
             }
@@ -60,11 +59,11 @@ fn sched_wait_us() -> int {
         Ok(text) => {
             let fields = text.split(" ")
             if fields.len() < 2 { -1 } else {
-                match convert::parse_int(fields[0]) {
+                match fields[0].to_int() {
                     Some(ns) => oncpu_us = ns / 1000,
                     None => oncpu_us = -1,
                 }
-                match convert::parse_int(fields[1]) {
+                match fields[1].to_int() {
                     Some(ns) => ns / 1000,
                     None => -1,
                 }
@@ -127,7 +126,7 @@ fn cause(i: int, ds50: int, vs50: int, pl50: int) -> string {
     if f_ntics[i] > 1 { parts.push("{f_ntics[i]} tics in one frame") }
     if f_logic[i] * 4 >= total { parts.push("tic logic {ms(f_logic[i])} ms") }
     if f_ds[i] * 2 >= ds50 * 3 { parts.push("drawsegs {f_ds[i]} vs p50 {ds50}") }
-    if f_vs[i] * 2 >= vs50 * 3 and f_vs[i] > 4 { parts.push("sprites {f_vs[i]} vs p50 {vs50}") }
+    if f_vs[i] * 2 >= vs50 * 3 && f_vs[i] > 4 { parts.push("sprites {f_vs[i]} vs p50 {vs50}") }
     if f_pl[i] * 2 >= pl50 * 3 { parts.push("planes {f_pl[i]} vs p50 {pl50}") }
     if f_wait[i] * 5 >= total { parts.push("preempted {ms(f_wait[i])} ms (runnable, waiting for a cpu)") }
     let rest = total - f_logic[i] - f_render[i]
@@ -166,7 +165,7 @@ fn report(variant: string, realtime: bool, wall_us: int) {
         if f_total[i] > 16667 { over++ }
     }
     let mode = if realtime { "realtime" } else { "maxspeed" }
-    println("gate run variant {variant} mode {mode} frames {n} tics {engine::tic_count()} wall_ms {ms(wall_us)} fps {convert::to_float(n) * 1000000.0 / convert::to_float(wall_us)}")
+    println("gate run variant {variant} mode {mode} frames {n} tics {engine::tic_count()} wall_ms {ms(wall_us)} fps {n as float * 1000000.0 / (wall_us as float)}")
     println("gate frame_ms p50 {ms(pct(s, 50))} p99 {ms(pct(s, 99))} max {ms(s[n - 1])} over_16.7 {over}")
     let mut cpu: Vec<int> = vec![]
     for i in 0..n { cpu.push(f_total[i] - f_wait[i]) }
@@ -185,7 +184,7 @@ fn report(variant: string, realtime: bool, wall_us: int) {
     let cut = order[if n > 5 { n - 5 } else { 0 }]
     let mut shown = 0
     for i in 0..n {
-        if f_total[i] >= cut and f_total[i] != f_total[worst] and shown < 4 {
+        if f_total[i] >= cut && f_total[i] != f_total[worst] && shown < 4 {
             println("gate spike {frame_line(i)} cause {cause(i, ds50, vs50, pl50)}")
             shown++
         }
@@ -255,7 +254,7 @@ pub fn run(present: fn() -> bool, variant: string) {
     sample(t0)
     let mut next_sample = 1000000
     let mut ok = true
-    while ok and engine::tic_count() < gate_tics and not demo::done() {
+    while ok && engine::tic_count() < gate_tics && !demo::done() {
         if realtime {
             let due = (now_us() - t0) / tic_us
             if engine::tic_count() >= due {
@@ -272,7 +271,7 @@ pub fn run(present: fn() -> bool, variant: string) {
         let tic0 = engine::tic_count()
         if realtime {
             let due = (start - t0) / tic_us
-            while engine::tic_count() < due and engine::tic_count() < gate_tics and not demo::done() { engine::run_tic() }
+            while engine::tic_count() < due && engine::tic_count() < gate_tics && !demo::done() { engine::run_tic() }
         } else {
             engine::run_tic()
         }

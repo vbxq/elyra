@@ -1,8 +1,7 @@
-needs std::convert as convert
-needs println from std::io
-needs wad
-needs fixed
-needs render
+use std::io::{println}
+use wad
+use fixed
+use render
 
 let mut l_x1: Vec<int> = vec![0]
 let mut l_y1: Vec<int> = vec![0]
@@ -163,7 +162,7 @@ pub fn angle_to(x: int, y: int) -> int {
     let mut den = x
     let mut ax = x
     let mut ay = y
-    if x == 0 and y == 0 { return 0 }
+    if x == 0 && y == 0 { return 0 }
     if ax >= 0 {
         if ay >= 0 {
             if ax <= ay {
@@ -218,7 +217,7 @@ pub fn angle_to(x: int, y: int) -> int {
 }
 
 fn is_monster(kind: int) -> bool {
-    kind == 3004 or kind == 9 or kind == 3001 or kind == 3002 or kind == 58 or kind == 3006 or kind == 3005 or kind == 3003 or kind == 16 or kind == 7
+    kind == 3004 || kind == 9 || kind == 3001 || kind == 3002 || kind == 58 || kind == 3006 || kind == 3005 || kind == 3003 || kind == 16 || kind == 7
 }
 
 fn solid_radius(kind: int) -> int {
@@ -369,14 +368,14 @@ fn setup_things(lv: Level) {
         }
         if (t.flags & 16) != 0 { continue }
         if (t.flags & skill_bit) == 0 { continue }
-        if no_monsters and is_monster(t.kind) { continue }
+        if no_monsters && is_monster(t.kind) { continue }
         let r = solid_radius(t.kind)
         if r == 0 { continue }
         let x = t.x << 16
         let y = t.y << 16
         let bx = (x - bm_ox) >> 23
         let by = (y - bm_oy) >> 23
-        if bx < 0 or by < 0 or bx >= bm_w or by >= bm_h { continue }
+        if bx < 0 || by < 0 || bx >= bm_w || by >= bm_h { continue }
         th_x.push(x)
         th_y.push(y)
         th_r.push(r << 16)
@@ -471,10 +470,10 @@ fn box_on_line_side(l: int) -> int {
 }
 
 fn check_line(l: int) -> bool {
-    if tm_right <= l_left[l] or tm_left >= l_right[l] or tm_top <= l_bottom[l] or tm_bottom >= l_top[l] { return true }
+    if tm_right <= l_left[l] || tm_left >= l_right[l] || tm_top <= l_bottom[l] || tm_bottom >= l_top[l] { return true }
     if box_on_line_side(l) != -1 { return true }
     let b = l_back[l]
-    if b < 0 or (l_flags[l] & 1) != 0 {
+    if b < 0 || (l_flags[l] & 1) != 0 {
         tm_blockline = l
         return false
     }
@@ -496,7 +495,7 @@ fn check_line(l: int) -> bool {
         tm_floorline = l
     }
     if lowfloor < tm_drop { tm_drop = lowfloor }
-    if l_special[l] != 0 and num_spec < 16 {
+    if l_special[l] != 0 && num_spec < 16 {
         spec_l[num_spec] = l
         num_spec++
     }
@@ -504,21 +503,21 @@ fn check_line(l: int) -> bool {
 }
 
 fn block_lines(bx: int, by: int) -> bool {
-    if bx < 0 or by < 0 or bx >= bm_w or by >= bm_h { return true }
+    if bx < 0 || by < 0 || bx >= bm_w || by >= bm_h { return true }
     let vc = validcount
     for l in bm_lists[by * bm_w + bx] {
         if l_valid[l] == vc { continue }
         l_valid[l] = vc
-        if not check_line(l) { return false }
+        if !check_line(l) { return false }
     }
     true
 }
 
 fn block_things(bx: int, by: int) -> bool {
-    if bx < 0 or by < 0 or bx >= bm_w or by >= bm_h { return true }
+    if bx < 0 || by < 0 || bx >= bm_w || by >= bm_h { return true }
     for t in th_blocks[by * bm_w + bx] {
         let bd = th_r[t] + 1048576
-        if iabs(th_x[t] - tm_x) < bd and iabs(th_y[t] - tm_y) < bd {
+        if iabs(th_x[t] - tm_x) < bd && iabs(th_y[t] - tm_y) < bd {
             tm_blockline = -1
             return false
         }
@@ -548,7 +547,7 @@ fn check_position(x: int, y: int) -> bool {
     let tyh = (tm_top - bm_oy + 2097152) >> 23
     for bx in txl..(txh + 1) {
         for by in tyl..(tyh + 1) {
-            if not block_things(bx, by) { return false }
+            if !block_things(bx, by) { return false }
         }
     }
     let xl = (tm_left - bm_ox) >> 23
@@ -557,7 +556,7 @@ fn check_position(x: int, y: int) -> bool {
     let yh = (tm_top - bm_oy) >> 23
     for bx in xl..(xh + 1) {
         for by in yl..(yh + 1) {
-            if not block_lines(bx, by) { return false }
+            if !block_lines(bx, by) { return false }
         }
     }
     true
@@ -569,7 +568,7 @@ fn fit_blockline() -> int {
 
 fn try_move(x: int, y: int, commit: bool) -> bool {
     moves_tried++
-    if not check_position(x, y) { return false }
+    if !check_position(x, y) { return false }
     if tm_ceil - tm_floor < 3670016 {
         tm_blockline = fit_blockline()
         return false
@@ -618,35 +617,35 @@ fn slide_move() {
         let _ = try_move(px + mx * lo / 32, py + my * lo / 32, true)
     }
     if bl >= 0 {
-        let ldx = convert::to_float(l_dx[bl] >> 8)
-        let ldy = convert::to_float(l_dy[bl] >> 8)
-        let rest = convert::to_float(32 - lo) / 32.0
-        let d = (convert::to_float(mx) * ldx + convert::to_float(my) * ldy) / (ldx * ldx + ldy * ldy) * rest
-        let nx = convert::to_int(ldx * d)
-        let ny = convert::to_int(ldy * d)
+        let ldx = (l_dx[bl] >> 8) as float
+        let ldy = (l_dy[bl] >> 8) as float
+        let rest = (32 - lo) as float / 32.0
+        let d = (mx as float * ldx + my as float * ldy) / (ldx * ldx + ldy * ldy) * rest
+        let nx = (ldx * d) as int
+        let ny = (ldy * d) as int
         pmomx = nx
         pmomy = ny
         if try_move(px + nx, py + ny, true) { return () }
         if try_move(px + nx / 2, py + ny / 2, true) { return () }
     }
-    if not try_move(px, py + my, true) {
+    if !try_move(px, py + my, true) {
         let _ = try_move(px + mx, py, true)
     }
     ()
 }
 
 fn xy_movement() {
-    if pmomx == 0 and pmomy == 0 { return () }
+    if pmomx == 0 && pmomy == 0 { return () }
     if pmomx > 1966080 { pmomx = 1966080 }
     if pmomx < -1966080 { pmomx = -1966080 }
     if pmomy > 1966080 { pmomy = 1966080 }
     if pmomy < -1966080 { pmomy = -1966080 }
     let mut xmove = pmomx
     let mut ymove = pmomy
-    while xmove != 0 or ymove != 0 {
+    while xmove != 0 || ymove != 0 {
         let mut tx = 0
         let mut ty = 0
-        if iabs(xmove) > 983040 or iabs(ymove) > 983040 {
+        if iabs(xmove) > 983040 || iabs(ymove) > 983040 {
             xmove = xmove / 2
             ymove = ymove / 2
             tx = px + xmove
@@ -657,14 +656,14 @@ fn xy_movement() {
             xmove = 0
             ymove = 0
         }
-        if not try_move(tx, ty, true) {
+        if !try_move(tx, ty, true) {
             slide_move()
             xmove = 0
             ymove = 0
         }
     }
     if pz > pfloorz { return () }
-    if pmomx > -4096 and pmomx < 4096 and pmomy > -4096 and pmomy < 4096 and cmd_fwd == 0 and cmd_side == 0 {
+    if pmomx > -4096 && pmomx < 4096 && pmomy > -4096 && pmomy < 4096 && cmd_fwd == 0 && cmd_side == 0 {
         pmomx = 0
         pmomy = 0
     } else {
@@ -739,7 +738,7 @@ fn lowest_ceiling_around(sec: int) -> int {
         let mut other = -1
         if f == sec { other = b }
         if b == sec { other = f }
-        if other >= 0 and s_ceil[other] < best { best = s_ceil[other] }
+        if other >= 0 && s_ceil[other] < best { best = s_ceil[other] }
     }
     best
 }
@@ -750,7 +749,7 @@ fn set_ceiling(s: int, h: int) {
 }
 
 fn change_sector(s: int) -> bool {
-    if px + 1048576 <= s_left[s] or px - 1048576 >= s_right[s] or py + 1048576 <= s_bottom[s] or py - 1048576 >= s_top[s] { return false }
+    if px + 1048576 <= s_left[s] || px - 1048576 >= s_right[s] || py + 1048576 <= s_bottom[s] || py - 1048576 >= s_top[s] { return false }
     if check_position(px, py) {
         let onfloor = pz == pfloorz
         pfloorz = tm_floor
@@ -763,7 +762,7 @@ fn change_sector(s: int) -> bool {
 
 fn new_door(sec: int, speed: int, stay: int) {
     let mut d = 0
-    while d < 31 and d_live[d] != 0 { d++ }
+    while d < 31 && d_live[d] != 0 { d++ }
     d_live[d] = 1
     d_sector[d] = sec
     d_dir[d] = 1
@@ -780,7 +779,7 @@ fn vertical_door(l: int, special: int) {
     if sec < 0 { return () }
     let cur = s_door[sec]
     if cur >= 0 {
-        if special == 1 or special == 117 {
+        if special == 1 || special == 117 {
             if d_dir[cur] == -1 { d_dir[cur] = 1 } else { d_dir[cur] = -1 }
         }
         return ()
@@ -798,7 +797,7 @@ fn vertical_door(l: int, special: int) {
 
 fn tagged_door_open(tag: int) {
     for s in 0..num_sectors {
-        if s_tag[s] == tag and s_door[s] < 0 { new_door(s, 131072, 1) }
+        if s_tag[s] == tag && s_door[s] < 0 { new_door(s, 131072, 1) }
     }
 }
 
@@ -811,16 +810,16 @@ fn lowest_floor_around(sec: int) -> int {
         let mut other = -1
         if f == sec { other = b }
         if b == sec { other = f }
-        if other >= 0 and s_floor[other] < best { best = s_floor[other] }
+        if other >= 0 && s_floor[other] < best { best = s_floor[other] }
     }
     best
 }
 
 fn start_lifts(tag: int) {
     for s in 0..num_sectors {
-        if s_tag[s] != tag or s_lift[s] >= 0 { continue }
+        if s_tag[s] != tag || s_lift[s] >= 0 { continue }
         let mut p = 0
-        while p < 15 and lf_live[p] != 0 { p++ }
+        while p < 15 && lf_live[p] != 0 { p++ }
         lf_live[p] = 1
         lf_sector[p] = s
         lf_low[p] = lowest_floor_around(s)
@@ -834,7 +833,7 @@ fn start_lifts(tag: int) {
 
 fn use_special(l: int) {
     let sp = l_special[l]
-    if sp == 1 or sp == 31 or sp == 117 { vertical_door(l, sp) }
+    if sp == 1 || sp == 31 || sp == 117 { vertical_door(l, sp) }
     if sp == 62 { start_lifts(l_tag[l]) }
 }
 
@@ -883,7 +882,7 @@ fn lift_tick(p: int) {
     if change_sector(s) {
         set_floor(s, old)
         let _ = change_sector(s)
-        if not past {
+        if !past {
             lf_status[p] = 1
             return ()
         }
@@ -896,17 +895,17 @@ fn lift_tick(p: int) {
 }
 
 fn seg_cross(l: int, x1: float, y1: float, ddx: float, ddy: float) -> float {
-    let ax = convert::to_float(l_x1[l] >> 8) / 256.0
-    let ay = convert::to_float(l_y1[l] >> 8) / 256.0
-    let ex = convert::to_float(l_dx[l] >> 8) / 256.0
-    let ey = convert::to_float(l_dy[l] >> 8) / 256.0
+    let ax = (l_x1[l] >> 8) as float / 256.0
+    let ay = (l_y1[l] >> 8) as float / 256.0
+    let ex = (l_dx[l] >> 8) as float / 256.0
+    let ey = (l_dy[l] >> 8) as float / 256.0
     let den = ddx * ey - ddy * ex
     if den == 0.0 { return -1.0 }
     let qx = ax - x1
     let qy = ay - y1
     let t = (qx * ey - qy * ex) / den
     let u = (qx * ddy - qy * ddx) / den
-    if t < 0.0 or t > 1.0 or u < 0.0 or u > 1.0 { return -1.0 }
+    if t < 0.0 || t > 1.0 || u < 0.0 || u > 1.0 { return -1.0 }
     t
 }
 
@@ -914,10 +913,10 @@ fn use_lines() {
     let fi = pangle >> 19
     let x2 = px + 64 * fixed::finesine[fi + 2048]
     let y2 = py + 64 * fixed::finesine[fi]
-    let fx = convert::to_float(px >> 8) / 256.0
-    let fy = convert::to_float(py >> 8) / 256.0
-    let ddx = convert::to_float((x2 - px) >> 8) / 256.0
-    let ddy = convert::to_float((y2 - py) >> 8) / 256.0
+    let fx = (px >> 8) as float / 256.0
+    let fy = (py >> 8) as float / 256.0
+    let ddx = ((x2 - px) >> 8) as float / 256.0
+    let ddy = ((y2 - py) >> 8) as float / 256.0
     let mut lox = px
     let mut hix = x2
     if x2 < px { lox = x2; hix = px }
@@ -929,12 +928,12 @@ fn use_lines() {
     let mut n = 0
     for bx in ((lox - bm_ox) >> 23)..(((hix - bm_ox) >> 23) + 1) {
         for by in ((loy - bm_oy) >> 23)..(((hiy - bm_oy) >> 23) + 1) {
-            if bx < 0 or by < 0 or bx >= bm_w or by >= bm_h { continue }
+            if bx < 0 || by < 0 || bx >= bm_w || by >= bm_h { continue }
             for l in bm_lists[by * bm_w + bx] {
                 if l_valid[l] == vc { continue }
                 l_valid[l] = vc
                 let t = seg_cross(l, fx, fy, ddx, ddy)
-                if t >= 0.0 and n < 64 {
+                if t >= 0.0 && n < 64 {
                     use_l[n] = l
                     use_t[n] = t
                     n++
@@ -1028,7 +1027,7 @@ fn run_player() {
     }
     calc_height()
     if cmd_use {
-        if not use_down {
+        if !use_down {
             use_lines()
             use_down = true
         }

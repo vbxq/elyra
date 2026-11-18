@@ -43,7 +43,7 @@ fn compile_accepts_a_type_imported_from_another_module() {
     let src_path = dir.join("main.aelys");
     std::fs::write(
         &src_path,
-        "needs geometry\nlet p = Point { x: 3, y: 4 }\np.norm()\n",
+        "use geometry\nlet p = Point { x: 3, y: 4 }\np.norm()\n",
     )
     .unwrap();
 

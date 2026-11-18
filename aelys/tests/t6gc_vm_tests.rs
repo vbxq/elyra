@@ -438,7 +438,7 @@ fn large_vec_rewritten_during_incremental_marking_completes_with_bounded_heap() 
 #[test]
 fn gc_statistics_are_readable_from_the_program() {
     let source = r#"
-needs std::sys
+use std::sys
 struct P { x: int, y: int }
 let mut v: Vec<P> = vec![]
 for k in 0..5000 { v.push(P { x: k, y: k }) }
@@ -482,7 +482,7 @@ ok
 #[test]
 fn gc_collect_from_the_program_reclaims_unreachable_objects() {
     let source = r#"
-needs std::sys
+use std::sys
 struct P { x: int, y: int }
 fn check() -> int {
     sys::gc_collect()

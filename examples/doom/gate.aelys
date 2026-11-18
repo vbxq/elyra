@@ -1,5 +1,5 @@
-needs engine
-needs harness
+use engine
+use harness
 
 let wad_path = engine::flag_value("--wad", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
 let _ = engine::load(wad_path)

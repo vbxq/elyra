@@ -11,7 +11,7 @@ fn while_condition_may_end_in_a_module_path_constant() {
     run_with_vm(
         &mut vm,
         r#"
-needs std::math
+use std::math
 fn probe() -> int {
     let mut t: float = 0.0
     while t < math::PI {
@@ -119,7 +119,7 @@ fn if_condition_may_end_in_a_module_path_constant() {
     let main_path = dir.path().join("main.aelys");
     std::fs::write(
         &main_path,
-        "needs limits\nfn probe(n: int) -> int {\n    if n == limits::COUNT {\n        1\n    } else {\n        0\n    }\n}\nprobe(3) * 10 + probe(4)\n",
+        "use limits\nfn probe(n: int) -> int {\n    if n == limits::COUNT {\n        1\n    } else {\n        0\n    }\n}\nprobe(3) * 10 + probe(4)\n",
     )
     .expect("main");
 
@@ -159,7 +159,7 @@ fn for_header_may_end_in_a_module_path_constant() {
     let main_path = dir.path().join("main.aelys");
     std::fs::write(
         &main_path,
-        "needs limits\nlet mut total = 0\nfor i in 0..limits::COUNT {\n    total = total + 1\n}\ntotal\n",
+        "use limits\nlet mut total = 0\nfor i in 0..limits::COUNT {\n    total = total + 1\n}\ntotal\n",
     )
     .expect("main");
 
@@ -280,7 +280,7 @@ fn a_nested_if_inside_a_condition_restores_the_restriction() {
     let main_path = dir.path().join("main.aelys");
     std::fs::write(
         &main_path,
-        "needs limits\nfn pick(n: int) -> bool { n == 1 }\nfn probe() -> int {\n    let mut total = 0\n    if pick(if total == limits::ZERO { 1 } else { 2 }) {\n        total = 5\n    }\n    total\n}\nprobe()\n",
+        "use limits\nfn pick(n: int) -> bool { n == 1 }\nfn probe() -> int {\n    let mut total = 0\n    if pick(if total == limits::ZERO { 1 } else { 2 }) {\n        total = 5\n    }\n    total\n}\nprobe()\n",
     )
     .expect("main");
 

@@ -1,14 +1,13 @@
-needs std::io
-needs std::convert
+use std::io
 
 fn average(numbers) -> float {
     if numbers.len() == 0 { return 0.0 }
 
     let mut sum = 0.0
     for i in 0..numbers.len() {
-        sum = sum + convert::to_float(numbers[i])
+        sum = sum + numbers[i] as float
     }
-    return sum / convert::to_float(numbers.len())
+    return sum / (numbers.len() as float)
 }
 
 fn min_max(numbers) -> Option<[int; 2]> {
@@ -49,9 +48,9 @@ fn median(numbers) -> float {
 
     let mid = sorted.len() / 2
     if sorted.len() % 2 == 0 {
-        return (convert::to_float(sorted[mid - 1]) + convert::to_float(sorted[mid])) / 2.0
+        return (sorted[mid - 1] as float + sorted[mid] as float) / 2.0
     } else {
-        return convert::to_float(sorted[mid])
+        return sorted[mid] as float
     }
 }
 
@@ -65,14 +64,14 @@ io::print("Data: [15, 23, 8, 42, 16, 4, 38, 27, 19, 31]")
 io::print("")
 
 let avg = average(data)
-io::print("Average: " + convert::to_string(avg))
+io::print("Average: " + avg.to_string())
 
 let mm = match min_max(data) {
     Some(values) => values,
     None => [0; 2],
 }
-io::print("Min: " + convert::to_string(mm[0]))
-io::print("Max: " + convert::to_string(mm[1]))
+io::print("Min: " + mm[0].to_string())
+io::print("Max: " + mm[1].to_string())
 
 let med = median(data)
-io::print("Median: " + convert::to_string(med))
+io::print("Median: " + med.to_string())

@@ -1,7 +1,7 @@
-needs std::sys
-needs wad
-needs map
-needs gfx
+use std::sys
+use wad
+use map
+use gfx
 
 fn mix(h: int, v: int) -> int {
     let r = (h * 31 + v) % 1000000007
@@ -41,7 +41,7 @@ fn summarize_level(lv: Level) {
     for i in 0..lv.things.len() {
         let t = lv.things[i]
         h = mix(mix(mix(mix(mix(h, t.x), t.y), t.angle), t.kind), t.flags)
-        if p1 < 0 and t.kind == 1 { p1 = i }
+        if p1 < 0 && t.kind == 1 { p1 = i }
     }
     println("things {lv.things.len()} hash {h}")
     let start = lv.things[p1]

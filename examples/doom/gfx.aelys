@@ -1,5 +1,5 @@
-needs std::bytes
-needs wad
+use std::bytes
+use wad
 
 fn lump_bytes(w: Wad, index: int) -> Vec<int> {
     let l = w.lumps[index]
@@ -119,13 +119,13 @@ pub fn compose_texture(w: Wad, g: Graphics, tex: TextureDef) -> Vec<int> {
         let patch = decode_patch(w, li)
         for x in 0..patch.width {
             let tx = pr.origin_x + x
-            if tx < 0 or tx >= width { continue }
+            if tx < 0 || tx >= width { continue }
             let col = tx * height
             for post in patch.columns[x] {
                 let y0 = pr.origin_y + post.top
                 for i in 0..post.length {
                     let ty = y0 + i
-                    if ty >= 0 and ty < height {
+                    if ty >= 0 && ty < height {
                         pixels[col + ty] = bytes::read_u8(w.buf, post.data + i)
                     }
                 }

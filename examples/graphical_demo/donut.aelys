@@ -1,9 +1,8 @@
 // donut.c port
 
-needs std::math
-needs std::time
-needs std::io
-needs std::convert
+use std::math
+use std::time
+use std::io
 
 let WIDTH: int = 80
 let HEIGHT: int = 40
@@ -12,7 +11,7 @@ let HEIGHT: int = 40
 let R1: float = 1.0      // Radius of the tube
 let R2: float = 2.0      // Distance from center to tube center
 let K2: float = 5.0      // Distance from viewer to donut
-let K1: float = convert::to_float(WIDTH) * K2 * 3.0 / (8.0 * (R1 + R2))  // Scaling factor
+let K1: float = WIDTH as float * K2 * 3.0 / (8.0 * (R1 + R2))  // Scaling factor
 
 // Luminance characters (from dark to bright)
 let CHARS: string = ".,-~:;=!*#$@"
@@ -139,7 +138,7 @@ fn render_frame(mut fb: Vec<int>, mut zbuf: Vec<float>, A: float, B: float) -> F
             let L = cosPhi * cosTheta * sinB - cosA * cosTheta * sinPhi - sinA * sinTheta + cosB * (cosA * sinTheta - cosTheta * sinA * sinPhi)
 
             if L > 0.0 {
-                if xp >= 0 and xp < WIDTH and yp >= 0 and yp < HEIGHT {
+                if xp >= 0 && xp < WIDTH && yp >= 0 && yp < HEIGHT {
                     if ooz > zbuf_get(zbuf, WIDTH, xp, yp) {
                         zbuf = zbuf_set(zbuf, WIDTH, xp, yp, ooz)
                         let mut lum_idx: int = math::floor(L * 8.0)
@@ -169,7 +168,7 @@ fn display_frame(fb: Vec<int>, width: int, height: int) {
 
 fn main() {
     io::println("Initializing 3D Donut Renderer...")
-    io::println("Screen: " + convert::to_string(WIDTH) + "x" + convert::to_string(HEIGHT))
+    io::println("Screen: " + WIDTH.to_string() + "x" + HEIGHT.to_string())
     io::println("")
 
     let mut state = Frame {
@@ -182,7 +181,7 @@ fn main() {
     let num_frames: int = 500
     let frame_delay: int = 15
 
-    io::println("Rendering " + convert::to_string(num_frames) + " frames...")
+    io::println("Rendering " + num_frames.to_string() + " frames...")
     time::sleep(1000)
 
     io::hide_cursor()
@@ -194,7 +193,7 @@ fn main() {
         display_frame(state.fb, WIDTH, HEIGHT)
 
         io::println("")
-        io::println("Frame " + convert::to_string(frame + 1) + "/" + convert::to_string(num_frames) + " | A=" + convert::to_string(math::floor(A * 100.0) / 100.0) + " B=" + convert::to_string(math::floor(B * 100.0) / 100.0))
+        io::println("Frame " + (frame + 1).to_string() + "/" + num_frames.to_string() + " | A=" + (math::floor(A * 100.0) / 100.0).to_string() + " B=" + (math::floor(B * 100.0) / 100.0).to_string())
 
         A = A + 0.07
         B = B + 0.03

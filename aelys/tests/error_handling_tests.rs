@@ -249,7 +249,7 @@ fn null_pattern_is_rejected_with_the_same_diagnostic() {
 
 #[test]
 fn null_introspection_is_not_a_surface_api() {
-    let message = compile_message("needs std::convert\nconvert::is_null(1)");
+    let message = compile_message("convert::is_null(1)");
     assert!(message.contains("null is not part of Aelys"), "{message}");
 }
 
@@ -446,7 +446,7 @@ fn untyped_native_cannot_cross_a_typed_operator_boundary() {
 
 #[test]
 fn standard_native_signature_rejects_wrong_math_argument() {
-    let message = compile_message("needs std::math\nmath::sqrt(\"bad\")");
+    let message = compile_message("use std::math\nmath::sqrt(\"bad\")");
     assert!(message.contains("not one of"), "{message}");
 }
 
@@ -663,7 +663,7 @@ fn dynamic_ordering_operand_is_a_compile_error() {
 
 #[test]
 fn inferred_not_operand_must_be_boolean() {
-    let message = compile_message("fn invert(value) -> bool { not value }\ninvert(1)");
+    let message = compile_message("fn invert(value) -> bool { !value }\ninvert(1)");
     assert!(message.contains("type mismatch"), "{message}");
 }
 

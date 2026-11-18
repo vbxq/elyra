@@ -1,4 +1,4 @@
-needs items
+use items
 
 enum InvError {
     NotFound(string),
@@ -37,7 +37,7 @@ impl Inventory {
     }
 
     fn take(mut self, name: string, n: int) -> Result<int, InvError> {
-        if not self.slots.contains_key(name) { return Err(InvError::NotFound(name)) }
+        if !self.slots.contains_key(name) { return Err(InvError::NotFound(name)) }
         let have = self.slots[name].qty
         if have < n { return Err(InvError::Insufficient(name, have, n)) }
         self.slots[name].qty -= n
@@ -77,7 +77,7 @@ fn parse_cat(s: string) -> Result<Category, InvError> {
 }
 
 fn parse_num(s: string) -> Result<int, InvError> {
-    match convert::parse_int(s) {
+    match s.to_int() {
         Some(n) => Ok(n),
         None => Err(InvError::Invalid("number {s}")),
     }

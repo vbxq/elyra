@@ -148,7 +148,7 @@ fn test_module_exports_contains_native_functions() {
 
 #[test]
 fn test_stdlib_modules_export_native_functions() {
-    let modules = ["math", "io", "string", "convert", "time"];
+    let modules = ["math", "io", "string", "time"];
     let source = Source::new("<test>", "");
 
     for module_name in &modules {

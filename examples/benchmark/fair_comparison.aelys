@@ -1,6 +1,5 @@
-needs std::io
-needs std::time
-needs std::convert
+use std::io
+use std::time
 
 fn gc_work() -> int {
     let s = "x"
@@ -42,15 +41,15 @@ io::print("=== Overhead comparison ===")
 let t0 = time::timer()
 let mut i = 0
 while i < n { let r = pure_work(); i = i + 1 }
-io::print("Pure arithmetic: " + convert::to_string(time::elapsed_ms(t0)) + "ms")
+io::print("Pure arithmetic: " + time::elapsed_ms(t0).to_string() + "ms")
 
 let t1 = time::timer()
 i = 0
 while i < n { let r = gc_work(); i = i + 1 }
-io::print("GC (s + s):      " + convert::to_string(time::elapsed_ms(t1)) + "ms")
+io::print("GC (s + s):      " + time::elapsed_ms(t1).to_string() + "ms")
 
 let mut arr: Vec<int> = vec![0; 100]
 let t2 = time::timer()
 i = 0
 while i < n { let r = manual_work(arr); i = i + 1 }
-io::print("Vec indexing:    " + convert::to_string(time::elapsed_ms(t2)) + "ms")
+io::print("Vec indexing:    " + time::elapsed_ms(t2).to_string() + "ms")

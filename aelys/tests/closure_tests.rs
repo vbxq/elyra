@@ -390,7 +390,7 @@ fn test_closure_captures_bool() {
         fn make_toggle() {
             let mut state = false
             return fn() {
-                state = not state
+                state = !state
                 return state
             }
         }

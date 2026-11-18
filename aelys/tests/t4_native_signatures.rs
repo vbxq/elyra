@@ -8,9 +8,7 @@ use aelys_syntax::Source;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-const MODULES: [&str; 9] = [
-    "io", "convert", "sys", "time", "fs", "net", "math", "string", "bytes",
-];
+const MODULES: [&str; 8] = ["io", "sys", "time", "fs", "net", "math", "string", "bytes"];
 
 // blocking on stdin, ending the process, or mutating process-wide state shared with other tests
 const NOT_CALLED: &[&str] = &[
@@ -117,7 +115,7 @@ fn arguments(vm: &mut VM, fixture: &Fixture, path: &str, params: &[InferType]) -
                     other => panic!("net::udp_bind failed: {other:?}"),
                 }
             }
-            ("convert", "parse_int_radix" | "to_radix", 1, _) => Value::int(16),
+            ("string", "to_int_radix", 1, _) => Value::int(16),
             ("time", "format", 0, _) => string(vm, "%Y"),
             ("string", "pad_left" | "pad_right", 2, _) => string(vm, "*"),
             ("bytes", "decode", 2, _) | ("bytes", "copy", 4, _) => Value::int(2),

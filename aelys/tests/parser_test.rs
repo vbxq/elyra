@@ -202,7 +202,7 @@ fn test_function_with_decorator() {
 
 #[test]
 fn test_and_or_expressions() {
-    let stmts = parse("a and b or c");
+    let stmts = parse("a && b || c");
 
     // Should be ((a and b) or c)
     match &stmts[0].kind {

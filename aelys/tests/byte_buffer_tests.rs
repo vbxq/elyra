@@ -7,7 +7,7 @@ use common::{
 fn test_bytes_alloc_and_size() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(100)
         bytes::size(buf)
     "#,
@@ -19,7 +19,7 @@ fn test_bytes_alloc_and_size() {
 fn test_bytes_alloc_zero_fails() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         bytes::alloc(0)
     "#,
     );
@@ -34,7 +34,7 @@ fn test_bytes_alloc_zero_fails() {
 fn test_bytes_alloc_negative_fails() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         bytes::alloc(-10)
     "#,
     );
@@ -50,7 +50,7 @@ fn test_bytes_free() {
     assert!(
         run_aelys(
             r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(100)
         bytes::free(buf)
     "#
@@ -63,7 +63,7 @@ fn test_bytes_free() {
 fn test_bytes_free_null_syntax_is_rejected() {
     let error = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         bytes::free(null)
     "#,
     );
@@ -74,7 +74,7 @@ fn test_bytes_free_null_syntax_is_rejected() {
 fn test_bytes_read_write_u8() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u8(buf, 0, 42)
         bytes::read_u8(buf, 0)
@@ -87,7 +87,7 @@ fn test_bytes_read_write_u8() {
 fn test_bytes_u8_range() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u8(buf, 0, 0)
         bytes::write_u8(buf, 1, 255)
@@ -101,7 +101,7 @@ fn test_bytes_u8_range() {
 fn test_bytes_u8_out_of_range() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u8(buf, 0, 256)
     "#,
@@ -117,7 +117,7 @@ fn test_bytes_u8_out_of_range() {
 fn test_bytes_u8_out_of_bounds() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::read_u8(buf, 10)
     "#,
@@ -133,7 +133,7 @@ fn test_bytes_u8_out_of_bounds() {
 fn test_bytes_read_write_u16() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u16(buf, 0, 12345)
         bytes::read_u16(buf, 0)
@@ -146,7 +146,7 @@ fn test_bytes_read_write_u16() {
 fn test_bytes_u16_little_endian() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u16(buf, 0, 258)
         bytes::read_u8(buf, 0)
@@ -159,7 +159,7 @@ fn test_bytes_u16_little_endian() {
 fn test_bytes_read_write_u32() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u32(buf, 0, 123456789)
         bytes::read_u32(buf, 0)
@@ -172,7 +172,7 @@ fn test_bytes_read_write_u32() {
 fn test_bytes_u32_out_of_bounds() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::read_u32(buf, 8)
     "#,
@@ -188,7 +188,7 @@ fn test_bytes_u32_out_of_bounds() {
 fn test_bytes_read_write_u64() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(16)
         bytes::write_u64(buf, 0, 140737488355327)
         bytes::read_u64(buf, 0)
@@ -202,7 +202,7 @@ fn test_bytes_read_write_u64() {
 fn test_bytes_read_write_f32() {
     let result = run_aelys_ok(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_f32(buf, 0, 3.14)
         bytes::read_f32(buf, 0)
@@ -220,7 +220,7 @@ fn test_bytes_read_write_f32() {
 fn test_bytes_read_write_f64() {
     let result = run_aelys_ok(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(16)
         bytes::write_f64(buf, 0, 3.141592653589793)
         bytes::read_f64(buf, 0)
@@ -238,7 +238,7 @@ fn test_bytes_read_write_f64() {
 fn test_bytes_fill() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::fill(buf, 2, 5, 42)
         bytes::read_u8(buf, 0) + bytes::read_u8(buf, 2) + bytes::read_u8(buf, 6)
@@ -251,7 +251,7 @@ fn test_bytes_fill() {
 fn test_bytes_copy_same_buffer() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(20)
         bytes::write_u8(buf, 0, 11)
         bytes::write_u8(buf, 1, 22)
@@ -267,7 +267,7 @@ fn test_bytes_copy_same_buffer() {
 fn test_bytes_copy_different_buffers() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let src = bytes::alloc(10)
         let dst = bytes::alloc(10)
         bytes::write_u8(src, 0, 100)
@@ -283,7 +283,7 @@ fn test_bytes_copy_different_buffers() {
 fn test_bytes_invalid_handle() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         bytes::read_u8(99999, 0)
     "#,
     );
@@ -298,7 +298,7 @@ fn test_bytes_invalid_handle() {
 fn test_bytes_use_after_free() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::free(buf)
         bytes::read_u8(buf, 0)
@@ -315,7 +315,7 @@ fn test_bytes_use_after_free() {
 fn test_bytes_negative_offset() {
     let err = run_aelys_err(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::read_u8(buf, -1)
     "#,
@@ -331,7 +331,7 @@ fn test_bytes_negative_offset() {
 fn test_bytes_resize() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u8(buf, 0, 42)
         bytes::resize(buf, 20)
@@ -345,7 +345,7 @@ fn test_bytes_resize() {
 fn test_bytes_resize_preserves_data() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u8(buf, 0, 42)
         bytes::resize(buf, 20)
@@ -359,7 +359,7 @@ fn test_bytes_resize_preserves_data() {
 fn test_bytes_clone() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_u8(buf, 0, 42)
         let buf2 = bytes::clone(buf)
@@ -374,7 +374,7 @@ fn test_bytes_clone() {
 fn test_bytes_equals() {
     assert_aelys_bool(
         r#"
-        needs std::bytes
+        use std::bytes
         let a = bytes::alloc(4)
         let b = bytes::alloc(4)
         bytes::write_u32(a, 0, 12345)
@@ -389,7 +389,7 @@ fn test_bytes_equals() {
 fn test_bytes_equals_different() {
     assert_aelys_bool(
         r#"
-        needs std::bytes
+        use std::bytes
         let a = bytes::alloc(4)
         let b = bytes::alloc(4)
         bytes::write_u32(a, 0, 12345)
@@ -404,7 +404,7 @@ fn test_bytes_equals_different() {
 fn test_bytes_signed_i8() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(4)
         bytes::write_i8(buf, 0, -128)
         bytes::write_i8(buf, 1, 127)
@@ -418,7 +418,7 @@ fn test_bytes_signed_i8() {
 fn test_bytes_signed_i16() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(4)
         bytes::write_i16(buf, 0, -32768)
         bytes::read_i16(buf, 0)
@@ -431,7 +431,7 @@ fn test_bytes_signed_i16() {
 fn test_bytes_signed_i32() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(8)
         bytes::write_i32(buf, 0, -2147483648)
         bytes::read_i32(buf, 0)
@@ -444,7 +444,7 @@ fn test_bytes_signed_i32() {
 fn test_bytes_big_endian_u16() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(4)
         bytes::write_u16_be(buf, 0, 0x1234)
         bytes::read_u8(buf, 0)
@@ -457,7 +457,7 @@ fn test_bytes_big_endian_u16() {
 fn test_bytes_big_endian_u32() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(8)
         bytes::write_u32_be(buf, 0, 0x12345678)
         bytes::read_u8(buf, 0)
@@ -470,7 +470,7 @@ fn test_bytes_big_endian_u32() {
 fn test_bytes_big_endian_roundtrip() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(8)
         bytes::write_u32_be(buf, 0, 0xDEADBEEF)
         bytes::read_u32_be(buf, 0)
@@ -483,7 +483,7 @@ fn test_bytes_big_endian_roundtrip() {
 fn test_bytes_from_string() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::from_string("Hello")
         bytes::size(buf)
     "#,
@@ -495,7 +495,7 @@ fn test_bytes_from_string() {
 fn test_bytes_from_string_content() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::from_string("ABC")
         bytes::read_u8(buf, 0) + bytes::read_u8(buf, 1) + bytes::read_u8(buf, 2)
     "#,
@@ -507,7 +507,7 @@ fn test_bytes_from_string_content() {
 fn test_bytes_decode() {
     assert_aelys_str(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(5)
         bytes::write_u8(buf, 0, 72)
         bytes::write_u8(buf, 1, 101)
@@ -524,7 +524,7 @@ fn test_bytes_decode() {
 fn test_bytes_write_string() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(10)
         bytes::write_string(buf, 0, "Hi")
         bytes::read_u8(buf, 0) + bytes::read_u8(buf, 1)
@@ -537,7 +537,7 @@ fn test_bytes_write_string() {
 fn test_bytes_write_string_returns_length() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(20)
         bytes::write_string(buf, 0, "Hello, World!")
     "#,
@@ -549,7 +549,7 @@ fn test_bytes_write_string_returns_length() {
 fn test_bytes_find() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::from_string("Hello, World!")
         bytes::find(buf, 0, -1, 111)
     "#,
@@ -561,7 +561,7 @@ fn test_bytes_find() {
 fn test_bytes_find_not_found() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::from_string("Hello")
         bytes::find(buf, 0, -1, 120)
     "#,
@@ -573,7 +573,7 @@ fn test_bytes_find_not_found() {
 fn test_bytes_find_with_range() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::from_string("abcabc")
         bytes::find(buf, 3, 6, 97)
     "#,
@@ -585,7 +585,7 @@ fn test_bytes_find_with_range() {
 fn test_bytes_reverse() {
     assert_aelys_str(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::from_string("Hello")
         bytes::reverse(buf, 0, 5)
         bytes::decode(buf, 0, 5)
@@ -598,7 +598,7 @@ fn test_bytes_reverse() {
 fn test_bytes_swap() {
     assert_aelys_int(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(4)
         bytes::write_u8(buf, 0, 10)
         bytes::write_u8(buf, 3, 40)
@@ -614,7 +614,7 @@ fn test_bytes_swap() {
 fn test_bytes_f32_big_endian() {
     let result = run_aelys_ok(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(8)
         bytes::write_f32_be(buf, 0, 3.14)
         bytes::read_f32_be(buf, 0)
@@ -632,7 +632,7 @@ fn test_bytes_f32_big_endian() {
 fn test_bytes_f64_big_endian() {
     let result = run_aelys_ok(
         r#"
-        needs std::bytes
+        use std::bytes
         let buf = bytes::alloc(16)
         bytes::write_f64_be(buf, 0, 3.141592653589793)
         bytes::read_f64_be(buf, 0)

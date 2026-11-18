@@ -25,7 +25,7 @@ fn assert_project_every_level(main: &str, lines: &[&str]) {
 #[test]
 fn a_top_level_let_does_not_reach_reads_of_the_import_it_shadows_before_it() {
     assert_project_every_level(
-        "needs util\nprintln(base)\nlet base = 7\nprintln(base)\nprintln(util::base)\n",
+        "use util\nprintln(base)\nlet base = 7\nprintln(base)\nprintln(util::base)\n",
         &["1000", "7", "1000"],
     );
 }
@@ -33,7 +33,7 @@ fn a_top_level_let_does_not_reach_reads_of_the_import_it_shadows_before_it() {
 #[test]
 fn an_initializer_read_before_the_shadowing_let_keeps_the_imported_value() {
     assert_project_every_level(
-        "needs util\nlet b2 = base * 2\nlet base = 7\nprintln(b2)\nprintln(base)\n",
+        "use util\nlet b2 = base * 2\nlet base = 7\nprintln(b2)\nprintln(base)\n",
         &["2000", "7"],
     );
 }
@@ -41,7 +41,7 @@ fn an_initializer_read_before_the_shadowing_let_keeps_the_imported_value() {
 #[test]
 fn a_function_called_before_the_shadowing_let_reads_the_import() {
     assert_project_every_level(
-        "needs util\nfn early() -> int { base }\nprintln(early())\nlet base = 7\nprintln(early())\nprintln(base + 1)\n",
+        "use util\nfn early() -> int { base }\nprintln(early())\nlet base = 7\nprintln(early())\nprintln(base + 1)\n",
         &["1000", "7", "8"],
     );
 }

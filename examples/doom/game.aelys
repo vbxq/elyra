@@ -1,5 +1,5 @@
-needs println from std::io
-needs engine
+use std::io::{println}
+use engine
 
 fn run_mode() {
     let present = fn() -> bool { true }

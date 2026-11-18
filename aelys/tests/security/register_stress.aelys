@@ -1,7 +1,7 @@
 // should run perfectly
 
-needs std.io
-needs std.convert
+use std.io
+use std.convert
 
 fn register_stress() -> int {
     let a0 = 0

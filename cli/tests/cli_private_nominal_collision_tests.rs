@@ -62,7 +62,7 @@ fn assert_agrees(name: &str, files: &[(&str, &str)], expected: &str, why: &str) 
     );
 }
 
-const SUM_MAIN: &str = "needs alpha\nneeds beta\nfn probe() -> int {\n    return alpha::take_alpha() + beta::take_beta()\n}\nprintln(probe())\n";
+const SUM_MAIN: &str = "use alpha\nuse beta\nfn probe() -> int {\n    return alpha::take_alpha() + beta::take_beta()\n}\nprintln(probe())\n";
 
 fn private_struct_module(taker: &str, answer: i64) -> String {
     format!(
@@ -78,7 +78,7 @@ fn private_enum_module(taker: &str, answer: i64) -> String {
 
 fn private_trait_module(taker: &str, answer: i64) -> String {
     format!(
-        "needs Cell from core\n\ntrait Probe {{\n    fn probe(self) -> int\n}}\n\nimpl Probe for Cell {{\n    fn probe(self) -> int {{\n        return {answer}\n    }}\n}}\n\npub fn {taker}() -> int {{\n    let c = Cell {{ v: 0 }}\n    return c.probe()\n}}\n"
+        "use core::{{Cell}}\n\ntrait Probe {{\n    fn probe(self) -> int\n}}\n\nimpl Probe for Cell {{\n    fn probe(self) -> int {{\n        return {answer}\n    }}\n}}\n\npub fn {taker}() -> int {{\n    let c = Cell {{ v: 0 }}\n    return c.probe()\n}}\n"
     )
 }
 
@@ -133,7 +133,7 @@ fn the_entry_file_s_own_hidden_struct_never_answers_for_its_dependency() {
             ("lib.aelys", &private_struct_module("take", 5)),
             (
                 "main.aelys",
-                "needs lib\n\nstruct S { v: int }\n\nimpl S {\n    fn get(self) -> int {\n        return 100\n    }\n}\n\nfn probe() -> int {\n    let s = S { v: 0 }\n    return lib::take() + s.get()\n}\nprintln(probe())\n",
+                "use lib\n\nstruct S { v: int }\n\nimpl S {\n    fn get(self) -> int {\n        return 100\n    }\n}\n\nfn probe() -> int {\n    let s = S { v: 0 }\n    return lib::take() + s.get()\n}\nprintln(probe())\n",
             ),
         ],
         "105",
@@ -154,7 +154,7 @@ fn a_third_module_never_moves_the_two_that_share_a_hidden_name() {
             ),
             (
                 "main.aelys",
-                "needs alpha\nneeds beta\nneeds gamma\nfn probe() -> int {\n    return alpha::take_alpha() + beta::take_beta() + gamma::take_gamma()\n}\nprintln(probe())\n",
+                "use alpha\nuse beta\nuse gamma\nfn probe() -> int {\n    return alpha::take_alpha() + beta::take_beta() + gamma::take_gamma()\n}\nprintln(probe())\n",
             ),
         ],
         "23",
@@ -173,11 +173,11 @@ fn one_imported_impl_reaching_two_importers_stays_one_symbol() {
             ),
             (
                 "beta.aelys",
-                "needs Point, Norm from alpha\npub fn beta_norm(v: int) -> int {\n    let p = Point { x: v }\n    return p.norm()\n}\n",
+                "use alpha::{Point, Norm}\npub fn beta_norm(v: int) -> int {\n    let p = Point { x: v }\n    return p.norm()\n}\n",
             ),
             (
                 "main.aelys",
-                "needs Point, Norm from alpha\nneeds beta_norm from beta\nfn probe() -> int {\n    let p = Point { x: 2 }\n    return p.norm() * 100 + beta_norm(1)\n}\nprintln(probe())\n",
+                "use alpha::{Point, Norm}\nuse beta::{beta_norm}\nfn probe() -> int {\n    let p = Point { x: 2 }\n    return p.norm() * 100 + beta_norm(1)\n}\nprintln(probe())\n",
             ),
         ],
         "603",
@@ -200,7 +200,7 @@ fn two_modules_hiding_one_global_name_each_read_their_own() {
             ),
             (
                 "main.aelys",
-                "needs A1, TA from alpha\nneeds B1, TB from beta\nfn probe() -> int {\n    let a = A1 { v: 0 }\n    let b = B1 { v: 0 }\n    return a.ta() * 1000 + b.tb()\n}\nprintln(probe())\n",
+                "use alpha::{A1, TA}\nuse beta::{B1, TB}\nfn probe() -> int {\n    let a = A1 { v: 0 }\n    let b = B1 { v: 0 }\n    return a.ta() * 1000 + b.tb()\n}\nprintln(probe())\n",
             ),
         ],
         "10200",

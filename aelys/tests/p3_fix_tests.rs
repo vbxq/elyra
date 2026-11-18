@@ -283,7 +283,7 @@ fn a_recursive_enum_declared_in_a_module_is_built_there_and_matched_in_the_impor
     let main = write(
         &dir,
         "main.aelys",
-        "needs lists\nfn count(l: L) -> int {\n    match l {\n        L::Cons(_, t) => 1 + count(t),\n        L::Nil => 0,\n    }\n}\nlet l = L::Cons(-1, lists::build(150))\nlet head = match l { L::Cons(h, L::Cons(n, _)) => h * 1000 + n, _ => 0 }\ncount(l) * 100000 + head\n",
+        "use lists\nfn count(l: L) -> int {\n    match l {\n        L::Cons(_, t) => 1 + count(t),\n        L::Nil => 0,\n    }\n}\nlet l = L::Cons(-1, lists::build(150))\nlet head = match l { L::Cons(h, L::Cons(n, _)) => h * 1000 + n, _ => 0 }\ncount(l) * 100000 + head\n",
     );
     let value = run_file(&main).expect("a module-built recursive enum must run");
     assert_eq!(value.as_int(), Some(151 * 100_000 - 1000 + 149));

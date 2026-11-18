@@ -668,7 +668,7 @@ fx(1) + fx(2)
     (
         "std_module_calls",
         r#"
-needs std::math
+use std::math
 fn sm(n: int) -> int {
     let keep = n * 29
     let a = math::abs(hog(-n)) + keep
@@ -707,7 +707,7 @@ fn run(source: &str, mode: JitMode, level: OptimizationLevel) -> StructuredValue
 }
 
 fn assembly_at(source: &str, level: OptimizationLevel) -> String {
-    if source.contains("\nneeds ") {
+    if source.contains("\nuse ") {
         return linked_assembly_at(source, level);
     }
     let src = Source::new("<t8>", source);

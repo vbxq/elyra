@@ -48,7 +48,7 @@ fn an_unwrap_failure_names_the_enum_variant_after_a_module_shifted_the_enum_ids(
     let error = run_err(
         &dir,
         "main.aelys",
-        "needs em\nenum Apple { Red(int), Green(int) }\nenum Bird { Crow(int), Owl(int) }\nfn f() -> Result<int, Apple> { Err(Apple::Green(5)) }\nlet r = f()\nr.unwrap()\n",
+        "use em\nenum Apple { Red(int), Green(int) }\nenum Bird { Crow(int), Owl(int) }\nfn f() -> Result<int, Apple> { Err(Apple::Green(5)) }\nlet r = f()\nr.unwrap()\n",
     );
     assert!(error.contains("Apple::Green(5)"), "{error}");
     assert!(!error.contains("Bird"), "{error}");
@@ -61,7 +61,7 @@ fn collection_natives_and_field_writes_reach_an_imported_mutable_variable() {
         run_int(
             &dir,
             "main.aelys",
-            "needs cnt\nmv.push(5)\nmv.insert(0, 7)\nlet _ = mm.insert(\"k\", 1)\nms.x = 3\nms.x += 1\nnames[0].push('z')\nlet f = fn() { mv.push(9) }\nf()\ncnt::total()\n",
+            "use cnt\nmv.push(5)\nmv.insert(0, 7)\nlet _ = mm.insert(\"k\", 1)\nms.x = 3\nms.x += 1\nnames[0].push('z')\nlet f = fn() { mv.push(9) }\nf()\ncnt::total()\n",
         ),
         4142
     );
@@ -79,7 +79,7 @@ fn a_mutable_alias_of_an_imported_immutable_aggregate_is_e0323() {
         "let mut q: Map<int, int> = Map::new()\nq = cnt::m",
         "fn grow(mut x: Vec<int>) { x.push(1) }\ngrow(cnt::v)",
     ] {
-        let error = run_err(&dir, "bad.aelys", &format!("needs cnt\n{body}\n0\n"));
+        let error = run_err(&dir, "bad.aelys", &format!("use cnt\n{body}\n0\n"));
         assert!(error.contains("E0323"), "{body}: {error}");
     }
 }
@@ -88,7 +88,7 @@ fn a_mutable_alias_of_an_imported_immutable_aggregate_is_e0323() {
 fn mutating_an_imported_immutable_collection_is_rejected() {
     let dir = tree(&[("cnt.aelys", CNT)]);
     for body in ["v.push(3)", "let _ = m.insert(1, 1)", "v[0] = 4"] {
-        let error = run_err(&dir, "bad.aelys", &format!("needs cnt\n{body}\n0\n"));
+        let error = run_err(&dir, "bad.aelys", &format!("use cnt\n{body}\n0\n"));
         assert!(error.contains("E0318"), "{body}: {error}");
     }
 }
@@ -109,11 +109,11 @@ fn a_carried_impl_body_calls_its_module_functions_and_keeps_their_mut_rule() {
         run_int(
             &dir,
             "main.aelys",
-            "needs m\nlet s = S { n: 10 }\nviag(s) * 100 + s.g()\n"
+            "use m\nlet s = S { n: 10 }\nviag(s) * 100 + s.g()\n"
         ),
         1212
     );
-    let error = run_err(&dir, "main2.aelys", "needs m2\nS { n: 1 }.g()\n");
+    let error = run_err(&dir, "main2.aelys", "use m2\nS { n: 1 }.g()\n");
     assert!(error.contains("E0323"), "{error}");
 }
 
@@ -127,10 +127,10 @@ fn a_constant_two_whole_modules_export_is_ambiguous_bare_and_fine_qualified() {
         run_int(
             &dir,
             "ok.aelys",
-            "needs ca\nneeds cb\nlet a = [0; ca::N]\nlet b = [0; cb::N]\na.len() * 10 + b.len()\n"
+            "use ca\nuse cb\nlet a = [0; ca::N]\nlet b = [0; cb::N]\na.len() * 10 + b.len()\n"
         ),
         34
     );
-    let error = run_err(&dir, "bad.aelys", "needs ca\nneeds cb\nN\n");
+    let error = run_err(&dir, "bad.aelys", "use ca\nuse cb\nN\n");
     assert!(error.contains("E0445"), "{error}");
 }

@@ -52,7 +52,7 @@ fn test_selective_trait_import_does_not_bring_an_unnamed_struct_into_scope() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Imported from stage2_support
+use stage2_support::{Stage2Imported}
 let b = Stage2Beacon { seed: 3 }
 b.seed
 "#,
@@ -77,7 +77,7 @@ b.seed
         message
     );
     assert!(
-        message.contains("needs Stage2Beacon from stage2_support"),
+        message.contains("use stage2_support::{Stage2Beacon}"),
         "the diagnostic must say how to import it: {}",
         message
     );
@@ -92,7 +92,7 @@ fn test_selective_struct_import_does_not_bring_an_unnamed_enum_into_scope() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Beacon from stage2_support
+use stage2_support::{Stage2Beacon}
 match Stage2Signal::Up {
     Stage2Signal::Up => 1,
     Stage2Signal::Down => 2
@@ -123,7 +123,7 @@ fn test_selective_struct_import_does_not_bring_an_unnamed_trait_into_scope() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Beacon from stage2_support
+use stage2_support::{Stage2Beacon}
 fn measure<T>(value: T) -> int where T: Stage2Imported {
     value.imported_mark()
 }
@@ -154,7 +154,7 @@ fn test_the_named_type_is_usable() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Beacon from stage2_support
+use stage2_support::{Stage2Beacon}
 let b = Stage2Beacon { seed: 3 }
 b.seed * 2
 "#,
@@ -173,7 +173,7 @@ fn test_several_named_types_are_usable_together() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Beacon, Stage2Signal from stage2_support
+use stage2_support::{Stage2Beacon, Stage2Signal}
 let b = Stage2Beacon { seed: 3 }
 let s = match Stage2Signal::Down {
     Stage2Signal::Up => 1,
@@ -196,7 +196,7 @@ fn test_the_hint_quotes_a_nested_module_path_in_surface_form() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Imported from lib::support
+use lib::support::{Stage2Imported}
 let b = Stage2Beacon { seed: 3 }
 b.seed
 "#,
@@ -205,7 +205,7 @@ b.seed
     let error = run_file(&main_path).expect_err("an unnamed type must not be in scope");
     let message = error.to_string();
     assert!(
-        message.contains("needs Stage2Beacon from lib::support"),
+        message.contains("use lib::support::{Stage2Beacon}"),
         "the hint must be written the way the surface writes it: {}",
         message
     );
@@ -220,7 +220,7 @@ fn test_whole_module_form_still_imports_everything_public() {
         &dir,
         "main.aelys",
         r#"
-needs stage2_support
+use stage2_support
 let b = Stage2Beacon { seed: 3 }
 let s = match Stage2Signal::Up {
     Stage2Signal::Up => 100,
@@ -243,7 +243,7 @@ fn test_impl_is_withheld_when_only_the_self_type_is_imported() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Beacon from stage2_support
+use stage2_support::{Stage2Beacon}
 let b = Stage2Beacon { seed: 3 }
 b.imported_mark()
 "#,
@@ -268,7 +268,7 @@ fn test_impl_is_withheld_when_only_the_trait_is_imported() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Imported from stage2_support
+use stage2_support::{Stage2Imported}
 struct Local { n: int }
 impl Stage2Imported for Local {
     fn imported_mark(self) -> int {
@@ -293,7 +293,7 @@ fn test_impl_travels_when_both_ends_are_imported() {
         &dir,
         "main.aelys",
         r#"
-needs Stage2Beacon, Stage2Imported from stage2_support
+use stage2_support::{Stage2Beacon, Stage2Imported}
 let b = Stage2Beacon { seed: 3 }
 b.imported_mark()
 "#,
@@ -330,7 +330,7 @@ impl Counter {
         &dir,
         "main.aelys",
         r#"
-needs Counter from inherent_support
+use inherent_support::{Counter}
 Counter { n: 21 }.doubled()
 "#,
     );
@@ -381,8 +381,8 @@ fn imported_projection_main(receiver: &str, item: &str, position: &str, split: b
         other => unreachable!("no imported cell for {other}"),
     };
     let imports = match split {
-        true => "needs Counter from support\nneeds Source from support",
-        false => "needs Counter, Source from support",
+        true => "use support::{Counter}\nuse support::{Source}",
+        false => "use support::{Counter, Source}",
     };
     format!("{imports}\n{line}")
 }
@@ -486,7 +486,7 @@ fn a_projection_needs_the_trait_that_declares_it_to_be_imported_too() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter from support\nfn probe(x: Counter::Item) -> int { return 1 }\n1\n",
+        "use support::{Counter}\nfn probe(x: Counter::Item) -> int { return 1 }\n1\n",
     );
     let error = run_file(&main).expect_err("the trait must be in scope for the item to resolve");
     let message = error.to_string();
@@ -501,8 +501,8 @@ fn a_projection_needs_the_trait_that_declares_it_to_be_imported_too() {
 fn a_module_qualified_receiver_is_not_a_projection_receiver() {
     // measured, not desired: the whole-module and aliased import forms bring
     for (import, receiver) in [
-        ("needs support", "support::Counter"),
-        ("needs support as s", "s::Counter"),
+        ("use support", "support::Counter"),
+        ("use support as s", "s::Counter"),
     ] {
         let dir = create_module_env();
         write_file(&dir, "support.aelys", ASSOCIATED_SUPPORT);
@@ -532,7 +532,7 @@ fn an_impl_written_beside_an_imported_trait_still_answers_a_projection() {
         &dir,
         "main.aelys",
         r#"
-needs Source from support
+use support::{Source}
 struct Counter { v: int }
 impl Source for Counter {
     type Item = int
@@ -583,7 +583,7 @@ fn whole_module_main(receiver: &str, item: &str, position: &str) -> String {
         ),
         other => unreachable!("no whole-module cell for {other}"),
     };
-    format!("needs support\n{line}")
+    format!("use support\n{line}")
 }
 
 fn run_whole_module(receiver: &str, item: &str, position: &str) -> Result<i64, String> {
@@ -647,14 +647,14 @@ fn the_bare_receiver_the_module_brought_in_still_answers_every_projection() {
         assert_eq!(
             run_whole_module("Cell", "Item", position),
             Ok(expected),
-            "Cell::Item in {position} position must run after `needs support`"
+            "Cell::Item in {position} position must run after `use support`"
         );
     }
     for (position, expected) in [("value", 5), ("length", 7)] {
         assert_eq!(
             run_whole_module("Cell", "LIMIT", position),
             Ok(expected),
-            "Cell::LIMIT in {position} position must fold after `needs support`"
+            "Cell::LIMIT in {position} position must fold after `use support`"
         );
     }
 }
@@ -665,7 +665,7 @@ fn run_module_member(name: &str) -> Result<i64, String> {
     let main = write_file(
         &dir,
         "main.aelys",
-        &format!("needs support\nsupport::{name}()\n"),
+        &format!("use support\nsupport::{name}()\n"),
     );
     match run_file(&main) {
         Ok(value) => Ok(value.as_int().unwrap_or_default()),
@@ -755,10 +755,10 @@ fn run_nominal_projection(import: &str, receiver: &str, position: &str) -> Resul
 }
 
 const NOMINAL_IMPORT_FORMS: [&str; 4] = [
-    "needs Counter, Source from support",
-    "needs Counter from support\nneeds Source from support",
-    "needs support",
-    "needs support as s",
+    "use support::{Counter, Source}",
+    "use support::{Counter}\nuse support::{Source}",
+    "use support",
+    "use support as s",
 ];
 
 const NOMINAL_ITEM_POSITIONS: [&str; 7] = [
@@ -795,13 +795,13 @@ fn a_type_a_carried_impl_needs_is_registered_but_stays_unnameable() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Source from support\nstruct Holder { it: Payload }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
+        "use support::{Counter, Source}\nstruct Holder { it: Payload }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
     );
     let message = run_file(&main)
         .expect_err("the importer never named 'Payload', so it may not write it")
         .to_string();
     assert!(
-        message.contains("E0378") && message.contains("needs Payload from support"),
+        message.contains("E0378") && message.contains("use support::{Payload}"),
         "the name the carried impl needs is refused to the importer with its repair: {message}"
     );
     assert_located_at("E0378", &message, 2);
@@ -850,7 +850,7 @@ impl Source for Counter {
 
 #[test]
 fn a_refusal_inside_a_carried_impl_names_the_file_that_owns_the_span() {
-    for import in ["needs Counter, Source from support", "needs support"] {
+    for import in ["use support::{Counter, Source}", "use support"] {
         let dir = create_module_env();
         write_file(&dir, "support.aelys", PRIVATE_GENERIC_ITEM_SUPPORT);
         let main = write_file(
@@ -880,7 +880,7 @@ fn a_refusal_inside_a_carried_impl_names_the_file_that_owns_the_span() {
 
 #[test]
 fn a_module_s_own_private_nominal_travels_with_the_body_that_names_it() {
-    for import in ["needs Counter, Source from support", "needs support"] {
+    for import in ["use support::{Counter, Source}", "use support"] {
         let dir = create_module_env();
         write_file(&dir, "support.aelys", PRIVATE_ITEM_SUPPORT);
         let main = write_file(
@@ -915,10 +915,10 @@ fn a_module_s_own_private_nominal_travels_with_the_body_that_names_it() {
         );
         assert!(
             message.contains("not public in module 'support'"),
-            "no `needs` line reaches it, and the message says why: {message}"
+            "no `use` line reaches it, and the message says why: {message}"
         );
         assert!(
-            !message.contains("needs Hidden from support"),
+            !message.contains("use support::{Hidden}"),
             "a repair that would itself be refused must not be offered: {message}"
         );
     }
@@ -931,7 +931,7 @@ fn a_carried_private_nominal_does_not_bind_to_the_importer_s_own_declaration() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Source from support\nstruct Hidden { pub other: int }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
+        "use support::{Counter, Source}\nstruct Hidden { pub other: int }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
     );
     let message = run_file(&main)
         .expect_err("two declarations of one name reach one flat table")

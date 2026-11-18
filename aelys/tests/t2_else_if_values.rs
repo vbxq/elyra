@@ -65,7 +65,7 @@ fn else_if_chain_of_depth_four_in_a_function_tail() {
 #[test]
 fn multi_line_branches_keep_their_value() {
     int_at_every_level(
-        "fn f(c: bool) -> int {\n    if c {\n        5\n    } else if not c {\n        6\n    } else {\n        7\n    }\n}\nlet x = if f(true) == 5 {\n    1\n} else {\n    2\n}\nx * 100 + f(false)\n",
+        "fn f(c: bool) -> int {\n    if c {\n        5\n    } else if !c {\n        6\n    } else {\n        7\n    }\n}\nlet x = if f(true) == 5 {\n    1\n} else {\n    2\n}\nx * 100 + f(false)\n",
         106,
     );
 }
@@ -216,7 +216,7 @@ fn branch_statements_run_in_every_value_position() {
         let b = bump(if c { hits = hits + 10; 7 } else { 8 })
         let m = match Some(1) { Some(v) => if v == 1 { hits = hits + 100; v } else { 0 }, None => 0 }
         let f = fn(x: int) -> int { if x > 0 { let y = x * 2; y + 1 } else { 0 } }
-        let g = if not c { 0 } else if c { hits = hits + 1000; 9 } else { 1 }
+        let g = if !c { 0 } else if c { hits = hits + 1000; 9 } else { 1 }
         hits * 100000 + a * 10000 + ret(true) * 1000 + b * 100 + m * 10 + f(3) - 7 + g - 9
         "#,
         111_100_000 + 50_000 + 6_000 + 800 + 10,

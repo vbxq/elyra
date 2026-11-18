@@ -74,11 +74,10 @@ fn test_constant_fold_unary() {
     let result = run_with_opt("-(-5)", OptimizationLevel::Basic);
     assert_eq!(result.as_int(), Some(5));
 
-    // Aelys uses 'not' instead of '!'
-    let result = run_with_opt("not false", OptimizationLevel::Basic);
+    let result = run_with_opt("!false", OptimizationLevel::Basic);
     assert_eq!(result.as_bool(), Some(true));
 
-    let result = run_with_opt("not not true", OptimizationLevel::Basic);
+    let result = run_with_opt("!!true", OptimizationLevel::Basic);
     assert_eq!(result.as_bool(), Some(true));
 }
 

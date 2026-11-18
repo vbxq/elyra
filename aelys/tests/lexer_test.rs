@@ -100,7 +100,7 @@ fn test_strings() {
 #[test]
 fn test_keywords() {
     let tokens =
-        Lexer::new("let mut fn if else while return break continue and or not true false null")
+        Lexer::new("let mut fn if else while return break continue && || ! use true false null")
             .scan()
             .unwrap();
     let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
@@ -119,7 +119,8 @@ fn test_keywords() {
             &TokenKind::Continue,
             &TokenKind::And,
             &TokenKind::Or,
-            &TokenKind::Not,
+            &TokenKind::Bang,
+            &TokenKind::Use,
             &TokenKind::True,
             &TokenKind::False,
             &TokenKind::Null,
@@ -315,13 +316,19 @@ fn test_logical_operators_in_expression() {
 }
 
 #[test]
-fn test_logical_operators_word_and_symbol() {
-    // Test that both syntaxes work and produce the same tokens
-    let tokens1 = Lexer::new("and or").scan().unwrap();
-    let tokens2 = Lexer::new("&& ||").scan().unwrap();
+fn test_logical_words_are_identifiers() {
+    let tokens = Lexer::new("and or not needs").scan().unwrap();
+    let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
 
-    let kinds1: Vec<_> = tokens1.iter().map(|t| &t.kind).collect();
-    let kinds2: Vec<_> = tokens2.iter().map(|t| &t.kind).collect();
-
-    assert_eq!(kinds1, kinds2);
+    assert_eq!(
+        kinds,
+        vec![
+            &TokenKind::Identifier("and".to_string()),
+            &TokenKind::Identifier("or".to_string()),
+            &TokenKind::Identifier("not".to_string()),
+            &TokenKind::Identifier("needs".to_string()),
+            &TokenKind::Semicolon,
+            &TokenKind::Eof,
+        ]
+    );
 }

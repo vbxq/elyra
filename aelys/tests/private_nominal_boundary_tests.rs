@@ -38,7 +38,7 @@ const STRUCT_SUPPORT: &str = "struct Hidden { h: int }\n\npub struct Counter { p
 
 #[test]
 fn a_private_enum_tuple_constructor_is_refused_under_every_import_form() {
-    for import in ["needs Counter, Pub from sup", "needs sup"] {
+    for import in ["use sup::{Counter, Pub}", "use sup"] {
         let dir = create_module_env();
         write_file(&dir, "sup.aelys", ENUM_SUPPORT);
         let main = write_file(
@@ -54,7 +54,7 @@ fn a_private_enum_tuple_constructor_is_refused_under_every_import_form() {
             "the tuple path answers like the struct path: {message}"
         );
         assert!(
-            !message.contains("needs HiddenE from sup"),
+            !message.contains("use sup::{HiddenE}"),
             "a repair that would itself be refused must not be offered: {message}"
         );
     }
@@ -67,7 +67,7 @@ fn a_private_enum_unit_path_is_refused_without_a_false_repair() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn probe() -> int {\n    let x = HiddenE::B\n    match x {\n        HiddenE::A(n) => n,\n        HiddenE::B => 9,\n    }\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn probe() -> int {\n    let x = HiddenE::B\n    match x {\n        HiddenE::A(n) => n,\n        HiddenE::B => 9,\n    }\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("the unit path answers like the tuple path");
     assert!(
@@ -75,7 +75,7 @@ fn a_private_enum_unit_path_is_refused_without_a_false_repair() {
         "both spellings refuse with the same code: {message}"
     );
     assert!(
-        !message.contains("needs HiddenE from sup"),
+        !message.contains("use sup::{HiddenE}"),
         "the help the tuple path lost must not survive here: {message}"
     );
 }
@@ -87,7 +87,7 @@ fn a_private_enum_still_answers_through_the_carried_body() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn probe() -> int {\n    Counter { v: 2 }.get()\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn probe() -> int {\n    Counter { v: 2 }.get()\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -103,7 +103,7 @@ fn a_private_enum_coexists_with_the_importer_s_own_declaration() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nenum HiddenE { A(int), B }\nfn probe() -> int {\n    let carried = Counter { v: 2 }.get()\n    let own = match HiddenE::A(3) {\n        HiddenE::A(n) => n,\n        HiddenE::B => 0,\n    }\n    carried * 100 + own\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nenum HiddenE { A(int), B }\nfn probe() -> int {\n    let carried = Counter { v: 2 }.get()\n    let own = match HiddenE::A(3) {\n        HiddenE::A(n) => n,\n        HiddenE::B => 0,\n    }\n    carried * 100 + own\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -123,7 +123,7 @@ fn a_private_token_gate_stays_closed() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Gate, Check from sup\nfn probe() -> int {\n    let a = Gate { g: 1 }.check()\n    let b = match Token::Admin(7) {\n        Token::Admin(n) => n * 1000,\n        Token::Guest => 1,\n    }\n    a + b\n}\nprobe()\n",
+        "use sup::{Gate, Check}\nfn probe() -> int {\n    let a = Gate { g: 1 }.check()\n    let b = match Token::Admin(7) {\n        Token::Admin(n) => n * 1000,\n        Token::Guest => 1,\n    }\n    a + b\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("the gate answers 1 while the forgery answers 7001");
     assert!(
@@ -134,7 +134,7 @@ fn a_private_token_gate_stays_closed() {
     let hidden = write_file(
         &dir,
         "hidden.aelys",
-        "needs Gate, Check from sup\nfn probe() -> int {\n    grant(Token::Admin(9))\n}\nprobe()\n",
+        "use sup::{Gate, Check}\nfn probe() -> int {\n    grant(Token::Admin(9))\n}\nprobe()\n",
     );
     let message = run(&hidden).expect_err("the private function stays hidden");
     assert!(
@@ -145,7 +145,7 @@ fn a_private_token_gate_stays_closed() {
 
 #[test]
 fn a_private_trait_method_call_is_refused_like_an_absent_field() {
-    for import in ["needs Counter, Pub from sup", "needs sup"] {
+    for import in ["use sup::{Counter, Pub}", "use sup"] {
         let dir = create_module_env();
         write_file(&dir, "sup.aelys", TRAIT_SUPPORT);
         let main = write_file(
@@ -170,7 +170,7 @@ fn a_private_trait_qualified_call_is_refused() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn probe() -> int {\n    Hid::render(Counter { v: 2 })\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn probe() -> int {\n    Hid::render(Counter { v: 2 })\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("naming the trait names what is not exported");
     assert!(
@@ -186,15 +186,15 @@ fn a_private_trait_bound_is_refused_without_a_false_repair() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn only<T: Hid>(x: T) -> int {\n    x.render()\n}\nfn probe() -> int {\n    only(Counter { v: 2 })\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn only<T: Hid>(x: T) -> int {\n    x.render()\n}\nfn probe() -> int {\n    only(Counter { v: 2 })\n}\nprobe()\n",
     );
-    let message = run(&main).expect_err("no `needs` line reaches the trait");
+    let message = run(&main).expect_err("no `use` line reaches the trait");
     assert!(
         message.contains("E0403") && message.contains("'Hid'"),
         "the bound refuses like the impl header: {message}"
     );
     assert!(
-        !message.contains("needs Hid from sup"),
+        !message.contains("use sup::{Hid}"),
         "the repair names a line that would itself be refused: {message}"
     );
 }
@@ -206,7 +206,7 @@ fn a_private_trait_still_answers_through_the_carried_body() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn probe() -> int {\n    Counter { v: 2 }.get()\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn probe() -> int {\n    Counter { v: 2 }.get()\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -226,7 +226,7 @@ fn a_public_but_unimported_trait_keeps_its_import_repair() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn probe() -> int {\n    let c = Counter { v: 2 }\n    c.render()\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn probe() -> int {\n    let c = Counter { v: 2 }\n    c.render()\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("the public trait is merely unimported here");
     assert!(
@@ -242,7 +242,7 @@ fn a_private_struct_coexists_with_the_importer_s_own_declaration() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from support\nstruct Hidden { q: string }\nfn probe() -> int {\n    let h = Hidden { q: \"own\" }\n    let c = Counter { value: 3 }\n    c.get() + h.q.len()\n}\nprobe()\n",
+        "use support::{Counter, Pub}\nstruct Hidden { q: string }\nfn probe() -> int {\n    let h = Hidden { q: \"own\" }\n    let c = Counter { value: 3 }\n    c.get() + h.q.len()\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -258,7 +258,7 @@ fn a_private_struct_coexists_even_when_the_body_goes_uncalled() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from support\nstruct Hidden { q: int }\nfn probe() -> int {\n    let h = Hidden { q: 2 }\n    h.q\n}\nprobe()\n",
+        "use support::{Counter, Pub}\nstruct Hidden { q: int }\nfn probe() -> int {\n    let h = Hidden { q: 2 }\n    h.q\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -269,7 +269,7 @@ fn a_private_struct_coexists_even_when_the_body_goes_uncalled() {
 
 #[test]
 fn a_private_struct_direct_naming_stays_refused() {
-    for import in ["needs Counter, Pub from support", "needs support"] {
+    for import in ["use support::{Counter, Pub}", "use support"] {
         let dir = create_module_env();
         write_file(&dir, "support.aelys", STRUCT_SUPPORT);
         let main = write_file(
@@ -298,7 +298,7 @@ fn an_associated_type_reaching_a_private_nominal_keeps_its_collision() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Source from support\nstruct Hidden { pub other: int }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
+        "use support::{Counter, Source}\nstruct Hidden { pub other: int }\nfn probe() -> int {\n    return 1\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("the associated item exposes the name");
     assert!(
@@ -319,7 +319,7 @@ fn a_public_struct_against_a_private_namesake_runs() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nneeds Node, mkn from pubmod\nfn probe() -> int {\n    let n = mkn(4)\n    Counter { value: 3 }.get() + n.p\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nuse pubmod::{Node, mkn}\nfn probe() -> int {\n    let n = mkn(4)\n    Counter { value: 3 }.get() + n.p\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -340,7 +340,7 @@ fn two_private_namesakes_from_two_modules_run_side_by_side() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from support\nneeds Box2, Second from other\nfn probe() -> int {\n    Counter { value: 3 }.get() + Box2 { v: 2 }.two()\n}\nprobe()\n",
+        "use support::{Counter, Pub}\nuse other::{Box2, Second}\nfn probe() -> int {\n    Counter { value: 3 }.get() + Box2 { v: 2 }.two()\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -356,7 +356,7 @@ fn a_whole_module_import_coexists_with_an_own_declaration() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs support\nstruct Hidden { q: int }\nfn probe() -> int {\n    let n = Hidden { q: 4 }\n    n.q\n}\nprobe()\n",
+        "use support\nstruct Hidden { q: int }\nfn probe() -> int {\n    let n = Hidden { q: 4 }\n    n.q\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -376,7 +376,7 @@ fn an_aliased_import_coexists_with_an_own_declaration() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs sup as s\nstruct Hidden { q: int }\nfn probe() -> int {\n    let h = Hidden { q: 5 }\n    s::mk(3).get() + h.q\n}\nprobe()\n",
+        "use sup as s\nstruct Hidden { q: int }\nfn probe() -> int {\n    let h = Hidden { q: 5 }\n    s::mk(3).get() + h.q\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -396,12 +396,12 @@ fn a_private_name_two_hops_down_coexists_with_an_own_declaration() {
     write_file(
         &dir,
         "mid.aelys",
-        "needs Deep, DeepT from deep\n\npub struct Mid { pub m: int }\n\npub trait MidT {\n    fn mg(self) -> int\n}\n\nimpl MidT for Mid {\n    fn mg(self) -> int {\n        Deep { d: self.m }.dg() + 5\n    }\n}\n",
+        "use deep::{Deep, DeepT}\n\npub struct Mid { pub m: int }\n\npub trait MidT {\n    fn mg(self) -> int\n}\n\nimpl MidT for Mid {\n    fn mg(self) -> int {\n        Deep { d: self.m }.dg() + 5\n    }\n}\n",
     );
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Mid, MidT from mid\nstruct Leaf { z: int }\nfn probe() -> int {\n    let a = Mid { m: 1 }.mg()\n    let l = Leaf { z: 2 }\n    a + l.z\n}\nprobe()\n",
+        "use mid::{Mid, MidT}\nstruct Leaf { z: int }\nfn probe() -> int {\n    let a = Mid { m: 1 }.mg()\n    let l = Leaf { z: 2 }\n    a + l.z\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -421,7 +421,7 @@ fn a_body_only_private_generic_travels_with_the_body() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs P, PT from sup\nfn probe() -> int {\n    P { v: 3 }.pg()\n}\nprobe()\n",
+        "use sup::{P, PT}\nfn probe() -> int {\n    P { v: 3 }.pg()\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -432,7 +432,7 @@ fn a_body_only_private_generic_travels_with_the_body() {
 
 #[test]
 fn an_associated_type_reaching_a_private_generic_stays_refused() {
-    for import in ["needs Counter, Source from support", "needs support"] {
+    for import in ["use support::{Counter, Source}", "use support"] {
         let dir = create_module_env();
         write_file(
             &dir,
@@ -472,7 +472,7 @@ fn private_generics_outside_carried_bodies_stay_importable() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs api from sup\nneeds api2 from sup2\nfn probe() -> int {\n    api(3) + api2(3)\n}\nprobe()\n",
+        "use sup::{api}\nuse sup2::{api2}\nfn probe() -> int {\n    api(3) + api2(3)\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -492,7 +492,7 @@ fn private_functions_and_globals_still_travel_and_coexist() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs C, T from sup\nfn helper(n: int) -> int {\n    n + 1\n}\nlet gseed = 7\nfn probe() -> int {\n    C { v: 2 }.go() + helper(1) + gseed\n}\nprobe()\n",
+        "use sup::{C, T}\nfn helper(n: int) -> int {\n    n + 1\n}\nlet gseed = 7\nfn probe() -> int {\n    C { v: 2 }.go() + helper(1) + gseed\n}\nprobe()\n",
     );
     assert_eq!(
         run(&main),
@@ -513,12 +513,12 @@ fn refusals_are_byte_identical_under_swapped_order_and_repetition() {
     let first = write_file(
         &dir,
         "first.aelys",
-        "needs Counter, Pub from support\nneeds Box2, Second from other\nfn probe() -> int {\n    Counter { value: 3 }.get() + Box2 { v: 2 }.two()\n}\nprobe()\n",
+        "use support::{Counter, Pub}\nuse other::{Box2, Second}\nfn probe() -> int {\n    Counter { value: 3 }.get() + Box2 { v: 2 }.two()\n}\nprobe()\n",
     );
     let second = write_file(
         &dir,
         "second.aelys",
-        "needs Box2, Second from other\nneeds Counter, Pub from support\nfn probe() -> int {\n    Counter { value: 3 }.get() + Box2 { v: 2 }.two()\n}\nprobe()\n",
+        "use other::{Box2, Second}\nuse support::{Counter, Pub}\nfn probe() -> int {\n    Counter { value: 3 }.get() + Box2 { v: 2 }.two()\n}\nprobe()\n",
     );
     let mut seen = std::collections::HashSet::new();
     for _ in 0..20 {
@@ -546,7 +546,7 @@ fn refusals_are_byte_identical_under_swapped_order_and_repetition() {
                 .map(|value| value.to_string())
                 .unwrap_or_default()
         ),
-        "the order of the two `needs` lines cannot decide the answer"
+        "the order of the two `use` lines cannot decide the answer"
     );
 
     let dir = create_module_env();
@@ -554,7 +554,7 @@ fn refusals_are_byte_identical_under_swapped_order_and_repetition() {
     let refused = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn probe() -> int {\n    match HiddenE::A(3) {\n        HiddenE::A(n) => n,\n        HiddenE::B => 0,\n    }\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn probe() -> int {\n    match HiddenE::A(3) {\n        HiddenE::A(n) => n,\n        HiddenE::B => 0,\n    }\n}\nprobe()\n",
     );
     let first_message = run(&refused).expect_err("the enum stays refused");
     for _ in 0..20 {
@@ -574,92 +574,92 @@ fn each_kind_answers_its_own_code_in_each_importer_cell() {
     write_file(&dir, "sup.aelys", MATRIX_SUPPORT);
     let cells: &[(&str, &str, &str)] = &[
         (
-            "needs Carrier, Carry from sup",
+            "use sup::{Carrier, Carry}",
             "let s = PrivS { h: 1 }\ns.h\n",
             "E0403",
         ),
         (
-            "needs Carrier, Carry from sup",
+            "use sup::{Carrier, Carry}",
             "match PrivE::A(1) {\n PrivE::A(n) => n,\n PrivE::B => 0,\n}\n",
             "E0403",
         ),
         (
-            "needs Carrier, Carry from sup",
+            "use sup::{Carrier, Carry}",
             "let x = PrivE::B\nmatch x {\n PrivE::A(n) => n,\n PrivE::B => 9,\n}\n",
             "E0403",
         ),
         (
-            "needs Carrier, Carry from sup",
+            "use sup::{Carrier, Carry}",
             "let c = Carrier { v: 1 }\nc.pt()\n",
             "E0363",
         ),
         (
-            "needs Carrier, Carry from sup",
+            "use sup::{Carrier, Carry}",
             "PrivT::pt(Carrier { v: 1 })\n",
             "E0403",
         ),
-        ("needs Carrier, Carry from sup", "privfn(1)\n", "E0301"),
-        ("needs Carrier, Carry from sup", "privg\n", "E0301"),
-        ("needs sup", "let s = PrivS { h: 1 }\ns.h\n", "E0403"),
+        ("use sup::{Carrier, Carry}", "privfn(1)\n", "E0301"),
+        ("use sup::{Carrier, Carry}", "privg\n", "E0301"),
+        ("use sup", "let s = PrivS { h: 1 }\ns.h\n", "E0403"),
         (
-            "needs sup",
+            "use sup",
             "match PrivE::A(1) {\n PrivE::A(n) => n,\n PrivE::B => 0,\n}\n",
             "E0403",
         ),
-        ("needs sup", "let c = Carrier { v: 1 }\nc.pt()\n", "E0363"),
-        ("needs sup as sp", "let x = PrivS { h: 1 }\nx.h\n", "E0403"),
+        ("use sup", "let c = Carrier { v: 1 }\nc.pt()\n", "E0363"),
+        ("use sup as sp", "let x = PrivS { h: 1 }\nx.h\n", "E0403"),
         (
-            "needs Carrier, Carry from sup\nstruct PrivS { q: int }",
+            "use sup::{Carrier, Carry}\nstruct PrivS { q: int }",
             "let s = PrivS { q: 1 }\ns.q\n",
             "run:1",
         ),
         (
-            "needs Carrier, Carry from sup\nenum PrivE { A(int), B }",
+            "use sup::{Carrier, Carry}\nenum PrivE { A(int), B }",
             "match PrivE::A(1) {\n PrivE::A(n) => n,\n PrivE::B => 0,\n}\n",
             "run:1",
         ),
         (
-            "needs Carrier, Carry from sup\ntrait PrivT {\n fn pt(self) -> int\n}",
+            "use sup::{Carrier, Carry}\ntrait PrivT {\n fn pt(self) -> int\n}",
             "let c = Carrier { v: 1 }\nc.pt()\n",
             "E0410",
         ),
         (
-            "needs Carrier, Carry from sup\nfn privfn(n: int) -> int {\n n + 1\n}",
+            "use sup::{Carrier, Carry}\nfn privfn(n: int) -> int {\n n + 1\n}",
             "privfn(1)\n",
             "run:2",
         ),
         (
-            "needs Carrier, Carry from sup\nlet privg = 7",
+            "use sup::{Carrier, Carry}\nlet privg = 7",
             "privg\n",
             "run:7",
         ),
         (
-            "needs sup\nstruct PrivS { q: int }",
+            "use sup\nstruct PrivS { q: int }",
             "let s = PrivS { q: 1 }\ns.q\n",
             "run:1",
         ),
         (
-            "needs sup\ntrait PrivT {\n fn pt(self) -> int\n}",
+            "use sup\ntrait PrivT {\n fn pt(self) -> int\n}",
             "let c = Carrier { v: 1 }\nc.pt()\n",
             "E0410",
         ),
         (
-            "needs sup as sp\nstruct PrivS { q: int }",
+            "use sup as sp\nstruct PrivS { q: int }",
             "let c = sp::mkc(2).go()\nlet x = PrivS { q: 1 }\nc + x.q\n",
             "run:1113",
         ),
         (
-            "needs Carrier, Carry from sup\nstruct PrivS { q: int }",
+            "use sup::{Carrier, Carry}\nstruct PrivS { q: int }",
             "let c = Carrier { v: 2 }.go()\nlet s = PrivS { q: 1 }\nc + s.q\n",
             "run:1113",
         ),
         (
-            "needs Carrier, Carry from sup",
+            "use sup::{Carrier, Carry}",
             "Carrier { v: 2 }.go()\n",
             "run:1112",
         ),
-        ("needs sup", "Carrier { v: 2 }.go()\n", "run:1112"),
-        ("needs sup as sp", "sp::mkc(2).go()\n", "run:1112"),
+        ("use sup", "Carrier { v: 2 }.go()\n", "run:1112"),
+        ("use sup as sp", "sp::mkc(2).go()\n", "run:1112"),
     ];
     for (index, (import, body, expected)) in cells.iter().enumerate() {
         let main = write_file(
@@ -695,7 +695,7 @@ fn an_associated_type_reaching_a_private_enum_stays_unconstructible() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Source from sup\nfn probe() -> int {\n    match HiddenE::A(3) {\n        HiddenE::A(n) => n,\n        HiddenE::B => 0,\n    }\n}\nprobe()\n",
+        "use sup::{Counter, Source}\nfn probe() -> int {\n    match HiddenE::A(3) {\n        HiddenE::A(n) => n,\n        HiddenE::B => 0,\n    }\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("the associated item exposes the name");
     assert!(
@@ -711,7 +711,7 @@ fn a_private_trait_method_is_absent_on_a_receiver_known_at_its_instance() {
     let main = write_file(
         &dir,
         "main.aelys",
-        "needs Counter, Pub from sup\nfn id<Z>(z: Z) -> Z { return z }\nfn probe() -> int {\n    let c = id(Counter { v: 2 })\n    c.render()\n}\nprobe()\n",
+        "use sup::{Counter, Pub}\nfn id<Z>(z: Z) -> Z { return z }\nfn probe() -> int {\n    let c = id(Counter { v: 2 })\n    c.render()\n}\nprobe()\n",
     );
     let message = run(&main).expect_err("the trait never crossed the boundary");
     assert!(

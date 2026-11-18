@@ -1,5 +1,5 @@
-needs std::fs
-needs std::sys
+use std::fs
+use std::sys
 
 const BAR_WIDTH = 40
 const TOP = 10
@@ -10,7 +10,7 @@ fn split_words(text: string) -> Vec<string> {
     let mut apostrophe = false
     for c in text {
         match c {
-            '\'' | '\u{2019}' if not current.is_empty() and not apostrophe => apostrophe = true,
+            '\'' | '\u{2019}' if !current.is_empty() && !apostrophe => apostrophe = true,
             c if c.is_alpha() => {
                 if apostrophe {
                     current.push('\'')
@@ -19,7 +19,7 @@ fn split_words(text: string) -> Vec<string> {
                 current.push(c.to_lower())
             }
             _ => {
-                if not current.is_empty() {
+                if !current.is_empty() {
                     words.push(current)
                     current = ""
                 }
@@ -27,7 +27,7 @@ fn split_words(text: string) -> Vec<string> {
             }
         }
     }
-    if not current.is_empty() {
+    if !current.is_empty() {
         words.push(current)
     }
     words
@@ -61,7 +61,7 @@ fn longest(words: Vec<string>) -> Option<string> {
     let mut best: Option<string> = None
     for w in words {
         let better = if let Some(b) = best {
-            w.char_len() > b.char_len() or (w.char_len() == b.char_len() and w < b)
+            w.char_len() > b.char_len() || (w.char_len() == b.char_len() && w < b)
         } else {
             true
         }

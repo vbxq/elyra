@@ -1,10 +1,9 @@
-needs std::fs as fs
-needs std::convert as convert
-needs utils
-needs http
+use std::fs as fs
+use utils
+use http
 
 pub fn serve_static(client: int, path: string, public_dir: string, index_file: string) -> bool {
-    if not convert::to_bool(utils::is_safe_path(path)) {
+    if !utils::is_safe_path(path) {
         utils::log_error("Directory traversal attempt: " + path)
         http::send_error(client, 403, "Access forbidden: invalid path")
         return false
@@ -12,7 +11,7 @@ pub fn serve_static(client: int, path: string, public_dir: string, index_file: s
 
     let mut file_path = path
 
-    if file_path.len() == 0 or file_path == "/" {
+    if file_path.len() == 0 || file_path == "/" {
         file_path = index_file
     } else if file_path.starts_with("/") {
         file_path = file_path.substr(1, file_path.len() - 1)
@@ -25,12 +24,12 @@ pub fn serve_static(client: int, path: string, public_dir: string, index_file: s
         file_path = file_path + "/" + index_file
     }
 
-    if not fs::exists(full_path) {
+    if !fs::exists(full_path) {
         http::send_error(client, 404, "File not found: " + file_path)
         return false
     }
 
-    if not fs::is_file(full_path) {
+    if !fs::is_file(full_path) {
         http::send_error(client, 403, "Cannot serve directory without index file")
         return false
     }
@@ -39,7 +38,7 @@ pub fn serve_static(client: int, path: string, public_dir: string, index_file: s
 
     let mut content_type = "application/octet-stream"
 
-    if file_path.ends_with(".html") or file_path.ends_with(".htm") {
+    if file_path.ends_with(".html") || file_path.ends_with(".htm") {
         content_type = "text/html; charset=utf-8"
     } else if file_path.ends_with(".css") {
         content_type = "text/css; charset=utf-8"
@@ -49,7 +48,7 @@ pub fn serve_static(client: int, path: string, public_dir: string, index_file: s
         content_type = "application/json; charset=utf-8"
     } else if file_path.ends_with(".png") {
         content_type = "image/png"
-    } else if file_path.ends_with(".jpg") or file_path.ends_with(".jpeg") {
+    } else if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") {
         content_type = "image/jpeg"
     } else if file_path.ends_with(".gif") {
         content_type = "image/gif"

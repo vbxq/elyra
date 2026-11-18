@@ -378,7 +378,7 @@ pub fn twice<T>(x: T) -> (T, T) {
 #[test]
 fn tuples_cross_modules_through_generic_templates_and_nested_schemas() {
     let main = r#"
-needs pairs
+use pairs
 let s: pairs::Stack<(int, string)> = pairs::new_stack()
 let s2 = s.pushed((4, "four")).pushed((5, "five!"))
 let (n, word) = s2.top()

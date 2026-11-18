@@ -335,7 +335,7 @@ fn auto_registered_standard_modules_are_nameable_at_compile_time() {
     let runtime = Runtime::new();
     let module = runtime
         .compile(
-            "convert::to_int(math::floor(2.5)) + string::len(\"abc\")",
+            "math::floor(2.5) as int + string::len(\"abc\")",
             CompileOptions::default(),
         )
         .unwrap();

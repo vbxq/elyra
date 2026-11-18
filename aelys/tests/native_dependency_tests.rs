@@ -75,7 +75,7 @@ fn circular_native_dependency_is_rejected() {
     copy_module(&dir, "cycle_a", &lib_a);
     copy_module(&dir, "cycle_b", &lib_b);
 
-    let main_path = write_file(&dir, "main.aelys", "needs cycle_a\n");
+    let main_path = write_file(&dir, "main.aelys", "use cycle_a\n");
 
     let err = run_file(&main_path).expect_err("should fail");
     assert!(
@@ -96,7 +96,7 @@ fn diamond_dependency_version_conflict_is_rejected() {
     copy_module(&dir, "dep_b", &lib_b);
     copy_module(&dir, "dep_c", &lib_c);
 
-    let main_path = write_file(&dir, "main.aelys", "needs dep_a\nneeds dep_c\n");
+    let main_path = write_file(&dir, "main.aelys", "use dep_a\nuse dep_c\n");
 
     let err = run_file(&main_path).expect_err("should fail");
     assert!(

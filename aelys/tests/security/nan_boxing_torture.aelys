@@ -1,8 +1,8 @@
 // float -> pointer confusion
 // crashes if everything is good
 
-needs std.io
-needs std.convert
+use std.io
+use std.convert
 
 @no_gc
 fn nan_poison() {
