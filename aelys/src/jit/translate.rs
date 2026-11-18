@@ -270,8 +270,10 @@ fn translate_function(
             match instruction.opcode {
                 OpCode::GetGlobalIdx | OpCode::GetGlobalIdxWide => {
                     let index = global_index(function, instruction)?;
-                    *global_indices.get_mut(instruction.a)? =
-                        is_native_global(function, index).then_some(index);
+                    if !is_native_global(function, index) {
+                        return None;
+                    }
+                    *global_indices.get_mut(instruction.a)? = Some(index);
                     *register_types.get_mut(instruction.a)? = IrType::Uninitialized;
                     *nested_functions.get_mut(instruction.a)? = None;
                 }

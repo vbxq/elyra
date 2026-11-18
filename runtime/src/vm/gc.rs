@@ -94,6 +94,13 @@ impl VM {
                 .iter()
                 .filter_map(|value| value.as_ptr().map(GcRef::new)),
         );
+        if let Some(range) = self.frame_jit_root_range() {
+            roots.extend(
+                self.registers[range]
+                    .iter()
+                    .filter_map(|value| value.as_ptr().map(GcRef::new)),
+            );
+        }
         roots.extend(self.open_upvalues.iter().copied());
         roots.extend(self.current_upvalues.iter().copied());
         roots.extend(self.host_roots.references());

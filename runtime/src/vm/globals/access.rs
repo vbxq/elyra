@@ -43,6 +43,7 @@ impl VM {
     pub fn set_global_by_index(&mut self, idx: usize, value: Value) {
         if idx >= self.globals_by_index.len() {
             self.globals_by_index.resize(idx + 1, Value::null());
+            self.global_view.names.resize(idx + 1, String::new());
         }
         if idx >= self.global_generations.len() {
             self.global_generations.resize(idx + 1, 0);
@@ -52,6 +53,7 @@ impl VM {
         self.bump_jit_global_epoch();
         self.globals_by_index_cache.clear();
         self.globals_by_index_dirty = true;
+        self.global_view.note_write(idx);
     }
 
     pub(crate) fn set_global_by_index_checked(
@@ -94,6 +96,7 @@ impl VM {
         self.bump_jit_global_epoch();
         self.globals_by_index.clear();
         self.globals_by_index_cache.clear();
+        self.global_view.clear();
         self.current_global_mapping_id = usize::MAX;
     }
 

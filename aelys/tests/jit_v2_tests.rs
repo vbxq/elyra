@@ -156,7 +156,7 @@ increment(42)
         isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::int(43))
     );
-    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_cache_entries(), 2);
     assert_eq!(runtime.jit_deoptimizations(), 0);
 }
 
@@ -682,7 +682,7 @@ result
         isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::int(42))
     );
-    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_cache_entries(), 2);
     assert_eq!(runtime.jit_deoptimizations(), 0);
 }
 

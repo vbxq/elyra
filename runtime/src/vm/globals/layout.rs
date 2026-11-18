@@ -1,4 +1,5 @@
 use super::super::{GcRef, ObjectKind, VM, Value};
+use aelys_bytecode::GlobalLayout;
 use std::sync::Arc;
 
 impl VM {
@@ -36,9 +37,6 @@ impl VM {
         if mapping_id == self.current_global_mapping_id {
             return mapping_id;
         }
-        if self.install_prepared_mapping(mapping_id) {
-            return mapping_id;
-        }
         let layout = if let Some(obj) = self.heap.get(func_ref) {
             match &obj.kind {
                 ObjectKind::Function(function) => {
@@ -57,16 +55,19 @@ impl VM {
             None
         };
         match layout {
-            Some(layout) if !layout.names().is_empty() => self.prepare_globals_for_layout(&layout),
-            Some(layout) => self.prepare_empty_global_mapping(layout.id()),
-            None => self.prepare_empty_global_mapping(0),
+            Some(layout) => self.prepare_globals_for_layout(&layout),
+            None => {
+                self.current_global_mapping_id = 0;
+                0
+            }
         }
     }
 
     /// mapping ids come from a process wide counter, so an unusual number of layouts stops being cached
     const MAX_PREPARED_MAPPING: usize = 1 << 20;
 
-    fn install_prepared_mapping(&mut self, mapping_id: usize) -> bool {
+    fn install_prepared_mapping(&mut self, layout: &GlobalLayout) -> bool {
+        let mapping_id = layout.id();
         let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id).cloned() else {
             return false;
         };
@@ -75,6 +76,7 @@ impl VM {
         if self.global_generations.len() != prepared.len() {
             self.sync_global_generation_len(prepared.len());
         }
+        self.global_view.reset(layout.names(), Some(mapping_id));
         self.current_global_mapping_id = mapping_id;
         true
     }
@@ -89,17 +91,23 @@ impl VM {
         self.globals_by_index_cache[mapping_id] = Some(prepared);
     }
 
-    pub fn prepare_globals_for_layout(&mut self, layout: &super::super::GlobalLayout) -> usize {
+    pub fn prepare_globals_for_layout(&mut self, layout: &GlobalLayout) -> usize {
         let mapping_id = layout.id();
         if mapping_id == self.current_global_mapping_id {
             return mapping_id;
         }
-
-        if self.install_prepared_mapping(mapping_id) {
+        let names = layout.names();
+        if names.is_empty() || self.global_view.is_ready(mapping_id) {
+            self.current_global_mapping_id = mapping_id;
             return mapping_id;
         }
-
-        let names = layout.names();
+        if self.merge_global_layout(layout) {
+            return mapping_id;
+        }
+        self.sync_current_function_globals();
+        if self.install_prepared_mapping(layout) {
+            return mapping_id;
+        }
 
         let needed_len = names.len();
         if self.globals_by_index.len() < needed_len {
@@ -115,6 +123,7 @@ impl VM {
         }
         self.globals_by_index.truncate(needed_len);
         self.sync_global_generation_len(needed_len);
+        self.global_view.reset(names, Some(mapping_id));
 
         self.current_global_mapping_id = mapping_id;
         let snapshot = Arc::new(self.globals_by_index.clone());
@@ -122,13 +131,36 @@ impl VM {
         mapping_id
     }
 
-    fn prepare_empty_global_mapping(&mut self, mapping_id: usize) -> usize {
-        if mapping_id == self.current_global_mapping_id {
-            return mapping_id;
+    // adds the layout's names to the view when no index already names another global
+    fn merge_global_layout(&mut self, layout: &GlobalLayout) -> bool {
+        let names = layout.names();
+        let merged = &self.global_view.names;
+        if merged.len() != self.globals_by_index.len() {
+            return false;
         }
-        self.globals_by_index.clear();
-        self.current_global_mapping_id = mapping_id;
-        self.store_prepared_mapping(mapping_id, Arc::new(Vec::new()));
-        mapping_id
+        let conflict = names.iter().enumerate().any(|(index, name)| {
+            !name.is_empty()
+                && merged
+                    .get(index)
+                    .is_some_and(|existing| !existing.is_empty() && existing != name)
+        });
+        if conflict {
+            return false;
+        }
+        if self.globals_by_index.len() < names.len() {
+            self.globals_by_index.resize(names.len(), Value::null());
+            self.global_view.names.resize(names.len(), String::new());
+            self.sync_global_generation_len(names.len());
+        }
+        for (index, name) in names.iter().enumerate() {
+            if name.is_empty() || !self.global_view.names[index].is_empty() {
+                continue;
+            }
+            self.globals_by_index[index] = self.globals.get(name).copied().unwrap_or(Value::null());
+            self.global_view.names[index] = name.clone();
+        }
+        self.global_view.mark_ready(layout.id());
+        self.current_global_mapping_id = layout.id();
+        true
     }
 }

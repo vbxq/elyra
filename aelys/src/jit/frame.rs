@@ -2,8 +2,8 @@ use aelys_bytecode::{
     Constant, Function, InstructionFormat, IntWidth, OpCode, TypeDescriptor, Value,
 };
 use aelys_runtime::{
-    FRAME_STATUS_CALL_IN_INTERPRETER, FRAME_STATUS_EXIT, FrameCode, FrameCodeInfo,
-    FrameCollectionKind, FrameData, FrameJitContext, FrameSiteKind,
+    FRAME_STATUS_CALL_IN_INTERPRETER, FRAME_STATUS_EXIT, FRAME_STATUS_NATIVE_ERROR, FrameCode,
+    FrameCodeInfo, FrameCollectionKind, FrameData, FrameJitContext, FrameSiteKind,
 };
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
@@ -40,7 +40,18 @@ pub(crate) enum FrameRefusal {
     Decode,
     NoEntry,
     EmptyEntry,
+    Captures,
     Codegen(String),
+}
+
+// an open upvalue aliases a register of this frame, which machine code keeps in its own variables
+fn captures_locals(function: &Function) -> bool {
+    function.nested_functions.iter().any(|nested| {
+        nested
+            .upvalue_descriptors
+            .iter()
+            .any(|descriptor| descriptor.is_local)
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -251,8 +262,16 @@ impl Analysis<'_> {
                 simple(vec![], Some(a))
             }
             GetGlobalIdx | GetGlobalIdxWide => {
-                self.global_name(self.global_index(inst)?)?;
+                self.named_global(self.global_index(inst)?)?;
                 simple(vec![], Some(a))
+            }
+            SetGlobalIdx | SetGlobalIdxWide => {
+                self.named_global(self.global_index(inst)?)?;
+                simple(vec![a], None)
+            }
+            AddGlobalI => {
+                self.named_global(c)?;
+                simple(vec![b], Some(a))
             }
             Add | Sub | Mul | AddII | SubII | MulII | DivII | ModII | AddFF | SubFF | MulFF
             | DivFF | ModFF | AddIIG | SubIIG | MulIIG | DivIIG | ModIIG | Eq | Ne | Lt | Le
@@ -294,10 +313,7 @@ impl Analysis<'_> {
                 flow: Flow::Return,
             },
             CallGlobal => {
-                let name = self.global_name(b)?;
-                if name.is_empty() {
-                    return None;
-                }
+                self.named_global(b)?;
                 simple((a + 1..a + 1 + c).collect(), Some(a))
             }
             Call => {
@@ -341,11 +357,193 @@ impl Analysis<'_> {
 
     fn global_index(&self, inst: &Inst) -> Option<usize> {
         match inst.op {
-            OpCode::GetGlobalIdx => usize::try_from(inst.imm & 0xffff).ok(),
-            OpCode::GetGlobalIdxWide => usize::try_from(inst.imm).ok(),
+            OpCode::GetGlobalIdx | OpCode::SetGlobalIdx => usize::try_from(inst.imm & 0xffff).ok(),
+            OpCode::GetGlobalIdxWide | OpCode::SetGlobalIdxWide => usize::try_from(inst.imm).ok(),
             _ => None,
         }
     }
+
+    fn named_global(&self, index: usize) -> Option<usize> {
+        self.global_name(index)
+            .is_some_and(|name| !name.is_empty())
+            .then_some(index)
+    }
+
+    fn uses_globals(&self, inst: &Inst) -> bool {
+        matches!(
+            inst.op,
+            OpCode::GetGlobalIdx
+                | OpCode::GetGlobalIdxWide
+                | OpCode::SetGlobalIdx
+                | OpCode::SetGlobalIdxWide
+                | OpCode::AddGlobalI
+                | OpCode::CallGlobal
+        )
+    }
+
+    // what the interpreter may read and write from this instruction on: an exit resumes it here
+    fn live_effect(&self, inst: &Inst) -> LiveEffect {
+        use OpCode::*;
+        if let Some(effect) = self.effect(inst) {
+            return LiveEffect {
+                uses: Some(effect.uses),
+                def: effect.def,
+                flow: effect.flow,
+            };
+        }
+        let every = || LiveEffect {
+            uses: None,
+            def: None,
+            flow: Flow::Return,
+        };
+        let (a, b, c) = (inst.a, inst.b, inst.c);
+        let words = self.function.bytecode.as_slice();
+        let simple = |uses: Vec<usize>, def: Option<usize>| LiveEffect {
+            uses: Some(uses),
+            def,
+            flow: Flow::Next,
+        };
+        let effect = match inst.op {
+            Div | Mod | AddFFG | SubFFG | MulFFG | DivFFG | ModFFG | LtFFG | LeFFG | GtFFG
+            | GeFFG | EqFFG | NeFFG | ArrayGetI | ArrayGetF | ArrayGetB | ArrayGetP | VecGetI
+            | VecGetF | VecGetB | VecGetP | StringLoadChar | RangeNew | RangeNewInclusive
+            | ArraySlice | VecSlice
+                if inst.valid =>
+            {
+                simple(vec![b, c], Some(a))
+            }
+            GetGlobal | GetUpval | VecNewI | VecNewF | VecNewB | VecNewP if inst.valid => {
+                simple(vec![], Some(a))
+            }
+            SetGlobal if inst.valid => simple(vec![a], None),
+            SetUpval if inst.valid => simple(vec![b], None),
+            ArrayNewI | ArrayNewF | ArrayNewB | ArrayNewP | VecPopI | VecPopF | VecPopB
+            | VecPopP | VecCap | Cast | MakeSum | SumTest | SumPayload
+                if inst.valid =>
+            {
+                simple(vec![b], Some(a))
+            }
+            VecReserve if inst.valid => simple(vec![a, b], None),
+            ArrayLit | VecLit if inst.valid => simple((b..b + c).collect(), Some(a)),
+            CallUpval if inst.valid => simple((a + 1..a + 1 + c).collect(), Some(a)),
+            TailCallUpval if inst.valid => LiveEffect {
+                uses: Some((a + 1..a + 1 + c).collect()),
+                def: None,
+                flow: Flow::Return,
+            },
+            MatchFail if inst.valid => LiveEffect {
+                uses: Some(if c == 1 { vec![b] } else { vec![] }),
+                def: None,
+                flow: Flow::Return,
+            },
+            StringForLoop | VecForLoop | ArrayForLoop | StringForLoopLong | VecForLoopLong
+            | ArrayForLoopLong
+                if inst.valid =>
+            {
+                match inst.target {
+                    Some(target) => LiveEffect {
+                        uses: Some(vec![a, a + 1, a + 2]),
+                        def: None,
+                        flow: Flow::Branch(target),
+                    },
+                    None => every(),
+                }
+            }
+            StructNew | EnumNew | EnumTest | EnumLoad => {
+                let (Some(first), Some(second)) = (words.get(inst.ip + 1), words.get(inst.ip + 2))
+                else {
+                    return every();
+                };
+                let destination = (first >> 16) as usize;
+                let source = (first & 0xffff) as usize;
+                let uses = match inst.op {
+                    StructNew => (source..source + (second >> 16) as usize).collect(),
+                    EnumNew => (source..source + (second & 0xffff) as usize).collect(),
+                    _ => vec![source],
+                };
+                simple(uses, Some(destination))
+            }
+            _ => every(),
+        };
+        let out_of_range = effect
+            .uses
+            .iter()
+            .flatten()
+            .chain(effect.def.iter())
+            .any(|register| *register >= self.registers);
+        if out_of_range { every() } else { effect }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LiveEffect {
+    uses: Option<Vec<usize>>,
+    def: Option<usize>,
+    flow: Flow,
+}
+
+fn function_liveness(
+    analysis: &Analysis<'_>,
+    instructions: &[Inst],
+    by_ip: &HashMap<usize, usize>,
+) -> (HashMap<usize, Live>, HashMap<usize, Live>) {
+    let all = Live::all(analysis.registers);
+    let effects = instructions
+        .iter()
+        .map(|inst| analysis.live_effect(inst))
+        .collect::<Vec<_>>();
+    let mut live_in = vec![Live::default(); instructions.len()];
+    let mut live_out = vec![Live::default(); instructions.len()];
+    let successor_live = |live_in: &[Live], ip: usize| match by_ip.get(&ip) {
+        Some(index) => live_in[*index],
+        None => all,
+    };
+    loop {
+        let mut changed = false;
+        for index in (0..instructions.len()).rev() {
+            let inst = &instructions[index];
+            let effect = &effects[index];
+            let mut out = Live::default();
+            match effect.flow {
+                Flow::Next => out.union(&successor_live(&live_in, inst.next)),
+                Flow::Jump(target) => out.union(&successor_live(&live_in, target)),
+                Flow::Branch(target) => {
+                    out.union(&successor_live(&live_in, target));
+                    out.union(&successor_live(&live_in, inst.next));
+                }
+                Flow::Return => {}
+            }
+            let input = match &effect.uses {
+                None => all,
+                Some(uses) => {
+                    let mut input = out;
+                    if let Some(def) = effect.def {
+                        input.remove(def);
+                    }
+                    for &register in uses {
+                        input.insert(register);
+                    }
+                    input
+                }
+            };
+            if live_out[index] != out || live_in[index] != input {
+                live_out[index] = out;
+                live_in[index] = input;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let by_ip_map = |values: Vec<Live>| {
+        instructions
+            .iter()
+            .zip(values)
+            .map(|(inst, live)| (inst.ip, live))
+            .collect::<HashMap<_, _>>()
+    };
+    (by_ip_map(live_in), by_ip_map(live_out))
 }
 
 fn constant_index(inst: &Inst) -> Option<usize> {
@@ -409,51 +607,7 @@ fn region(
     let mut order = effects.keys().copied().collect::<Vec<_>>();
     order.sort_unstable();
     leaders.retain(|ip| effects.contains_key(ip));
-    let all = Live::all(analysis.registers);
-    let mut live_in: HashMap<usize, Live> = order.iter().map(|ip| (*ip, Live::default())).collect();
-    let mut live_out: HashMap<usize, Live> = live_in.clone();
-    loop {
-        let mut changed = false;
-        for &ip in order.iter().rev() {
-            let effect = &effects[&ip];
-            let Some(effect) = effect else {
-                if live_in[&ip] != all {
-                    live_in.insert(ip, all);
-                    changed = true;
-                }
-                continue;
-            };
-            let next = by_ip.get(&ip).map(|index| instructions[*index].next);
-            let successors: Vec<usize> = match effect.flow {
-                Flow::Next => next.into_iter().collect(),
-                Flow::Jump(target) => vec![target],
-                Flow::Branch(target) => vec![target].into_iter().chain(next).collect(),
-                Flow::Return => vec![],
-            };
-            let mut out = Live::default();
-            for successor in successors {
-                out.union(live_in.get(&successor).unwrap_or(&all));
-            }
-            let mut input = out;
-            if let Some(def) = effect.def {
-                input.remove(def);
-            }
-            for &register in &effect.uses {
-                input.insert(register);
-            }
-            if live_out[&ip] != out {
-                live_out.insert(ip, out);
-                changed = true;
-            }
-            if live_in[&ip] != input {
-                live_in.insert(ip, input);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let (live_in, live_out) = function_liveness(analysis, instructions, by_ip);
     Some(Region {
         order,
         effects,
@@ -464,7 +618,8 @@ fn region(
 }
 
 struct Helpers {
-    global: FuncRef,
+    view: FuncRef,
+    set_global: FuncRef,
     call: FuncRef,
     push: FuncRef,
     collection: FuncRef,
@@ -494,6 +649,8 @@ struct Lowerer<'a, 'b> {
     current: Option<(usize, Live, Option<Block>)>,
     known: HashMap<ClifValue, Known>,
     origins: HashMap<usize, usize>,
+    progress: Variable,
+    uses_globals: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -601,7 +758,109 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         }
     }
 
+    fn commit_progress(&mut self) {
+        let progress = self.builder.use_var(self.progress);
+        let previous = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.context,
+            FrameJitContext::PROGRESS,
+        );
+        let total = self.builder.ins().iadd(previous, progress);
+        self.builder.ins().store(
+            Self::trusted(),
+            total,
+            self.context,
+            FrameJitContext::PROGRESS,
+        );
+    }
+
+    fn count_backedge(&mut self, inst: &Inst, target: usize) {
+        if target <= inst.ip {
+            let progress = self.builder.use_var(self.progress);
+            let next = self.builder.ins().iadd_imm_s(progress, 1);
+            self.builder.def_var(self.progress, next);
+        }
+    }
+
+    fn global_view(&mut self) -> (ClifValue, ClifValue) {
+        let globals = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.context,
+            FrameJitContext::GLOBALS,
+        );
+        let length = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.context,
+            FrameJitContext::GLOBALS_LEN,
+        );
+        (globals, length)
+    }
+
+    // every global read of machine code goes through here, so a read check belongs in this one place
+    fn load_global(&mut self, index: usize, exit: Block) -> ClifValue {
+        let (globals, length) = self.global_view();
+        let inside = self.builder.ins().icmp_imm_s(
+            IntCC::UnsignedGreaterThan,
+            length,
+            i64::try_from(index).unwrap_or(i64::MAX),
+        );
+        self.guard(inside, exit);
+        let offset = i32::try_from(index * 8).unwrap_or(i32::MAX);
+        self.builder
+            .ins()
+            .load(types::I64, Self::trusted(), globals, offset)
+    }
+
+    fn store_global(&mut self, index: usize, value: ClifValue, exit: Block) {
+        let index = self
+            .builder
+            .ins()
+            .iconst(types::I64, i64::try_from(index).unwrap_or(i64::MAX));
+        let call = self
+            .builder
+            .ins()
+            .call(self.helpers.set_global, &[self.context, index, value]);
+        let stored = self.builder.inst_results(call)[0];
+        self.guard(stored, exit);
+    }
+
+    // the view holds every name of this function once its generation matches the one recorded in the data block
+    fn ensure_view(&mut self) {
+        if !self.uses_globals {
+            return;
+        }
+        let current = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.context,
+            FrameJitContext::VIEW_GENERATION,
+        );
+        let prepared = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.data,
+            FrameData::VIEW_GENERATION,
+        );
+        let ready = self.builder.ins().icmp(IntCC::Equal, current, prepared);
+        let refresh = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.builder.set_cold_block(refresh);
+        self.builder.ins().brif(ready, done, &[], refresh, &[]);
+        self.builder.seal_block(refresh);
+        self.builder.switch_to_block(refresh);
+        self.builder
+            .ins()
+            .call(self.helpers.view, &[self.context, self.data]);
+        self.builder.ins().jump(done, &[]);
+        self.builder.seal_block(done);
+        self.builder.switch_to_block(done);
+    }
+
     fn leave(&mut self, ip: usize) {
+        self.commit_progress();
         let status = self
             .builder
             .ins()
@@ -1061,57 +1320,31 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                     .analysis
                     .global_index(inst)
                     .ok_or(FrameRefusal::Decode)?;
-                let name: Arc<str> = Arc::from(
-                    self.analysis
-                        .global_name(index)
-                        .ok_or(FrameRefusal::Decode)?,
-                );
-                let (site, offset) = self.site(FrameSiteKind::Global { name });
-                let epoch = self.builder.ins().load(
-                    types::I64,
-                    Self::trusted(),
-                    self.context,
-                    FrameJitContext::GLOBAL_EPOCH,
-                );
-                let cached_epoch = self.builder.ins().load(
-                    types::I64,
-                    Self::trusted(),
-                    self.data,
-                    offset + FrameData::SITE_EPOCH,
-                );
-                let hit = self.builder.ins().icmp(IntCC::Equal, epoch, cached_epoch);
-                let hit_block = self.builder.create_block();
-                let miss_block = self.builder.create_block();
-                let join = self.builder.create_block();
-                self.builder.set_cold_block(miss_block);
-                let result = self.builder.append_block_param(join, types::I64);
-                self.builder
-                    .ins()
-                    .brif(hit, hit_block, &[], miss_block, &[]);
-                self.builder.seal_block(hit_block);
-                self.builder.seal_block(miss_block);
-                self.builder.switch_to_block(hit_block);
-                let cached = self.builder.ins().load(
-                    types::I64,
-                    Self::trusted(),
-                    self.data,
-                    offset + FrameData::SITE_VALUE,
-                );
-                self.builder.ins().jump(join, &[BlockArg::from(cached)]);
-                self.builder.switch_to_block(miss_block);
-                let site = self
-                    .builder
-                    .ins()
-                    .iconst(types::I64, i64::try_from(site).unwrap_or(0));
-                let call = self
-                    .builder
-                    .ins()
-                    .call(self.helpers.global, &[self.context, self.data, site]);
-                let resolved = self.builder.inst_results(call)[0];
-                self.builder.ins().jump(join, &[BlockArg::from(resolved)]);
-                self.builder.seal_block(join);
-                self.builder.switch_to_block(join);
-                self.set(inst.a, result);
+                let exit = self.exit();
+                let value = self.load_global(index, exit);
+                self.set(inst.a, value);
+            }
+            SetGlobalIdx | SetGlobalIdxWide => {
+                let index = self
+                    .analysis
+                    .global_index(inst)
+                    .ok_or(FrameRefusal::Decode)?;
+                let exit = self.exit();
+                let value = self.get(inst.a);
+                self.store_global(index, value, exit);
+            }
+            AddGlobalI => {
+                let exit = self.exit();
+                let current = self.load_global(inst.c, exit);
+                let right = self.get(inst.b);
+                let ints = self.both_ints(current, right);
+                self.guard(ints, exit);
+                let left = self.unbox_int(current);
+                let right = self.unbox_int(right);
+                let sum = self.builder.ins().iadd(left, right);
+                let boxed = self.box_int_checked(sum, exit);
+                self.store_global(inst.c, boxed, exit);
+                self.set(inst.a, boxed);
             }
             AddII | SubII | MulII | DivII | ModII => {
                 let exit = self.exit();
@@ -1304,6 +1537,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 let Flow::Jump(target) = effect.flow else {
                     return Err(FrameRefusal::Decode);
                 };
+                self.count_backedge(inst, target);
                 let target = self.block_for(target);
                 self.builder.ins().jump(target, &[]);
                 return Ok(true);
@@ -1314,6 +1548,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 };
                 let value = self.get(inst.a);
                 let falsy = self.falsy(value);
+                self.count_backedge(inst, target);
                 let taken = self.block_for(target);
                 let fallthrough = self.block_for(inst.next);
                 if matches!(inst.op, JumpIf | JumpIfLong) {
@@ -1353,6 +1588,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 let up = self.builder.ins().icmp(up, next, end);
                 let down = self.builder.ins().icmp(down, next, end);
                 let continues = self.builder.ins().select(ascending, up, down);
+                self.count_backedge(inst, target);
                 let taken = self.block_for(target);
                 let fallthrough = self.block_for(inst.next);
                 self.builder
@@ -1372,6 +1608,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                     .builder
                     .ins()
                     .icmp(IntCC::SignedLessThan, iterator, limit);
+                self.count_backedge(inst, target);
                 let taken = self.block_for(target);
                 let fallthrough = self.block_for(inst.next);
                 self.builder
@@ -1380,11 +1617,13 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 return Ok(true);
             }
             Return => {
+                self.commit_progress();
                 let value = self.get(inst.a);
                 self.builder.ins().return_(&[value]);
                 return Ok(true);
             }
             Return0 => {
+                self.commit_progress();
                 let value = self.constant(Value::unit().raw());
                 self.builder.ins().return_(&[value]);
                 return Ok(true);
@@ -1592,9 +1831,31 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
         self.blocks.insert(ip, block);
-        self.pending_exits
-            .push((block, ip, Live::all(self.analysis.registers)));
+        let live = self
+            .region
+            .live_in
+            .get(&ip)
+            .copied()
+            .unwrap_or_else(|| Live::all(self.analysis.registers));
+        self.pending_exits.push((block, ip, live));
         block
+    }
+
+    // a native called below may collect: every live value that can be a reference must sit in the register stack
+    fn flush_references(&mut self, live: &Live, skip: usize, window_start: usize) {
+        for register in live.registers(self.analysis.registers).collect::<Vec<_>>() {
+            if register == skip || register >= window_start {
+                continue;
+            }
+            let value = self.get(register);
+            if self.known.contains_key(&value) {
+                continue;
+            }
+            let offset = i32::try_from(register * 8).unwrap_or(i32::MAX);
+            self.builder
+                .ins()
+                .store(Self::trusted(), value, self.registers, offset);
+        }
     }
 
     fn lower_call(&mut self, inst: &Inst) -> Result<(), FrameRefusal> {
@@ -1612,17 +1873,23 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 .ins()
                 .store(Self::trusted(), value, window, offset);
         }
-        let kind = if inst.op == OpCode::CallGlobal {
+        let (kind, callee) = if inst.op == OpCode::CallGlobal {
             let name = self
                 .analysis
                 .global_name(inst.b)
                 .ok_or(FrameRefusal::Decode)?;
-            FrameSiteKind::CallGlobal {
-                name: Arc::from(name),
-            }
+            let exit = self.exit();
+            let callee = self.load_global(inst.b, exit);
+            (
+                FrameSiteKind::CallGlobal {
+                    name: Arc::from(name),
+                },
+                callee,
+            )
         } else {
-            FrameSiteKind::CallRegister
+            (FrameSiteKind::CallRegister, self.get(inst.b))
         };
+        self.flush_references(&live_out, destination, window_start);
         let (site, offset) = self.site(kind);
         let entry = self.builder.ins().load(
             types::I64,
@@ -1630,34 +1897,13 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             self.data,
             offset + FrameData::SITE_ENTRY,
         );
-        let callee_register = if inst.op != OpCode::CallGlobal {
-            Some(self.get(inst.b))
-        } else {
-            None
-        };
-        let matches = if let Some(callee) = callee_register {
-            let cached = self.builder.ins().load(
-                types::I64,
-                Self::trusted(),
-                self.data,
-                offset + FrameData::SITE_VALUE,
-            );
-            self.builder.ins().icmp(IntCC::Equal, callee, cached)
-        } else {
-            let epoch = self.builder.ins().load(
-                types::I64,
-                Self::trusted(),
-                self.context,
-                FrameJitContext::GLOBAL_EPOCH,
-            );
-            let cached = self.builder.ins().load(
-                types::I64,
-                Self::trusted(),
-                self.data,
-                offset + FrameData::SITE_EPOCH,
-            );
-            self.builder.ins().icmp(IntCC::Equal, epoch, cached)
-        };
+        let cached = self.builder.ins().load(
+            types::I64,
+            Self::trusted(),
+            self.data,
+            offset + FrameData::SITE_VALUE,
+        );
+        let matches = self.builder.ins().icmp(IntCC::Equal, callee, cached);
         let compiled = self.builder.ins().icmp_imm_s(IntCC::NotEqual, entry, 0);
         let registers = self.builder.ins().load(
             types::I64,
@@ -1733,10 +1979,6 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             .builder
             .ins()
             .iconst(types::I64, i64::try_from(site).unwrap_or(0));
-        let callee = match callee_register {
-            Some(callee) => callee,
-            None => self.builder.ins().iconst(types::I64, 0),
-        };
         let count_value = self
             .builder
             .ins()
@@ -1770,9 +2012,12 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.seal_block(ok);
         self.builder.switch_to_block(failed);
         let in_interpreter = self.builder.create_block();
+        let not_in_interpreter = self.builder.create_block();
+        let native_failed = self.builder.create_block();
         let unwound = self.builder.create_block();
-        self.builder.set_cold_block(in_interpreter);
-        self.builder.set_cold_block(unwound);
+        for block in [in_interpreter, not_in_interpreter, native_failed, unwound] {
+            self.builder.set_cold_block(block);
+        }
         let interpret = self.builder.ins().icmp_imm_s(
             IntCC::Equal,
             status,
@@ -1780,22 +2025,27 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         );
         self.builder
             .ins()
-            .brif(interpret, in_interpreter, &[], unwound, &[]);
+            .brif(interpret, in_interpreter, &[], not_in_interpreter, &[]);
         self.builder.seal_block(in_interpreter);
-        self.builder.seal_block(unwound);
+        self.builder.seal_block(not_in_interpreter);
         self.builder.switch_to_block(in_interpreter);
         self.flush(&live_in, None);
         self.leave(inst.ip);
+        self.builder.switch_to_block(not_in_interpreter);
+        let native_error = self.builder.ins().icmp_imm_s(
+            IntCC::Equal,
+            status,
+            i64::try_from(FRAME_STATUS_NATIVE_ERROR).unwrap_or(3),
+        );
+        self.builder
+            .ins()
+            .brif(native_error, native_failed, &[], unwound, &[]);
+        self.builder.seal_block(native_failed);
+        self.builder.seal_block(unwound);
+        self.builder.switch_to_block(native_failed);
+        self.flush(&live_out, Some(destination));
+        self.leave(inst.next);
         self.builder.switch_to_block(unwound);
-        let callee = match callee_register {
-            Some(callee) => callee,
-            None => self.builder.ins().load(
-                types::I64,
-                Self::trusted(),
-                self.data,
-                offset + FrameData::SITE_VALUE,
-            ),
-        };
         let destination_value = self
             .builder
             .ins()
@@ -1809,6 +2059,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.switch_to_block(ok);
         self.set(destination, result);
         self.forget_vectors();
+        self.ensure_view();
         Ok(())
     }
 
@@ -1899,6 +2150,7 @@ pub(crate) fn frame_isa() -> Result<OwnedTargetIsa, String> {
         ("use_colocated_libcalls", "false"),
         ("is_pic", "false"),
         ("opt_level", "speed"),
+        ("enable_verifier", "false"),
     ] {
         flags.set(name, value).map_err(|error| error.to_string())?;
     }
@@ -1916,6 +2168,9 @@ pub(crate) fn compile_frame(
     let registers = usize::try_from(function.num_registers).map_err(|_| FrameRefusal::Registers)?;
     if registers > MAX_FRAME_REGISTERS || registers < usize::from(function.arity) {
         return Err(FrameRefusal::Registers);
+    }
+    if captures_locals(function) {
+        return Err(FrameRefusal::Captures);
     }
     let instructions = decode(function).ok_or(FrameRefusal::Decode)?;
     let by_ip = instructions
@@ -1977,10 +2232,14 @@ pub(crate) fn compile_frame(
 
     let mut jit_builder =
         JITBuilder::with_isa(Arc::clone(isa), cranelift_module::default_libcall_names());
-    let symbols: [(&str, *const u8); 8] = [
+    let symbols: [(&str, *const u8); 9] = [
         (
-            "aelys_frame_global",
-            aelys_runtime::aelys_frame_global as *const u8,
+            "aelys_frame_view",
+            aelys_runtime::aelys_frame_view as *const u8,
+        ),
+        (
+            "aelys_frame_set_global",
+            aelys_runtime::aelys_frame_set_global as *const u8,
         ),
         (
             "aelys_frame_call",
@@ -2048,11 +2307,18 @@ pub(crate) fn compile_frame(
     };
     let i64t = types::I64;
     let helpers = Helpers {
-        global: declare(
+        view: declare(
             &mut module,
             &mut context.func,
-            "aelys_frame_global",
-            &[pointer, pointer, i64t],
+            "aelys_frame_view",
+            &[pointer, pointer],
+            &[i64t],
+        )?,
+        set_global: declare(
+            &mut module,
+            &mut context.func,
+            "aelys_frame_set_global",
+            &[pointer, i64t, i64t],
             &[i64t],
         )?,
         call: declare(
@@ -2156,12 +2422,20 @@ pub(crate) fn compile_frame(
         };
         builder.def_var(*variable, value);
     }
+    let progress = builder.declare_var(types::I64);
+    let zero = builder.ins().iconst(types::I64, 0);
+    builder.def_var(progress, zero);
+    let uses_globals = region.order.iter().any(|ip| {
+        matches!(region.effects.get(ip), Some(Some(_)))
+            && by_ip
+                .get(ip)
+                .is_some_and(|index| analysis.uses_globals(&instructions[*index]))
+    });
     let mut blocks = HashMap::new();
     for leader in &region.leaders {
         blocks.insert(*leader, builder.create_block());
     }
     let first = blocks[&entry_ip];
-    builder.ins().jump(first, &[]);
     let mut lowerer = Lowerer {
         builder,
         analysis: &analysis,
@@ -2181,7 +2455,11 @@ pub(crate) fn compile_frame(
         current: None,
         known: HashMap::new(),
         origins: HashMap::new(),
+        progress,
+        uses_globals,
     };
+    lowerer.ensure_view();
+    lowerer.builder.ins().jump(first, &[]);
     let leaders = region.leaders.iter().copied().collect::<Vec<_>>();
     for leader in leaders {
         lowerer.lower_block(leader)?;

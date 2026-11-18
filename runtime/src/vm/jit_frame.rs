@@ -1,13 +1,16 @@
+#![allow(clippy::missing_safety_doc)]
+
 use super::{CallFrame, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
 use crate::{
-    FRAME_STATUS_CALL_IN_INTERPRETER, FRAME_STATUS_OK, FrameCode, FrameCollectionKind, FrameData,
-    FrameEntry, FrameJitContext, FrameSiteKind, JitFunctionKey,
+    FRAME_STATUS_CALL_IN_INTERPRETER, FRAME_STATUS_NATIVE_ERROR, FRAME_STATUS_OK, FrameCode,
+    FrameCollectionKind, FrameData, FrameEntry, FrameJitContext, JitFunctionKey,
 };
 use aelys_common::error::RuntimeError;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
 const EXIT_BUDGET: u64 = 64;
+const EXITS_PER_PROGRESS: u64 = 4;
 
 #[derive(Clone, Copy)]
 pub(crate) struct FrameInstall {
@@ -22,12 +25,32 @@ enum EntryState {
     Refused,
 }
 
+#[derive(Default)]
+struct ExitBudget {
+    entries: u64,
+    exits: u64,
+    progress: u64,
+}
+
+impl ExitBudget {
+    // a region stays compiled while each exit is paid for by enough loop iterations or completed entries in machine code
+    fn record(&mut self, exited: bool, progress: u64) -> bool {
+        self.entries = self.entries.saturating_add(1);
+        self.progress = self.progress.saturating_add(progress);
+        if !exited {
+            self.progress = self.progress.saturating_add(1);
+            return false;
+        }
+        self.exits = self.exits.saturating_add(1);
+        self.exits > EXIT_BUDGET && self.exits.saturating_mul(EXITS_PER_PROGRESS) > self.progress
+    }
+}
+
 struct OsrEntry {
     ip: u32,
     state: EntryState,
     legacy_tried: bool,
-    entries: u64,
-    exits: u64,
+    budget: ExitBudget,
 }
 
 pub(crate) struct FrameSlot {
@@ -35,8 +58,7 @@ pub(crate) struct FrameSlot {
     key: Option<JitFunctionKey>,
     counters: usize,
     call: EntryState,
-    call_entries: u64,
-    call_exits: u64,
+    call_budget: ExitBudget,
     osr: SmallVec<[OsrEntry; 2]>,
     codes: SmallVec<[Arc<dyn FrameCode>; 2]>,
     blocks: SmallVec<[Box<[u64]>; 2]>,
@@ -68,6 +90,10 @@ pub(crate) struct FrameJitState {
     pub(crate) global_epoch: u64,
     osr_resume: bool,
     pub(crate) disabled: bool,
+    entry_floor: usize,
+    root_ceiling: usize,
+    native_depth: u32,
+    native_error: Option<RuntimeError>,
 }
 
 impl Default for FrameJitState {
@@ -87,10 +113,18 @@ impl Default for FrameJitState {
                 depth: 0,
                 scratch0: 0,
                 scratch1: 0,
+                globals: 0,
+                globals_len: 0,
+                view_generation: 0,
+                progress: 0,
             },
             global_epoch: 1,
             osr_resume: false,
             disabled: false,
+            entry_floor: 0,
+            root_ceiling: 0,
+            native_depth: 0,
+            native_error: None,
         }
     }
 }
@@ -163,8 +197,7 @@ impl VM {
             },
             key,
             counters,
-            call_entries: 0,
-            call_exits: 0,
+            call_budget: ExitBudget::default(),
             osr: SmallVec::new(),
             codes: SmallVec::new(),
             blocks: SmallVec::new(),
@@ -198,13 +231,6 @@ impl VM {
         };
         let code = executor.compile_frame(&key, &bytecode_function.function, osr_ip)?;
         let info = code.info();
-        if osr_ip.is_none() && self.calls_a_native(info) {
-            return None;
-        }
-        let object = self.heap.get(function)?;
-        let ObjectKind::Function(bytecode_function) = &object.kind else {
-            return None;
-        };
         if info.num_registers != bytecode_function.function.num_registers
             || info.arity != bytecode_function.function.arity
             || info.osr_ip != osr_ip
@@ -221,6 +247,7 @@ impl VM {
         block[1] = function.index() as u64;
         block[2] = std::ptr::from_ref::<crate::FrameCodeInfo>(info) as u64;
         block[3] = schema_words as u64;
+        block[FrameData::VIEW_GENERATION as usize / 8] = u64::MAX;
         let materialized = schemas.runtime_ids.len() == schemas.structs.len();
         for (index, schema) in schemas.structs.iter().enumerate() {
             let valid =
@@ -288,20 +315,14 @@ impl VM {
         if self.frames.len() >= MAX_FRAMES {
             return FrameOutcome::Interpret;
         }
-        let outcome = self.enter_frame_code(install, argument_start, EntryKind::Call);
+        let (outcome, progress) = self.enter_frame_code(install, argument_start, EntryKind::Call);
+        let exited = matches!(outcome, FrameOutcome::Exited(_));
+        if exited && let Some(executor) = self.jit_executor.as_ref() {
+            executor.record_frame_exit();
+        }
         let slot = &mut self.frame_jit.slots[index];
-        slot.call_entries = slot.call_entries.saturating_add(1);
-        if matches!(outcome, FrameOutcome::Exited(_)) {
-            if let Some(executor) = self.jit_executor.as_ref() {
-                executor.record_frame_exit();
-            }
-            let slot = &mut self.frame_jit.slots[index];
-            slot.call_exits = slot.call_exits.saturating_add(1);
-            if slot.call_exits > EXIT_BUDGET
-                && slot.call_exits.saturating_mul(2) > slot.call_entries
-            {
-                slot.call = EntryState::Refused;
-            }
+        if slot.call_budget.record(exited, progress) {
+            slot.call = EntryState::Refused;
         }
         outcome
     }
@@ -311,30 +332,43 @@ impl VM {
         install: FrameInstall,
         window_start: usize,
         kind: EntryKind,
-    ) -> FrameOutcome {
+    ) -> (FrameOutcome, u64) {
         let Some(window_end) = window_start.checked_add(install.registers as usize) else {
-            return FrameOutcome::Interpret;
+            return (FrameOutcome::Interpret, 0);
         };
         if window_end > self.registers.len() {
-            return FrameOutcome::Interpret;
+            return (FrameOutcome::Interpret, 0);
         }
         let depth = match kind {
             EntryKind::Call => MAX_FRAMES.saturating_sub(self.frames.len() + 1),
             EntryKind::Osr => MAX_FRAMES.saturating_sub(self.frames.len()),
         };
+        let expected_globals = self.current_global_mapping_id;
         self.frame_jit.pending.clear();
+        self.frame_jit.native_error = None;
+        self.frame_jit.entry_floor = window_start;
         let registers = self.registers.as_mut_ptr();
         let registers_end = registers as usize + self.registers.len() * 8;
         let vm = std::ptr::from_mut::<VM>(self).cast::<std::ffi::c_void>();
+        let epoch = self.frame_jit.global_epoch;
+        let (globals, globals_len) = (
+            self.globals_by_index.as_ptr() as u64,
+            self.globals_by_index.len() as u64,
+        );
+        let view_generation = self.global_view.generation;
         let context = &mut self.frame_jit.context;
         context.vm = vm;
         context.status = FRAME_STATUS_OK;
         context.resume_ip = 0;
-        context.global_epoch = self.frame_jit.global_epoch;
+        context.global_epoch = epoch;
         context.registers_end = registers_end as u64;
         context.depth = depth as u64;
+        context.globals = globals;
+        context.globals_len = globals_len;
+        context.view_generation = view_generation;
+        context.progress = 0;
         let context = std::ptr::from_mut::<FrameJitContext>(context);
-        // safety: the entry was produced by the frame compiler with the FrameEntry abi, the window lies inside the register stack and nothing reallocates it while machine code runs
+        // the window lies inside the register stack and nothing reallocates it while machine code runs
         let result = unsafe {
             let entry = std::mem::transmute::<usize, FrameEntry>(install.entry);
             entry(
@@ -343,16 +377,29 @@ impl VM {
                 install.data as *mut u64,
             )
         };
-        match self.frame_jit.context.status {
+        self.restore_interpreter_globals(expected_globals);
+        let progress = self.frame_jit.context.progress;
+        let outcome = match self.frame_jit.context.status {
             FRAME_STATUS_OK => FrameOutcome::Returned(Value::from_raw(result)),
             _ => FrameOutcome::Exited(
                 u32::try_from(self.frame_jit.context.resume_ip).unwrap_or(u32::MAX),
             ),
+        };
+        (outcome, progress)
+    }
+
+    pub(crate) fn restore_interpreter_globals(&mut self, expected: usize) {
+        if self.current_global_mapping_id == expected {
+            return;
+        }
+        if let Some(frame) = self.frames.last() {
+            let function = frame.function;
+            self.prepare_globals_for_function(function);
         }
     }
 
     pub(crate) fn push_pending_jit_frames(&mut self) -> Result<(), RuntimeError> {
-        if self.frame_jit.pending.is_empty() {
+        if self.frame_jit.pending.is_empty() && self.frame_jit.native_error.is_none() {
             return Ok(());
         }
         self.sync_current_function_globals();
@@ -393,6 +440,10 @@ impl VM {
         self.frame_jit.pending.clear();
         if let Some(function) = innermost {
             self.prepare_globals_for_function(function);
+        }
+        if let Some(mut error) = self.frame_jit.native_error.take() {
+            error.stack_trace = self.build_stack_trace();
+            return Err(error);
         }
         Ok(())
     }
@@ -447,8 +498,7 @@ impl VM {
                         ip,
                         state,
                         legacy_tried: install.is_none(),
-                        entries: 0,
-                        exits: 0,
+                        budget: ExitBudget::default(),
                     }),
                 }
                 if install.is_none()
@@ -463,16 +513,14 @@ impl VM {
         };
         let frame = self.frames.last()?;
         let base = frame.base;
-        let outcome = self.enter_frame_code(install, base, EntryKind::Osr);
+        let (outcome, progress) = self.enter_frame_code(install, base, EntryKind::Osr);
         let slot = &mut self.frame_jit.slots[index];
-        if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip) {
-            entry.entries = entry.entries.saturating_add(1);
-            if matches!(outcome, FrameOutcome::Exited(_)) {
-                entry.exits = entry.exits.saturating_add(1);
-                if entry.exits > EXIT_BUDGET && entry.exits.saturating_mul(2) > entry.entries {
-                    entry.state = EntryState::Refused;
-                }
-            }
+        if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip)
+            && entry
+                .budget
+                .record(matches!(outcome, FrameOutcome::Exited(_)), progress)
+        {
+            entry.state = EntryState::Refused;
         }
         match outcome {
             FrameOutcome::Returned(value) => {
@@ -496,20 +544,6 @@ impl VM {
             }
             FrameOutcome::Interpret | FrameOutcome::Legacy => Some(Ok(None)),
         }
-    }
-
-    // natives may allocate and collect, which machine-code frames outside the frame stack cannot survive
-    fn calls_a_native(&mut self, info: &crate::FrameCodeInfo) -> bool {
-        info.sites.iter().any(|site| {
-            let FrameSiteKind::CallGlobal { name } = site else {
-                return false;
-            };
-            let value = self.global_by_name(name);
-            value
-                .as_ptr()
-                .and_then(|pointer| self.heap.get(GcRef::new(pointer)))
-                .is_some_and(|object| matches!(object.kind, ObjectKind::Native(_)))
-        })
     }
 
     // the older pipeline runs every qualified global through call_value, which restarts the interpreter at register 0
@@ -584,7 +618,16 @@ impl VM {
         std::mem::take(&mut self.frame_jit.osr_resume)
     }
 
+    pub(crate) fn frame_jit_root_range(&self) -> Option<std::ops::Range<usize>> {
+        let jit = &self.frame_jit;
+        (jit.native_depth > 0 && jit.root_ceiling > jit.entry_floor)
+            .then(|| jit.entry_floor..jit.root_ceiling.min(self.registers.len()))
+    }
+
     pub(crate) fn sweep_frame_jit(&mut self) {
+        if self.frame_jit.native_depth > 0 {
+            return;
+        }
         for index in 0..self.frame_jit.slots.len() {
             let slot = &self.frame_jit.slots[index];
             if !slot.live || self.heap.get(slot.function).is_some() {
@@ -616,13 +659,6 @@ impl VM {
         self.frame_jit.global_epoch = epoch.wrapping_add(1).max(1);
     }
 
-    fn frame_site_name(data: *const u64, site: u64) -> Option<(FrameSiteKind, usize)> {
-        let site = usize::try_from(site).ok()?;
-        // safety: data blocks are built by install_frame_code and word 2 points at the info of a code kept alive by the same slot
-        let info = unsafe { &*(*data.add(2) as *const crate::FrameCodeInfo) };
-        Some((info.sites.get(site)?.clone(), site))
-    }
-
     fn global_by_name(&mut self, name: &str) -> Value {
         if name.is_empty() {
             return Value::null();
@@ -630,38 +666,93 @@ impl VM {
         self.sync_current_function_globals();
         self.globals.get(name).copied().unwrap_or_else(Value::null)
     }
+
+    fn refresh_frame_context(&mut self) {
+        let context = &mut self.frame_jit.context;
+        context.globals = self.globals_by_index.as_ptr() as u64;
+        context.globals_len = self.globals_by_index.len() as u64;
+        context.view_generation = self.global_view.generation;
+        context.global_epoch = self.frame_jit.global_epoch;
+    }
+
+    // the store the interpreter's SetGlobalIdx performs; globals are roots, so no barrier is involved
+    fn frame_store_global(&mut self, index: usize, value: Value) -> bool {
+        if index >= self.globals_by_index.len() {
+            return false;
+        }
+        self.set_global_by_index(index, value);
+        true
+    }
+
+    fn frame_native_call(
+        &mut self,
+        native: &aelys_bytecode::NativeFunction,
+        window: *const u64,
+        argument_count: usize,
+        frame_end: usize,
+    ) -> Result<Value, RuntimeError> {
+        let mut arguments = SmallVec::<[Value; 8]>::new();
+        for index in 0..argument_count {
+            // the arguments were stored into the window by the caller just before this call
+            arguments.push(Value::from_raw(unsafe { *window.add(index) }));
+        }
+        let previous_ceiling = self.frame_jit.root_ceiling;
+        self.frame_jit.root_ceiling = previous_ceiling.max(frame_end);
+        self.frame_jit.native_depth += 1;
+        let registers = self.registers.as_ptr();
+        let result = self.call_cached_native(native, &arguments);
+        self.frame_jit.native_depth -= 1;
+        self.frame_jit.root_ceiling = previous_ceiling;
+        if self.registers.as_ptr() != registers {
+            self.frame_jit.disabled = true;
+        }
+        result
+    }
 }
 
 fn site_words(data: *mut u64, site: usize) -> *mut u64 {
-    // safety: callers pass a site index taken from the info that sized this block
+    // callers pass a site index taken from the info that sized this block
     unsafe { data.add(FrameData::HEADER_WORDS + site * FrameData::SITE_WORDS) }
 }
 
-/// # Safety
-/// called only by frame machine code with the context, data block and site it was compiled with
-pub unsafe extern "C" fn aelys_frame_global(
-    context: *mut FrameJitContext,
-    data: *mut u64,
-    site: u64,
-) -> u64 {
-    // safety: the context is live for the synchronous machine-code invocation and points at its vm
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<VM>() };
-    let Some((FrameSiteKind::Global { name }, site)) = VM::frame_site_name(data, site) else {
-        return Value::null().raw();
-    };
-    let value = vm.global_by_name(&name);
-    let words = site_words(data, site);
-    // safety: words points at the five-word record of this site
-    unsafe {
-        *words.add(1) = value.raw();
-        *words = context.global_epoch;
-    }
-    value.raw()
+fn frame_info(data: *const u64) -> &'static crate::FrameCodeInfo {
+    // word 2 points at the info of a code kept alive by the slot that owns this block
+    unsafe { &*(*data.add(2) as *const crate::FrameCodeInfo) }
 }
 
-/// # Safety
-/// called only by frame machine code; window points at the callee register window inside the register stack
+fn context_vm<'a>(context: *mut FrameJitContext) -> (&'a mut FrameJitContext, &'a mut VM) {
+    unsafe {
+        let context = &mut *context;
+        let vm = &mut *context.vm.cast::<VM>();
+        (context, vm)
+    }
+}
+
+pub unsafe extern "C" fn aelys_frame_view(context: *mut FrameJitContext, data: *mut u64) -> u64 {
+    let (_, vm) = context_vm(context);
+    let function = GcRef::new(unsafe { *data.add(1) } as usize);
+    vm.prepare_globals_for_function(function);
+    unsafe {
+        *data.add(FrameData::VIEW_GENERATION as usize / 8) = vm.global_view.generation;
+    }
+    vm.refresh_frame_context();
+    1
+}
+
+pub unsafe extern "C" fn aelys_frame_set_global(
+    context: *mut FrameJitContext,
+    index: u64,
+    value: u64,
+) -> u64 {
+    let (_, vm) = context_vm(context);
+    let Ok(index) = usize::try_from(index) else {
+        return 0;
+    };
+    let stored = vm.frame_store_global(index, Value::from_raw(value));
+    vm.refresh_frame_context();
+    u64::from(stored)
+}
+
 pub unsafe extern "C" fn aelys_frame_call(
     context: *mut FrameJitContext,
     data: *mut u64,
@@ -670,39 +761,56 @@ pub unsafe extern "C" fn aelys_frame_call(
     window: *mut u64,
     argument_count: u64,
 ) -> u64 {
-    // safety: see aelys_frame_global
-    let context_ref = unsafe { &mut *context };
-    let vm = unsafe { &mut *context_ref.vm.cast::<VM>() };
+    let (context_ref, vm) = context_vm(context);
     let interpret = |context: &mut FrameJitContext| {
         context.status = FRAME_STATUS_CALL_IN_INTERPRETER;
         0
     };
-    let Some((kind, site)) = VM::frame_site_name(data, site) else {
+    let info = frame_info(data);
+    let Some(site) = usize::try_from(site)
+        .ok()
+        .filter(|site| *site < info.sites.len())
+    else {
         return interpret(context_ref);
     };
-    let callee_value = match &kind {
-        FrameSiteKind::CallGlobal { name } => vm.global_by_name(name),
-        FrameSiteKind::CallRegister => Value::from_raw(callee),
-        FrameSiteKind::Global { .. } => return interpret(context_ref),
-    };
+    let callee_value = Value::from_raw(callee);
     let words = site_words(data, site);
-    // safety: words points at the five-word record of this site
     unsafe {
         *words.add(1) = callee_value.raw();
         *words.add(2) = 0;
-        if matches!(kind, FrameSiteKind::CallGlobal { .. }) {
-            *words = context_ref.global_epoch;
-        }
     }
     let Some(pointer) = callee_value.as_ptr() else {
         return interpret(context_ref);
     };
     let function = GcRef::new(pointer);
-    let arity_matches = match vm.heap.get(function).map(|object| &object.kind) {
-        Some(ObjectKind::Function(target)) => u64::from(target.arity()) == argument_count,
-        _ => false,
+    let native = match vm.heap.get(function).map(|object| &object.kind) {
+        Some(ObjectKind::Function(target)) => {
+            if u64::from(target.arity()) != argument_count {
+                return interpret(context_ref);
+            }
+            None
+        }
+        Some(ObjectKind::Native(native)) => Some(native.clone()),
+        _ => return interpret(context_ref),
     };
-    if !arity_matches || vm.ensure_function_verified(function).is_err() {
+    if let Some(native) = native {
+        let Ok(count) = usize::try_from(argument_count) else {
+            return interpret(context_ref);
+        };
+        let base = (window as usize - vm.registers.as_ptr() as usize) / 8;
+        let frame_end = base.saturating_add(info.num_registers as usize);
+        let result = vm.frame_native_call(&native, window, count, frame_end);
+        vm.refresh_frame_context();
+        return match result {
+            Ok(value) => value.raw(),
+            Err(error) => {
+                vm.frame_jit.native_error = Some(error);
+                context_ref.status = FRAME_STATUS_NATIVE_ERROR;
+                0
+            }
+        };
+    }
+    if vm.ensure_function_verified(function).is_err() {
         return interpret(context_ref);
     }
     let Some(index) = vm.frame_slot(function) else {
@@ -726,35 +834,28 @@ pub unsafe extern "C" fn aelys_frame_call(
     if window_end > context_ref.registers_end || context_ref.depth == 0 {
         return interpret(context_ref);
     }
-    // safety: words points at the five-word record of this site
     unsafe {
         *words.add(2) = install.entry as u64;
         *words.add(3) = install.data as u64;
         *words.add(4) = u64::from(install.registers);
     }
     context_ref.depth -= 1;
-    // safety: the entry follows the FrameEntry abi and the window was checked against the register stack end
     let result = unsafe {
         let entry = std::mem::transmute::<usize, FrameEntry>(install.entry);
         entry(context, window, install.data as *mut u64)
     };
-    // safety: the callee returned, the context is still live
-    let context_ref = unsafe { &mut *context };
+    let (context_ref, _) = context_vm(context);
     context_ref.depth += 1;
     result
 }
 
-/// # Safety
-/// called only by frame machine code after a callee exited; window is the callee register window
 pub unsafe extern "C" fn aelys_frame_push(
     context: *mut FrameJitContext,
     callee: u64,
     window: *mut u64,
     dest: u64,
 ) -> u64 {
-    // safety: see aelys_frame_global
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<VM>() };
+    let (context, vm) = context_vm(context);
     let Some(pointer) = Value::from_raw(callee).as_ptr() else {
         return 0;
     };
@@ -768,16 +869,12 @@ pub unsafe extern "C" fn aelys_frame_push(
     0
 }
 
-/// # Safety
-/// called only by frame machine code; results are returned through the context scratch words
 pub unsafe extern "C" fn aelys_frame_collection(
     context: *mut FrameJitContext,
     value: u64,
     kind: u64,
 ) -> u64 {
-    // safety: see aelys_frame_global
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<VM>() };
+    let (context, vm) = context_vm(context);
     let Some(kind) = FrameCollectionKind::from_u64(kind) else {
         return 0;
     };
@@ -843,21 +940,16 @@ pub unsafe extern "C" fn aelys_frame_collection(
     1
 }
 
-/// # Safety
-/// called only by frame machine code; results are returned through the context scratch words
 pub unsafe extern "C" fn aelys_frame_struct(
     context: *mut FrameJitContext,
     data: *mut u64,
     value: u64,
     schema_index: u64,
 ) -> u64 {
-    // safety: see aelys_frame_global
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<VM>() };
+    let (context, vm) = context_vm(context);
     let Ok(schema_index) = usize::try_from(schema_index) else {
         return 0;
     };
-    // safety: word 3 of a data block is the offset of its schema table, sized by the function's schemas
     let (offset, function) = unsafe { (*data.add(3) as usize, *data.add(1) as usize) };
     let Some(ObjectKind::Function(function)) =
         vm.heap.get(GcRef::new(function)).map(|object| &object.kind)
@@ -867,7 +959,6 @@ pub unsafe extern "C" fn aelys_frame_struct(
     if schema_index >= function.function.struct_schemas.len() {
         return 0;
     }
-    // safety: the index was checked against the schema count the table was built from
     let runtime_id = unsafe { *data.add(offset + schema_index) };
     let Some(pointer) = Value::from_raw(value).as_ptr() else {
         return 0;
@@ -942,8 +1033,6 @@ impl VM {
     }
 }
 
-/// # Safety
-/// called only by frame machine code to store an object reference into element `index` of `owner`
 pub unsafe extern "C" fn aelys_frame_store_reference(
     context: *mut FrameJitContext,
     owner: u64,
@@ -951,31 +1040,25 @@ pub unsafe extern "C" fn aelys_frame_store_reference(
     value: u64,
     index: u64,
 ) -> u64 {
-    // safety: see aelys_frame_global
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<VM>() };
+    let (_, vm) = context_vm(context);
     let Some(pointer) = Value::from_raw(owner).as_ptr() else {
         return 0;
     };
     let Ok(index) = usize::try_from(index) else {
         return 0;
     };
-    // safety: slot was derived from the owner's storage by a resolve helper during this invocation
+    // slot was derived from the owner's storage by a resolve helper during this invocation
     unsafe { *slot = value };
     vm.frame_element_barrier(GcRef::new(pointer), index, Value::from_raw(value));
     1
 }
 
-/// # Safety
-/// called only by frame machine code; fails, leaving the vector unchanged, whenever the push could start a collection
 pub unsafe extern "C" fn aelys_frame_vec_push(
     context: *mut FrameJitContext,
     vector: u64,
     value: u64,
 ) -> u64 {
-    // safety: see aelys_frame_global
-    let context = unsafe { &mut *context };
-    let vm = unsafe { &mut *context.vm.cast::<VM>() };
+    let (_, vm) = context_vm(context);
     let Some(pointer) = Value::from_raw(vector).as_ptr() else {
         return 0;
     };

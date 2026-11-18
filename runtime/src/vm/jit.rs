@@ -68,8 +68,7 @@ impl VM {
         });
         let previous_mapping = self.current_global_mapping_id;
         let target_mapping = self.get_global_mapping_id(function);
-        let saved_globals = (needs_native_globals && target_mapping != previous_mapping)
-            .then(|| self.globals_by_index.clone());
+        let restore = needs_native_globals && target_mapping != previous_mapping;
         if needs_native_globals {
             self.prepare_globals_for_function(function);
         }
@@ -123,9 +122,8 @@ impl VM {
                 context.as_ref(),
             )
         })();
-        if let Some(globals) = saved_globals {
-            self.globals_by_index = globals;
-            self.current_global_mapping_id = previous_mapping;
+        if restore {
+            self.restore_interpreter_globals(previous_mapping);
         }
         result
     }

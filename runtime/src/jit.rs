@@ -132,6 +132,7 @@ impl JitFunctionKey {
 pub const FRAME_STATUS_OK: u64 = 0;
 pub const FRAME_STATUS_EXIT: u64 = 1;
 pub const FRAME_STATUS_CALL_IN_INTERPRETER: u64 = 2;
+pub const FRAME_STATUS_NATIVE_ERROR: u64 = 3;
 
 // field offsets are read by generated code
 #[repr(C)]
@@ -144,6 +145,10 @@ pub struct FrameJitContext {
     pub depth: u64,
     pub scratch0: u64,
     pub scratch1: u64,
+    pub globals: u64,
+    pub globals_len: u64,
+    pub view_generation: u64,
+    pub progress: u64,
 }
 
 impl FrameJitContext {
@@ -154,6 +159,10 @@ impl FrameJitContext {
     pub const DEPTH: i32 = 40;
     pub const SCRATCH0: i32 = 48;
     pub const SCRATCH1: i32 = 56;
+    pub const GLOBALS: i32 = 64;
+    pub const GLOBALS_LEN: i32 = 72;
+    pub const VIEW_GENERATION: i32 = 80;
+    pub const PROGRESS: i32 = 88;
 }
 
 // a per-vm block of u64 words: header then one site record per call or global site
@@ -163,7 +172,8 @@ impl FrameData {
     pub const CONSTANTS: i32 = 0;
     pub const FUNCTION: i32 = 8;
     pub const CODE: i32 = 16;
-    pub const HEADER_WORDS: usize = 4;
+    pub const VIEW_GENERATION: i32 = 32;
+    pub const HEADER_WORDS: usize = 5;
     pub const SITE_WORDS: usize = 5;
     pub const SITE_EPOCH: i32 = 0;
     pub const SITE_VALUE: i32 = 8;
@@ -179,9 +189,9 @@ impl FrameData {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FrameSiteKind {
-    Global { name: Arc<str> },
     CallGlobal { name: Arc<str> },
     CallRegister,
+    Native { name: Arc<str> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -113,16 +113,16 @@ fn a_jit_eligible_scalar_function_is_still_translated() {
 fn a_function_using_enum_opcodes_never_enters_the_jit_cache() {
     let outcome = run_hot(OWN_ENUM);
     assert_eq!(outcome.value, 11999);
-    assert_eq!(
-        outcome.cache_entries, 0,
-        "an enum-using function must stay interpreted"
-    );
     if JIT_TARGET {
         let control = run_hot(SCALAR);
         assert!(
-            control.cache_entries > 0,
-            "the harness must be able to observe a cache entry at all"
+            outcome.cache_entries < control.cache_entries,
+            "an enum-using function must stay interpreted: {} entries with it, {} with a scalar function",
+            outcome.cache_entries,
+            control.cache_entries
         );
+    } else {
+        assert_eq!(outcome.cache_entries, 0);
     }
 }
 

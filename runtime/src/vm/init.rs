@@ -39,6 +39,7 @@ impl VM {
             globals_by_index: Vec::with_capacity(64),
             globals_by_index_dirty: false,
             global_generations: Vec::with_capacity(64),
+            global_view: super::globals::GlobalView::default(),
             inline_call_cache: HashMap::with_capacity(64),
             last_inline_call_cache: None,
             jit_executor: None,

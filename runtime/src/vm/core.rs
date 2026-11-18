@@ -39,6 +39,7 @@ pub struct VM {
     /// set when an indexed write has not reached the name keyed table yet, so a call between two readers costs nothing
     pub(crate) globals_by_index_dirty: bool,
     pub(crate) global_generations: Vec<u64>,
+    pub(crate) global_view: super::globals::GlobalView,
     pub(crate) inline_call_cache: HashMap<InlineCacheKey, InlineCallCacheEntry>,
     pub(crate) last_inline_call_cache: Option<(InlineCacheKey, InlineCallCacheEntry)>,
     pub(crate) jit_executor: Option<Arc<dyn crate::JitExecutor>>,
