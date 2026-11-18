@@ -16,9 +16,9 @@ const LEVELS: [OptimizationLevel; 3] = [
     OptimizationLevel::Aggressive,
 ];
 
-const OVERFLOW: &str = "integer overflow outside the supported 48-bit range";
-const INT_MIN: i64 = -(1 << 47);
-const INT_MAX: i64 = (1 << 47) - 1;
+const OVERFLOW: &str = "integer overflow outside the int range (i64)";
+const INLINE_MIN: i64 = -(1 << 47);
+const INLINE_MAX: i64 = (1 << 47) - 1;
 
 fn general_loop() -> RunOptions {
     RunOptions {
@@ -172,9 +172,7 @@ fn fixed_int(op: &str, a: i64, b: i64, shift: i64) -> Option<i64> {
         "mul_shr" => (i128::from(a) * i128::from(b)) >> shift,
         _ => (i128::from(a) << shift) / i128::from(b),
     };
-    (i128::from(INT_MIN)..=i128::from(INT_MAX))
-        .contains(&exact)
-        .then_some(exact as i64)
+    i64::try_from(exact).ok()
 }
 
 fn fixed_i32(op: &str, a: i64, b: i64, shift: i64) -> i64 {
@@ -238,7 +236,7 @@ run(40)
     }
     s
 }
-run(0 - 140737488355327 - 1)
+run(-9223372036854775808)
 ",
         OVERFLOW,
         5,
@@ -253,9 +251,28 @@ run(0 - 140737488355327 - 1)
     }
     s - (m + 1)
 }
-run(0 - 140737488355327 - 1)
+run(-9223372036854775808)
 ",
-        -45 - (INT_MIN + 1),
+        -45 - (i64::MIN + 1),
+    );
+    let mut acc = 0i64;
+    for i in 0..64i64 {
+        let v = INLINE_MIN - i;
+        acc = (acc + (-v) % 1_000_000_007 + (-(INLINE_MAX + i)) % 1000) % 1_000_000_007;
+    }
+    assert_int_everywhere(
+        "fn run(n: int) -> int {
+    let mut acc = 0
+    for i in 0..n {
+        let v = -140737488355328 - i
+        let w = 140737488355327 + i
+        acc = (acc + (-v) % 1000000007 + (-w) % 1000) % 1000000007
+    }
+    acc
+}
+run(64)
+",
+        acc,
     );
 }
 
@@ -322,8 +339,8 @@ run(10)
         "fn run(n: int) -> int {
     let mut acc = 0
     for i in 0..n {
-        let a = 1073741824 + i
-        acc = acc + (a - i).mul_shr(a - 1073741824 + 131072, 0) % 7
+        let a = 1099511627776 + i
+        acc = acc + (a - i).mul_shr(a - 1099511627776 + 1073741824, 0) % 7
     }
     acc
 }
@@ -331,6 +348,27 @@ run(10)
 ",
         OVERFLOW,
         5,
+    );
+    let mut acc = 0i64;
+    for i in 0..300i64 {
+        let a = (1i64 << 40) + i * 977;
+        acc = (acc
+            + fixed_int("mul_shr", a, 1 << 20, 12).unwrap() % 1_000_003
+            + fixed_int("shl_div", a, 3 + i, 9).unwrap() % 1_000_003)
+            % 1_000_000_007;
+    }
+    assert_int_everywhere(
+        "fn run(n: int) -> int {
+    let mut acc = 0
+    for i in 0..n {
+        let a = 1099511627776 + i * 977
+        acc = (acc + a.mul_shr(1048576, 12) % 1000003 + a.shl_div(3 + i, 9) % 1000003) % 1000000007
+    }
+    acc
+}
+run(300)
+",
+        acc,
     );
 }
 
@@ -647,7 +685,7 @@ run(20000)
 #[test]
 fn a_global_accumulated_in_hot_code_keeps_its_overflow_and_uninitialised_errors() {
     assert_error_everywhere(
-        "let mut g = 140737488355000
+        "let mut g = 9223372036854775000
 fn run(n: int) -> int {
     for i in 0..n {
         g = g + i
@@ -660,7 +698,7 @@ run(100)
         4,
     );
     assert_int_everywhere(
-        "let mut g = 140737488355000
+        "let mut g = 9223372036854775000
 fn run(n: int) -> int {
     for i in 0..n {
         g = g + i
@@ -669,7 +707,19 @@ fn run(n: int) -> int {
 }
 run(26)
 ",
-        140_737_488_355_000 + (0..26).sum::<i64>(),
+        9_223_372_036_854_775_000 + (0..26).sum::<i64>(),
+    );
+    assert_int_everywhere(
+        "let mut g = 140737488355000
+fn run(n: int) -> int {
+    for i in 0..n {
+        g = g + i
+    }
+    g
+}
+run(100)
+",
+        140_737_488_355_000 + (0..100).sum::<i64>(),
     );
     assert_error_everywhere(
         "fn run(n: int) -> int {
