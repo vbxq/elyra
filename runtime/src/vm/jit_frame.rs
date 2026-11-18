@@ -42,6 +42,7 @@ pub(crate) struct FrameSlot {
     blocks: SmallVec<[Box<[u64]>; 2]>,
     live: bool,
     legacy_refused: bool,
+    legacy_safe: Option<bool>,
 }
 
 struct PendingFrame {
@@ -132,7 +133,15 @@ impl VM {
                 return Some(index);
             }
         }
-        let key = self.jit_function_keys.get(&function).cloned();
+        let key = match self.jit_function_keys.get(&function).cloned() {
+            Some(key) => Some(key),
+            None if self.jit_executor.is_some() => {
+                let key = JitFunctionKey::root(crate::next_jit_module_id());
+                self.jit_function_keys.insert(function, key.clone());
+                Some(key)
+            }
+            None => None,
+        };
         let counters = match &key {
             Some(key) => match self.frame_jit.counter_index.get(key) {
                 Some(index) => *index,
@@ -161,6 +170,7 @@ impl VM {
             blocks: SmallVec::new(),
             live: true,
             legacy_refused: false,
+            legacy_safe: None,
         };
         let index = if let Some(free) = self.frame_jit.free.pop() {
             let index = usize::try_from(free).ok()?;
@@ -410,6 +420,9 @@ impl VM {
             Some(EntryState::Refused) => {
                 let entry = &mut slot.osr[position?];
                 if entry.legacy_tried {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.jit_quiet_ip = bytecode_ip;
+                    }
                     return Some(Ok(None));
                 }
                 entry.legacy_tried = true;
@@ -497,6 +510,58 @@ impl VM {
                 .and_then(|pointer| self.heap.get(GcRef::new(pointer)))
                 .is_some_and(|object| matches!(object.kind, ObjectKind::Native(_)))
         })
+    }
+
+    // the older pipeline runs every qualified global through call_value, which restarts the interpreter at register 0
+    pub(crate) fn legacy_jit_is_safe(&mut self, function: GcRef) -> bool {
+        let Some(index) = self.frame_slot(function) else {
+            return false;
+        };
+        if let Some(safe) = self.frame_jit.slots[index].legacy_safe {
+            return safe;
+        }
+        let names = match self.heap.get(function).map(|object| &object.kind) {
+            Some(ObjectKind::Function(object)) => {
+                let layout = &object.function.global_layout;
+                let words = object.function.bytecode.as_slice();
+                let mut names = Vec::new();
+                let mut ip = 0usize;
+                while ip < words.len() {
+                    let word = words[ip];
+                    let Some(opcode) = u8::try_from(word >> 24)
+                        .ok()
+                        .and_then(aelys_bytecode::OpCode::from_u8)
+                    else {
+                        break;
+                    };
+                    let index = match opcode {
+                        aelys_bytecode::OpCode::CallGlobal => Some(((word >> 8) & 0xff) as usize),
+                        aelys_bytecode::OpCode::GetGlobalIdx => Some((word & 0xffff) as usize),
+                        aelys_bytecode::OpCode::GetGlobalIdxWide => {
+                            words.get(ip + 1).map(|index| *index as usize)
+                        }
+                        _ => None,
+                    };
+                    if let Some(name) = index.and_then(|index| layout.names().get(index))
+                        && name.contains("::")
+                    {
+                        names.push(name.clone());
+                    }
+                    ip += opcode.extension_words() + 1;
+                }
+                names
+            }
+            _ => return false,
+        };
+        let safe = names.iter().all(|name| {
+            let value = self.global_by_name(name);
+            value
+                .as_ptr()
+                .and_then(|pointer| self.heap.get(GcRef::new(pointer)))
+                .is_some_and(|object| matches!(object.kind, ObjectKind::Native(_)))
+        });
+        self.frame_jit.slots[index].legacy_safe = Some(safe);
+        safe
     }
 
     pub(crate) fn mark_frame_legacy_refused(&mut self, function: GcRef) {

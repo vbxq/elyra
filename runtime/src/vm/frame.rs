@@ -25,6 +25,7 @@ pub struct CallFrame {
     pub(crate) jit_backedges: u64,
     pub(crate) jit_backedges_initialized: bool,
     pub(crate) jit_backedge_compiled: bool,
+    pub(crate) jit_quiet_ip: usize,
 }
 
 impl CallFrame {
@@ -54,6 +55,7 @@ impl CallFrame {
             jit_backedges: 0,
             jit_backedges_initialized: false,
             jit_backedge_compiled: false,
+            jit_quiet_ip: usize::MAX,
         }
     }
 
@@ -86,6 +88,7 @@ impl CallFrame {
             jit_backedges: 0,
             jit_backedges_initialized: false,
             jit_backedge_compiled: false,
+            jit_quiet_ip: usize::MAX,
         }
     }
 
@@ -120,6 +123,7 @@ impl CallFrame {
             jit_backedges: 0,
             jit_backedges_initialized: false,
             jit_backedge_compiled: false,
+            jit_quiet_ip: usize::MAX,
         }
     }
 

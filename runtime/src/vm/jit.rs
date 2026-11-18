@@ -50,6 +50,11 @@ impl VM {
         if self.function_jit_unsupported(function) || self.jit_refused.get(&function).is_some() {
             return JitCallResult::Unsupported;
         }
+        if !self.legacy_jit_is_safe(function) {
+            self.jit_refused.insert(function, ());
+            self.mark_frame_legacy_refused(function);
+            return JitCallResult::Unsupported;
+        }
         let Some(executor) = self.jit_executor.as_ref().cloned() else {
             return JitCallResult::Unsupported;
         };
@@ -228,6 +233,13 @@ impl VM {
         function: GcRef,
         bytecode_ip: usize,
     ) -> Result<Option<Value>, RuntimeError> {
+        if self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.jit_quiet_ip == bytecode_ip)
+        {
+            return Ok(None);
+        }
         if let Some(result) = self.frame_jit_backedge(function, bytecode_ip) {
             return result;
         }
@@ -282,7 +294,7 @@ impl VM {
         key: &JitFunctionKey,
         bytecode_ip: usize,
     ) -> Option<JitCallResult> {
-        if self.function_jit_unsupported(function) {
+        if self.function_jit_unsupported(function) || !self.legacy_jit_is_safe(function) {
             return None;
         }
         let executor = self.jit_executor.as_ref()?.clone();
