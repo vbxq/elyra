@@ -75,10 +75,14 @@ impl TypeInference {
             stmts
         };
 
-        if return_type_ann.is_some()
-            && !matches!(return_type, InferType::Unit)
-            && !super::functions::body_always_returns(body, true)
-        {
+        let missing = match return_type_ann {
+            Some(_) => {
+                !matches!(return_type, InferType::Unit)
+                    && !super::functions::body_always_returns(body, true)
+            }
+            None => super::functions::falls_through_without_value(body),
+        };
+        if missing {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MissingReturnValue {
                     expected: return_type.clone(),

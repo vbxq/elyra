@@ -161,10 +161,13 @@ impl TypeInference {
             stmts
         };
 
-        if func.return_type.is_some()
-            && !matches!(return_type, InferType::Unit)
-            && !body_always_returns(&func.body, true)
-        {
+        let missing = match func.return_type {
+            Some(_) => {
+                !matches!(return_type, InferType::Unit) && !body_always_returns(&func.body, true)
+            }
+            None => falls_through_without_value(&func.body),
+        };
+        if missing {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MissingReturnValue {
                     expected: return_type.clone(),
@@ -380,9 +383,45 @@ fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
     )
 }
 
+fn expr_yields_value(expr: &aelys_syntax::Expr) -> bool {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
+            aelys_syntax::MatchArmBody::Expr(body) => expr_yields_value(body),
+            aelys_syntax::MatchArmBody::Block(stmts) => stmts.last().is_some_and(tail_yields_value),
+        }),
+        _ => !is_assignment(expr),
+    }
+}
+
+// a value returned with `return` gives the function a type, so every other path must yield one too
+pub(super) fn falls_through_without_value(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_returns_value) && !body_always_yields(stmts)
+}
+
+fn body_always_yields(stmts: &[Stmt]) -> bool {
+    let Some((last, prefix)) = stmts.split_last() else {
+        return false;
+    };
+    prefix.iter().any(|stmt| stmt_always_returns(stmt, false)) || stmt_always_yields(last)
+}
+
+fn stmt_always_yields(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(_) => true,
+        StmtKind::Expression(expr) => expr_yields_value(expr),
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => stmt_always_yields(then_branch) && stmt_always_yields(else_branch),
+        StmtKind::Block(stmts) => body_always_yields(stmts),
+        _ => false,
+    }
+}
+
 fn tail_yields_value(stmt: &Stmt) -> bool {
     match &stmt.kind {
-        StmtKind::Expression(expr) => !is_assignment(expr),
+        StmtKind::Expression(expr) => expr_yields_value(expr),
         StmtKind::If {
             then_branch,
             else_branch: Some(else_branch),
