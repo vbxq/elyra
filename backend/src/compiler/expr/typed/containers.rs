@@ -70,7 +70,7 @@ impl Compiler {
                 && matches!(object.kind, TypedExprKind::Unit)
                 && matches!(object.ty, InferType::Map(_, _))
             {
-                self.call_native("__map::new", &[], dest, span)?;
+                self.call_native("__map_new", &[], dest, span)?;
                 return Ok(true);
             }
             return Ok(false);
@@ -86,7 +86,7 @@ impl Compiler {
                 if member == "sort_by" {
                     self.compile_sort_by(object, element, &args[0], dest, span)?;
                 } else {
-                    self.call_native(&format!("__vec::{member}"), &operands, dest, span)?;
+                    self.call_native(&format!("__vec_{member}"), &operands, dest, span)?;
                 }
                 Ok(true)
             }
@@ -99,7 +99,7 @@ impl Compiler {
                 if let Some(tag) = tag {
                     operands.push(Operand::Int(i16::from(tag as u8)));
                 }
-                self.call_native(&format!("__map::{member}"), &operands, dest, span)?;
+                self.call_native(&format!("__map_{member}"), &operands, dest, span)?;
                 Ok(true)
             }
             InferType::Char
@@ -114,11 +114,11 @@ impl Compiler {
                             | "to_lower"
                     ) =>
             {
-                self.call_native(&format!("__char::{member}"), &operands, dest, span)?;
+                self.call_native(&format!("__char_{member}"), &operands, dest, span)?;
                 Ok(true)
             }
             InferType::String if member == "push" && args.len() == 1 => {
-                self.call_native("__string::push", &operands, dest, span)?;
+                self.call_native("__string_push", &operands, dest, span)?;
                 Ok(true)
             }
             _ => Ok(false),
@@ -133,7 +133,7 @@ impl Compiler {
         span: Span,
     ) -> Result<()> {
         self.call_native(
-            "__map::index",
+            "__map_index",
             &[Operand::Expr(object), Operand::Expr(index)],
             dest,
             span,
@@ -149,7 +149,7 @@ impl Compiler {
         span: Span,
     ) -> Result<()> {
         self.call_native(
-            "__map::insert",
+            "__map_insert",
             &[
                 Operand::Expr(object),
                 Operand::Expr(index),
@@ -171,8 +171,8 @@ impl Compiler {
             (InferType::Char, InferType::Char) => {
                 return self.compile_typed_expr(inner, dest).map(|()| true);
             }
-            (InferType::Char, _) => "__char::to_int",
-            (_, InferType::Char) => "__char::from_int",
+            (InferType::Char, _) => "__char_to_int",
+            (_, InferType::Char) => "__char_from_int",
             _ => return Ok(false),
         };
         self.call_native(native, &[Operand::Expr(inner)], dest, span)?;
@@ -225,7 +225,7 @@ impl Compiler {
         self.compile_typed_expr(object, sequence)?;
         let state = self.alloc_register()?;
         self.call_native(
-            "__vec::sort_by_begin",
+            "__vec_sort_by_begin",
             &[Operand::Reg(sequence)],
             state,
             span,
@@ -261,7 +261,7 @@ impl Compiler {
         };
         let loop_start = self.current_offset();
         self.call_native(
-            "__vec::sort_by_step",
+            "__vec_sort_by_step",
             &[Operand::Reg(state), Operand::Reg(result)],
             more,
             span,
@@ -277,7 +277,7 @@ impl Compiler {
         self.emit_jump_back(loop_start, span);
         self.patch_jump(exit);
         self.call_native(
-            "__vec::sort_by_finish",
+            "__vec_sort_by_finish",
             &[Operand::Reg(state), Operand::Reg(sequence)],
             dest,
             span,
