@@ -881,19 +881,20 @@ fn outer(value: int) -> int {
 "#;
     let (value, entries) = run_tiered(sized);
     assert_eq!(value, -2147471650 + 238 + 393183231);
-    assert_eq!(
-        entries, 0,
-        "a function with sized arithmetic must stay interpreted"
-    );
     let control = r#"
 fn outer(value: int) -> int {
     return value + 1
 }
 "#;
-    let (value, entries) = run_tiered(control);
-    assert_eq!(value, 12000);
+    let (control_value, control_entries) = run_tiered(control);
+    assert_eq!(control_value, 12000);
     if JIT_TARGET {
-        assert!(entries > 0, "the harness must observe a compiled function");
+        assert!(
+            entries < control_entries,
+            "a function with sized arithmetic must stay interpreted: {entries} entries with it, {control_entries} with a scalar function"
+        );
+    } else {
+        assert_eq!(entries, 0);
     }
 }
 

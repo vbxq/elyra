@@ -98,7 +98,8 @@ aelys-cli -ae.max-heap=128M program.aelys
 | `gc-stats=on` | Print collection counts, pause maximum, p99, total and histogram, allocations and bytes when the program exits |
 | `gc-stress=on` | Collect after almost every allocation (testing only) |
 | `gc-verify=on` | Before each minor collection, check that every old-to-young pointer was recorded by a write barrier, and panic otherwise (testing only, walks the whole heap) |
-| `jit=on` | Enable the tiered JIT |
+| `jit=on` | Enable the Cranelift JIT (Linux x86_64), compiled on a background thread |
+| `jit-sync=on` | With `jit=on`, compile on the calling thread at the exact call or back-edge that crossed the threshold (deterministic, for tests) |
 
 Sizes accept the suffixes `K`, `M` and `G`.
 

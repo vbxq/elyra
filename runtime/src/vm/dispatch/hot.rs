@@ -1,9 +1,9 @@
-use super::ops::sized::{sized_unary_value, wrap_binary};
+use super::ops::sized::{fixed_value, sized_unary_value, wrap_binary};
 use super::ops::structs::integer_fits;
 use super::ops::sums::NONE_TAG;
-use crate::vm::{CallFrame, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
+use crate::vm::{CallFrame, GcObject, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
 use aelys_bytecode::object::{SumTag, UpvalueLocation, VecData};
-use aelys_bytecode::{FunctionSchemas, OpCode, SizedInt, TypeDescriptor};
+use aelys_bytecode::{FixedKind, FunctionSchemas, OpCode, SizedInt, TypeDescriptor};
 use std::sync::Arc;
 
 // an 8-bit operand plus the two ForLoopI companions stays below this, even on unverified jump targets
@@ -17,6 +17,10 @@ const LOAD_BOOL: u8 = OpCode::LoadBool as u8;
 const LOAD_UNIT: u8 = OpCode::LoadUnit as u8;
 const ADD: u8 = OpCode::Add as u8;
 const SUB: u8 = OpCode::Sub as u8;
+const NEG: u8 = OpCode::Neg as u8;
+const CALL: u8 = OpCode::Call as u8;
+const MUL_SHR: u8 = OpCode::MulShr as u8;
+const SHL_DIV: u8 = OpCode::ShlDiv as u8;
 const MUL: u8 = OpCode::Mul as u8;
 const ADD_I: u8 = OpCode::AddI as u8;
 const SUB_I: u8 = OpCode::SubI as u8;
@@ -76,6 +80,8 @@ const FOR_LOOP_I: u8 = OpCode::ForLoopI as u8;
 const FOR_LOOP_I_INC: u8 = OpCode::ForLoopIInc as u8;
 const WHILE_LOOP_LT: u8 = OpCode::WhileLoopLt as u8;
 const GET_GLOBAL_IDX: u8 = OpCode::GetGlobalIdx as u8;
+const SET_GLOBAL_IDX: u8 = OpCode::SetGlobalIdx as u8;
+const ADD_GLOBAL_I: u8 = OpCode::AddGlobalI as u8;
 const ARRAY_LOAD_I: u8 = OpCode::ArrayLoadI as u8;
 const ARRAY_LOAD_F: u8 = OpCode::ArrayLoadF as u8;
 const ARRAY_LOAD_B: u8 = OpCode::ArrayLoadB as u8;
@@ -174,6 +180,8 @@ const HOT_OPCODES: &[u8] = &[
     FOR_LOOP_I_INC,
     WHILE_LOOP_LT,
     GET_GLOBAL_IDX,
+    SET_GLOBAL_IDX,
+    ADD_GLOBAL_I,
     ARRAY_LOAD_I,
     ARRAY_LOAD_F,
     ARRAY_LOAD_B,
@@ -199,6 +207,10 @@ const HOT_OPCODES: &[u8] = &[
     LOAD_NONE,
     SUM_TEST,
     SUM_PAYLOAD,
+    NEG,
+    CALL,
+    MUL_SHR,
+    SHL_DIV,
 ];
 
 pub(super) static HOT: [bool; 256] = {
@@ -259,7 +271,6 @@ struct HotCall {
     upvalues_len: usize,
     registers: u32,
     mapping: usize,
-    loops_stay: Option<bool>,
 }
 
 fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
@@ -275,21 +286,19 @@ fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
 }
 
 impl VM {
-    fn jit_loops_settled(&self, function: GcRef) -> bool {
-        self.jit_ignores(function)
-            || self.frames.last().is_some_and(|frame| {
-                frame.jit_backedge_compiled
-                    || (frame.jit_backedges_initialized
-                        && frame.jit_backedge_base >= crate::JIT_TIER1_BACKEDGE_THRESHOLD)
-            })
+    #[inline(always)]
+    fn frame_jit_quiet_at(&self, target: usize) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.jit_quiet_ip == target)
+    }
+
+    fn jit_loops_settled(&self) -> bool {
+        !self.frame_jit_active()
     }
 
     fn jit_ignores(&self, function: GcRef) -> bool {
-        let unsupported = matches!(
-            self.heap.get(function).map(|object| &object.kind),
-            Some(ObjectKind::Function(target)) if target.function.jit_unsupported_struct
-        );
-        unsupported || self.jit_refused.get(&function).is_some()
+        !self.frame_jit_active() || self.frame_jit_interprets(function)
     }
 
     fn hot_schemas(&self, function: GcRef) -> Option<Arc<FunctionSchemas>> {
@@ -301,7 +310,11 @@ impl VM {
     }
 
     #[inline(always)]
-    fn hot_global_callee<const JIT: bool>(&self, global: usize, arity: usize) -> Option<HotCall> {
+    fn hot_global_callee<const JIT: bool>(
+        &mut self,
+        global: usize,
+        arity: usize,
+    ) -> Option<HotCall> {
         let callee = GcRef::new(self.globals_by_index.get(global)?.as_ptr()?);
         let ObjectKind::Function(target) = &self.heap.get(callee)?.kind else {
             return None;
@@ -309,10 +322,7 @@ impl VM {
         if !target.verified || target.arity() != arity as u16 {
             return None;
         }
-        let ignored = !JIT
-            || target.function.jit_unsupported_struct
-            || self.jit_refused.get(&callee).is_some();
-        ignored.then(|| HotCall {
+        let call = HotCall {
             function: callee,
             code: target.function.bytecode.as_ptr(),
             code_len: target.function.bytecode.len(),
@@ -322,8 +332,9 @@ impl VM {
             upvalues_len: 0,
             registers: target.num_registers(),
             mapping: target.function.global_layout.id(),
-            loops_stay: Some(true),
-        })
+        };
+        let ignored = !JIT || self.jit_ignores(callee) || self.frame_call_stays(callee);
+        ignored.then_some(call)
     }
 
     fn hot_value_callee(&self, value: Value, arity: usize) -> Option<HotCall> {
@@ -343,7 +354,6 @@ impl VM {
                     upvalues_len: 0,
                     registers: target.num_registers(),
                     mapping: target.function.global_layout.id(),
-                    loops_stay: None,
                 })
             }
             ObjectKind::Closure(closure) => {
@@ -364,10 +374,78 @@ impl VM {
                     upvalues_len: closure.upvalues.len(),
                     registers: closure.num_registers,
                     mapping: target.function.global_layout.id(),
-                    loops_stay: None,
                 })
             }
             _ => None,
+        }
+    }
+
+    #[inline(always)]
+    fn hot_call_callee<const JIT: bool>(&mut self, value: Value, arity: usize) -> Option<HotCall> {
+        let target = self.hot_value_callee(value, arity)?;
+        if JIT
+            && target.function.index() == value.as_ptr()?
+            && !self.jit_ignores(target.function)
+            && !self.frame_call_stays(target.function)
+        {
+            return None;
+        }
+        Some(target)
+    }
+
+    #[inline(never)]
+    fn hot_backedge_stays(&mut self, function: GcRef, target: usize) -> bool {
+        self.frame_jit_quiet_at(target) || self.frame_backedge_stays(function, target)
+    }
+
+    #[inline(never)]
+    fn hot_store_global(&mut self, index: usize, value: Value) -> bool {
+        self.store_global_in_view(index, value)
+    }
+
+    // operands is the two words after the instruction, both inside the code
+    #[inline(never)]
+    fn hot_fixed(&mut self, instr: u32, operands: *const u32, regs: *mut Value) -> bool {
+        let (first, second) = unsafe { (*operands, *operands.add(1)) };
+        let target = (first >> 16) as usize;
+        let left = (first & 0xffff) as usize;
+        let right = (second >> 16) as usize;
+        let shift_register = (second & 0xffff) as usize;
+        let mode = (instr >> 8) & 0xff;
+        if target >= REGISTER_WINDOW
+            || left >= REGISTER_WINDOW
+            || right >= REGISTER_WINDOW
+            || (mode != 0 && shift_register >= REGISTER_WINDOW)
+        {
+            return false;
+        }
+        let Some(kind) = FixedKind::from_u8((instr >> 16) as u8) else {
+            return false;
+        };
+        let inline = |index: usize| unsafe { (*regs.add(index)).is_int() };
+        if !inline(left) || !inline(right) || (mode != 0 && !inline(shift_register)) {
+            return false;
+        }
+        let int = |index: usize| unsafe { (*regs.add(index)).as_int_unchecked() };
+        let shift = if mode == 0 {
+            i64::from(instr as u8)
+        } else {
+            int(shift_register)
+        };
+        let opcode = if (instr >> 24) as u8 == MUL_SHR {
+            OpCode::MulShr
+        } else {
+            OpCode::ShlDiv
+        };
+        match fixed_value(opcode, kind, int(left), int(right), shift) {
+            Some(Some(result)) => match int48(result) {
+                Some(value) => {
+                    unsafe { *regs.add(target) = value };
+                    true
+                }
+                None => false,
+            },
+            _ => false,
         }
     }
 
@@ -565,10 +643,25 @@ impl VM {
         }
         macro_rules! index {
             ($index:expr) => {
-                match get!($index).as_int() {
-                    Some(index) if index >= 0 => index as usize,
-                    _ => leave!(),
-                }
+                or_leave!(get!($index).as_index())
+            };
+        }
+        macro_rules! slot {
+            ($value:expr) => {
+                or_leave!(
+                    $value
+                        .ptr_payload()
+                        .and_then(|payload| self.heap.slot_object(payload))
+                )
+            };
+        }
+        macro_rules! slot_mut {
+            ($value:expr) => {
+                or_leave!(
+                    $value
+                        .ptr_payload()
+                        .and_then(|payload| self.heap.slot_object_mut(payload))
+                )
             };
         }
         macro_rules! struct_operands {
@@ -608,7 +701,7 @@ impl VM {
                 match loops_stay {
                     Some(settled) => settled,
                     None => {
-                        let settled = self.jit_loops_settled(function);
+                        let settled = self.jit_loops_settled();
                         loops_stay = Some(settled);
                         settled
                     }
@@ -618,7 +711,10 @@ impl VM {
         macro_rules! branch {
             ($target:expr) => {{
                 let target = $target;
-                if (target <= ip && !settled!()) || target >= code_len {
+                if (target <= ip
+                    && !(!JIT || settled!() || self.hot_backedge_stays(function, target)))
+                    || target >= code_len
+                {
                     leave!();
                 }
                 target
@@ -632,12 +728,13 @@ impl VM {
             let c = (instr & 0xff) as usize;
             let next = ip + 1;
             macro_rules! enter {
-                ($target:expr) => {{
+                ($target:expr, $window:expr) => {{
                     let target: HotCall = $target;
+                    let window = $window;
                     if !ends_safely(target.code, target.code_len) {
                         leave!();
                     }
-                    let callee_base = base + a + 1;
+                    let callee_base = base + window + 1;
                     match callee_base.checked_add((target.registers as usize).max(REGISTER_WINDOW))
                     {
                         Some(end) if end <= self.registers.len() => {}
@@ -676,7 +773,7 @@ impl VM {
                     constants_len = target.constants_len;
                     regs = unsafe { self.registers.as_mut_ptr().add(base) };
                     schemas = None;
-                    loops_stay = if JIT { target.loops_stay } else { Some(true) };
+                    loops_stay = (!JIT).then_some(true);
                     0
                 }};
             }
@@ -987,7 +1084,11 @@ impl VM {
                         advanced > end
                     };
                     let target = next.wrapping_add_signed(isize::from(instr as u16 as i16));
-                    if again && ((target <= ip && !settled!()) || target >= code_len) {
+                    if again
+                        && ((target <= ip
+                            && !(!JIT || settled!() || self.hot_backedge_stays(function, target)))
+                            || target >= code_len)
+                    {
                         leave!();
                     }
                     set!(a, value);
@@ -1009,19 +1110,46 @@ impl VM {
                     set!(a, value);
                     next
                 }
+                // int storage only ever receives 48-bit values, so a load needs no range check
                 VEC_LOAD_I => {
                     let index = index!(c);
-                    let ObjectKind::Vec(vector) = object!(get!(b)) else {
+                    let Some(GcObject {
+                        kind: ObjectKind::Vec(vector),
+                        ..
+                    }) = slot!(get!(b))
+                    else {
                         leave!();
                     };
                     let value = if let VecData::Ints(items) = &vector.data {
-                        or_leave!(int48(*or_leave!(items.get(index))))
+                        Value::int_wrapping(*or_leave!(items.get(index)))
                     } else if let VecData::Bytes(items) = &vector.data {
                         Value::int(i64::from(*or_leave!(items.get(index))))
                     } else {
                         leave!();
                     };
                     set!(a, value);
+                    next
+                }
+                SET_GLOBAL_IDX => {
+                    if !self.hot_store_global((instr & 0xffff) as usize, get!(a)) {
+                        leave!();
+                    }
+                    next
+                }
+                ADD_GLOBAL_I => {
+                    let global = or_leave!(self.globals_by_index.get(c).copied());
+                    let (left, right) = (global, get!(b));
+                    if !left.is_int() || !right.is_int() {
+                        leave!();
+                    }
+                    let result = or_leave!(int48(
+                        left.as_int_unchecked()
+                            .wrapping_add(right.as_int_unchecked())
+                    ));
+                    if !self.hot_store_global(c, result) {
+                        leave!();
+                    }
+                    set!(a, result);
                     next
                 }
                 VEC_LOAD_F | VEC_LOAD_B | VEC_LOAD_P => {
@@ -1034,14 +1162,18 @@ impl VM {
                 }
                 ARRAY_LOAD_I => {
                     let index = index!(c);
-                    let ObjectKind::Array(array) = object!(get!(b)) else {
+                    let Some(GcObject {
+                        kind: ObjectKind::Array(array),
+                        ..
+                    }) = slot!(get!(b))
+                    else {
                         leave!();
                     };
                     let Some(&value) = array.data.as_ints().and_then(|items| items.get(index))
                     else {
                         leave!();
                     };
-                    set!(a, or_leave!(int48(value)));
+                    set!(a, Value::int_wrapping(value));
                     next
                 }
                 ARRAY_LOAD_F | ARRAY_LOAD_B | ARRAY_LOAD_P => {
@@ -1054,8 +1186,16 @@ impl VM {
                 }
                 VEC_STORE_I => {
                     let index = index!(b);
-                    let value = or_leave!(get!(c).as_int());
-                    let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
+                    let value = get!(c);
+                    if !value.is_int() {
+                        leave!();
+                    }
+                    let value = value.as_int_unchecked();
+                    let Some(GcObject {
+                        kind: ObjectKind::Vec(vector),
+                        ..
+                    }) = slot_mut!(get!(a))
+                    else {
                         leave!();
                     };
                     if let VecData::Ints(items) = &mut vector.data {
@@ -1085,8 +1225,16 @@ impl VM {
                 }
                 ARRAY_STORE_I => {
                     let index = index!(b);
-                    let value = or_leave!(get!(c).as_int());
-                    let ObjectKind::Array(array) = object_mut!(get!(a)) else {
+                    let value = get!(c);
+                    if !value.is_int() {
+                        leave!();
+                    }
+                    let value = value.as_int_unchecked();
+                    let Some(GcObject {
+                        kind: ObjectKind::Array(array),
+                        ..
+                    }) = slot_mut!(get!(a))
+                    else {
                         leave!();
                     };
                     let Some(slot) = array
@@ -1141,8 +1289,28 @@ impl VM {
                     *or_leave!(structure.slots.get_mut(field)) = value;
                     next + 2
                 }
-                CALL_GLOBAL => enter!(or_leave!(self.hot_global_callee::<JIT>(b, c))),
-                CALL_CACHED => enter!(or_leave!(self.hot_value_callee(get!(b), c))),
+                CALL_GLOBAL => enter!(or_leave!(self.hot_global_callee::<JIT>(b, c)), a),
+                CALL_CACHED => enter!(or_leave!(self.hot_value_callee(get!(b), c)), a),
+                CALL => enter!(or_leave!(self.hot_call_callee::<JIT>(get!(b), c)), b),
+                NEG => {
+                    let value = get!(b);
+                    if value.is_int() {
+                        set!(a, or_leave!(int48(value.as_int_unchecked().wrapping_neg())));
+                    } else if value.is_float() {
+                        set!(a, Value::float(-value.as_float_unchecked()));
+                    } else {
+                        leave!();
+                    }
+                    next
+                }
+                MUL_SHR | SHL_DIV => {
+                    if next + 2 >= code_len
+                        || !self.hot_fixed(instr, unsafe { code.add(next) }, regs)
+                    {
+                        leave!();
+                    }
+                    next + 2
+                }
                 GET_UPVAL | SET_UPVAL | LOAD_NONE | SUM_TEST | SUM_PAYLOAD => {
                     if !self.hot_closure_and_sum(instr, regs, base) {
                         leave!();
@@ -1166,7 +1334,7 @@ impl VM {
                     if switch {
                         self.sync_current_function_globals();
                     }
-                    self.pop_frame_with_jit_metadata();
+                    self.frames.pop();
                     changed = true;
                     let frame = &self.frames[depth - 2];
                     let mapping = frame.global_mapping_id;

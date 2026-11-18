@@ -43,6 +43,9 @@ pub struct VM {
     pub(crate) global_name_ids: HashMap<String, u32>,
     pub(crate) global_names_by_id: Vec<String>,
     pub(crate) global_users: Vec<Vec<(usize, u32)>>,
+    /// by name id: the value an indexed write left while the name keyed entry still holds an older one
+    pub(crate) global_latest: Vec<Option<Value>>,
+    pub(crate) global_stale: Vec<u32>,
     pub(crate) globals_by_index: Vec<Value>,
     /// set when an indexed write has not reached the name keyed table yet, so a call between two readers costs nothing
     pub(crate) globals_by_index_dirty: bool,
@@ -51,9 +54,7 @@ pub struct VM {
     pub(crate) last_inline_call_cache: Option<(InlineCacheKey, InlineCallCacheEntry)>,
     pub(crate) jit_executor: Option<Arc<dyn crate::JitExecutor>>,
     pub(crate) jit_function_keys: crate::jit::InlineMap<GcRef, crate::JitFunctionKey>,
-    pub(crate) jit_call_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
-    pub(crate) jit_backedge_counts: crate::jit::InlineMap<crate::JitFunctionKey, u64>,
-    pub(crate) jit_refused: crate::jit::InlineMap<GcRef, ()>,
+    pub(crate) frame_jit: super::jit_frame::FrameJitState,
     pub(crate) schema_registry: HashMap<SchemaId, StructSchema>,
     pub(crate) schema_index: HashMap<super::alloc::StructIdentity, SchemaId>,
     pub(crate) next_schema_id: u32,
@@ -63,6 +64,8 @@ pub struct VM {
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,
     pub(crate) resources: Vec<Option<Resource>>,
+    /// one immutable Ok(()) handed out by every native that succeeds with unit; it stays rooted
+    pub(crate) unit_ok: Option<GcRef>,
     pub(crate) native_modules: HashMap<String, NativeModule>,
     pub(crate) native_registry: HashMap<String, u32>,
     pub(crate) native_impls: Vec<NativeFunctionImpl>,
@@ -71,7 +74,6 @@ pub struct VM {
     pub(crate) execution_control: ExecutionControl,
     pub(crate) execution_stats: ExecutionStats,
     pub(crate) gc_pauses: super::gc::GcPauseStats,
-    pub(crate) jit_control_error: Option<aelys_common::error::RuntimeError>,
     pub(crate) host_roots: Arc<HostRootSet>,
     pub(crate) native_call_roots: Vec<GcRef>,
     pub(crate) id: u64,

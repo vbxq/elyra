@@ -50,6 +50,18 @@ impl Value {
         }
     }
 
+    #[inline(always)]
+    pub fn as_index(&self) -> Option<usize> {
+        const MASK: u64 = QNAN | TAG_MASK | (PAYLOAD_MASK & !(PAYLOAD_MASK >> 1));
+        ((self.0 & MASK) == (QNAN | super::TAG_INT))
+            .then_some((self.0 & (PAYLOAD_MASK >> 1)) as usize)
+    }
+
+    #[inline(always)]
+    pub fn ptr_payload(&self) -> Option<u64> {
+        ((self.0 & (QNAN | TAG_MASK)) == (QNAN | super::TAG_PTR)).then_some(self.0 & PAYLOAD_MASK)
+    }
+
     // unchecked variants for type-specialized opcodes (hot paths)
     #[inline(always)]
     pub fn as_int_unchecked(&self) -> i64 {

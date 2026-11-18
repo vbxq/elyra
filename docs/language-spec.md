@@ -344,9 +344,8 @@ println(fixed_mul(0x7FFF0000, 0x20000))   // -131072
 println(fixed_div(10 << 16, 4 << 16))     // 163840, 2.5 in 16.16
 ```
 
-Each sized operator, and each of these two methods, is a single VM instruction. The JIT
-does not compile a function that uses them; it runs in the interpreter with the same
-results.
+Each sized operator, and each of these two methods, is a single VM instruction. Machine
+code leaves for the interpreter at each of them, which runs it with the same results.
 
 ### Type Annotations
 

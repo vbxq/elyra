@@ -388,6 +388,19 @@ impl VM {
         self.alloc_object_without_collection(obj)
     }
 
+    pub(crate) fn unit_ok_value(&mut self) -> Result<Value, RuntimeError> {
+        if let Some(reference) = self.unit_ok
+            && let Some(ObjectKind::Sum(sum)) = self.heap.get(reference).map(|object| &object.kind)
+            && sum.tag == SumTag::ResultOk
+            && sum.payload.is_unit()
+        {
+            return Ok(Value::ptr(reference.index()));
+        }
+        let reference = self.alloc_sum(SumTag::ResultOk, Value::unit())?;
+        self.unit_ok = Some(reference);
+        Ok(Value::ptr(reference.index()))
+    }
+
     pub fn alloc_sum(&mut self, tag: SumTag, payload: Value) -> Result<GcRef, RuntimeError> {
         let obj = GcObject::new(ObjectKind::Sum(AelysSum::new(tag, payload)));
         let size = u64::try_from(Heap::estimate_object_size(&obj)).unwrap_or(u64::MAX);

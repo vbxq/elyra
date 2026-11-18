@@ -10,7 +10,7 @@ impl VM {
         match (
             self.execution_control.report,
             self.execution_control_enabled(),
-            self.jit_executor.is_some(),
+            self.frame_jit_active(),
         ) {
             (true, true, true) => self.run_fast_impl::<true, true, true>(),
             (true, true, _) => self.run_fast_impl::<true, true, false>(),
@@ -111,6 +111,7 @@ impl VM {
                         constants_len,
                     )
                 };
+                self.execution_stats.hot_exits = self.execution_stats.hot_exits.wrapping_add(1);
                 if changed {
                     let last = self.frames.len() - 1;
                     self.frames[last].ip = hot_ip;
@@ -129,7 +130,7 @@ impl VM {
                 if previous_gmap != caller_gmap {
                     self.sync_current_function_globals();
                 }
-                self.pop_frame_with_jit_metadata();
+                self.frames.pop();
                 if self.frames.is_empty() {
                     return Ok(Value::null());
                 }
@@ -592,7 +593,7 @@ impl VM {
                                         ));
                                     }
 
-                                    let mut jit_deopt = None;
+                                    let mut jit_resume = None;
                                     if JIT {
                                         let argument_start = base
                                             .checked_add(usize::from(func_reg))
@@ -600,25 +601,20 @@ impl VM {
                                             .ok_or_else(|| {
                                                 self.runtime_error(RuntimeErrorKind::StackOverflow)
                                             })?;
-                                        match self.try_execute_jit_register_call(
-                                                    callee_ref,
-                                                    argument_start,
-                                                    nargs,
-                                                )? {
-                                                crate::vm::jit::JitRegisterCallResult::Returned(result) => {
-                                                    reg_set!(base + usize::from(dest), result);
-                                                    continue;
-                                                }
-                                                crate::vm::jit::JitRegisterCallResult::Aborted => {
-                                                    return Err(self.take_jit_control_error().unwrap_or_else(|| {
-                                                        self.runtime_error(RuntimeErrorKind::Interrupted)
-                                                    }));
-                                                }
-                                                crate::vm::jit::JitRegisterCallResult::Deoptimized { bytecode_ip, registers } => {
-                                                    jit_deopt = Some((bytecode_ip, registers));
-                                                }
-                                                crate::vm::jit::JitRegisterCallResult::Unsupported => {}
+                                        match self.frame_jit_call(callee_ref, argument_start) {
+                                            crate::vm::jit_frame::FrameOutcome::Returned(
+                                                result,
+                                            ) => {
+                                                reg_set!(base + usize::from(dest), result);
+                                                continue;
                                             }
+                                            crate::vm::jit_frame::FrameOutcome::Exited(
+                                                bytecode_ip,
+                                            ) => {
+                                                jit_resume = Some(bytecode_ip);
+                                            }
+                                            crate::vm::jit_frame::FrameOutcome::Interpret => {}
+                                        }
                                     }
 
                                     if callee_gmap != global_mapping_id {
@@ -646,12 +642,8 @@ impl VM {
                                         callee_ref, new_base, dest, bc_ptr, bc_len, const_ptr,
                                         const_len, num_regs,
                                     );
-                                    if let Some((bytecode_ip, registers)) = jit_deopt {
-                                        self.apply_jit_deoptimization(
-                                            &mut new_frame,
-                                            bytecode_ip,
-                                            registers,
-                                        )?;
+                                    if let Some(bytecode_ip) = jit_resume {
+                                        self.resume_jit_exit(&mut new_frame, bytecode_ip)?;
                                     }
                                     new_frame.global_mapping_id = callee_gmap;
 
@@ -661,6 +653,9 @@ impl VM {
                                         );
                                     }
                                     self.frames.push(new_frame);
+                                    if JIT {
+                                        self.push_pending_jit_frames()?;
+                                    }
                                     reload_frame_state!();
                                 }
 
@@ -773,7 +768,7 @@ impl VM {
                             self.sync_current_function_globals();
                         }
 
-                        self.pop_frame_with_jit_metadata();
+                        self.frames.pop();
 
                         if self.frames.is_empty() {
                             return Ok(result);
@@ -804,7 +799,7 @@ impl VM {
                             self.sync_current_function_globals();
                         }
 
-                        self.pop_frame_with_jit_metadata();
+                        self.frames.pop();
 
                         if self.frames.is_empty() {
                             return Ok(Value::unit());
@@ -1037,7 +1032,7 @@ impl VM {
                                             },
                                         ));
                                     }
-                                    let mut jit_deopt = None;
+                                    let mut jit_resume = None;
                                     if JIT {
                                         let argument_start = base
                                             .checked_add(usize::from(dest))
@@ -1045,25 +1040,20 @@ impl VM {
                                             .ok_or_else(|| {
                                                 self.runtime_error(RuntimeErrorKind::StackOverflow)
                                             })?;
-                                        match self.try_execute_jit_register_call(
-                                                    callee_ref,
-                                                    argument_start,
-                                                    u16::from(nargs),
-                                                )? {
-                                                crate::vm::jit::JitRegisterCallResult::Returned(result) => {
-                                                    reg_set!(base + usize::from(dest), result);
-                                                    continue;
-                                                }
-                                                crate::vm::jit::JitRegisterCallResult::Aborted => {
-                                                    return Err(self.take_jit_control_error().unwrap_or_else(|| {
-                                                        self.runtime_error(RuntimeErrorKind::Interrupted)
-                                                    }));
-                                                }
-                                                crate::vm::jit::JitRegisterCallResult::Deoptimized { bytecode_ip, registers } => {
-                                                    jit_deopt = Some((bytecode_ip, registers));
-                                                }
-                                                crate::vm::jit::JitRegisterCallResult::Unsupported => {}
+                                        match self.frame_jit_call(callee_ref, argument_start) {
+                                            crate::vm::jit_frame::FrameOutcome::Returned(
+                                                result,
+                                            ) => {
+                                                reg_set!(base + usize::from(dest), result);
+                                                continue;
                                             }
+                                            crate::vm::jit_frame::FrameOutcome::Exited(
+                                                bytecode_ip,
+                                            ) => {
+                                                jit_resume = Some(bytecode_ip);
+                                            }
+                                            crate::vm::jit_frame::FrameOutcome::Interpret => {}
+                                        }
                                     }
                                     if callee_gmap != global_mapping_id {
                                         self.sync_current_function_globals();
@@ -1088,12 +1078,8 @@ impl VM {
                                         callee_ref, new_base, dest, bc_ptr, bc_len, const_ptr,
                                         const_len, num_regs,
                                     );
-                                    if let Some((bytecode_ip, registers)) = jit_deopt {
-                                        self.apply_jit_deoptimization(
-                                            &mut new_frame,
-                                            bytecode_ip,
-                                            registers,
-                                        )?;
+                                    if let Some(bytecode_ip) = jit_resume {
+                                        self.resume_jit_exit(&mut new_frame, bytecode_ip)?;
                                     }
                                     new_frame.global_mapping_id = callee_gmap;
                                     if self.frames.len() >= crate::vm::MAX_FRAMES {
@@ -1102,6 +1088,9 @@ impl VM {
                                         );
                                     }
                                     self.frames.push(new_frame);
+                                    if JIT {
+                                        self.push_pending_jit_frames()?;
+                                    }
                                     reload_frame_state!();
                                 }
                                 CallData::Native { arity, func } => {

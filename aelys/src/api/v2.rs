@@ -13,12 +13,10 @@ use aelys_native::AelysModuleDescriptor;
 use aelys_opt::{OptimizationLevel, Optimizer};
 use aelys_runtime::stdlib::StdModuleExports;
 use aelys_runtime::{
-    ExecutionControl, HostRoot, JitArgument, JitCallResult, JitDeoptValue, JitExecutor,
-    JitFunctionKey, VM, Value, VmConfig, VmConfigError,
+    ExecutionControl, HostRoot, JitExecutor, JitFunctionKey, VM, Value, VmConfig, VmConfigError,
 };
 use aelys_sema::{InferType, TypeInference};
 use aelys_syntax::{Source, Span};
-use smallvec::SmallVec;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -31,7 +29,6 @@ pub use aelys_driver::CallableFunction;
 pub use aelys_runtime::InterruptHandle;
 
 const TIER1_CALL_THRESHOLD: u64 = 1_000;
-const TIER2_CALL_THRESHOLD: u64 = 10_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JitMode {
@@ -50,46 +47,37 @@ impl Default for JitMode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JitConfig {
-    max_cache_entries: usize,
+    asynchronous: bool,
+    compile_fault: Option<String>,
 }
 
 impl JitConfig {
-    pub fn with_max_cache_entries(
-        mut self,
-        max_cache_entries: usize,
-    ) -> Result<Self, JitConfigError> {
-        if max_cache_entries == 0 {
-            return Err(JitConfigError::EmptyCache);
-        }
-        self.max_cache_entries = max_cache_entries;
-        Ok(self)
+    pub fn with_async_compilation(mut self, asynchronous: bool) -> Self {
+        self.asynchronous = asynchronous;
+        self
     }
 
-    pub fn max_cache_entries(&self) -> usize {
-        self.max_cache_entries
+    pub fn async_compilation(&self) -> bool {
+        self.asynchronous
     }
-}
 
-impl Default for JitConfig {
-    fn default() -> Self {
-        Self {
-            max_cache_entries: 256,
-        }
+    #[doc(hidden)]
+    pub fn with_compile_panic_for(mut self, function: &str) -> Self {
+        self.compile_fault = Some(function.to_string());
+        self
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JitConfigError {
-    EmptyCache,
     Initialization(String),
 }
 
 impl fmt::Display for JitConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyCache => formatter.write_str("JIT cache must contain at least one entry"),
             Self::Initialization(error) => write!(formatter, "JIT initialization failed: {error}"),
         }
     }
@@ -218,7 +206,6 @@ pub struct ExecutionReport {
 #[derive(Clone)]
 pub struct CompiledModule {
     avbc: Arc<[u8]>,
-    function: Arc<aelys_bytecode::Function>,
     module_id: u64,
     source: Arc<Source>,
     /// set when the module imported other modules, whose globals live in that one isolate
@@ -296,9 +283,6 @@ fn build_jit_provider(
     jit_mode: JitMode,
     config: &JitConfig,
 ) -> Result<Option<Arc<JitProvider>>, JitConfigError> {
-    if config.max_cache_entries == 0 {
-        return Err(JitConfigError::EmptyCache);
-    }
     if jit_mode == JitMode::Off || !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return Ok(None);
     }
@@ -307,12 +291,11 @@ fn build_jit_provider(
         JitMode::Baseline => 1,
         JitMode::Tiered => TIER1_CALL_THRESHOLD,
     };
-    let tier2_call_threshold = (jit_mode == JitMode::Tiered).then_some(TIER2_CALL_THRESHOLD);
     Ok(Some(Arc::new(
         JitProvider::new(
-            config.max_cache_entries,
             call_threshold,
-            tier2_call_threshold,
+            config.asynchronous,
+            config.compile_fault.clone(),
         )
         .map_err(JitConfigError::Initialization)?,
     )))
@@ -506,7 +489,6 @@ impl Runtime {
         let module_id = aelys_runtime::next_jit_module_id();
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
-            function: Arc::new(function),
             module_id,
             source,
             linked_isolate: None,
@@ -520,7 +502,7 @@ impl Runtime {
         source_name: impl Into<String>,
     ) -> Result<CompiledModule, AelysError> {
         let source = Source::new(source_name.into(), "");
-        let function = deserialize(avbc).map_err(|error| {
+        deserialize(avbc).map_err(|error| {
             AelysError::Runtime(RuntimeError::new(
                 RuntimeErrorKind::InvalidBytecode(error.to_string()),
                 Vec::new(),
@@ -530,7 +512,6 @@ impl Runtime {
         let module_id = aelys_runtime::next_jit_module_id();
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
-            function: Arc::new(function),
             module_id,
             source,
             linked_isolate: None,
@@ -558,7 +539,6 @@ impl Runtime {
             id: NEXT_ISOLATE_ID.fetch_add(1, Ordering::Relaxed),
             vm,
             runtime: Arc::clone(&self.inner),
-            jit_call_counts: SmallVec::new(),
             last_report: None,
             persistent_globals,
             module_globals: HashSet::new(),
@@ -686,7 +666,6 @@ pub struct ModuleInstance {
     avbc: Arc<[u8]>,
     function_ref: Cell<GcRef>,
     global_layout: Arc<aelys_bytecode::GlobalLayout>,
-    jit_function: Arc<aelys_bytecode::Function>,
     source: Arc<Source>,
     root: HostRoot,
 }
@@ -697,21 +676,11 @@ pub struct Isolate {
     id: u64,
     vm: VM,
     runtime: Arc<RuntimeInner>,
-    jit_call_counts: SmallVec<[(u64, u64); 4]>,
     last_report: Option<ExecutionReport>,
     persistent_globals: HashSet<String>,
     module_globals: HashSet<String>,
     active_module_root: Option<HostRoot>,
     _not_sync: Cell<()>,
-}
-
-enum RootJitResult {
-    Unsupported,
-    Returned(Value),
-    Deoptimized {
-        bytecode_ip: u32,
-        registers: Vec<(u16, Value)>,
-    },
 }
 
 type StandardModuleRegister = fn(&mut VM) -> Result<StdModuleExports, RuntimeError>;
@@ -763,76 +732,6 @@ impl Isolate {
             }
         }
         self.vm.invalidate_global_mapping();
-    }
-
-    fn try_execute_jit(
-        &mut self,
-        module_id: u64,
-        function: &aelys_bytecode::Function,
-        options: &RunOptions,
-    ) -> Result<RootJitResult, AelysError> {
-        if self.runtime.jit_mode == JitMode::Off || function.jit_unsupported_struct {
-            return Ok(RootJitResult::Unsupported);
-        }
-        let Some(provider) = self.runtime.jit.as_ref() else {
-            return Ok(RootJitResult::Unsupported);
-        };
-        self.vm.prepare_globals_for_layout(&function.global_layout);
-        let calls = if let Some((_, calls)) = self
-            .jit_call_counts
-            .iter_mut()
-            .find(|(id, _)| *id == module_id)
-        {
-            *calls = calls.saturating_add(1);
-            *calls
-        } else {
-            self.jit_call_counts.push((module_id, 1));
-            1
-        };
-        let key = JitFunctionKey::root(module_id);
-        if !provider.should_execute(&key, calls) {
-            return Ok(RootJitResult::Unsupported);
-        }
-        let context = Some(self.vm.jit_execution_context(
-            options.report
-                || options.max_instructions.is_some()
-                || options.deadline.is_some()
-                || options.interrupt.is_some(),
-        ));
-        match provider.try_execute_with_context(
-            &key,
-            function,
-            &[] as &[JitArgument<'_>],
-            calls,
-            context.as_ref(),
-        ) {
-            JitCallResult::Unsupported => Ok(RootJitResult::Unsupported),
-            JitCallResult::Returned(value) => Ok(RootJitResult::Returned(value)),
-            JitCallResult::Aborted => Err(AelysError::Runtime(
-                self.vm
-                    .take_jit_control_error()
-                    .unwrap_or_else(|| self.vm.runtime_error(RuntimeErrorKind::Interrupted)),
-            )),
-            JitCallResult::Deoptimized {
-                bytecode_ip,
-                registers,
-            } => {
-                let Some(registers) = registers
-                    .into_iter()
-                    .map(|(register, value)| match value {
-                        JitDeoptValue::Value(value) => Some((register, value)),
-                        JitDeoptValue::Argument(_) => None,
-                    })
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    return Ok(RootJitResult::Unsupported);
-                };
-                Ok(RootJitResult::Deoptimized {
-                    bytecode_ip,
-                    registers,
-                })
-            }
-        }
     }
 
     /// `aelys run` does. imported modules are linked into this isolate, so the result runs here
@@ -953,7 +852,6 @@ impl Isolate {
         reject_unverifiable_module(&function, &source)?;
         Ok(CompiledModule {
             avbc: Arc::from(avbc),
-            function: Arc::new(function),
             module_id: aelys_runtime::next_jit_module_id(),
             source,
             linked_isolate: Some(self.id),
@@ -968,13 +866,8 @@ impl Isolate {
         self.reject_foreign_module(module)?;
         self.prepare_module_run();
         self.configure_run(&options);
-        let jit_result = self.try_execute_jit(module.module_id, &module.function, &options)?;
-        if let RootJitResult::Returned(value) = &jit_result {
-            self.last_report = self.jit_report(&options, &module.function, &module.source);
-            return Ok(ExecutionOutcome::Returned(*value));
-        }
         let instance = self.instantiate(module)?;
-        self.run_instance(&instance, jit_result, options)
+        self.run_instance(&instance, options)
     }
 
     pub fn instantiate(&mut self, module: &CompiledModule) -> Result<ModuleInstance, AelysError> {
@@ -989,7 +882,6 @@ impl Isolate {
             avbc: Arc::clone(&module.avbc),
             function_ref: Cell::new(function_ref),
             global_layout,
-            jit_function: Arc::clone(&module.function),
             source: Arc::clone(&module.source),
             root: self.vm.pin_host_ref(function_ref),
         })
@@ -1005,39 +897,7 @@ impl Isolate {
         }
         self.prepare_module_run();
         self.configure_run(&options);
-        let jit_result =
-            self.try_execute_jit(instance.module_id, &instance.jit_function, &options)?;
-        if let RootJitResult::Returned(value) = &jit_result {
-            self.last_report = self.jit_report(&options, &instance.jit_function, &instance.source);
-            return Ok(ExecutionOutcome::Returned(*value));
-        }
-        self.run_instance(instance, jit_result, options)
-    }
-
-    fn jit_report(
-        &self,
-        options: &RunOptions,
-        function: &aelys_bytecode::Function,
-        source: &Source,
-    ) -> Option<ExecutionReport> {
-        if !options.report {
-            return None;
-        }
-        let stats = self.vm.execution_stats();
-        Some(ExecutionReport {
-            instructions: stats.instructions,
-            allocations: stats.allocations,
-            allocated_bytes: self.vm.heap().bytes_allocated(),
-            collections: stats.collections,
-            gc_pause_total_ns: stats.gc_pause_nanos,
-            gc_pause_max_ns: stats.gc_max_pause_nanos,
-            cache_hits: stats.cache_hits,
-            cache_misses: stats.cache_misses,
-            instruction_pointer: stats.last_instruction_pointer,
-            function: Some(function.name.as_deref().unwrap_or("<main>").to_string()),
-            source: source.name.clone(),
-            random_seed: self.vm.random_seed(),
-        })
+        self.run_instance(instance, options)
     }
 
     fn configure_run(&mut self, options: &RunOptions) {
@@ -1083,23 +943,12 @@ impl Isolate {
     fn run_instance(
         &mut self,
         instance: &ModuleInstance,
-        jit_result: RootJitResult,
         options: RunOptions,
     ) -> Result<ExecutionOutcome, AelysError> {
         let global_layout = Arc::clone(&instance.global_layout);
         self.vm.set_source(Arc::clone(&instance.source));
         let function_ref = self.live_function_ref(instance)?;
-        let result = match jit_result {
-            RootJitResult::Deoptimized {
-                bytecode_ip,
-                registers,
-            } => self
-                .vm
-                .execute_deoptimized(function_ref, bytecode_ip, registers),
-            RootJitResult::Unsupported | RootJitResult::Returned(_) => {
-                self.vm.execute(function_ref)
-            }
-        };
+        let result = self.vm.execute(function_ref);
         if result.is_ok() {
             self.vm.sync_globals_to_hashmap(global_layout.names());
         }

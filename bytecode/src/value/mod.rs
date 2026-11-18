@@ -39,4 +39,12 @@ const CANONICAL_NAN: u64 = QNAN | TAG_NAN | 1;
 impl Value {
     pub const INLINE_INT_MIN: i64 = -(1i64 << 47);
     pub const INLINE_INT_MAX: i64 = (1i64 << 47) - 1;
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    pub const fn from_raw(bits: u64) -> Self {
+        Self(bits)
+    }
 }

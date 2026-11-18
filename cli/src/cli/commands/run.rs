@@ -38,7 +38,8 @@ pub fn run_with_options(
         InputFormat::Source => {
             ensure_utf8_source(path_ref)?;
             let jit = if parsed.jit {
-                match aelys::new_jit_executor(aelys::JitMode::Tiered, aelys::JitConfig::default()) {
+                let config = aelys::JitConfig::default().with_async_compilation(!parsed.jit_sync);
+                match aelys::new_jit_executor(aelys::JitMode::Tiered, config) {
                     Ok(executor) => executor,
                     Err(error) => return Err(format!("jit: {error}")),
                 }

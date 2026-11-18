@@ -7,6 +7,7 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
     let mut max_instructions = None;
     let mut timeout_ms = None;
     let mut jit = false;
+    let mut jit_sync = false;
 
     for arg in args {
         if let Some(value) = arg.strip_prefix("-ae.") {
@@ -17,6 +18,7 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
                 &mut max_instructions,
                 &mut timeout_ms,
                 &mut jit,
+                &mut jit_sync,
             )?;
             continue;
         }
@@ -28,6 +30,7 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
                 &mut max_instructions,
                 &mut timeout_ms,
                 &mut jit,
+                &mut jit_sync,
             )?;
             continue;
         }
@@ -42,6 +45,7 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
         max_instructions,
         timeout_ms,
         jit,
+        jit_sync,
     })
 }
 
@@ -52,6 +56,7 @@ fn apply_vm_arg(
     max_instructions: &mut Option<u64>,
     timeout_ms: &mut Option<u64>,
     jit: &mut bool,
+    jit_sync: &mut bool,
 ) -> Result<(), VmArgsError> {
     let (key, raw_value) = value
         .split_once('=')
@@ -97,6 +102,10 @@ fn apply_vm_arg(
         }
         "jit" => {
             *jit = parse_switch(raw_value, raw_arg)?;
+            Ok(())
+        }
+        "jit-sync" => {
+            *jit_sync = parse_switch(raw_value, raw_arg)?;
             Ok(())
         }
         _ => Err(VmArgsError::UnknownArgument(raw_arg.to_string())),

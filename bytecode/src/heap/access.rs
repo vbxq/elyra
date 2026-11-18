@@ -2,6 +2,19 @@ use super::{Heap, HeapGeneration, MajorPhase, REMEMBERED, RememberedEntry, WHOLE
 use crate::object::{GcObject, GcRef, ObjectKind};
 
 impl Heap {
+    #[inline(always)]
+    pub fn slot_object(&self, payload: u64) -> Option<&Option<GcObject>> {
+        let slot = self.objects.get((payload & 0xff_ffff) as usize)?;
+        (u64::from(slot.generation) == payload >> 24).then_some(&slot.object)
+    }
+
+    // stores of a pointer through this reference must be followed by a write barrier call
+    #[inline(always)]
+    pub fn slot_object_mut(&mut self, payload: u64) -> Option<&mut Option<GcObject>> {
+        let slot = self.objects.get_mut((payload & 0xff_ffff) as usize)?;
+        (u64::from(slot.generation) == payload >> 24).then_some(&mut slot.object)
+    }
+
     pub fn get(&self, gc_ref: GcRef) -> Option<&GcObject> {
         let slot = self.objects.get(gc_ref.slot_index())?;
         (slot.generation == gc_ref.generation())

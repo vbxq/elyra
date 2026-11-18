@@ -101,6 +101,9 @@ impl VM {
             self.globals_by_index_cache
                 .resize_with(mapping_id + 1, || None);
         }
+        if self.globals_by_index_cache[mapping_id].is_some() {
+            self.frame_jit.prepared_generation += 1;
+        }
         for (slot, &name_id) in prepared.name_ids.iter().enumerate() {
             if name_id != UNNAMED_GLOBAL {
                 self.global_users[name_id as usize].push((mapping_id, slot as u32));
@@ -110,6 +113,8 @@ impl VM {
     }
 
     pub(crate) fn clear_prepared_globals(&mut self) {
+        self.flush_stale_globals();
+        self.frame_jit.prepared_generation += 1;
         self.globals_by_index_cache.clear();
         for users in &mut self.global_users {
             users.clear();
@@ -127,6 +132,7 @@ impl VM {
         self.global_name_ids.insert(name.to_string(), id);
         self.global_names_by_id.push(name.to_string());
         self.global_users.push(Vec::new());
+        self.global_latest.push(None);
         id
     }
 
@@ -140,6 +146,7 @@ impl VM {
             return mapping_id;
         }
 
+        self.flush_stale_globals();
         let names = layout.names();
 
         let needed_len = names.len();
@@ -167,6 +174,90 @@ impl VM {
         };
         self.store_prepared_mapping(mapping_id, prepared);
         mapping_id
+    }
+
+    // machine code reads its own prepared view, which every indexed write keeps current, so it never switches the interpreter's view
+    pub(crate) fn frame_prepared_view(
+        &mut self,
+        layout: &super::super::GlobalLayout,
+    ) -> Option<(*const Value, usize)> {
+        let mapping_id = layout.id();
+        if mapping_id > Self::MAX_PREPARED_MAPPING {
+            return None;
+        }
+        if !matches!(self.globals_by_index_cache.get(mapping_id), Some(Some(_))) {
+            self.sync_current_function_globals();
+            self.flush_stale_globals();
+            let names = layout.names();
+            let mut values = Vec::with_capacity(names.len());
+            let mut name_ids = Vec::with_capacity(names.len());
+            for name in names {
+                if name.is_empty() {
+                    values.push(Value::null());
+                    name_ids.push(UNNAMED_GLOBAL);
+                } else {
+                    values.push(self.globals.get(name).copied().unwrap_or(Value::uninit()));
+                    name_ids.push(self.global_name_id(name));
+                }
+            }
+            self.store_prepared_mapping(
+                mapping_id,
+                PreparedGlobals {
+                    values,
+                    name_ids: name_ids.into_boxed_slice(),
+                },
+            );
+        }
+        let view = self.globals_by_index_cache.get(mapping_id)?.as_ref()?;
+        Some((view.values.as_ptr(), view.values.len()))
+    }
+
+    // the interpreter's current view gets a prepared copy, so a write from machine code reaches it through its users
+    pub(crate) fn register_current_view(&mut self) {
+        let mapping_id = self.current_global_mapping_id;
+        if mapping_id > Self::MAX_PREPARED_MAPPING
+            || matches!(self.globals_by_index_cache.get(mapping_id), Some(Some(_)))
+        {
+            return;
+        }
+        let Some(function) = self.frames.last().map(|frame| frame.function) else {
+            return;
+        };
+        let layout = match self.heap.get(function).map(|object| &object.kind) {
+            Some(ObjectKind::Function(function)) => Arc::clone(&function.function.global_layout),
+            Some(ObjectKind::Closure(closure)) => {
+                match self.heap.get(closure.function).map(|object| &object.kind) {
+                    Some(ObjectKind::Function(function)) => {
+                        Arc::clone(&function.function.global_layout)
+                    }
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+        let names = layout.names();
+        if layout.id() != mapping_id || names.len() != self.globals_by_index.len() {
+            return;
+        }
+        self.sync_current_function_globals();
+        let name_ids = names
+            .iter()
+            .map(|name| {
+                if name.is_empty() {
+                    UNNAMED_GLOBAL
+                } else {
+                    self.global_name_id(name)
+                }
+            })
+            .collect::<Vec<_>>();
+        let values = self.globals_by_index.clone();
+        self.store_prepared_mapping(
+            mapping_id,
+            PreparedGlobals {
+                values,
+                name_ids: name_ids.into_boxed_slice(),
+            },
+        );
     }
 
     fn prepare_empty_global_mapping(&mut self, mapping_id: usize) -> usize {

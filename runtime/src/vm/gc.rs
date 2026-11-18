@@ -317,14 +317,26 @@ impl VM {
                 .filter_map(|value| value.as_ptr().map(GcRef::new)),
         );
         roots.extend(
+            self.stale_global_values()
+                .filter_map(|value| value.as_ptr().map(GcRef::new)),
+        );
+        roots.extend(
             self.globals_by_index
                 .iter()
                 .filter_map(|value| value.as_ptr().map(GcRef::new)),
         );
+        if let Some(range) = self.frame_jit_root_range() {
+            roots.extend(
+                self.registers[range]
+                    .iter()
+                    .filter_map(|value| value.as_ptr().map(GcRef::new)),
+            );
+        }
         roots.extend(self.open_upvalues.iter().copied());
         roots.extend(self.current_upvalues.iter().copied());
         roots.extend(self.host_roots.references());
         roots.extend(self.native_call_roots.iter().copied());
+        roots.extend(self.unit_ok);
         roots
     }
 

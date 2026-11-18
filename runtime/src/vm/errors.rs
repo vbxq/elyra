@@ -147,7 +147,7 @@ impl VM {
         matrix[a_len][b_len]
     }
 
-    fn build_stack_trace(&self) -> Vec<StackFrame> {
+    pub(crate) fn build_stack_trace(&self) -> Vec<StackFrame> {
         let mut stack_trace = Vec::new();
         for frame in self.frames.iter().rev() {
             if let Some(obj) = self.heap.get(frame.function())

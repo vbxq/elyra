@@ -6,26 +6,7 @@ use std::sync::Arc;
 
 impl VM {
     pub fn execute(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
-        self.execute_with_deoptimization(function, None)
-    }
-
-    pub fn execute_deoptimized(
-        &mut self,
-        function: GcRef,
-        bytecode_ip: u32,
-        registers: Vec<(u16, Value)>,
-    ) -> Result<Value, RuntimeError> {
-        self.execute_with_deoptimization(function, Some((bytecode_ip, registers)))
-    }
-
-    fn execute_with_deoptimization(
-        &mut self,
-        function: GcRef,
-        deoptimization: Option<(u32, Vec<(u16, Value)>)>,
-    ) -> Result<Value, RuntimeError> {
-        match catch_unwind(AssertUnwindSafe(|| {
-            self.execute_inner(function, deoptimization)
-        })) {
+        match catch_unwind(AssertUnwindSafe(|| self.execute_inner(function))) {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) => {
                 self.abort_execution();
@@ -57,11 +38,7 @@ impl VM {
         self.current_global_mapping_id = 0;
     }
 
-    fn execute_inner(
-        &mut self,
-        function: GcRef,
-        deoptimization: Option<(u32, Vec<(u16, Value)>)>,
-    ) -> Result<Value, RuntimeError> {
+    fn execute_inner(&mut self, function: GcRef) -> Result<Value, RuntimeError> {
         self.ensure_function_verified(function)?;
         let (
             bytecode_ptr,
@@ -101,10 +78,9 @@ impl VM {
         };
 
         if !global_layout.names().is_empty() {
+            self.flush_stale_globals();
             let needed_len = global_layout.names().len();
-            if self.globals_by_index.len() < needed_len {
-                self.globals_by_index.resize(needed_len, Value::null());
-            }
+            self.globals_by_index.resize(needed_len, Value::null());
             for (idx, name) in global_layout.names().iter().enumerate() {
                 if !name.is_empty() {
                     self.globals_by_index[idx] =
@@ -137,11 +113,9 @@ impl VM {
         if self.registers.len() < register_count {
             self.registers.resize(register_count, Value::null());
         }
-        if let Some((bytecode_ip, registers)) = deoptimization {
-            self.apply_jit_deoptimization(&mut frame, bytecode_ip, registers)?;
-        }
         frame.global_mapping_id = global_mapping_id;
         self.push_frame(frame)?;
+        self.register_current_view();
         self.run_fast()
     }
 
