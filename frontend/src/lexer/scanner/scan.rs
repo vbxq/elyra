@@ -168,7 +168,9 @@ impl Lexer {
 
             '"' => self.string()?,
 
-            '\'' if (self.peek().is_alphabetic() || self.peek() == '_') && !self.quote_closes_after_name() => {
+            '\'' if (self.peek().is_alphabetic() || self.peek() == '_')
+                && !self.quote_closes_after_name() =>
+            {
                 while self.peek().is_alphanumeric() || self.peek() == '_' {
                     self.advance();
                 }

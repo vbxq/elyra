@@ -415,7 +415,10 @@ impl TypeInference {
         for (ty, span, func_name) in std::mem::take(&mut self.fall_through_residuals) {
             let expected = subst.apply(&ty);
             if !expected.is_concrete()
-                || matches!(expected, InferType::Unit | InferType::Never | InferType::Dynamic)
+                || matches!(
+                    expected,
+                    InferType::Unit | InferType::Never | InferType::Dynamic
+                )
             {
                 continue;
             }

@@ -30,7 +30,10 @@ fn rejected(source: &str) -> String {
 
 fn rejected_with(source: &str, code: &str) -> String {
     let message = rejected(source);
-    assert!(message.contains(code), "expected {code}, got:\n{message}\nfor:\n{source}");
+    assert!(
+        message.contains(code),
+        "expected {code}, got:\n{message}\nfor:\n{source}"
+    );
     assert!(
         !message.contains("__aelys") && !message.contains("AelysTuple"),
         "internal name leaked:\n{message}"
@@ -62,17 +65,15 @@ fn u64_ranges_are_checked_against_the_full_int_range() {
 
 #[test]
 fn an_unannotated_closure_with_a_non_value_tail_returns_unit() {
-    for body in [
-        "if k == 0 { 5 }",
-        "let z = k",
-        "while k < 0 { }",
-    ] {
+    for body in ["if k == 0 { 5 }", "let z = k", "while k < 0 { }"] {
         rejected_with(
             &format!("let f = fn(k: int) {{ {body} }}\nlet x: int = f(1)\nx + 1"),
             "E0301",
         );
         rejected_with(
-            &format!("fn apply(g: fn(int) -> int, v: int) -> int {{ g(v) }}\napply(fn(k: int) {{ {body} }}, 1)"),
+            &format!(
+                "fn apply(g: fn(int) -> int, v: int) -> int {{ g(v) }}\napply(fn(k: int) {{ {body} }}, 1)"
+            ),
             "E0301",
         );
     }
@@ -172,7 +173,10 @@ fn internal_tuple_names_are_neither_visible_nor_writable() {
         assert!(error.contains(message), "{error}");
     }
     let nested = rejected_with("let t = ((1, \"a\"), 2)\nt.0.5", "E0363");
-    assert!(nested.contains("tuple (int, string) has no field 5"), "{nested}");
+    assert!(
+        nested.contains("tuple (int, string) has no field 5"),
+        "{nested}"
+    );
     for source in [
         "let x: AelysTuple2<int, int> = (1, 2)\nx.1",
         "struct AelysTuple2 { a: int }\nlet t = (1, 2)\nt.0",
@@ -183,7 +187,9 @@ fn internal_tuple_names_are_neither_visible_nor_writable() {
     ] {
         let error = rejected(source);
         assert!(
-            error.contains("E0394") && error.contains("reserved name") && !error.contains("<prelude>"),
+            error.contains("E0394")
+                && error.contains("reserved name")
+                && !error.contains("<prelude>"),
             "{error}\nfor:\n{source}"
         );
     }
@@ -193,7 +199,10 @@ fn internal_tuple_names_are_neither_visible_nor_writable() {
         "fn f(t: (int, int, int)) -> int { match t { (a, b) => a } }\nf((1, 2, 3))",
     ] {
         let error = rejected_with(source, "E0301");
-        assert!(error.contains("tuple pattern has"), "{error}\nfor:\n{source}");
+        assert!(
+            error.contains("tuple pattern has"),
+            "{error}\nfor:\n{source}"
+        );
     }
 }
 
@@ -359,7 +368,10 @@ fn an_assignment_tail_makes_a_unit_function() {
         "fn h(mut v: Vec<int>, c: bool) { if c { v.push(1) } else { v.pop() } }\nh(vec![1], true)",
         "E0301",
     );
-    int_at_every_level("let mut z = 0\nfn set(v: int) -> int { z = v }\nset(41) + 1", 42);
+    int_at_every_level(
+        "let mut z = 0\nfn set(v: int) -> int { z = v }\nset(41) + 1",
+        42,
+    );
 }
 
 #[test]
@@ -500,12 +512,19 @@ s.a.0 + s.a.1 + s.b.0.0 + a + b + c + d + v[1].a.0 + p + q
     .expect("imported tuple fields and payloads");
     assert_eq!(value.as_int(), Some(3 + 3 + 45 + 21 + 4 + 3 + 9 + 2 + 3));
 
-    let untouched = run_with_geo("needs geo\ngeo::one() + 41\n").expect("a module with tuple fields loads");
+    let untouched =
+        run_with_geo("needs geo\ngeo::one() + 41\n").expect("a module with tuple fields loads");
     assert_eq!(untouched.as_int(), Some(42));
 
     for (main, expected) in [
-        ("needs geo\nlet s = geo::seg()\ns.a.5\n", "tuple (int, int) has no field 5"),
-        ("needs geo\nlet s = geo::seg()\nlet y: int = s.b\ny\n", "found ((int, string), bool)"),
+        (
+            "needs geo\nlet s = geo::seg()\ns.a.5\n",
+            "tuple (int, int) has no field 5",
+        ),
+        (
+            "needs geo\nlet s = geo::seg()\nlet y: int = s.b\ny\n",
+            "found ((int, string), bool)",
+        ),
         (
             "needs geo\nmatch geo::mk(0) { Shape::Pt((a, b, c)) => 1, _ => 0 }\n",
             "tuple pattern has 3 elements",
@@ -513,7 +532,10 @@ s.a.0 + s.a.1 + s.b.0.0 + a + b + c + d + v[1].a.0 + p + q
     ] {
         let error = run_with_geo(main).expect_err("rejected");
         assert!(error.contains(expected), "{error}\nfor:\n{main}");
-        assert!(!error.contains("__aelys") && !error.contains("AelysTuple"), "{error}");
+        assert!(
+            !error.contains("__aelys") && !error.contains("AelysTuple"),
+            "{error}"
+        );
     }
 }
 
@@ -532,7 +554,10 @@ fn low_severity_diagnostics_and_receivers() {
         let error = rejected_with(source, "E0391");
         assert!(!error.contains("if/else"), "{error}");
     }
-    let mixed = rejected_with("let c = true\nlet r = loop { if c { break 1 }\n break \"a\" }\nr", "E0301");
+    let mixed = rejected_with(
+        "let c = true\nlet r = loop { if c { break 1 }\n break \"a\" }\nr",
+        "E0301",
+    );
     assert!(mixed.contains("`break` values of one loop"), "{mixed}");
     for source in [
         "fn f() -> (int, Option<int>) { (1, None) }\nlet Some(q) = f().1\nq",

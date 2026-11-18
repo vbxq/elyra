@@ -1290,7 +1290,8 @@ impl TypeInference {
             })
             .unwrap_or_default();
         let mut substitutions = substitutions;
-        let tuple_literal = explicit_type_args.is_empty() && aelys_syntax::tuple_arity(name).is_some();
+        let tuple_literal =
+            explicit_type_args.is_empty() && aelys_syntax::tuple_arity(name).is_some();
         let mut typed_values: Vec<Option<TypedExpr>> = Vec::new();
         if tuple_literal && let Some(definition) = &def {
             for field in fields {

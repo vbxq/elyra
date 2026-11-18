@@ -1502,6 +1502,34 @@ impl TypeInference {
         )
     }
 
+    fn mismatched_tuple_pattern(
+        &mut self,
+        name: &str,
+        ty: &InferType,
+        pattern: &Pattern,
+    ) -> Option<TypedPattern> {
+        let InferType::Applied { name: actual, .. } = ty else {
+            return None;
+        };
+        let expected = aelys_syntax::tuple_arity(actual)?;
+        let found = aelys_syntax::tuple_arity(name)?;
+        if expected == found {
+            return None;
+        }
+        self.errors.push(TypeError {
+            kind: TypeErrorKind::TuplePatternArity { expected, found },
+            span: pattern.span,
+            reason: ConstraintReason::Other("tuple pattern".to_string()),
+        });
+        Some(self.infer_pattern(
+            pattern,
+            &InferType::Applied {
+                name: name.to_string(),
+                args: vec![InferType::Poison; found],
+            },
+        ))
+    }
+
     fn constrain_integer_pattern(&mut self, ty: &InferType, bounds: &[Option<i64>], span: Span) {
         if ty.is_integer() {
             if bounds
@@ -2037,6 +2065,9 @@ impl TypeInference {
                         span: pattern.span,
                     };
                 };
+                if let Some(typed) = self.mismatched_tuple_pattern(&name, ty, pattern) {
+                    return typed;
+                }
                 let field_substitutions: std::collections::HashMap<String, InferType> =
                     if def.type_params.is_empty() {
                         if let InferType::Var(_) = ty {
@@ -2074,30 +2105,7 @@ impl TypeInference {
                                     name: name.clone(),
                                     args: fresh.clone(),
                                 };
-                                let arities = match ty {
-                                    InferType::Applied { name: actual, .. } => {
-                                        aelys_syntax::tuple_arity(actual)
-                                            .zip(aelys_syntax::tuple_arity(&name))
-                                    }
-                                    _ => None,
-                                };
-                                if let Some((expected, found)) = arities {
-                                    self.errors.push(TypeError {
-                                        kind: TypeErrorKind::TuplePatternArity { expected, found },
-                                        span: pattern.span,
-                                        reason: ConstraintReason::Other(
-                                            "tuple pattern".to_string(),
-                                        ),
-                                    });
-                                    let poisoned = vec![InferType::Poison; fresh.len()];
-                                    return self.infer_pattern(
-                                        pattern,
-                                        &InferType::Applied {
-                                            name: name.clone(),
-                                            args: poisoned,
-                                        },
-                                    );
-                                } else if let InferType::Var(_) = ty {
+                                if let InferType::Var(_) = ty {
                                     self.constraints.push(Constraint::equal(
                                         ty.clone(),
                                         expected,
