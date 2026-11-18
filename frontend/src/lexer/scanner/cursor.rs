@@ -17,6 +17,7 @@ impl Lexer {
         c
     }
 
+    // `'a'` is a character literal and `'a` a label, as in rust
     pub(super) fn peek(&self) -> char {
         self.chars.get(self.current).copied().unwrap_or('\0')
     }

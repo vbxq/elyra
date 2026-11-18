@@ -55,6 +55,9 @@ pub fn resolve_globals(imports: Option<&ModuleImports>, vm: &VM) -> ResolvedGlob
         resolved
             .codegen_globals
             .extend(imports.impl_body_globals.iter().cloned());
+        for (name, target) in &imports.global_renames {
+            resolved.symbol_origins.insert(name.clone(), target.clone());
+        }
     }
 
     resolved

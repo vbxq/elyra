@@ -1,0 +1,97 @@
+// build the module and copy it here as sdl.so first, see docs/native-modules.md
+needs std::bytes as bytes
+needs std::sys as sys
+needs sdl
+
+let W = 320
+let H = 200
+let FRAME_NS = 16666667
+
+fn frame_count() -> int {
+    match sys::arg(0) {
+        Some(text) => match convert::parse_int(text) {
+            Some(n) => n,
+            None => 600,
+        },
+        None => 600,
+    }
+}
+
+fn paint_palette(palette: int, shift: int) {
+    let mut i = 0
+    while i < 256 {
+        bytes::write_u8(palette, i * 3, (i + shift) % 256)
+        bytes::write_u8(palette, i * 3 + 1, i)
+        bytes::write_u8(palette, i * 3 + 2, 255 - i)
+        i += 1
+    }
+}
+
+fn expected_rgb(index: int, shift: int) -> int {
+    return ((index + shift) % 256) * 65536 + index * 256 + (255 - index)
+}
+
+match sdl::open("Elyra SDL gradient", W, H, 3) {
+    Ok(_) => (),
+    Err(e) => {
+        println("open failed: {e}")
+        sys::exit(1)
+    }
+}
+
+let pixels = bytes::alloc(W * H)
+let mut y = 0
+while y < H {
+    bytes::fill(pixels, y * W, W, y)
+    y += 1
+}
+let palette = bytes::alloc(768)
+
+let frames = frame_count()
+let escape = sdl::scancode("Escape")
+let start = sdl::now_ns()
+let mut shown = 0
+let mut quit = false
+while shown < frames and not quit {
+    paint_palette(palette, shown)
+    match sdl::present_indexed(pixels, palette) {
+        Ok(_) => (),
+        Err(e) => {
+            println("present failed: {e}")
+            sys::exit(1)
+        }
+    }
+    shown += 1
+    let mut event = sdl::poll()
+    while event != 0 {
+        if event == 1 or (event == 2 and sdl::event_key() == escape) {
+            quit = true
+        }
+        event = sdl::poll()
+    }
+    let next = start + shown * FRAME_NS
+    let wait_ms = (next - sdl::now_ns()) / 1000000
+    if wait_ms > 0 {
+        sdl::delay_ms(wait_ms)
+    }
+}
+let elapsed_ms = (sdl::now_ns() - start) / 1000000
+
+let last = shown - 1
+let indexed = match sdl::read_pixel(10, 20) { Ok(p) => p, Err(e) => -1 }
+let indexed_ok = indexed == expected_rgb(20, last)
+let bottom = match sdl::read_pixel(319, 199) { Ok(p) => p, Err(e) => -1 }
+let bottom_ok = bottom == expected_rgb(199, last)
+
+let argb = bytes::alloc(W * H * 4)
+bytes::fill(argb, 0, W * H * 4, 90)
+match sdl::present_argb(argb) {
+    Ok(_) => (),
+    Err(e) => println("present_argb failed: {e}")
+}
+let direct = match sdl::read_pixel(160, 100) { Ok(p) => p, Err(e) => -1 }
+let direct_ok = direct == 90 * 65536 + 90 * 256 + 90
+
+sdl::close()
+println("frames={shown} quit={quit} elapsed_ms={elapsed_ms}")
+println("indexed_pixel={indexed} indexed_ok={indexed_ok} bottom_ok={bottom_ok} argb_ok={direct_ok}")

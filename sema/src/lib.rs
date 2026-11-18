@@ -9,6 +9,7 @@ pub mod unify;
 
 pub use constraint::{Constraint, ConstraintReason, TypeError};
 pub use env::TypeEnv;
+pub use infer::constants::ConstValue;
 pub use infer::{
     GENERATED_SYMBOL_PREFIX, TypeInference,
     entry::{InferenceInputs, InferenceResult},

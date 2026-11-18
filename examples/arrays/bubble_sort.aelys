@@ -29,7 +29,7 @@ fn print_array(arr) {
     io::print(s + "]")
 }
 
-let arr = [64, 34, 25, 12, 22, 11, 90]
+let mut arr = [64, 34, 25, 12, 22, 11, 90]
 io::print("Before sort:")
 print_array(arr)
 

@@ -419,6 +419,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -471,6 +472,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -523,6 +525,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -575,6 +578,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(arr_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(arr_ref).is_some() {
@@ -1054,22 +1058,14 @@ macro_rules! execute_arrays {
                             }));
                         }
                     } else if let ObjectKind::String(s) = &obj.kind {
-                        let s_clone = s.as_str().to_string();
-                        if let Some(ch) = s_clone.chars().nth(idx as usize) {
-                            let mut buf = [0u8; 4];
-                            let char_str = ch.encode_utf8(&mut buf);
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            match $vm.intern_string(char_str) {
-                                Ok(str_ref) => {
-                                    $reg_set!(dest, Value::ptr(str_ref.index()));
-                                }
-                                Err(e) => return Err(e),
-                            }
+                        let text = s.as_str();
+                        if let Some(ch) = text.chars().nth(idx as usize) {
+                            $reg_set!(dest, Value::char(ch));
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
                                 index: idx,
-                                length: s_clone.chars().count() as i64,
+                                length: text.chars().count() as i64,
                             }));
                         }
                     } else {
@@ -1157,6 +1153,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1209,6 +1206,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1261,6 +1259,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1311,6 +1310,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     Some((false, len)) => {
                         if let Some(obj) = $vm.heap.get_mut(vec_ref)
@@ -1323,6 +1323,7 @@ macro_rules! execute_arrays {
                                 length: len,
                             }));
                         }
+                        $vm.heap.write_barrier_element(vec_ref, idx as usize, value);
                     }
                     None => {
                         if $vm.heap.get(vec_ref).is_some() {
@@ -1346,33 +1347,17 @@ macro_rules! execute_arrays {
                 let str_val = $reg_get!($base + b as usize);
                 let idx = $reg_get!($base + c as usize).as_int().unwrap_or(-1);
 
-                if idx < 0 {
-                    $vm.frames[$current_frame_idx].ip = $ip;
-                    return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                        index: idx,
-                        length: 0,
-                    }));
-                }
-
                 let str_ref = GcRef::new(str_val.as_ptr().unwrap_or(0));
                 if let Some(obj) = $vm.heap.get(str_ref) {
                     if let ObjectKind::String(s) = &obj.kind {
-                        let s_clone = s.as_str().to_string();
-                        if let Some(ch) = s_clone.chars().nth(idx as usize) {
-                            let mut buf = [0u8; 4];
-                            let char_str = ch.encode_utf8(&mut buf);
-                            $vm.frames[$current_frame_idx].ip = $ip;
-                            match $vm.intern_string(char_str) {
-                                Ok(new_ref) => {
-                                    $reg_set!(dest, Value::ptr(new_ref.index()));
-                                }
-                                Err(e) => return Err(e),
-                            }
+                        let text = s.as_str();
+                        if let Some(ch) = text.chars().nth(idx as usize) {
+                            $reg_set!(dest, Value::char(ch));
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
                                 index: idx,
-                                length: s_clone.chars().count() as i64,
+                                length: text.chars().count() as i64,
                             }));
                         }
                     } else {

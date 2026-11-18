@@ -2,6 +2,7 @@ pub(super) mod array;
 mod assign;
 mod binary;
 mod call;
+mod collections;
 mod if_expr;
 mod lambda;
 pub(crate) mod member;
@@ -9,7 +10,7 @@ mod primary;
 
 use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
-use crate::typed_ast::{TypedExpr, TypedExprKind, TypedFmtStringPart};
+use crate::typed_ast::{TypedExpr, TypedExprKind, TypedFmtStringPart, TypedStmt, TypedStmtKind};
 use crate::types::InferType;
 use aelys_syntax::{Expr, ExprKind};
 
@@ -30,6 +31,7 @@ impl TypeInference {
 
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
         let callee_position = std::mem::take(&mut self.callee_position);
+        self.drop_unused_expectation(expr);
         self.depth += 1;
         if self.depth > super::MAX_INFERENCE_DEPTH {
             self.errors.push(TypeError::recursion_limit(expr.span));
@@ -51,6 +53,7 @@ impl TypeInference {
             ExprKind::Float(f) => (TypedExprKind::Float(*f), InferType::F64),
             ExprKind::Bool(b) => (TypedExprKind::Bool(*b), InferType::Bool),
             ExprKind::String(s) => (TypedExprKind::String(s.clone()), InferType::String),
+            ExprKind::Char(c) => (TypedExprKind::Char(*c), InferType::Char),
             ExprKind::Unit => (TypedExprKind::Unit, InferType::Unit),
             ExprKind::FmtString(parts) => {
                 let typed_parts = parts
@@ -78,7 +81,12 @@ impl TypeInference {
             ExprKind::Binary { left, op, right } => {
                 let mut typed_left = self.infer_expr(left);
                 let mut typed_right = self.infer_expr(right);
-                Self::narrow_binop_int_literals(&mut typed_left, &mut typed_right);
+                if !matches!(
+                    op,
+                    aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr
+                ) {
+                    self.narrow_binop_int_literals(&mut typed_left, &mut typed_right);
+                }
                 let result_type = self.infer_binary_op(*op, &typed_left, &typed_right, expr.span);
 
                 (
@@ -176,6 +184,11 @@ impl TypeInference {
                 type_args,
                 fields,
             } => self.infer_enum_literal(path, type_args, fields, expr.span),
+            ExprKind::Block(stmts) => {
+                let (typed, ty) = self.infer_block_value(stmts);
+                (TypedExprKind::Block(typed), ty)
+            }
+            ExprKind::Loop { body, label } => self.infer_loop_expr(body, label.as_ref()),
             ExprKind::Cast {
                 expr: inner,
                 target,
@@ -186,7 +199,11 @@ impl TypeInference {
                 let src = &typed_inner.ty;
                 let src_is_type_param = matches!(src, InferType::Var(_))
                     || matches!(src, InferType::Struct(name) if self.type_params_in_scope.contains(name));
+                let char_cast = (*src == InferType::Char
+                    && (target_ty.is_integer() || target_ty == InferType::Char))
+                    || (src.is_integer() && target_ty == InferType::Char);
                 let allowed = src_is_type_param
+                    || char_cast
                     || ((src.is_numeric()
                         || *src == InferType::Bool
                         || *src == InferType::Dynamic
@@ -220,23 +237,286 @@ impl TypeInference {
         }
     }
 
-    fn narrow_binop_int_literals(left: &mut TypedExpr, right: &mut TypedExpr) {
-        let narrow = |lit: &mut TypedExpr, target: &InferType| {
-            if let TypedExprKind::Int(v) = &lit.kind
-                && target.is_integer()
-                && *target != InferType::I64
-                && InferType::int_fits(*v, target)
-            {
-                lit.ty = target.clone();
-            }
-        };
-        if matches!(&left.kind, TypedExprKind::Int(_)) && right.ty.is_integer() {
-            narrow(left, &right.ty.clone());
-        } else if matches!(&right.kind, TypedExprKind::Int(_)) && left.ty.is_integer() {
-            narrow(right, &left.ty.clone());
+    fn narrow_binop_int_literals(&mut self, left: &mut TypedExpr, right: &mut TypedExpr) {
+        if literal_shaped(left) && right.ty.is_sized_integer() {
+            let target = right.ty.clone();
+            self.retype_int_literal(left, &target);
+        } else if literal_shaped(right) && left.ty.is_sized_integer() {
+            let target = left.ty.clone();
+            self.retype_int_literal(right, &target);
+        } else if literal_shaped(left) && matches!(right.ty, InferType::Var(_)) {
+            let target = right.ty.clone();
+            self.defer_int_literal(left, target);
+        } else if literal_shaped(right) && matches!(left.ty, InferType::Var(_)) {
+            let target = left.ty.clone();
+            self.defer_int_literal(right, target);
         }
     }
 
+    // kept out of infer_expr: its debug frame bounds the nesting the depth limit test reaches
+    #[inline(never)]
+    fn drop_unused_expectation(&mut self, expr: &Expr) {
+        if !matches!(
+            expr.kind,
+            ExprKind::StructLiteral { .. }
+                | ExprKind::EnumLiteral { .. }
+                | ExprKind::GenericEnumLiteral { .. }
+                | ExprKind::Call { .. }
+        ) {
+            self.nominal_expectation = None;
+        }
+    }
+
+    pub(crate) fn infer_expr_expecting(&mut self, expr: &Expr, expected: &InferType) -> TypedExpr {
+        self.nominal_expectation = Some(expected.clone());
+        let typed = self.infer_expr(expr);
+        self.nominal_expectation = None;
+        typed
+    }
+
+    pub(crate) fn expected_type_args(expected: Option<InferType>, name: &str) -> Vec<InferType> {
+        match expected {
+            Some(InferType::Applied {
+                name: applied,
+                args,
+            }) if applied == name => args,
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn unify_branch_literals(&mut self, branches: &mut [&mut TypedExpr]) {
+        let target = branches
+            .iter()
+            .filter(|branch| !literal_shaped(branch))
+            .map(|branch| branch.ty.clone())
+            .find(InferType::is_sized_integer);
+        let Some(target) = target else {
+            return;
+        };
+        for branch in branches.iter_mut() {
+            if literal_shaped(branch) {
+                self.retype_int_literal(branch, &target);
+            }
+        }
+    }
+
+    fn defer_int_literal(&mut self, expr: &mut TypedExpr, target: InferType) {
+        let mut values = Vec::new();
+        retype_open_literal(expr, &target, &mut values);
+        self.pending_int_literals.push((target, values));
+    }
+
+    pub(crate) fn settle_pending_int_literals(&mut self, subst: &mut crate::unify::Substitution) {
+        for (target, values) in std::mem::take(&mut self.pending_int_literals) {
+            let resolved = subst.apply(&target);
+            match &resolved {
+                InferType::Var(id) => subst.bind(*id, InferType::I64),
+                InferType::Poison | InferType::Dynamic | InferType::Never => {}
+                ty if ty.is_integer() => {
+                    for (value, span) in values {
+                        if !InferType::int_fits(value, ty) {
+                            self.errors.push(TypeError {
+                                kind: TypeErrorKind::Mismatch {
+                                    expected: ty.clone(),
+                                    found: InferType::I64,
+                                },
+                                span,
+                                reason: ConstraintReason::IntLiteralOverflow {
+                                    value,
+                                    target: ty.clone(),
+                                },
+                            });
+                        }
+                    }
+                }
+                other => {
+                    if let Some((_, span)) = values.first() {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::Mismatch {
+                                expected: other.clone(),
+                                found: InferType::I64,
+                            },
+                            span: *span,
+                            reason: ConstraintReason::BinaryOp {
+                                op: "integer literal".to_string(),
+                            },
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn fit_int_literal(&mut self, expr: &mut TypedExpr, expected: &InferType) {
+        match expected {
+            target if target.is_sized_integer() => {
+                if literal_shaped(expr) {
+                    self.retype_int_literal(expr, target);
+                }
+            }
+            InferType::Array(inner) | InferType::FixedArray(inner, _) | InferType::Vec(inner) => {
+                let elements = match &mut expr.kind {
+                    TypedExprKind::ArrayLiteral {
+                        element_type: None,
+                        elements,
+                        ..
+                    } if !matches!(expected, InferType::Vec(_)) => elements,
+                    TypedExprKind::VecLiteral {
+                        element_type: None,
+                        elements,
+                        ..
+                    } if matches!(expected, InferType::Vec(_)) => elements,
+                    _ => return,
+                };
+                for element in elements.iter_mut() {
+                    self.fit_int_literal(element, inner);
+                }
+                if elements.is_empty() || elements.iter().any(|element| element.ty != **inner) {
+                    return;
+                }
+                expr.ty = match &expr.ty {
+                    InferType::FixedArray(_, length) => {
+                        InferType::FixedArray(inner.clone(), *length)
+                    }
+                    InferType::Array(_) => InferType::Array(inner.clone()),
+                    InferType::Vec(_) => InferType::Vec(inner.clone()),
+                    other => other.clone(),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    fn retype_int_literal(&mut self, expr: &mut TypedExpr, target: &InferType) {
+        match &mut expr.kind {
+            TypedExprKind::Int(value) => {
+                if !InferType::int_fits(*value, target) {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::Mismatch {
+                            expected: target.clone(),
+                            found: InferType::I64,
+                        },
+                        span: expr.span,
+                        reason: ConstraintReason::IntLiteralOverflow {
+                            value: *value,
+                            target: target.clone(),
+                        },
+                    });
+                }
+            }
+            TypedExprKind::Grouping(inner) | TypedExprKind::Unary { operand: inner, .. } => {
+                self.retype_int_literal(inner, target);
+            }
+            TypedExprKind::Binary {
+                left,
+                op: aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr,
+                ..
+            } => self.retype_int_literal(left, target),
+            TypedExprKind::Binary { left, right, .. } => {
+                self.retype_int_literal(left, target);
+                self.retype_int_literal(right, target);
+            }
+            TypedExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.retype_int_literal(then_branch, target);
+                self.retype_int_literal(else_branch, target);
+            }
+            TypedExprKind::Match { arms, .. } => {
+                for arm in arms.iter_mut() {
+                    match &mut arm.body {
+                        crate::typed_ast::TypedMatchArmBody::Expr(body) => {
+                            self.retype_int_literal(body, target)
+                        }
+                        crate::typed_ast::TypedMatchArmBody::Block(stmts) => {
+                            if let Some(tail) = stmts.last_mut() {
+                                self.retype_tail_literal(tail, target);
+                            }
+                        }
+                    }
+                }
+            }
+            TypedExprKind::Block(stmts) => {
+                if let Some(tail) = stmts.last_mut() {
+                    self.retype_tail_literal(tail, target);
+                }
+            }
+            TypedExprKind::Loop { body, label } => {
+                let label = label.clone();
+                for stmt in body.iter_mut() {
+                    self.retype_break_literals(stmt, label.as_deref(), 0, target);
+                }
+            }
+            _ => return,
+        }
+        expr.ty = target.clone();
+    }
+
+    fn retype_tail_literal(&mut self, stmt: &mut TypedStmt, target: &InferType) {
+        match &mut stmt.kind {
+            TypedStmtKind::Expression(expr) => self.retype_int_literal(expr, target),
+            TypedStmtKind::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                self.retype_tail_literal(then_branch, target);
+                self.retype_tail_literal(else_branch, target);
+            }
+            TypedStmtKind::Block(stmts) => {
+                if let Some(tail) = stmts.last_mut() {
+                    self.retype_tail_literal(tail, target);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn retype_break_literals(
+        &mut self,
+        stmt: &mut TypedStmt,
+        label: Option<&str>,
+        depth: usize,
+        target: &InferType,
+    ) {
+        match &mut stmt.kind {
+            TypedStmtKind::Break {
+                label: name,
+                value: Some(value),
+            } if breaks_to(name.as_deref(), label, depth) => self.retype_int_literal(value, target),
+            TypedStmtKind::Block(stmts) => {
+                for stmt in stmts {
+                    self.retype_break_literals(stmt, label, depth, target);
+                }
+            }
+            TypedStmtKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.retype_break_literals(then_branch, label, depth, target);
+                if let Some(else_branch) = else_branch {
+                    self.retype_break_literals(else_branch, label, depth, target);
+                }
+            }
+            TypedStmtKind::While { body, .. }
+            | TypedStmtKind::For { body, .. }
+            | TypedStmtKind::ForEach { body, .. } => {
+                self.retype_break_literals(body, label, depth + 1, target)
+            }
+            TypedStmtKind::Expression(TypedExpr {
+                kind: TypedExprKind::Loop { body, .. },
+                ..
+            }) => {
+                for stmt in body {
+                    self.retype_break_literals(stmt, label, depth + 1, target);
+                }
+            }
+            _ => {}
+        }
+    }
     fn infer_logical_expr(
         &mut self,
         op_label: &str,
@@ -302,4 +582,161 @@ impl TypeInference {
             InferType::Bool,
         )
     }
+}
+
+pub(crate) fn literal_shaped(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        TypedExprKind::Int(_) => expr.ty == InferType::I64,
+        TypedExprKind::Grouping(inner) => literal_shaped(inner),
+        TypedExprKind::Unary {
+            op: aelys_syntax::UnaryOp::Neg | aelys_syntax::UnaryOp::BitNot,
+            operand,
+        } => literal_shaped(operand),
+        TypedExprKind::Binary {
+            left,
+            op: aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr,
+            right,
+        } => {
+            literal_shaped(left) && (right.ty.is_integer() || matches!(right.ty, InferType::Var(_)))
+        }
+        TypedExprKind::Binary { left, op, right } => {
+            !matches!(
+                op,
+                aelys_syntax::BinaryOp::Lt
+                    | aelys_syntax::BinaryOp::Le
+                    | aelys_syntax::BinaryOp::Gt
+                    | aelys_syntax::BinaryOp::Ge
+                    | aelys_syntax::BinaryOp::Eq
+                    | aelys_syntax::BinaryOp::Ne
+            ) && literal_shaped(left)
+                && literal_shaped(right)
+        }
+        TypedExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => literal_shaped(then_branch) && literal_shaped(else_branch),
+        TypedExprKind::Match { arms, .. } => {
+            !arms.is_empty()
+                && arms.iter().all(|arm| match &arm.body {
+                    crate::typed_ast::TypedMatchArmBody::Expr(body) => literal_shaped(body),
+                    crate::typed_ast::TypedMatchArmBody::Block(stmts) => {
+                        stmts.last().is_some_and(tail_literal_shaped)
+                    }
+                })
+        }
+        TypedExprKind::Block(stmts) => stmts.last().is_some_and(tail_literal_shaped),
+        TypedExprKind::Loop { body, label } => {
+            let mut values = Vec::new();
+            for stmt in body {
+                break_values(stmt, label.as_deref(), 0, &mut values);
+            }
+            !values.is_empty() && values.into_iter().all(literal_shaped)
+        }
+        _ => false,
+    }
+}
+
+fn tail_literal_shaped(stmt: &TypedStmt) -> bool {
+    match &stmt.kind {
+        TypedStmtKind::Expression(expr) => literal_shaped(expr),
+        TypedStmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => tail_literal_shaped(then_branch) && tail_literal_shaped(else_branch),
+        TypedStmtKind::Block(stmts) => stmts.last().is_some_and(tail_literal_shaped),
+        TypedStmtKind::Return(_) | TypedStmtKind::Break { .. } | TypedStmtKind::Continue { .. } => {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn breaks_to(name: Option<&str>, label: Option<&str>, depth: usize) -> bool {
+    match name {
+        Some(name) => Some(name) == label,
+        None => depth == 0,
+    }
+}
+
+// depth counts the loops between a break and the loop whose value it gives
+fn break_values<'a>(
+    stmt: &'a TypedStmt,
+    label: Option<&str>,
+    depth: usize,
+    out: &mut Vec<&'a TypedExpr>,
+) {
+    match &stmt.kind {
+        TypedStmtKind::Break {
+            label: name,
+            value: Some(value),
+        } if breaks_to(name.as_deref(), label, depth) => out.push(value),
+        TypedStmtKind::Block(stmts) => {
+            for stmt in stmts {
+                break_values(stmt, label, depth, out);
+            }
+        }
+        TypedStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            break_values(then_branch, label, depth, out);
+            if let Some(else_branch) = else_branch {
+                break_values(else_branch, label, depth, out);
+            }
+        }
+        TypedStmtKind::While { body, .. }
+        | TypedStmtKind::For { body, .. }
+        | TypedStmtKind::ForEach { body, .. } => break_values(body, label, depth + 1, out),
+        TypedStmtKind::Expression(TypedExpr {
+            kind: TypedExprKind::Loop { body, .. },
+            ..
+        }) => {
+            for stmt in body {
+                break_values(stmt, label, depth + 1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn retype_open_literal(
+    expr: &mut TypedExpr,
+    target: &InferType,
+    values: &mut Vec<(i64, aelys_syntax::Span)>,
+) {
+    match &mut expr.kind {
+        TypedExprKind::Int(value) => values.push((*value, expr.span)),
+        TypedExprKind::Grouping(inner) | TypedExprKind::Unary { operand: inner, .. } => {
+            retype_open_literal(inner, target, values);
+        }
+        TypedExprKind::Binary {
+            left,
+            op: aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr,
+            ..
+        } => retype_open_literal(left, target, values),
+        TypedExprKind::Binary { left, right, .. } => {
+            retype_open_literal(left, target, values);
+            retype_open_literal(right, target, values);
+        }
+        TypedExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            retype_open_literal(then_branch, target, values);
+            retype_open_literal(else_branch, target, values);
+        }
+        TypedExprKind::Match { arms, .. } => {
+            for arm in arms.iter_mut() {
+                if let crate::typed_ast::TypedMatchArmBody::Expr(body) = &mut arm.body {
+                    retype_open_literal(body, target, values);
+                }
+            }
+        }
+        _ => return,
+    }
+    expr.ty = target.clone();
 }

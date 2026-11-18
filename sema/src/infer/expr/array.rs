@@ -235,11 +235,11 @@ impl TypeInference {
     }
 
     pub(super) fn constant_length_value(&self, expr: &Expr) -> Option<i64> {
-        constant_int_value_with(expr, &|leaf| self.constant_path_int(leaf))
+        constant_int_value_with(expr, &|leaf| self.constant_int_leaf(leaf))
     }
 
     pub(crate) fn constant_collection_length(&self, expr: &Expr) -> Option<usize> {
-        constant_collection_length_with(expr, &|leaf| self.constant_path_int(leaf))
+        constant_collection_length_with(expr, &|leaf| self.constant_int_leaf(leaf))
     }
 
     fn infer_repeat_count(&mut self, count: &Expr) -> TypedExpr {
@@ -285,7 +285,19 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         self.reject_constant_index(object, index);
         let typed_object = self.infer_expr(object);
-        let typed_index = self.infer_expr(index);
+        let mut typed_index = self.infer_expr(index);
+
+        if let InferType::Map(key, value) = &typed_object.ty {
+            let value = value.as_ref().clone();
+            self.constrain_map_key_argument(key, &mut typed_index);
+            return (
+                TypedExprKind::Index {
+                    object: Box::new(typed_object),
+                    index: Box::new(typed_index),
+                },
+                value,
+            );
+        }
 
         if matches!(typed_index.ty, InferType::Range) {
             let result_ty = match &typed_object.ty {
@@ -312,7 +324,8 @@ impl TypeInference {
             );
         }
 
-        if !self.reject_dynamic(
+        if typed_index.ty.is_integer() {
+        } else if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
             index.span,
@@ -337,7 +350,7 @@ impl TypeInference {
         let elem_ty = match &typed_object.ty {
             InferType::Array(inner) | InferType::FixedArray(inner, _) => (**inner).clone(),
             InferType::Vec(inner) => (**inner).clone(),
-            InferType::String => InferType::String,
+            InferType::String => InferType::Char,
             InferType::Dynamic => {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::InvalidIndex {
@@ -401,53 +414,70 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         self.check_write_access(object, span, "index assignment");
         self.reject_constant_index(object, index);
-        let binding = mutable_collection_binding(object);
-        let binding_type = binding
-            .and_then(|name| self.env.lookup(name).cloned())
-            .unwrap_or(InferType::Dynamic);
-        if binding.is_some_and(|name| self.env.is_read_only(name)) {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::ReadOnlyCollectionRequired {
-                    method: "index assignment".to_string(),
-                    receiver: binding_type.clone(),
-                },
-                span: object.span,
-                reason: ConstraintReason::Other("read-only collection receiver".to_string()),
-            });
-        } else if binding
-            .is_none_or(|name| self.env.borrow_kind(name).is_none() && !self.env.is_mutable(name))
-        {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::MutableCollectionRequired {
-                    method: "index assignment".to_string(),
-                    receiver: binding_type,
-                },
-                span: object.span,
-                reason: ConstraintReason::Other("mutable collection receiver".to_string()),
-            });
-        }
         let typed_object = self.infer_expr(object);
+        self.require_mutable_place(object, &typed_object.ty, "index assignment", true);
         let typed_index = self.infer_expr(index);
         let typed_value = self.infer_expr(value);
+        self.infer_index_assign_typed(object, typed_object, typed_index, typed_value)
+    }
 
-        if !self.reject_dynamic(
+    pub(super) fn infer_index_assign_typed(
+        &mut self,
+        object: &Expr,
+        typed_object: TypedExpr,
+        mut typed_index: TypedExpr,
+        mut typed_value: TypedExpr,
+    ) -> (TypedExprKind, InferType) {
+        let index_span = typed_index.span;
+        let value_span = typed_value.span;
+        if let InferType::Map(key, map_value) = &typed_object.ty {
+            let map_value = map_value.as_ref().clone();
+            self.constrain_map_key_argument(key, &mut typed_index);
+            self.fit_int_literal(&mut typed_value, &map_value);
+            let reason = ConstraintReason::ArrayElement;
+            if !self.reject_dynamic(&typed_value.ty, &map_value, value_span, reason.clone()) {
+                self.constraints.push(Constraint::equal(
+                    map_value,
+                    typed_value.ty.clone(),
+                    value_span,
+                    reason,
+                ));
+            }
+            return (
+                TypedExprKind::IndexAssign {
+                    object: Box::new(typed_object),
+                    index: Box::new(typed_index),
+                    value: Box::new(typed_value),
+                },
+                InferType::Unit,
+            );
+        }
+        if let InferType::Array(inner) | InferType::FixedArray(inner, _) | InferType::Vec(inner) =
+            &typed_object.ty
+        {
+            let inner = inner.as_ref().clone();
+            self.fit_int_literal(&mut typed_value, &inner);
+        }
+
+        if typed_index.ty.is_integer() {
+        } else if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
-            index.span,
+            index_span,
             ConstraintReason::ArrayIndex,
         ) && !matches!(typed_index.ty, InferType::UntypedNative(_))
         {
             self.constraints.push(Constraint::equal(
                 InferType::I64,
                 typed_index.ty.clone(),
-                index.span,
+                index_span,
                 ConstraintReason::ArrayIndex,
             ));
         } else {
             self.reject_untyped_native(
                 &typed_index.ty,
                 &InferType::I64,
-                index.span,
+                index_span,
                 ConstraintReason::ArrayIndex,
             );
         }
@@ -455,18 +485,18 @@ impl TypeInference {
         let result_ty = match &typed_object.ty {
             InferType::Array(inner) | InferType::FixedArray(inner, _) | InferType::Vec(inner) => {
                 let reason = ConstraintReason::ArrayElement;
-                if !self.reject_dynamic(&typed_value.ty, inner, value.span, reason.clone())
+                if !self.reject_dynamic(&typed_value.ty, inner, value_span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,
                         inner,
-                        value.span,
+                        value_span,
                         reason.clone(),
                     )
                 {
                     self.constraints.push(Constraint::equal(
                         inner.as_ref().clone(),
                         typed_value.ty.clone(),
-                        value.span,
+                        value_span,
                         reason,
                     ));
                 }
@@ -494,18 +524,18 @@ impl TypeInference {
                     ConstraintReason::ArrayElement,
                 ));
                 let reason = ConstraintReason::ArrayElement;
-                if !self.reject_dynamic(&typed_value.ty, &element, value.span, reason.clone())
+                if !self.reject_dynamic(&typed_value.ty, &element, value_span, reason.clone())
                     && !self.reject_untyped_native(
                         &typed_value.ty,
                         &element,
-                        value.span,
+                        value_span,
                         reason.clone(),
                     )
                 {
                     self.constraints.push(Constraint::equal(
                         element,
                         typed_value.ty.clone(),
-                        value.span,
+                        value_span,
                         reason,
                     ));
                 }
@@ -540,6 +570,19 @@ impl TypeInference {
             },
             result_ty,
         )
+    }
+
+    fn constrain_map_key_argument(&mut self, key: &InferType, index: &mut TypedExpr) {
+        self.fit_int_literal(index, key);
+        let reason = ConstraintReason::Other("map key".to_string());
+        if !self.reject_dynamic(&index.ty, key, index.span, reason.clone()) {
+            self.constraints.push(Constraint::equal(
+                key.clone(),
+                index.ty.clone(),
+                index.span,
+                reason,
+            ));
+        }
     }
 
     fn reject_constant_index(&mut self, object: &Expr, index: &Expr) {
@@ -772,15 +815,6 @@ fn constant_collection_length_with(
             .and_then(|size| usize::try_from(size).ok()),
         ExprKind::String(value) => Some(value.chars().count()),
         ExprKind::Grouping(inner) => constant_collection_length_with(inner, resolve),
-        _ => None,
-    }
-}
-
-fn mutable_collection_binding(expr: &Expr) -> Option<&str> {
-    match &expr.kind {
-        ExprKind::Identifier(name) => Some(name.as_str()),
-        ExprKind::Grouping(inner) => mutable_collection_binding(inner),
-        ExprKind::Index { object, .. } => mutable_collection_binding(object),
         _ => None,
     }
 }

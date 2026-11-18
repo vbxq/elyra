@@ -19,6 +19,7 @@ impl Compiler {
             ExprKind::Int(n) => self.compile_literal_int(*n, dest, expr.span),
             ExprKind::Float(f) => self.compile_literal_float(*f, dest, expr.span),
             ExprKind::String(s) => self.compile_literal_string(s, dest, expr.span),
+            ExprKind::Char(c) => self.compile_literal_char(*c, dest, expr.span),
             ExprKind::FmtString(parts) => self.compile_fmt_string(parts, &[], dest, expr.span),
             ExprKind::Bool(b) => self.compile_literal_bool(*b, dest, expr.span),
             ExprKind::Unit => self.compile_literal_unit(dest, expr.span),
@@ -118,15 +119,18 @@ impl Compiler {
                 ),
             )),
             ExprKind::Cast { expr: inner, .. } => self.compile_expr(inner, dest),
-            ExprKind::Try(_) | ExprKind::Match { .. } => Err(
-                aelys_common::error::AelysError::Compile(aelys_common::error::CompileError::new(
+            ExprKind::Try(_)
+            | ExprKind::Match { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Loop { .. } => Err(aelys_common::error::AelysError::Compile(
+                aelys_common::error::CompileError::new(
                     aelys_common::error::CompileErrorKind::TypeInferenceError(
                         "typed sum expressions are required for the VM backend".to_string(),
                     ),
                     expr.span,
                     self.source.clone(),
-                )),
-            ),
+                ),
+            )),
         }
     }
 }

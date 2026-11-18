@@ -1,4 +1,4 @@
-use crate::stdlib::helpers::get_number;
+use crate::stdlib::helpers::{float_to_int_checked, get_number};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
@@ -97,7 +97,7 @@ fn native_cbrt(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn native_abs(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(i) = args[0].as_int() {
-        Ok(Value::int(i.abs()))
+        Value::int_checked(i.abs()).map_err(|_| vm.runtime_error(RuntimeErrorKind::IntegerOverflow))
     } else if let Some(f) = args[0].as_float() {
         Ok(Value::float(f.abs()))
     } else {
@@ -200,21 +200,22 @@ fn native_pow(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_floor(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    Ok(Value::int(get_number(vm, args[0], "floor")?.floor() as i64))
+    let x = get_number(vm, args[0], "floor")?;
+    float_to_int_checked(vm, x.floor(), "floor")
 }
 
 fn native_ceil(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let x = get_number(vm, args[0], "ceil")?;
-    Ok(Value::int(x.ceil() as i64))
+    float_to_int_checked(vm, x.ceil(), "ceil")
 }
 
 fn native_round(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let n = get_number(vm, args[0], "round")?;
-    Ok(Value::int(n.round() as i64))
+    float_to_int_checked(vm, n.round(), "round")
 }
 fn native_trunc(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let x = get_number(vm, args[0], "trunc")?;
-    Ok(Value::int(x.trunc() as i64))
+    float_to_int_checked(vm, x.trunc(), "trunc")
 }
 
 fn native_min(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

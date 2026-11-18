@@ -2,7 +2,7 @@ use super::super::Compiler;
 use super::super::liveness::LivenessAnalysis;
 use aelys_bytecode::OpCode;
 use aelys_common::Result;
-use aelys_sema::{TypedFunction, TypedStmtKind};
+use aelys_sema::TypedFunction;
 use std::collections::HashSet;
 
 pub(super) fn compile_typed_body(
@@ -34,41 +34,15 @@ pub(super) fn compile_typed_body(
 
     let last_stmt = &func.body[last_idx];
 
-    let implicit_return_reg = match &last_stmt.kind {
-        TypedStmtKind::Expression(expr) => {
-            let result_reg = nested_compiler.alloc_register()?;
-            nested_compiler.compile_typed_expr(expr, result_reg)?;
-            Some(result_reg)
-        }
-        TypedStmtKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } if else_branch.is_some() => {
-            let result_reg = nested_compiler.alloc_register()?;
-            let cond_reg = nested_compiler.alloc_register()?;
-
-            nested_compiler.compile_typed_expr(condition, cond_reg)?;
-            let jump_to_else =
-                nested_compiler.emit_jump_if(OpCode::JumpIfNot, cond_reg, condition.span);
-            nested_compiler.free_register(cond_reg);
-
-            nested_compiler.compile_typed_if_branch_for_return(then_branch, result_reg)?;
-            let jump_to_end = nested_compiler.emit_jump(OpCode::Jump, then_branch.span);
-            nested_compiler.patch_jump(jump_to_else);
-
-            if let Some(else_branch) = else_branch.as_ref() {
-                nested_compiler.compile_typed_if_branch_for_return(else_branch, result_reg)?;
-            }
-            nested_compiler.patch_jump(jump_to_end);
-
-            Some(result_reg)
-        }
-        _ => {
-            nested_compiler.compile_typed_stmt(last_stmt)?;
-            nested_compiler.free_dead_locals(last_idx, &liveness, &mut already_freed);
-            None
-        }
+    let unit_return = matches!(func.return_type, aelys_sema::InferType::Unit);
+    let implicit_return_reg = if !unit_return && Compiler::typed_stmt_yields_value(last_stmt) {
+        let result_reg = nested_compiler.alloc_register()?;
+        nested_compiler.compile_typed_stmt_value(last_stmt, result_reg)?;
+        Some(result_reg)
+    } else {
+        nested_compiler.compile_typed_stmt(last_stmt)?;
+        nested_compiler.free_dead_locals(last_idx, &liveness, &mut already_freed);
+        None
     };
 
     if let Some(result_reg) = implicit_return_reg {

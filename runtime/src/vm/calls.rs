@@ -48,7 +48,8 @@ impl VM {
                     }
                 }
                 ObjectKind::Native(native) => CallData::Native {
-                    native: native.clone(),
+                    arity: native.arity,
+                    func: self.native_impl(native),
                 },
                 ObjectKind::Closure(closure) => CallData::Closure {
                     inner_func_ref: closure.function,
@@ -107,20 +108,16 @@ impl VM {
                 self.push_frame(new_frame)?;
             }
 
-            CallData::Native { native } => {
-                if native.arity != u16::from(nargs) {
+            CallData::Native { arity, func } => {
+                if arity != u16::from(nargs) {
                     return Err(self.runtime_error(RuntimeErrorKind::ArityMismatch {
-                        expected: native.arity,
+                        expected: arity,
                         got: u16::from(nargs),
                     }));
                 }
-
-                let mut args = Vec::with_capacity(nargs as usize);
-                for i in 0..nargs {
-                    args.push(self.read_register(func_reg + 1 + i)?);
-                }
-
-                let result = self.call_cached_native(&native, &args)?;
+                let first = self.current_frame()?.base + usize::from(func_reg) + 1;
+                let result =
+                    self.call_native_registers(func, func_ref, first, usize::from(nargs))?;
                 self.write_register(dest, result)?;
             }
 

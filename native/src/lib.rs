@@ -8,6 +8,8 @@ pub const AELYS_NATIVE_INVALID_ARGUMENT: i32 = 1;
 pub const AELYS_NATIVE_INTEGER_OVERFLOW: i32 = 2;
 pub const AELYS_NATIVE_RESULT_ERROR: i32 = 3;
 pub const AELYS_NATIVE_OPTION_NONE: i32 = 4;
+pub const AELYS_NATIVE_BORROW_CONFLICT: i32 = 5;
+pub const AELYS_NATIVE_PANIC: i32 = 6;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,6 +26,7 @@ impl AelysValue {
 }
 
 mod abi;
+mod context;
 mod hash;
 mod macros;
 mod value;
@@ -33,6 +36,7 @@ pub use abi::{
     AelysNativeFn, AelysNativeType, AelysRequiredModule, AelysTypeDescriptor, AelysVmApi,
     NativeContext, NativeHandle,
 };
+pub use context::{CallContext, with_call_context};
 pub use hash::{compute_exports_hash, init_descriptor_exports_hash};
 pub use value::{
     value_as_bool, value_as_float, value_as_handle, value_as_int, value_bool, value_float,
@@ -48,6 +52,10 @@ pub fn store_vm_api(api: &AelysVmApi) {
     let _ = VM_API.set(*api);
 }
 
+fn vm_api() -> Option<&'static AelysVmApi> {
+    VM_API.get()
+}
+
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn alloc_string_from_context(
     context: *mut NativeContext,
@@ -60,23 +68,8 @@ pub unsafe fn alloc_string_from_context(
     if status == 0 { Ok(output) } else { Err(status) }
 }
 
-/// borrow a byte buffer allocated by `bytes::alloc`, valid only until the call returns and never resized or freed while held
-pub unsafe fn borrow_bytes_from_handle<'a>(
-    context: *mut NativeContext,
-    handle: AelysValue,
-) -> Option<&'a mut [u8]> {
-    let api = VM_API.get()?;
-    let borrow = api.borrow_bytes?;
-    let mut pointer: *mut u8 = core::ptr::null_mut();
-    let mut length: usize = 0;
-    let status = borrow(context, handle, &mut pointer, &mut length);
-    if status != 0 || pointer.is_null() {
-        return None;
-    }
-    Some(unsafe { core::slice::from_raw_parts_mut(pointer, length) })
-}
-
 /// read a string value from the VM using the stored API. # safety `VM` must be a valid pointer to a live VM instance (clippy moment)
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn read_string_from_value(
     context: *mut NativeContext,
     value: AelysValue,

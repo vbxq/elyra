@@ -1,6 +1,17 @@
 use super::array::{AelysArray, ArrayData, TypeTag};
 use crate::value::Value;
 
+macro_rules! each_variant {
+    ($data:expr, $v:ident => $body:expr) => {
+        match $data {
+            VecData::Ints($v) => $body,
+            VecData::Floats($v) => $body,
+            VecData::Bools($v) => $body,
+            VecData::Objects($v) => $body,
+        }
+    };
+}
+
 #[derive(Debug, Clone)]
 pub enum VecData {
     Ints(Vec<i64>),
@@ -324,6 +335,42 @@ impl AelysVec {
             VecData::Bools(v) => v.pop().map(|b| Value::bool(b != 0)),
             VecData::Objects(v) => v.pop(),
         }
+    }
+
+    pub fn insert(&mut self, index: usize, value: Value) -> bool {
+        if index > self.len() || !self.push(value) {
+            return false;
+        }
+        each_variant!(&mut self.data, v => v[index..].rotate_right(1));
+        true
+    }
+
+    pub fn remove(&mut self, index: usize) -> Option<Value> {
+        let removed = self.get(index)?;
+        each_variant!(&mut self.data, v => {
+            v.remove(index);
+        });
+        Some(removed)
+    }
+
+    pub fn swap_remove(&mut self, index: usize) -> Option<Value> {
+        let removed = self.get(index)?;
+        each_variant!(&mut self.data, v => {
+            v.swap_remove(index);
+        });
+        Some(removed)
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        each_variant!(&mut self.data, v => v.truncate(len));
+    }
+
+    pub fn swap(&mut self, a: usize, b: usize) {
+        each_variant!(&mut self.data, v => v.swap(a, b));
+    }
+
+    pub fn reverse(&mut self) {
+        each_variant!(&mut self.data, v => v.reverse());
     }
 
     pub fn reserve(&mut self, additional: usize) {

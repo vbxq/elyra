@@ -372,16 +372,12 @@ fn test_bitwise_in_function_check_bit() {
 // =============================================================================
 
 #[test]
-fn test_negative_shift_wraps() {
-    // Negative shift amount wraps around (& 63)
-    // -1 & 63 = 63 (in two's complement, -1 has all bits set)
+fn test_negative_shift_count_overflows() {
     let code = r#"
         let n = -1
         1 << n
     "#;
-    let result = run(code);
-    // Should be 1 << 63 (wrapped) - this overflows to negative in i64
-    assert!(result.as_int().is_some());
+    assert!(run_fails(code));
 }
 
 #[test]
@@ -407,15 +403,12 @@ fn test_large_right_shift_wraps() {
 }
 
 #[test]
-fn test_shift_by_63_succeeds() {
-    // Shift by 63 (max before wrap) should succeed
+fn test_shift_by_63_overflows() {
     let code = r#"
         let n = 63
         1 << n
     "#;
-    let result = run(code);
-    // 1 << 63 = i64::MIN (sign bit set)
-    assert!(result.as_int().is_some());
+    assert!(run_fails(code));
 }
 
 #[test]

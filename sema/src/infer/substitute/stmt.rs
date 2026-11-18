@@ -39,9 +39,14 @@ impl TypeInference {
                     .as_ref()
                     .map(|e| Box::new(self.apply_substitution_stmt(e, subst))),
             },
-            TypedStmtKind::While { condition, body } => TypedStmtKind::While {
+            TypedStmtKind::While {
+                condition,
+                body,
+                label,
+            } => TypedStmtKind::While {
                 condition: self.apply_substitution_expr(condition, subst),
                 body: Box::new(self.apply_substitution_stmt(body, subst)),
+                label: label.clone(),
             },
             TypedStmtKind::For {
                 iterator,
@@ -50,6 +55,7 @@ impl TypeInference {
                 inclusive,
                 step,
                 body,
+                label,
             } => TypedStmtKind::For {
                 iterator: iterator.clone(),
                 start: self.apply_substitution_expr(start, subst),
@@ -61,6 +67,7 @@ impl TypeInference {
                         .map(|s| self.apply_substitution_expr(s, subst)),
                 ),
                 body: Box::new(self.apply_substitution_stmt(body, subst)),
+                label: label.clone(),
             },
             TypedStmtKind::ForEach {
                 iterator,
@@ -68,19 +75,28 @@ impl TypeInference {
                 elem_type,
                 read_only,
                 body,
+                label,
             } => TypedStmtKind::ForEach {
                 iterator: iterator.clone(),
                 iterable: self.apply_substitution_expr(iterable, subst),
                 elem_type: subst.apply(elem_type),
                 read_only: *read_only,
                 body: Box::new(self.apply_substitution_stmt(body, subst)),
+                label: label.clone(),
             },
             TypedStmtKind::Return(expr) => TypedStmtKind::Return(
                 expr.as_ref()
                     .map(|e| self.apply_substitution_expr(e, subst)),
             ),
-            TypedStmtKind::Break => TypedStmtKind::Break,
-            TypedStmtKind::Continue => TypedStmtKind::Continue,
+            TypedStmtKind::Break { label, value } => TypedStmtKind::Break {
+                label: label.clone(),
+                value: value
+                    .as_ref()
+                    .map(|value| self.apply_substitution_expr(value, subst)),
+            },
+            TypedStmtKind::Continue { label } => TypedStmtKind::Continue {
+                label: label.clone(),
+            },
             TypedStmtKind::Function(func) => {
                 TypedStmtKind::Function(self.apply_substitution_func(func, subst))
             }

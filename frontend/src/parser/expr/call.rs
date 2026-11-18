@@ -1,6 +1,8 @@
 use super::Parser;
 use aelys_common::Result;
+use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_syntax::{BinaryOp, Expr, ExprKind, MemberSeparator, TokenKind};
+use std::sync::Arc;
 
 impl Parser {
     pub(super) fn call(&mut self) -> Result<Expr> {
@@ -48,7 +50,12 @@ impl Parser {
                     span,
                 );
             } else if self.match_token(&TokenKind::Dot) {
-                let member = self.consume_identifier("member name")?;
+                let member = if let TokenKind::Int(index) = self.peek().kind {
+                    self.advance();
+                    index.to_string()
+                } else {
+                    self.consume_identifier("member name")?
+                };
                 let span = expr.span.merge(self.previous().span);
 
                 expr = Expr::new(
@@ -186,28 +193,25 @@ impl Parser {
                     self.advance(); // consume MinusMinus
                     BinaryOp::Sub
                 };
-                let span = expr.span.merge(self.previous().span);
-
-                if let ExprKind::Identifier(ref name) = expr.kind {
-                    let one = Expr::new(ExprKind::Int(1), self.previous().span);
-                    let binary = Expr::new(
-                        ExprKind::Binary {
-                            left: Box::new(expr.clone()),
-                            op,
-                            right: Box::new(one),
-                        },
-                        span,
-                    );
-                    expr = Expr::new(
-                        ExprKind::Assign {
-                            name: name.clone(),
-                            value: Box::new(binary),
-                        },
-                        span,
-                    );
-                } else {
-                    break;
+                let op_span = self.previous().span;
+                if !matches!(
+                    expr.kind,
+                    ExprKind::Identifier(_)
+                        | ExprKind::Index { .. }
+                        | ExprKind::Member {
+                            separator: aelys_syntax::MemberSeparator::Dot,
+                            ..
+                        }
+                ) {
+                    return Err(CompileError::new(
+                        CompileErrorKind::InvalidAssignmentTarget,
+                        expr.span.merge(op_span),
+                        Arc::clone(&self.source),
+                    )
+                    .into());
                 }
+                let one = Expr::new(ExprKind::Int(1), op_span);
+                expr = self.desugar_compound(expr, op, one, op_span);
             } else if self.match_token(&TokenKind::As) {
                 let target = self.parse_type_annotation()?;
                 let span = expr.span.merge(self.previous().span);

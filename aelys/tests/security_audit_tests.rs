@@ -90,7 +90,7 @@ fn verifier_rejects_invalid_wide_sum_tag_before_dispatch() {
 
 #[test]
 fn verifier_rejects_invalid_compact_match_failure_encoding() {
-    for (family, message_flag) in [(1, 2), (3, 0)] {
+    for (family, message_flag) in [(1, 2), (3, 0), (2, 4)] {
         let mut vm = make_vm();
         let mut func = Function::new(Some("bad_match_fail".to_string()), 0);
         func.num_registers = 1;
@@ -109,7 +109,7 @@ fn verifier_rejects_invalid_compact_match_failure_encoding() {
 
 #[test]
 fn verifier_rejects_invalid_wide_match_failure_encoding() {
-    for (family, message_flag) in [(3, 0), (1, 2)] {
+    for (family, message_flag) in [(3, 0), (1, 2), (2, 4)] {
         let mut vm = make_vm();
         let mut func = Function::new(Some("bad_wide_match_fail".to_string()), 0);
         func.emit_a(OpCode::Wide, u8::from(OpCode::MatchFail), 0, 0, 1);
@@ -610,6 +610,7 @@ fn type_inference_rc_shared() {
     use std::rc::Rc;
     let mut env = TypeEnv::new();
     let fn_type = Rc::new(InferType::Function {
+        modes: aelys_sema::types::ParamModes::plain(),
         params: vec![InferType::I64],
         ret: Box::new(InferType::I64),
     });

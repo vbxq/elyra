@@ -84,6 +84,29 @@ impl Parser {
             return Err(self.error(CompileErrorKind::NullIsNotInSurface));
         }
 
+        if self.match_token(&TokenKind::LParen) {
+            if self.match_token(&TokenKind::RParen) {
+                return Ok(TypeAnnotation::new(
+                    "unit".to_string(),
+                    start_span.merge(self.previous().span),
+                ));
+            }
+            let mut elements = vec![self.parse_type_annotation()?];
+            while self.match_token(&TokenKind::Comma) {
+                if self.check(&TokenKind::RParen) {
+                    break;
+                }
+                elements.push(self.parse_type_annotation()?);
+            }
+            self.consume(&TokenKind::RParen, ")")?;
+            let span = start_span.merge(self.previous().span);
+            if elements.len() == 1 {
+                return Ok(elements.remove(0));
+            }
+            let name = self.tuple_struct_name(elements.len())?;
+            return Ok(TypeAnnotation::with_params(name, elements, span));
+        }
+
         self.reject_trait_object()?;
 
         let first_name = self.consume_identifier("type name")?;
@@ -190,9 +213,9 @@ impl Parser {
         self.consume(&TokenKind::LParen, "(")?;
         let mut params = Vec::new();
         if !self.check(&TokenKind::RParen) {
-            params.push(self.parse_type_annotation()?);
+            params.push(self.parse_function_type_parameter()?);
             while self.match_token(&TokenKind::Comma) {
-                params.push(self.parse_type_annotation()?);
+                params.push(self.parse_function_type_parameter()?);
             }
         }
         self.consume(&TokenKind::RParen, ")")?;
@@ -204,6 +227,13 @@ impl Parser {
             ret,
             start_span.merge(end_span),
         ))
+    }
+
+    fn parse_function_type_parameter(&mut self) -> Result<TypeAnnotation> {
+        let mutable = self.match_token(&TokenKind::Mut);
+        let mut param = self.parse_type_annotation()?;
+        param.mutable = mutable;
+        Ok(param)
     }
 
     fn reject_trait_object(&self) -> Result<()> {
@@ -246,7 +276,7 @@ impl Parser {
         let name = if receiver_reference.is_some() {
             "self".to_string()
         } else {
-            self.consume_identifier("parameter name")?
+            self.consume_declared_identifier("parameter name")?
         };
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {

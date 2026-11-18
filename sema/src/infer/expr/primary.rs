@@ -22,6 +22,9 @@ impl TypeInference {
             .or_else(|| self.env.lookup_function_ref(name))
         {
             let ty = ty.clone();
+            if let Some(value) = self.env.lookup_constant(name) {
+                return (value.literal(), ty);
+            }
             let resolved = self.env.lookup_alias(name).unwrap_or(name).to_string();
             return (TypedExprKind::Identifier(resolved), ty);
         }
@@ -33,6 +36,21 @@ impl TypeInference {
                 },
                 span,
                 reason: ConstraintReason::Other("namespace used as a value".to_string()),
+            });
+            return (
+                TypedExprKind::Identifier(name.to_string()),
+                InferType::Poison,
+            );
+        }
+
+        if let Some(modules) = self.ambiguous_imports.get(name) {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::AmbiguousImport {
+                    name: name.to_string(),
+                    modules: modules.clone(),
+                },
+                span,
+                reason: ConstraintReason::Other("variable lookup".to_string()),
             });
             return (
                 TypedExprKind::Identifier(name.to_string()),

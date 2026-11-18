@@ -165,6 +165,16 @@ impl VM {
                     }
                 }};
             }
+            macro_rules! require_operand_words {
+                ($count:expr) => {{
+                    if ip + $count > bytecode_len {
+                        self.frames[current_frame_idx].ip = ip;
+                        return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                            format!("instruction at {} is missing operand words", ip - 1),
+                        )));
+                    }
+                }};
+            }
             macro_rules! int_value {
                 ($value:expr) => {{
                     match Value::int_checked($value) {
@@ -178,7 +188,35 @@ impl VM {
             }
 
             match opcode_byte {
-                0..=4 | 75..=76 | 180 | 182..=183 => {
+                0..=4 | 75..=76 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_load_store(
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => {
+                            unreachable!("load/store handler cannot change frames")
+                        }
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!("load/store handler cannot change frames")
+                        }
+                    }
+                }
+
+                180 | 182..=183 => {
+                    require_operand_words!(1);
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -224,6 +262,7 @@ impl VM {
                 }
 
                 196..=198 => {
+                    require_operand_words!(2);
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -249,6 +288,7 @@ impl VM {
                 }
 
                 199..=201 => {
+                    require_operand_words!(2);
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -283,6 +323,10 @@ impl VM {
                     let right_value = *reg_ref!(base + usize::from(source));
                     let (Some(left), Some(right)) = (left_value.as_int(), right_value.as_int())
                     else {
+                        if left_value.is_uninit() {
+                            self.frames[current_frame_idx].ip = ip;
+                            return Err(self.uninitialized_global_error(usize::from(global)));
+                        }
                         let found = if left_value.as_int().is_some() {
                             right_value
                         } else {
@@ -373,7 +417,8 @@ impl VM {
                                 constants_len: usize,
                             },
                             Native {
-                                native: crate::vm::NativeFunction,
+                                arity: u16,
+                                func: Option<crate::vm::NativeFunctionImpl>,
                             },
                             Closure {
                                 arity: u16,
@@ -395,6 +440,7 @@ impl VM {
 
                         {
                             if opcode_byte == 34 {
+                                require_operand_words!(2);
                                 let first = unsafe { *bytecode_ptr.add(ip) };
                                 let second = unsafe { *bytecode_ptr.add(ip + 1) };
                                 ip += 2;
@@ -444,7 +490,8 @@ impl VM {
                                         }
                                     }
                                     ObjectKind::Native(native) => CallData::Native {
-                                        native: native.clone(),
+                                        arity: native.arity,
+                                        func: self.native_impl(native),
                                     },
                                     ObjectKind::Closure(closure) => {
                                         let inner_gmap = self
@@ -576,24 +623,21 @@ impl VM {
                                     reload_frame_state!();
                                 }
 
-                                CallData::Native { native } => {
-                                    if native.arity != nargs {
+                                CallData::Native { arity, func } => {
+                                    if arity != nargs {
                                         return Err(self.runtime_error(
                                             RuntimeErrorKind::ArityMismatch {
-                                                expected: native.arity,
+                                                expected: arity,
                                                 got: nargs,
                                             },
                                         ));
                                     }
-
-                                    let mut args = Vec::with_capacity(usize::from(nargs));
-                                    for i in 0..nargs {
-                                        args.push(reg_get!(
-                                            base + usize::from(func_reg) + 1 + usize::from(i)
-                                        ));
-                                    }
-
-                                    match self.call_cached_native(&native, &args) {
+                                    match self.call_native_registers(
+                                        func,
+                                        callee_ref,
+                                        base + usize::from(func_reg) + 1,
+                                        usize::from(nargs),
+                                    ) {
                                         Ok(result) => {
                                             self.registers[base + usize::from(dest)] = result;
                                             regs_ptr = self.registers.as_mut_ptr();
@@ -750,7 +794,8 @@ impl VM {
                                 const_len: usize,
                             },
                             Native {
-                                native: crate::vm::NativeFunction,
+                                arity: u16,
+                                func: Option<crate::vm::NativeFunctionImpl>,
                             },
                             Closure {
                                 arity: u16,
@@ -791,6 +836,9 @@ impl VM {
                             current_func_ptr = match func_value.as_ptr() {
                                 Some(p) => p,
                                 None => {
+                                    if func_value.is_uninit() {
+                                        return Err(self.uninitialized_global_error(idx));
+                                    }
                                     if func_value.is_null() {
                                         let global_name = self.heap.get(func_ref).and_then(|obj| {
                                             match &obj.kind {
@@ -884,7 +932,8 @@ impl VM {
                                         }
                                     }
                                     ObjectKind::Native(native) => CallData::Native {
-                                        native: native.clone(),
+                                        arity: native.arity,
+                                        func: self.native_impl(native),
                                     },
                                     ObjectKind::Closure(closure) => {
                                         let inner_gmap = self
@@ -1017,20 +1066,21 @@ impl VM {
                                     self.frames.push(new_frame);
                                     reload_frame_state!();
                                 }
-                                CallData::Native { native } => {
-                                    if native.arity != u16::from(nargs) {
+                                CallData::Native { arity, func } => {
+                                    if arity != u16::from(nargs) {
                                         return Err(self.runtime_error(
                                             RuntimeErrorKind::ArityMismatch {
-                                                expected: native.arity,
+                                                expected: arity,
                                                 got: u16::from(nargs),
                                             },
                                         ));
                                     }
-                                    let mut args = Vec::with_capacity(nargs as usize);
-                                    for i in 0..nargs {
-                                        args.push(reg_get!(base + dest as usize + 1 + i as usize));
-                                    }
-                                    match self.call_cached_native(&native, &args) {
+                                    match self.call_native_registers(
+                                        func,
+                                        callee_ref,
+                                        base + dest as usize + 1,
+                                        usize::from(nargs),
+                                    ) {
                                         Ok(result) => {
                                             self.registers[base + dest as usize] = result;
                                             regs_ptr = self.registers.as_mut_ptr();
@@ -1196,7 +1246,38 @@ impl VM {
                     super::ops::globals::execute(self, &state, ip, opcode_byte, instr)?;
                 }
 
-                35..=38 | 126 | 181 => {
+                35..=38 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match super::ops::closures::execute(
+                        self,
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        upvalues_ptr,
+                        upvalues_len,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => {
+                            unreachable!("closure handler cannot change frames")
+                        }
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!("closure handler cannot change frames")
+                        }
+                    }
+                }
+
+                126 | 181 => {
+                    require_operand_words!(if opcode_byte == 126 { 2 } else { 1 });
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -1250,7 +1331,7 @@ impl VM {
                     )?;
                 }
 
-                122..=123 | 130..=176 | 192..=195 => {
+                130..=176 | 192..=195 => {
                     super::ops::arrays::execute_arrays!(
                         self,
                         opcode_byte,
@@ -1262,6 +1343,67 @@ impl VM {
                         reg_get,
                         reg_set
                     );
+                }
+
+                122..=123 => {
+                    require_operand_words!(2);
+                    super::ops::arrays::execute_arrays!(
+                        self,
+                        opcode_byte,
+                        instr,
+                        base,
+                        current_frame_idx,
+                        ip,
+                        bytecode_ptr,
+                        reg_get,
+                        reg_set
+                    );
+                }
+
+                202..=228 => {
+                    let (a, b, c) = decode_abc(instr);
+                    let left = reg_ref!(base + b as usize).as_int_unchecked();
+                    let right = reg_ref!(base + c as usize).as_int_unchecked();
+                    reg_set!(
+                        base + a as usize,
+                        Value::int_wrapping(super::ops::sized::wrap_unchecked(
+                            opcode_byte,
+                            left,
+                            right
+                        ))
+                    );
+                }
+
+                229..=233 => {
+                    super::ops::sized::execute(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        opcode_byte,
+                        instr,
+                    )?;
+                }
+
+                234..=235 => {
+                    require_operand_words!(2);
+                    let first = unsafe { *bytecode_ptr.add(ip) };
+                    let second = unsafe { *bytecode_ptr.add(ip + 1) };
+                    ip += 2;
+                    super::ops::sized::execute_fixed(
+                        self,
+                        ip,
+                        base,
+                        current_frame_idx,
+                        regs_ptr,
+                        regs_len,
+                        opcode_byte,
+                        instr,
+                        first,
+                        second,
+                    )?;
                 }
 
                 191 => {
@@ -1277,6 +1419,7 @@ impl VM {
                 }
 
                 184 => {
+                    require_operand_words!(2);
                     let branch_origin = ip;
                     let active_function = func_ref;
                     let wide_opcode =

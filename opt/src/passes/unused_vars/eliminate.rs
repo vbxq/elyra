@@ -22,6 +22,10 @@ pub fn eliminate_unused_in_block(
             if *is_pub {
                 return true;
             } // keep pub exports
+            // a body carried to an importer reads the module's slot after this unit is gone
+            if aelys_sema::is_module_scoped_global(name) {
+                return true;
+            }
             if !used_vars.contains(name) && !has_side_effects(initializer) {
                 stats.dead_code_eliminated += 1;
                 return false;
@@ -138,7 +142,7 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
             fields.iter().any(|(_, v)| has_side_effects(v))
         }
         TypedExprKind::Cast { expr, .. } => has_side_effects(expr),
-        TypedExprKind::Try { operand, .. } => has_side_effects(operand),
+        TypedExprKind::Try { .. } => true,
         TypedExprKind::Match { scrutinee, arms } => {
             if has_side_effects(scrutinee) {
                 true
@@ -147,20 +151,33 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
                     arm.guard.as_ref().is_some_and(has_side_effects)
                         || match &arm.body {
                             aelys_sema::TypedMatchArmBody::Expr(expr) => has_side_effects(expr),
-                            aelys_sema::TypedMatchArmBody::Block(stmts) => stmts.iter().any(|stmt| {
-                                matches!(stmt.kind, TypedStmtKind::Expression(ref expr) if has_side_effects(expr))
-                            }),
+                            aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                                stmts.iter().any(stmt_has_side_effects)
+                            }
                         }
                 })
             }
         }
+        TypedExprKind::Block(stmts) => stmts.iter().any(stmt_has_side_effects),
+        TypedExprKind::Loop { .. } => true,
         TypedExprKind::Identifier(_)
         | TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
         | TypedExprKind::Bool(_)
         | TypedExprKind::String(_)
+        | TypedExprKind::Char(_)
         | TypedExprKind::Unit
         | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Null => false,
+    }
+}
+
+fn stmt_has_side_effects(stmt: &TypedStmt) -> bool {
+    match &stmt.kind {
+        TypedStmtKind::Expression(expr)
+        | TypedStmtKind::Let {
+            initializer: expr, ..
+        } => has_side_effects(expr),
+        _ => true,
     }
 }

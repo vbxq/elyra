@@ -24,6 +24,8 @@ impl Value {
             "None"
         } else if self.is_unit() {
             "Unit"
+        } else if self.is_char() {
+            "Char"
         } else if self.is_bool() {
             "Bool"
         } else if self.is_int() {

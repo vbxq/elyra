@@ -148,6 +148,61 @@ impl TypeInference {
             .unwrap_or_default()
     }
 
+    pub(crate) fn declared_param_modes(
+        &self,
+        symbol: &str,
+        skip: usize,
+        params: &[InferType],
+    ) -> crate::types::ParamModes {
+        crate::types::ParamModes::declared(
+            params,
+            self.function_mutable_params
+                .get(symbol)
+                .into_iter()
+                .flatten()
+                .skip(skip)
+                .map(Option::is_some),
+        )
+    }
+
+    pub(super) fn mutable_params_for_call(
+        &self,
+        callee: &Expr,
+        typed_callee: &TypedExpr,
+    ) -> Option<Vec<Option<String>>> {
+        if let TypedExprKind::StructMethod { symbol, .. } = &typed_callee.kind
+            && let Some(params) = self.function_mutable_params.get(symbol)
+        {
+            return Some(params.clone());
+        }
+        source_call_path(callee).and_then(|name| self.function_mutable_params.get(&name).cloned())
+    }
+
+    pub(super) fn calls_through_function_value(
+        &self,
+        callee: &Expr,
+        typed_callee: &TypedExpr,
+    ) -> bool {
+        match (&callee.kind, &typed_callee.kind) {
+            (_, TypedExprKind::StructMethod { .. }) => false,
+            (ExprKind::Grouping(inner), TypedExprKind::Grouping(typed_inner)) => {
+                self.calls_through_function_value(inner, typed_inner)
+            }
+            (ExprKind::Identifier(name), _) => self.env.binds_value(name),
+            (ExprKind::GenericApply { callee, .. }, _) => {
+                source_call_path(callee).is_none_or(|path| self.env.binds_value(&path))
+            }
+            (
+                ExprKind::Member {
+                    separator: aelys_syntax::MemberSeparator::Path,
+                    ..
+                },
+                _,
+            ) => false,
+            _ => true,
+        }
+    }
+
     pub(super) fn validate_reference_annotation(
         &mut self,
         annotation: &TypeAnnotation,

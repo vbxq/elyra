@@ -107,7 +107,12 @@ impl Compiler {
         // Native calls read args from dest+1, so compile the expression there.
         let arg_reg = dest + 1;
 
-        if (arg_reg as usize) < self.register_pool.len() && !self.register_pool[arg_reg as usize] {
+        if crate::compiler::call::util::call_window_available(
+            &self.register_pool,
+            self.next_register,
+            arg_reg,
+            1,
+        ) {
             // fast path: dest+1 is free
             self.register_pool[arg_reg as usize] = true;
             self.next_register = self.next_register.max(u32::from(arg_reg) + 1);
@@ -118,7 +123,7 @@ impl Compiler {
             self.free_register(arg_reg);
         } else {
             // slow path: dest+1 is occupied, use a fresh consecutive pair
-            let call_base = self.alloc_consecutive_registers_for_call(2, span)?;
+            let call_base = self.alloc_call_window(2, span)?;
             let call_arg = call_base + 1;
 
             self.register_pool[call_base as usize] = true;

@@ -22,7 +22,9 @@ impl ConstantFolder {
                     self.optimize_stmt(else_b);
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+                condition, body, ..
+            } => {
                 self.optimize_expr(condition);
                 self.optimize_stmt(body);
             }
@@ -44,7 +46,10 @@ impl ConstantFolder {
                 self.optimize_expr(iterable);
                 self.optimize_stmt(body);
             }
-            TypedStmtKind::Return(Some(expr)) => self.optimize_expr(expr),
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => self.optimize_expr(expr),
             TypedStmtKind::Function(func) => self.optimize_function(func),
             TypedStmtKind::ImplDecl { methods, .. } => {
                 for method in methods {
@@ -52,8 +57,8 @@ impl ConstantFolder {
                 }
             }
             TypedStmtKind::Return(None)
-            | TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }

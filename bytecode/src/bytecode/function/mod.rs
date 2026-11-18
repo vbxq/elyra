@@ -21,6 +21,7 @@ pub struct Function {
     bytecode_builder: Vec<u32>, // temp storage during compilation
     jump_overflow: Option<usize>,
     wide_operand_error: Option<OpCode>,
+    wide_operand_line: Option<u32>,
     pub constants: Vec<Constant>,
     pub nested_functions: Vec<Function>,
     pub upvalue_descriptors: Vec<UpvalueDescriptor>,
@@ -30,6 +31,8 @@ pub struct Function {
     pub struct_schemas: Vec<StructSchema>,
     pub enum_schemas: Vec<EnumSchema>,
     pub schema_ids: Vec<SchemaId>,
+    pub enum_ids: Vec<u16>,
+    pub source: Option<Arc<aelys_syntax::Source>>,
     pub jit_unsupported_struct: bool,
 }
 
@@ -43,6 +46,7 @@ impl Function {
             bytecode_builder: Vec::new(),
             jump_overflow: None,
             wide_operand_error: None,
+            wide_operand_line: None,
             constants: Vec::new(),
             nested_functions: Vec::new(),
             upvalue_descriptors: Vec::new(),
@@ -52,6 +56,8 @@ impl Function {
             struct_schemas: Vec::new(),
             enum_schemas: Vec::new(),
             schema_ids: Vec::new(),
+            enum_ids: Vec::new(),
+            source: None,
             jit_unsupported_struct: false,
         }
     }
@@ -72,8 +78,15 @@ impl Function {
         })
     }
 
-    pub fn record_wide_operand_error(&mut self, op: OpCode) {
-        self.wide_operand_error.get_or_insert(op);
+    pub fn record_wide_operand_error(&mut self, op: OpCode, line: u32) {
+        if self.wide_operand_error.is_none() {
+            self.wide_operand_error = Some(op);
+            self.wide_operand_line = Some(line);
+        }
+    }
+
+    pub fn own_wide_operand_fault(&self) -> Option<(OpCode, u32)> {
+        self.wide_operand_error.zip(self.wide_operand_line)
     }
 
     pub fn finalize_bytecode(&mut self) {
@@ -272,6 +285,28 @@ impl Function {
         self.record_lines(2, line);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn emit_fixed(
+        &mut self,
+        op: OpCode,
+        kind: super::FixedKind,
+        shift: FixedShift,
+        a: u16,
+        b: u16,
+        c: u16,
+        line: u32,
+    ) {
+        debug_assert!(matches!(op, OpCode::MulShr | OpCode::ShlDiv));
+        let (mode, immediate, register) = match shift {
+            FixedShift::Immediate(value) => (0u8, value, 0u16),
+            FixedShift::Register(register) => (1u8, 0u8, register),
+        };
+        self.emit_a(op, kind.to_u8(), mode, immediate, line);
+        self.push_raw((u32::from(a) << 16) | u32::from(b));
+        self.push_raw((u32::from(c) << 16) | u32::from(register));
+        self.record_lines(2, line);
+    }
+
     fn emit_wide_or_record_error(
         &mut self,
         op: OpCode,
@@ -283,7 +318,7 @@ impl Function {
         if op.supports_wide_registers() {
             self.emit_wide_abc(op, a, b, c, line);
         } else {
-            self.record_wide_operand_error(op);
+            self.record_wide_operand_error(op, line);
         }
     }
 
@@ -300,4 +335,10 @@ impl Function {
             nested.strip_debug_info();
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixedShift {
+    Immediate(u8),
+    Register(u16),
 }

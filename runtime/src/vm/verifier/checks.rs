@@ -81,7 +81,7 @@ pub(super) fn check_call_args(
     Ok(())
 }
 
-pub(super) fn check_jump(ip: usize, offset: i16, bc_len: usize, op: &str) -> Result<(), String> {
+pub(super) fn check_jump(ip: usize, offset: i16, bc_len: usize, op: &str) -> Result<usize, String> {
     let next_ip = ip
         .checked_add(1)
         .ok_or_else(|| format!("{} ip overflow", op))?;
@@ -95,7 +95,7 @@ pub(super) fn check_jump(ip: usize, offset: i16, bc_len: usize, op: &str) -> Res
     if target_index > bc_len {
         return Err(format!("{} jump target {} out of bounds", op, target));
     }
-    Ok(())
+    Ok(target_index)
 }
 
 pub(super) fn check_jump_i32(
@@ -103,7 +103,7 @@ pub(super) fn check_jump_i32(
     offset: i32,
     bc_len: usize,
     op: &str,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let next_ip = ip
         .checked_add(2)
         .ok_or_else(|| format!("{} ip overflow", op))?;
@@ -117,5 +117,5 @@ pub(super) fn check_jump_i32(
     if target_index > bc_len {
         return Err(format!("{} jump target {} out of bounds", op, target));
     }
-    Ok(())
+    Ok(target_index)
 }

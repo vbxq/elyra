@@ -60,3 +60,10 @@ impl LivenessAnalysis {
             .collect()
     }
 }
+
+// names some closure in the statements captures; a break compiled before that closure must still close them
+pub fn captured_names(stmts: &[aelys_sema::TypedStmt]) -> HashSet<String> {
+    let mut analysis = LivenessAnalysis::default();
+    def_use::compute_def_use(&mut analysis, stmts);
+    analysis.captured_vars
+}

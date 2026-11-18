@@ -63,13 +63,65 @@ impl Compiler {
         c: impl CompilerOperand,
         span: Span,
     ) {
+        let (a, b, c) = (a.into_operand(), b.into_operand(), c.into_operand());
+        let wide = u8::try_from(a).is_err() || u8::try_from(b).is_err() || u8::try_from(c).is_err();
+        let callee = match op {
+            OpCode::Call => Some(b),
+            // a cached or upvalue call reads its arguments above dest, a plain call above the callee
+            OpCode::CallCached if wide => {
+                if a != b {
+                    self.emit_a(OpCode::Move, a, b, 0, span);
+                }
+                Some(a)
+            }
+            OpCode::CallUpval if wide => {
+                self.emit_a(OpCode::GetUpval, a, b, 0, span);
+                Some(a)
+            }
+            _ => None,
+        };
+        if let Some(callee) = callee {
+            self.note_call_window(OpCode::Call, a, callee, c, span);
+            self.current.emit_call(
+                Register::new(a),
+                Register::new(callee),
+                Arity::new(c),
+                self.current_line(span),
+            );
+            return;
+        }
+        self.note_call_window(op, a, b, c, span);
         self.current.emit_register_abc(
             op,
-            Register::new(a.into_operand()),
-            Register::new(b.into_operand()),
-            Register::new(c.into_operand()),
+            Register::new(a),
+            Register::new(b),
+            Register::new(c),
             self.current_line(span),
         );
+    }
+
+    fn note_call_window(&mut self, op: OpCode, dest: u16, func: u16, nargs: u16, span: Span) {
+        let window_base = match op {
+            OpCode::Call | OpCode::CallWide => usize::from(func) + 1,
+            OpCode::CallCached | OpCode::CallGlobal | OpCode::CallUpval | OpCode::TailCallUpval => {
+                usize::from(dest) + 1
+            }
+            _ => return,
+        };
+        if self.call_window_fault.is_some() {
+            return;
+        }
+        let args_end = window_base + usize::from(nargs);
+        let top = self.live_register_top();
+        let clobbered = (args_end..top)
+            .find(|&register| self.register_pool[register] && register != usize::from(dest));
+        if let Some(register) = clobbered {
+            self.call_window_fault = Some((
+                u16::try_from(register).unwrap_or(u16::MAX),
+                u16::try_from(window_base).unwrap_or(u16::MAX),
+                span,
+            ));
+        }
     }
 
     pub fn emit_b(&mut self, op: OpCode, a: u16, imm: i16, span: Span) {
@@ -95,22 +147,7 @@ impl Compiler {
         nargs: u16,
         span: Span,
     ) {
-        let func = func.into_operand();
-        if op == OpCode::Call
-            || (op == OpCode::CallCached
-                && (u8::try_from(dest).is_err()
-                    || u8::try_from(func).is_err()
-                    || u8::try_from(nargs).is_err()))
-        {
-            self.current.emit_call(
-                Register::new(dest),
-                Register::new(func),
-                Arity::new(nargs),
-                self.current_line(span),
-            );
-        } else {
-            self.emit_a(op, dest, func, nargs, span);
-        }
+        self.emit_a(op, dest, func.into_operand(), nargs, span);
     }
 
     pub fn emit_jump(&mut self, op: OpCode, span: Span) -> usize {

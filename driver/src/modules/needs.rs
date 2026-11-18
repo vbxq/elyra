@@ -20,17 +20,11 @@ fn resolve_loaded_module<'a>(
     String,
     Option<String>,
 ) {
-    let full_path = needs.path.join(".");
-    if let Some(module_info) = loader.get_module(&full_path) {
-        return (Some(module_info), full_path, None);
-    }
-    if needs.path.len() > 1 {
-        let parent = needs.path[..needs.path.len() - 1].join(".");
-        if let Some(module_info) = loader.get_module(&parent) {
-            return (Some(module_info), parent, needs.path.last().cloned());
-        }
-    }
-    (None, full_path, None)
+    let (key, symbol) = match loader.resolved_needs(needs) {
+        Some(resolved) => (resolved.key.clone(), resolved.symbol.clone()),
+        None => (needs.path.join("."), None),
+    };
+    (loader.get_module(&key), key, symbol)
 }
 
 fn surface_module(module_path: &str) -> String {
@@ -145,7 +139,8 @@ impl NominalImports {
             }
         }
         self.types.extend(selected);
-        if !impl_stmts.is_empty() {
+        let generic_fns = module_info.exported_types.generic_fns.clone();
+        if !impl_stmts.is_empty() || !generic_fns.is_empty() {
             let module = aelys_syntax::ModuleId::new(module_path);
             self.body_globals
                 .extend(module_info.exported_types.globals.keys().cloned());
@@ -160,6 +155,10 @@ impl NominalImports {
             self.types.module_globals.insert(
                 module.as_str().to_string(),
                 module_info.exported_types.globals.clone(),
+            );
+            self.types.module_scopes.insert(
+                module.as_str().to_string(),
+                module_info.exported_types.scope.clone(),
             );
             self.types.module_scoped_globals.insert(
                 module.as_str().to_string(),
@@ -220,6 +219,12 @@ impl NominalImports {
                     .into_iter()
                     .map(|stmt| stmt.with_definition_module(module.clone())),
             );
+            self.impl_stmts.extend(generic_fns.into_iter().map(
+                |stmt| match stmt.definition_module {
+                    Some(_) => stmt,
+                    None => stmt.with_definition_module(module.clone()),
+                },
+            ));
         }
     }
 
@@ -372,6 +377,11 @@ fn load_modules(
     let mut symbol_origins: HashMap<String, String> = HashMap::new();
     let mut nominal_imports = NominalImports::default();
     let mut nominal_scopes: Vec<NominalScopeEntry> = Vec::new();
+    let mut global_renames: HashMap<String, String> = HashMap::new();
+    let mut bare_imports = crate::modules::loader::BareImports::default();
+    let mut immutable_imports = std::collections::BTreeSet::new();
+    let mut mutable_imports = std::collections::BTreeSet::new();
+    let mut generic_imports = crate::modules::loader::GenericTargets::default();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
         .iter()
@@ -417,56 +427,66 @@ fn load_modules(
             }
 
             let module_alias = loader.get_module_alias(needs);
+            module_info.import_constants(
+                &module_alias,
+                &effective_kind,
+                &mut nominal_imports.types.module_constants,
+            );
+            let origin_of = |qualified: &str| {
+                if is_stdlib {
+                    qualified.to_string()
+                } else {
+                    module_path.clone()
+                }
+            };
             match &effective_kind {
-                ImportKind::Module { alias: None } => {
+                ImportKind::Module { alias: None } | ImportKind::Wildcard => {
                     for name in module_info.exports.keys() {
                         let qualified = format!("{}::{}", module_alias, name);
-                        if let Some(existing) = symbol_origins.get(name) {
-                            return Err(AelysError::Compile(CompileError::new(
-                                CompileErrorKind::SymbolConflict {
-                                    symbol: name.clone(),
-                                    modules: vec![existing.clone(), module_path.clone()],
-                                    carried_by: Vec::new(),
-                                    repair: SymbolConflictRepair::Alias,
-                                },
-                                needs.span,
-                                source.clone(),
-                            )));
-                        }
-                        symbol_origins.insert(
-                            name.clone(),
-                            if is_stdlib {
-                                qualified.clone()
-                            } else {
-                                module_path.clone()
-                            },
-                        );
                         known_globals.insert(qualified.clone());
+                        let signature = module_info
+                            .native_signatures
+                            .get(&qualified)
+                            .or_else(|| module_info.native_signatures.get(name))
+                            .cloned();
+                        if let Some(signature) = &signature {
+                            native_signatures.insert(qualified.clone(), signature.clone());
+                        }
+                        bare_imports.note_bare(name, &module_path, &module_alias);
+                        if bare_imports.is_explicit(name) {
+                            continue;
+                        }
+                        symbol_origins.insert(name.clone(), origin_of(&qualified));
                         known_globals.insert(name.clone());
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(name.clone());
                         }
-                        if let Some(signature) = module_info
-                            .native_signatures
-                            .get(&qualified)
-                            .or_else(|| module_info.native_signatures.get(name))
-                        {
-                            native_signatures.insert(qualified.clone(), signature.clone());
-                            native_signatures.insert(name.clone(), signature.clone());
+                        if let Some(signature) = signature {
+                            native_signatures.insert(name.clone(), signature);
                         }
                     }
                 }
                 ImportKind::Symbols(symbols) => {
                     for sym in symbols {
+                        if module_info.exports.contains_key(sym)
+                            && let Some(previous) = bare_imports.note_explicit(sym, &module_path)
+                        {
+                            return Err(AelysError::Compile(CompileError::new(
+                                CompileErrorKind::SymbolConflict {
+                                    symbol: sym.clone(),
+                                    modules: vec![
+                                        surface_module(&previous),
+                                        surface_module(&module_path),
+                                    ],
+                                    carried_by: Vec::new(),
+                                    repair: SymbolConflictRepair::NameOne,
+                                },
+                                needs.span,
+                                source.clone(),
+                            )));
+                        }
                         let qualified = format!("{}::{}", module_alias, sym);
-                        symbol_origins.insert(
-                            sym.clone(),
-                            if is_stdlib {
-                                qualified.clone()
-                            } else {
-                                module_path.clone()
-                            },
-                        );
+                        symbol_origins.insert(sym.clone(), origin_of(&qualified));
                         known_globals.insert(sym.clone());
                         if module_info.native_functions.contains(&qualified) {
                             known_native_globals.insert(sym.clone());
@@ -477,32 +497,6 @@ fn load_modules(
                             .or_else(|| module_info.native_signatures.get(sym))
                         {
                             native_signatures.insert(sym.clone(), signature.clone());
-                        }
-                    }
-                }
-                ImportKind::Wildcard => {
-                    for name in module_info.exports.keys() {
-                        let qualified = format!("{}::{}", module_alias, name);
-                        symbol_origins.insert(
-                            name.clone(),
-                            if is_stdlib {
-                                qualified.clone()
-                            } else {
-                                module_path.clone()
-                            },
-                        );
-                        known_globals.insert(qualified.clone());
-                        known_globals.insert(name.clone());
-                        if module_info.native_functions.contains(&qualified) {
-                            known_native_globals.insert(name.clone());
-                        }
-                        if let Some(signature) = module_info
-                            .native_signatures
-                            .get(&qualified)
-                            .or_else(|| module_info.native_signatures.get(name))
-                        {
-                            native_signatures.insert(qualified.clone(), signature.clone());
-                            native_signatures.insert(name.clone(), signature.clone());
                         }
                     }
                 }
@@ -527,6 +521,36 @@ fn load_modules(
                     }
                 }
             }
+            if let Some((symbol, previous)) = generic_imports.note(
+                module_info,
+                &module_path,
+                &loader.get_module_alias(needs),
+                &effective_kind,
+                &mut bare_imports,
+            ) {
+                return Err(AelysError::Compile(CompileError::new(
+                    CompileErrorKind::SymbolConflict {
+                        symbol,
+                        modules: vec![surface_module(&previous), surface_module(&module_path)],
+                        carried_by: Vec::new(),
+                        repair: SymbolConflictRepair::NameOne,
+                    },
+                    needs.span,
+                    source.clone(),
+                )));
+            }
+            let (immutable, mutable) =
+                loader.import_mutability(needs, &effective_kind, &module_path);
+            immutable_imports.extend(immutable);
+            mutable_imports.extend(mutable);
+            for (name, target) in loader.import_renames(needs, &effective_kind, &module_path) {
+                let explicit_elsewhere = !matches!(effective_kind, ImportKind::Symbols(_))
+                    && !name.contains("::")
+                    && bare_imports.is_explicit(&name);
+                if !explicit_elsewhere {
+                    global_renames.insert(name, target);
+                }
+            }
         }
     }
 
@@ -537,6 +561,20 @@ fn load_modules(
         let scope = entry.scope();
         nominal_imports.absorb(module_info, &entry.module_path, scope, entry.span);
     }
+
+    let ambiguous_imports = bare_imports.ambiguous();
+    let generic_targets = generic_imports.finish(&bare_imports, &ambiguous_imports);
+    for name in ambiguous_imports.keys() {
+        known_globals.remove(name);
+        known_native_globals.remove(name);
+        native_signatures.remove(name);
+        symbol_origins.remove(name);
+        global_renames.remove(name);
+        nominal_imports.types.module_constants.remove(name);
+    }
+    nominal_imports.types.ambiguous_imports = ambiguous_imports;
+    nominal_imports.types.immutable_imports = immutable_imports;
+    nominal_imports.types.mutable_imports = mutable_imports;
 
     if let Some((clash, span)) = nominal_imports.first_clash() {
         return Err(clash.into_error(SymbolConflictRepair::NameOne, span, &source));
@@ -573,6 +611,8 @@ fn load_modules(
             imported_impl_stmts: nominal_imports.impl_stmts,
             impl_body_globals: nominal_imports.body_globals,
             module_sources: nominal_imports.module_sources,
+            global_renames,
+            generic_targets,
         },
         loader,
     ))

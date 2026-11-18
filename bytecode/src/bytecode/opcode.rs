@@ -203,6 +203,204 @@ pub enum OpCode {
     EnumNew,
     EnumTest,
     EnumLoad,
+    AddWI8 = 202,
+    AddWI16,
+    AddWI32,
+    AddWU8,
+    AddWU16,
+    AddWU32,
+    SubWI8,
+    SubWI16,
+    SubWI32,
+    SubWU8,
+    SubWU16,
+    SubWU32,
+    MulWI8,
+    MulWI16,
+    MulWI32,
+    MulWU8,
+    MulWU16,
+    MulWU32,
+    ShlWI8,
+    ShlWI16,
+    ShlWI32,
+    ShlWU8,
+    ShlWU16,
+    ShlWU32,
+    ShrW8,
+    ShrW16,
+    ShrW32,
+    DivWI8,
+    DivWI16,
+    DivWI32,
+    NegW,
+    NotW,
+    MulShr,
+    ShlDiv,
+}
+
+#[macro_export]
+macro_rules! sized_binary_opcodes {
+    () => {
+        $crate::OpCode::AddWI8
+            | $crate::OpCode::AddWI16
+            | $crate::OpCode::AddWI32
+            | $crate::OpCode::AddWU8
+            | $crate::OpCode::AddWU16
+            | $crate::OpCode::AddWU32
+            | $crate::OpCode::SubWI8
+            | $crate::OpCode::SubWI16
+            | $crate::OpCode::SubWI32
+            | $crate::OpCode::SubWU8
+            | $crate::OpCode::SubWU16
+            | $crate::OpCode::SubWU32
+            | $crate::OpCode::MulWI8
+            | $crate::OpCode::MulWI16
+            | $crate::OpCode::MulWI32
+            | $crate::OpCode::MulWU8
+            | $crate::OpCode::MulWU16
+            | $crate::OpCode::MulWU32
+            | $crate::OpCode::ShlWI8
+            | $crate::OpCode::ShlWI16
+            | $crate::OpCode::ShlWI32
+            | $crate::OpCode::ShlWU8
+            | $crate::OpCode::ShlWU16
+            | $crate::OpCode::ShlWU32
+            | $crate::OpCode::ShrW8
+            | $crate::OpCode::ShrW16
+            | $crate::OpCode::ShrW32
+            | $crate::OpCode::DivWI8
+            | $crate::OpCode::DivWI16
+            | $crate::OpCode::DivWI32
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum SizedInt {
+    I8 = 0,
+    I16 = 1,
+    I32 = 2,
+    U8 = 3,
+    U16 = 4,
+    U32 = 5,
+}
+
+impl SizedInt {
+    pub const ALL: [SizedInt; 6] = [
+        SizedInt::I8,
+        SizedInt::I16,
+        SizedInt::I32,
+        SizedInt::U8,
+        SizedInt::U16,
+        SizedInt::U32,
+    ];
+
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::I8),
+            1 => Some(Self::I16),
+            2 => Some(Self::I32),
+            3 => Some(Self::U8),
+            4 => Some(Self::U16),
+            5 => Some(Self::U32),
+            _ => None,
+        }
+    }
+
+    pub const fn bits(self) -> u32 {
+        match self {
+            Self::I8 | Self::U8 => 8,
+            Self::I16 | Self::U16 => 16,
+            Self::I32 | Self::U32 => 32,
+        }
+    }
+
+    pub const fn signed(self) -> bool {
+        matches!(self, Self::I8 | Self::I16 | Self::I32)
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+        }
+    }
+
+    #[inline(always)]
+    pub const fn wrap(self, value: i64) -> i64 {
+        match self {
+            Self::I8 => value as i8 as i64,
+            Self::I16 => value as i16 as i64,
+            Self::I32 => value as i32 as i64,
+            Self::U8 => value as u8 as i64,
+            Self::U16 => value as u16 as i64,
+            Self::U32 => value as u32 as i64,
+        }
+    }
+
+    pub const fn min(self) -> i64 {
+        match self {
+            Self::I8 => i8::MIN as i64,
+            Self::I16 => i16::MIN as i64,
+            Self::I32 => i32::MIN as i64,
+            Self::U8 | Self::U16 | Self::U32 => 0,
+        }
+    }
+
+    pub const fn max(self) -> i64 {
+        match self {
+            Self::I8 => i8::MAX as i64,
+            Self::I16 => i16::MAX as i64,
+            Self::I32 => i32::MAX as i64,
+            Self::U8 => u8::MAX as i64,
+            Self::U16 => u16::MAX as i64,
+            Self::U32 => u32::MAX as i64,
+        }
+    }
+
+    pub const fn contains(self, value: i64) -> bool {
+        value >= self.min() && value <= self.max()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrappingOp {
+    Add,
+    Sub,
+    Mul,
+    Shl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixedKind {
+    Sized(SizedInt),
+    Int,
+}
+
+impl FixedKind {
+    pub const INT_BYTE: u8 = 6;
+
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::Sized(kind) => kind as u8,
+            Self::Int => Self::INT_BYTE,
+        }
+    }
+
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        if value == Self::INT_BYTE {
+            return Some(Self::Int);
+        }
+        match SizedInt::from_u8(value) {
+            Some(kind) => Some(Self::Sized(kind)),
+            None => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +409,12 @@ pub enum CastTarget {
     Int = 0,
     Float = 1,
     Bool = 2,
+    I8 = 3,
+    I16 = 4,
+    I32 = 5,
+    U8 = 6,
+    U16 = 7,
+    U32 = 8,
 }
 
 impl CastTarget {
@@ -219,7 +423,36 @@ impl CastTarget {
             0 => Some(Self::Int),
             1 => Some(Self::Float),
             2 => Some(Self::Bool),
+            3 => Some(Self::I8),
+            4 => Some(Self::I16),
+            5 => Some(Self::I32),
+            6 => Some(Self::U8),
+            7 => Some(Self::U16),
+            8 => Some(Self::U32),
             _ => None,
+        }
+    }
+
+    pub const fn sized(kind: SizedInt) -> Self {
+        match kind {
+            SizedInt::I8 => Self::I8,
+            SizedInt::I16 => Self::I16,
+            SizedInt::I32 => Self::I32,
+            SizedInt::U8 => Self::U8,
+            SizedInt::U16 => Self::U16,
+            SizedInt::U32 => Self::U32,
+        }
+    }
+
+    pub const fn sized_kind(self) -> Option<SizedInt> {
+        match self {
+            Self::I8 => Some(SizedInt::I8),
+            Self::I16 => Some(SizedInt::I16),
+            Self::I32 => Some(SizedInt::I32),
+            Self::U8 => Some(SizedInt::U8),
+            Self::U16 => Some(SizedInt::U16),
+            Self::U32 => Some(SizedInt::U32),
+            Self::Int | Self::Float | Self::Bool => None,
         }
     }
 }
@@ -236,6 +469,7 @@ pub enum InstructionFormat {
     WideRegisterOffset32,
     WideAbc,
     Struct,
+    Fixed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,11 +488,11 @@ impl From<OpCode> for u8 {
 }
 
 impl OpCode {
-    pub fn from_u8(byte: u8) -> Option<Self> {
+    pub const fn from_u8(byte: u8) -> Option<Self> {
         if byte <= 77
-            || (79..=103).contains(&byte)
-            || (105..=127).contains(&byte)
-            || (130..=201).contains(&byte)
+            || (byte >= 79 && byte <= 103)
+            || (byte >= 105 && byte <= 127)
+            || (byte >= 130 && byte <= 235)
         {
             Some(unsafe { std::mem::transmute::<u8, OpCode>(byte) })
         } else {
@@ -308,6 +542,7 @@ impl OpCode {
             | Self::EnumNew
             | Self::EnumTest
             | Self::EnumLoad => InstructionFormat::Struct,
+            Self::MulShr | Self::ShlDiv => InstructionFormat::Fixed,
             _ => InstructionFormat::Abc,
         }
     }
@@ -320,7 +555,7 @@ impl OpCode {
             | InstructionFormat::RegisterIndex32Aux
             | InstructionFormat::WideRegisterOffset32
             | InstructionFormat::WideAbc => 2,
-            InstructionFormat::Struct => 2,
+            InstructionFormat::Struct | InstructionFormat::Fixed => 2,
             InstructionFormat::Abc | InstructionFormat::AImm16 => 0,
         }
     }
@@ -371,7 +606,9 @@ impl OpCode {
             | Self::VecPopP
             | Self::VecLen
             | Self::VecCap
-            | Self::VecReserve => Some(WideRegisterOperands::Ab),
+            | Self::VecReserve
+            | Self::NegW
+            | Self::NotW => Some(WideRegisterOperands::Ab),
             Self::VecNewI | Self::VecNewF | Self::VecNewB | Self::VecNewP => {
                 Some(WideRegisterOperands::A)
             }
@@ -469,10 +706,64 @@ impl OpCode {
             | Self::RangeNewInclusive
             | Self::ArraySlice
             | Self::VecSlice => Some(WideRegisterOperands::Abc),
+            sized_binary_opcodes!() => Some(WideRegisterOperands::Abc),
             Self::MakeSum | Self::SumTest | Self::SumPayload | Self::Cast | Self::MatchFail => {
                 Some(WideRegisterOperands::Ab)
             }
             _ => None,
+        }
+    }
+
+    pub const fn is_sized_binary(self) -> bool {
+        let byte = self as u8;
+        byte >= Self::AddWI8 as u8 && byte <= Self::DivWI32 as u8
+    }
+
+    pub const fn wrapping(op: WrappingOp, kind: SizedInt) -> Self {
+        let base = match op {
+            WrappingOp::Add => Self::AddWI8,
+            WrappingOp::Sub => Self::SubWI8,
+            WrappingOp::Mul => Self::MulWI8,
+            WrappingOp::Shl => Self::ShlWI8,
+        };
+        match Self::from_u8(base as u8 + kind as u8) {
+            Some(opcode) => opcode,
+            None => unreachable!(),
+        }
+    }
+
+    pub const fn wrapping_shr(kind: SizedInt) -> Self {
+        match kind.bits() {
+            8 => Self::ShrW8,
+            16 => Self::ShrW16,
+            _ => Self::ShrW32,
+        }
+    }
+
+    pub const fn wrapping_div(kind: SizedInt) -> Option<Self> {
+        match kind {
+            SizedInt::I8 => Some(Self::DivWI8),
+            SizedInt::I16 => Some(Self::DivWI16),
+            SizedInt::I32 => Some(Self::DivWI32),
+            SizedInt::U8 | SizedInt::U16 | SizedInt::U32 => None,
+        }
+    }
+
+    pub const fn wrapping_parts(self) -> Option<(WrappingOp, SizedInt)> {
+        let byte = self as u8;
+        if byte < Self::AddWI8 as u8 || byte > Self::ShlWU32 as u8 {
+            return None;
+        }
+        let offset = byte - Self::AddWI8 as u8;
+        let op = match offset / 6 {
+            0 => WrappingOp::Add,
+            1 => WrappingOp::Sub,
+            2 => WrappingOp::Mul,
+            _ => WrappingOp::Shl,
+        };
+        match SizedInt::from_u8(offset % 6) {
+            Some(kind) => Some((op, kind)),
+            None => None,
         }
     }
 

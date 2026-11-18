@@ -54,6 +54,7 @@ impl ModuleLoader {
                 })
                 .collect(),
             exported_types: Default::default(),
+            constants: Default::default(),
         };
         self.loaded_modules
             .insert(module_path_str.clone(), module_info);

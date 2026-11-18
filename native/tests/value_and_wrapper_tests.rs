@@ -257,7 +257,8 @@ fn generated_sum_wrappers_encode_string_and_unit_payloads() {
         alloc_string: Some(test_alloc_string),
         read_string: None,
         borrow_bytes: None,
-        _reserved: [0; 2],
+        borrow_bytes_shared: None,
+        _reserved: [0; 1],
     });
 
     let input = value_int(7).unwrap();

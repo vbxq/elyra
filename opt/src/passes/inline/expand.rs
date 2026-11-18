@@ -363,6 +363,7 @@ impl InlineExpander {
             TypedExprKind::Float(f) => TypedExprKind::Float(*f),
             TypedExprKind::Bool(b) => TypedExprKind::Bool(*b),
             TypedExprKind::String(s) => TypedExprKind::String(s.clone()),
+            TypedExprKind::Char(s) => TypedExprKind::Char(*s),
             TypedExprKind::Unit => TypedExprKind::Unit,
             TypedExprKind::AssociatedConst {
                 param,
@@ -387,6 +388,7 @@ impl InlineExpander {
                 scrutinee: Box::new(self.substitute_expr(scrutinee, params, span)),
                 arms: arms.clone(),
             },
+            TypedExprKind::Block(_) | TypedExprKind::Loop { .. } => expr.kind.clone(),
         };
 
         TypedExpr::new(kind, expr.ty.clone(), span)
@@ -432,9 +434,14 @@ impl InlineExpander {
                     .as_ref()
                     .map(|e| Box::new(self.substitute_stmt(e, params, span))),
             },
-            TypedStmtKind::While { condition, body } => TypedStmtKind::While {
+            TypedStmtKind::While {
+                condition,
+                body,
+                label,
+            } => TypedStmtKind::While {
                 condition: self.substitute_expr(condition, params, span),
                 body: Box::new(self.substitute_stmt(body, params, span)),
+                label: label.clone(),
             },
             TypedStmtKind::For {
                 iterator,
@@ -443,6 +450,7 @@ impl InlineExpander {
                 inclusive,
                 step,
                 body,
+                label,
             } => TypedStmtKind::For {
                 iterator: iterator.clone(),
                 start: self.substitute_expr(start, params, span),
@@ -454,6 +462,7 @@ impl InlineExpander {
                         .map(|s| self.substitute_expr(s, params, span)),
                 ),
                 body: Box::new(self.substitute_stmt(body, params, span)),
+                label: label.clone(),
             },
             TypedStmtKind::ForEach {
                 iterator,
@@ -461,12 +470,14 @@ impl InlineExpander {
                 elem_type,
                 read_only,
                 body,
+                label,
             } => TypedStmtKind::ForEach {
                 iterator: iterator.clone(),
                 iterable: self.substitute_expr(iterable, params, span),
                 elem_type: elem_type.clone(),
                 read_only: *read_only,
                 body: Box::new(self.substitute_stmt(body, params, span)),
+                label: label.clone(),
             },
             TypedStmtKind::Return(e) => {
                 TypedStmtKind::Return(e.as_ref().map(|ex| self.substitute_expr(ex, params, span)))

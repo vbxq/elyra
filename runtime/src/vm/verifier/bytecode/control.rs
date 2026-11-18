@@ -12,14 +12,19 @@ pub(super) fn verify(
     imm: i16,
     num_regs: usize,
     bytecode_len: usize,
+    targets: &mut Vec<(usize, usize)>,
 ) -> Result<bool, String> {
+    let mut jump = |name: &str| -> Result<(), String> {
+        targets.push((ip, verify_jump(ip, imm, bytecode_len, name)?));
+        Ok(())
+    };
     match opcode {
         OpCode::Jump => {
-            verify_jump(ip, imm, bytecode_len, "Jump")?;
+            jump("Jump")?;
         }
         OpCode::JumpIf | OpCode::JumpIfNot => {
             verify_reg(a, num_regs, "JumpIf")?;
-            verify_jump(ip, imm, bytecode_len, "JumpIf")?;
+            jump("JumpIf")?;
         }
         OpCode::Return => {
             verify_reg(a, num_regs, "Return")?;
@@ -28,27 +33,27 @@ pub(super) fn verify(
         OpCode::ForLoopI | OpCode::ForLoopIInc => {
             // ForLoopI uses 3 consecutive registers: a (iter), a+1 (limit), a+2 (step)
             verify_reg_range(a, 3, num_regs, "ForLoopI")?;
-            verify_jump(ip, imm, bytecode_len, "ForLoopI")?;
+            jump("ForLoopI")?;
         }
         OpCode::WhileLoopLt => {
             // WhileLoopLt uses 2 consecutive registers: a (value), a+1 (limit)
             verify_reg_range(a, 2, num_regs, "WhileLoopLt")?;
-            verify_jump(ip, imm, bytecode_len, "WhileLoopLt")?;
+            jump("WhileLoopLt")?;
         }
         OpCode::StringForLoop => {
             // StringForLoop uses 3 consecutive registers: a (char), a+1 (byte_offset), a+2 (string_ptr)
             verify_reg_range(a, 3, num_regs, "StringForLoop")?;
-            verify_jump(ip, imm, bytecode_len, "StringForLoop")?;
+            jump("StringForLoop")?;
         }
         OpCode::VecForLoop => {
             // VecForLoop uses 3 consecutive registers: a (element), a+1 (index), a+2 (vec_ptr)
             verify_reg_range(a, 3, num_regs, "VecForLoop")?;
-            verify_jump(ip, imm, bytecode_len, "VecForLoop")?;
+            jump("VecForLoop")?;
         }
         OpCode::ArrayForLoop => {
             // ArrayForLoop uses 3 consecutive registers: a (element), a+1 (index), a+2 (array_ptr)
             verify_reg_range(a, 3, num_regs, "ArrayForLoop")?;
-            verify_jump(ip, imm, bytecode_len, "ArrayForLoop")?;
+            jump("ArrayForLoop")?;
         }
         _ => return Ok(false),
     }

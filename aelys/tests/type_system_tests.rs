@@ -1483,8 +1483,8 @@ fn test_various_int_types() {
         let a: int = 10
         let b: int = 20
         let c: int = 30
-        let d: int64 = 40
-        a + b + c + d
+        let d: i32 = 40
+        a + b + c + d as int
     "#,
     );
     assert_eq!(result.as_int(), Some(100));

@@ -13,8 +13,9 @@ impl TypeInference {
         _span: Span,
     ) -> (TypedExprKind, InferType) {
         let typed_cond = self.infer_expr(condition);
-        let typed_then = self.infer_expr(then_branch);
-        let typed_else = self.infer_expr(else_branch);
+        let mut typed_then = self.infer_expr(then_branch);
+        let mut typed_else = self.infer_expr(else_branch);
+        self.unify_branch_literals(&mut [&mut typed_then, &mut typed_else]);
         let dynamic_result = matches!(typed_then.ty, InferType::Dynamic)
             || matches!(typed_else.ty, InferType::Dynamic);
         let poisoned_result = matches!(typed_then.ty, InferType::Poison)
@@ -39,7 +40,11 @@ impl TypeInference {
             ));
         }
 
-        let result_type = self.type_gen.fresh();
+        let result_type = [&typed_then.ty, &typed_else.ty]
+            .into_iter()
+            .find(|ty| known_aggregate(ty))
+            .cloned()
+            .unwrap_or_else(|| self.type_gen.fresh());
         if !self.reject_dynamic(
             &typed_then.ty,
             &result_type,
@@ -67,6 +72,7 @@ impl TypeInference {
             ));
         }
 
+        let settled = settled_branch_type(&typed_then.ty, &typed_else.ty);
         (
             TypedExprKind::If {
                 condition: Box::new(typed_cond),
@@ -78,8 +84,31 @@ impl TypeInference {
             } else if dynamic_result {
                 InferType::Dynamic
             } else {
-                result_type
+                settled.unwrap_or(result_type)
             },
         )
+    }
+}
+
+fn known_aggregate(ty: &InferType) -> bool {
+    matches!(
+        ty,
+        InferType::Struct(_)
+            | InferType::Applied { .. }
+            | InferType::Array(_)
+            | InferType::FixedArray(_, _)
+            | InferType::Vec(_)
+            | InferType::Map(_, _)
+    ) && ty.is_concrete()
+}
+
+// a method call on the if needs its receiver type before the constraints are solved
+pub(crate) fn settled_branch_type(then_ty: &InferType, else_ty: &InferType) -> Option<InferType> {
+    match (then_ty, else_ty) {
+        (InferType::Never, other) | (other, InferType::Never) if other.is_concrete() => {
+            Some(other.clone())
+        }
+        (left, right) if left == right && left.is_concrete() => Some(left.clone()),
+        _ => None,
     }
 }

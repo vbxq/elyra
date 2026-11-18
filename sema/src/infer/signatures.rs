@@ -124,6 +124,8 @@ fn is_foreign_impl_target(ty: &InferType, type_table: &crate::types::TypeTable) 
         InferType::Struct(name) | InferType::Applied { name, .. } => !type_table.has_nominal(name),
         InferType::Option(_)
         | InferType::Result(_, _)
+        | InferType::Map(_, _)
+        | InferType::Char
         | InferType::Array(_)
         | InferType::FixedArray(_, _)
         | InferType::Vec(_)
@@ -363,7 +365,14 @@ impl TypeInference {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Function(func) => {
+                    let saved = stmt
+                        .definition_module
+                        .clone()
+                        .map(|module| std::mem::replace(&mut self.current_module, module));
                     self.collect_function_signature(func, prefix);
+                    if let Some(saved) = saved {
+                        self.current_module = saved;
+                    }
                 }
                 StmtKind::ImplDecl { .. } => {}
                 StmtKind::TraitDecl { .. } => {}
@@ -388,6 +397,16 @@ impl TypeInference {
                 }
                 StmtKind::ForEach { body, .. } => {
                     self.walk_signatures_in_stmt(body, prefix);
+                }
+                StmtKind::Expression(aelys_syntax::Expr {
+                    kind:
+                        aelys_syntax::ExprKind::Block(inner_stmts)
+                        | aelys_syntax::ExprKind::Loop {
+                            body: inner_stmts, ..
+                        },
+                    ..
+                }) => {
+                    self.walk_signatures(inner_stmts, prefix);
                 }
                 _ => {}
             }
@@ -627,6 +646,10 @@ impl TypeInference {
         self.current_function_bindings = saved_bindings;
 
         let fn_type = Rc::new(InferType::Function {
+            modes: crate::types::ParamModes::declared(
+                &param_types,
+                func.params.iter().map(|param| param.mutable),
+            ),
             params: param_types,
             ret: Box::new(ret_type),
         });
@@ -652,11 +675,20 @@ impl TypeInference {
             .insert(full_name.clone(), func.type_params.clone());
         self.function_reference_modes
             .insert(full_name.clone(), reference_modes.clone());
+        let mutable_params: Vec<Option<String>> = func
+            .params
+            .iter()
+            .map(|param| param.mutable.then(|| param.name.clone()))
+            .collect();
+        self.function_mutable_params
+            .insert(full_name.clone(), mutable_params.clone());
         if !prefix.is_empty() {
             self.function_type_params
                 .insert(func.name.clone(), func.type_params.clone());
             self.function_reference_modes
                 .insert(func.name.clone(), reference_modes);
+            self.function_mutable_params
+                .insert(func.name.clone(), mutable_params);
         }
 
         self.env.define_function(full_name, Rc::clone(&fn_type));
@@ -2115,6 +2147,14 @@ impl TypeInference {
                 symbol.clone(),
                 method.params.iter().map(|param| param.reference).collect(),
             );
+            self.function_mutable_params.insert(
+                symbol.clone(),
+                method
+                    .params
+                    .iter()
+                    .map(|param| param.mutable.then(|| param.name.clone()))
+                    .collect(),
+            );
             let carries_obligation = !method_bounds.is_empty() || !method_bindings.is_empty();
             if !method_bounds.is_empty() {
                 self.generic_function_bounds
@@ -2138,6 +2178,10 @@ impl TypeInference {
                 symbol.clone(),
                 Rc::new(InferType::Function {
                     params: params.clone(),
+                    modes: crate::types::ParamModes::declared(
+                        &params,
+                        method.params.iter().map(|param| param.mutable),
+                    ),
                     ret: Box::new(ret.clone()),
                 }),
             );
@@ -2450,7 +2494,8 @@ impl TypeInference {
                     )),
                 }
             }
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
+                modes: modes.clone(),
                 params: params
                     .iter()
                     .map(|param| {
@@ -2481,6 +2526,10 @@ impl TypeInference {
                 self.normalize_projection_in_signature(inner, associated_types, target_ty),
             )),
             InferType::Result(ok, err) => InferType::Result(
+                Box::new(self.normalize_projection_in_signature(ok, associated_types, target_ty)),
+                Box::new(self.normalize_projection_in_signature(err, associated_types, target_ty)),
+            ),
+            InferType::Map(ok, err) => InferType::Map(
                 Box::new(self.normalize_projection_in_signature(ok, associated_types, target_ty)),
                 Box::new(self.normalize_projection_in_signature(err, associated_types, target_ty)),
             ),
@@ -2861,7 +2910,7 @@ fn collect_projections(ty: &InferType, out: &mut Vec<InferType>) {
             out.push(ty.clone());
             collect_projections(self_ty, out);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_projections(param, out);
             }
@@ -2871,7 +2920,7 @@ fn collect_projections(ty: &InferType, out: &mut Vec<InferType>) {
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner)
         | InferType::Option(inner) => collect_projections(inner, out),
-        InferType::Result(ok, err) => {
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
             collect_projections(ok, out);
             collect_projections(err, out);
         }
@@ -3070,7 +3119,8 @@ fn own_params_conform(
         (InferType::FixedArray(expected, length), InferType::FixedArray(actual, actual_length)) => {
             length == actual_length && conform(expected, actual, pairing)
         }
-        (InferType::Result(expected_ok, expected_err), InferType::Result(ok, err)) => {
+        (InferType::Result(expected_ok, expected_err), InferType::Result(ok, err))
+        | (InferType::Map(expected_ok, expected_err), InferType::Map(ok, err)) => {
             conform(expected_ok, ok, pairing) && conform(expected_err, err, pairing)
         }
         (InferType::Tuple(expected), InferType::Tuple(actual)) => {
@@ -3081,10 +3131,11 @@ fn own_params_conform(
                     .all(|(expected, actual)| conform(expected, actual, pairing))
         }
         (
-            InferType::Function { params, ret },
+            InferType::Function { params, ret, .. },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) => {
             params.len() == actual_params.len()

@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{Constraint, TypeError, TypeErrorKind};
+use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::types::InferType;
 use crate::unify::{Substitution, UnifyError, unify, unify_error_to_type_error};
 use aelys_syntax::Span;
@@ -20,7 +20,7 @@ fn type_node_count(ty: &InferType) -> usize {
             | InferType::FixedArray(inner, _)
             | InferType::Vec(inner)
             | InferType::Projection { self_ty: inner, .. } => walk(inner, count),
-            InferType::Result(ok, err) => {
+            InferType::Result(ok, err) | InferType::Map(ok, err) => {
                 walk(ok, count);
                 walk(err, count);
             }
@@ -34,7 +34,7 @@ fn type_node_count(ty: &InferType) -> usize {
                     walk(arg, count);
                 }
             }
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 for param in params {
                     walk(param, count);
                 }
@@ -143,7 +143,8 @@ impl TypeInference {
                 state.cache.insert(ty.clone(), normalized.clone());
                 normalized
             }
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
+                modes: modes.clone(),
                 params: params
                     .iter()
                     .map(|param| self.normalize_projection_types_bounded(param, state))
@@ -164,6 +165,10 @@ impl TypeInference {
                 self.normalize_projection_types_bounded(inner, state),
             )),
             InferType::Result(ok, err) => InferType::Result(
+                Box::new(self.normalize_projection_types_bounded(ok, state)),
+                Box::new(self.normalize_projection_types_bounded(err, state)),
+            ),
+            InferType::Map(ok, err) => InferType::Map(
                 Box::new(self.normalize_projection_types_bounded(ok, state)),
                 Box::new(self.normalize_projection_types_bounded(err, state)),
             ),
@@ -268,6 +273,7 @@ impl TypeInference {
 
                 match &resolved {
                     InferType::Var(_) | InferType::Dynamic | InferType::Poison => {}
+                    InferType::Param(_) if matches!(reason, ConstraintReason::MapKey) => {}
                     concrete => {
                         let solutions = options
                             .iter()
@@ -281,6 +287,16 @@ impl TypeInference {
                             .collect::<Vec<_>>();
 
                         match solutions.len() {
+                            0 if matches!(reason, ConstraintReason::MapKey) => {
+                                self.errors.push(TypeError {
+                                    kind: TypeErrorKind::InvalidMapKey {
+                                        key: concrete.clone(),
+                                    },
+                                    span,
+                                    reason,
+                                });
+                                self.poison(&resolved, &mut subst);
+                            }
                             0 => {
                                 self.errors.push(TypeError::not_one_of(
                                     concrete.clone(),
@@ -310,7 +326,7 @@ impl TypeInference {
             InferType::Var(id) => {
                 subst.bind(*id, InferType::Poison);
             }
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 for p in params {
                     self.poison(p, subst);
                 }
@@ -339,10 +355,12 @@ fn contains_open_projection(ty: &InferType) -> bool {
         | InferType::Array(inner)
         | InferType::FixedArray(inner, _)
         | InferType::Vec(inner) => contains_open_projection(inner),
-        InferType::Result(ok, err) => contains_open_projection(ok) || contains_open_projection(err),
+        InferType::Result(ok, err) | InferType::Map(ok, err) => {
+            contains_open_projection(ok) || contains_open_projection(err)
+        }
         InferType::Tuple(elements) => elements.iter().any(contains_open_projection),
         InferType::Applied { args, .. } => args.iter().any(contains_open_projection),
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_open_projection) || contains_open_projection(ret)
         }
         _ => false,
@@ -353,10 +371,12 @@ fn decompose_for_deferral(left: &InferType, right: &InferType) -> Vec<(InferType
     let (
         InferType::Function {
             params: left_params,
+            modes: left_modes,
             ret: left_ret,
         },
         InferType::Function {
             params: right_params,
+            modes: right_modes,
             ret: right_ret,
         },
     ) = (left, right)
@@ -372,5 +392,13 @@ fn decompose_for_deferral(left: &InferType, right: &InferType) -> Vec<(InferType
         .zip(right_params.iter().cloned())
         .collect();
     components.push((left_ret.as_ref().clone(), right_ret.as_ref().clone()));
+    if left_modes != right_modes {
+        let with_modes = |modes: &crate::types::ParamModes| InferType::Function {
+            params: left_params.clone(),
+            modes: modes.clone(),
+            ret: left_ret.clone(),
+        };
+        components.push((with_modes(left_modes), with_modes(right_modes)));
+    }
     components
 }

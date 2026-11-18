@@ -5,11 +5,9 @@ use super::{
 use aelys_bytecode::object::{
     AelysArray, AelysEnum, AelysStruct, AelysSum, AelysVec, SumTag, TypeTag,
 };
-use aelys_bytecode::{DefId, SchemaId, StructFieldSchema, StructSchema, TypeDescriptor};
+use aelys_bytecode::{DefId, EnumSchema, SchemaId, StructSchema, TypeDescriptor};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use aelys_native::{AelysNativeFn, AelysNativeType};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 impl VM {
     pub(crate) fn ensure_array_capacity(
@@ -150,6 +148,8 @@ impl VM {
             Some(object) => match &mut object.kind {
                 ObjectKind::Vec(vector) => {
                     if vector.push(value) {
+                        let index = vector.len() - 1;
+                        self.heap.write_barrier_element(vector_ref, index, value);
                         Ok(())
                     } else {
                         Err(self.runtime_error(RuntimeErrorKind::TypeError {
@@ -206,7 +206,7 @@ impl VM {
     }
 
     pub fn intern_string(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
-        if let Some(existing) = self.heap.find_interned_string(s) {
+        if let Some(existing) = self.heap.lookup_interned_string(s) {
             return Ok(existing);
         }
         let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
@@ -215,7 +215,7 @@ impl VM {
     }
 
     fn intern_string_without_collection(&mut self, s: &str) -> Result<GcRef, RuntimeError> {
-        if let Some(existing) = self.heap.find_interned_string(s) {
+        if let Some(existing) = self.heap.lookup_interned_string(s) {
             return Ok(existing);
         }
         let size = u64::try_from(Heap::estimate_string_size(s.len())).unwrap_or(u64::MAX);
@@ -224,7 +224,7 @@ impl VM {
     }
 
     pub fn alloc_function(&mut self, mut func: super::Function) -> Result<GcRef, RuntimeError> {
-        self.materialize_schema_ids(&mut func);
+        self.materialize_schema_ids(&mut func)?;
         let mut required = u64::try_from(Heap::estimate_function_size(&func)).unwrap_or(u64::MAX);
         for constant in &func.constants {
             if let aelys_bytecode::Constant::String(string) = constant {
@@ -249,26 +249,35 @@ impl VM {
         self.alloc_object_without_collection(obj)
     }
 
-    fn materialize_schema_ids(&mut self, function: &mut super::Function) {
+    fn materialize_schema_ids(
+        &mut self,
+        function: &mut super::Function,
+    ) -> Result<(), RuntimeError> {
         let mut ids = Vec::with_capacity(function.struct_schemas.len());
         for schema in &function.struct_schemas {
-            ids.push(self.intern_schema(schema));
+            let key = struct_identity(schema, function);
+            ids.push(self.intern_schema(key, schema));
         }
         function.schema_ids = ids;
-        for nested in &mut function.nested_functions {
-            self.materialize_schema_ids(nested);
+        let mut enum_ids = Vec::with_capacity(function.enum_schemas.len());
+        for schema in &function.enum_schemas {
+            let key = enum_identity(schema, function);
+            let id = self.intern_enum_schema(key, schema).ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                    "more distinct enum schemas than a u16 enum id can name".to_string(),
+                ))
+            })?;
+            enum_ids.push(id);
         }
+        function.enum_ids = enum_ids;
+        for nested in &mut function.nested_functions {
+            self.materialize_schema_ids(nested)?;
+        }
+        Ok(())
     }
 
-    fn intern_schema(&mut self, schema: &StructSchema) -> SchemaId {
-        let hash = schema_hash(schema);
-        if let Some(bucket) = self.schema_index.get(&hash)
-            && let Some(id) = bucket.iter().find(|id| {
-                self.schema_registry
-                    .get(id)
-                    .is_some_and(|existing| same_schema(existing, schema))
-            })
-        {
+    fn intern_schema(&mut self, key: StructIdentity, schema: &StructSchema) -> SchemaId {
+        if let Some(id) = self.schema_index.get(&key) {
             return *id;
         }
         let mut id = SchemaId(self.next_schema_id);
@@ -278,8 +287,24 @@ impl VM {
             self.next_schema_id = self.next_schema_id.saturating_add(1).max(1);
         }
         self.schema_registry.insert(id, schema.clone());
-        self.schema_index.entry(hash).or_default().push(id);
+        self.schema_index.insert(key, id);
         id
+    }
+
+    fn intern_enum_schema(&mut self, key: EnumIdentity, schema: &EnumSchema) -> Option<u16> {
+        if let Some(id) = self.enum_index.get(&key) {
+            return Some(*id);
+        }
+        let id = u16::try_from(self.enum_registry.len()).ok()?;
+        self.enum_registry.push(
+            schema
+                .variants
+                .iter()
+                .map(|variant| variant.fields.len())
+                .collect(),
+        );
+        self.enum_index.insert(key, id);
+        Some(id)
     }
 
     pub fn alloc_native(
@@ -288,9 +313,10 @@ impl VM {
         arity: u16,
         func: NativeFn,
     ) -> Result<GcRef, RuntimeError> {
-        self.native_registry
-            .insert(name.to_string(), NativeFunctionImpl::Rust(func));
-        let obj = GcObject::new(ObjectKind::Native(NativeFunction::new(name, arity)));
+        let slot = self.register_native_impl(name, NativeFunctionImpl::Rust(func));
+        let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
+            name, arity, slot,
+        )));
         self.alloc_object(obj)
     }
 
@@ -300,14 +326,16 @@ impl VM {
         arity: u16,
         func: AelysNativeFn,
     ) -> Result<GcRef, RuntimeError> {
-        self.native_registry.insert(
-            name.to_string(),
+        let slot = self.register_native_impl(
+            name,
             NativeFunctionImpl::Foreign {
                 function: func,
                 result: super::ForeignReturnKind::Raw,
             },
         );
-        let obj = GcObject::new(ObjectKind::Native(NativeFunction::new(name, arity)));
+        let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
+            name, arity, slot,
+        )));
         self.alloc_object(obj)
     }
 
@@ -318,14 +346,16 @@ impl VM {
         func: AelysNativeFn,
         result_type: Option<AelysNativeType>,
     ) -> Result<GcRef, RuntimeError> {
-        self.native_registry.insert(
-            name.to_string(),
+        let slot = self.register_native_impl(
+            name,
             NativeFunctionImpl::Foreign {
                 function: func,
                 result: super::ForeignReturnKind::from_native_type(result_type),
             },
         );
-        let obj = GcObject::new(ObjectKind::Native(NativeFunction::new(name, arity)));
+        let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
+            name, arity, slot,
+        )));
         self.alloc_object(obj)
     }
 
@@ -412,20 +442,142 @@ impl VM {
     }
 }
 
-type SchemaKey<'a> = (&'a DefId, &'a [TypeDescriptor], &'a [StructFieldSchema]);
-
-fn schema_key(schema: &StructSchema) -> SchemaKey<'_> {
-    (&schema.ctor, &schema.type_args, &schema.fields)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum CanonicalDescriptor {
+    Plain(TypeDescriptor),
+    Option(Box<CanonicalDescriptor>),
+    Result(Box<CanonicalDescriptor>, Box<CanonicalDescriptor>),
+    Array(Box<CanonicalDescriptor>),
+    FixedArray(Box<CanonicalDescriptor>, u32),
+    Vec(Box<CanonicalDescriptor>),
+    Struct(NominalIdentity),
+    Enum(NominalIdentity),
+    Function {
+        params: Box<[CanonicalDescriptor]>,
+        ret: Box<CanonicalDescriptor>,
+    },
+    Unresolved,
 }
 
-fn same_schema(left: &StructSchema, right: &StructSchema) -> bool {
-    schema_key(left) == schema_key(right)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct NominalIdentity {
+    def: DefId,
+    args: Box<[CanonicalDescriptor]>,
 }
 
-fn schema_hash(schema: &StructSchema) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    schema_key(schema).hash(&mut hasher);
-    hasher.finish()
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct StructIdentity {
+    nominal: NominalIdentity,
+    fields: Box<[(String, CanonicalDescriptor)]>,
+}
+
+type VariantFields = Box<[(Option<String>, CanonicalDescriptor)]>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct EnumIdentity {
+    nominal: NominalIdentity,
+    name: String,
+    variants: Box<[(String, VariantFields)]>,
+}
+
+const CANONICAL_DEPTH: usize = 64;
+
+// a local schema index means nothing outside its function, so nesting keys on definition identity
+fn canonical(
+    descriptor: &TypeDescriptor,
+    function: &super::Function,
+    depth: usize,
+) -> CanonicalDescriptor {
+    if depth > CANONICAL_DEPTH {
+        return CanonicalDescriptor::Unresolved;
+    }
+    let inner = |descriptor: &TypeDescriptor| Box::new(canonical(descriptor, function, depth + 1));
+    match descriptor {
+        TypeDescriptor::Option(item) => CanonicalDescriptor::Option(inner(item)),
+        TypeDescriptor::Result(ok, err) => CanonicalDescriptor::Result(inner(ok), inner(err)),
+        TypeDescriptor::Array(item) => CanonicalDescriptor::Array(inner(item)),
+        TypeDescriptor::FixedArray(item, length) => {
+            CanonicalDescriptor::FixedArray(inner(item), *length)
+        }
+        TypeDescriptor::Vec(item) => CanonicalDescriptor::Vec(inner(item)),
+        TypeDescriptor::Struct(index) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| function.struct_schemas.get(index))
+            .map_or(CanonicalDescriptor::Unresolved, |schema| {
+                CanonicalDescriptor::Struct(nominal(
+                    &schema.ctor,
+                    &schema.type_args,
+                    function,
+                    depth + 1,
+                ))
+            }),
+        TypeDescriptor::Enum(index) => function.enum_schemas.get(usize::from(*index)).map_or(
+            CanonicalDescriptor::Unresolved,
+            |schema| {
+                CanonicalDescriptor::Enum(nominal(
+                    &schema.def_id,
+                    &schema.type_args,
+                    function,
+                    depth + 1,
+                ))
+            },
+        ),
+        TypeDescriptor::Function { params, ret } => CanonicalDescriptor::Function {
+            params: params
+                .iter()
+                .map(|param| canonical(param, function, depth + 1))
+                .collect(),
+            ret: inner(ret),
+        },
+        plain => CanonicalDescriptor::Plain(plain.clone()),
+    }
+}
+
+fn nominal(
+    def: &DefId,
+    args: &[TypeDescriptor],
+    function: &super::Function,
+    depth: usize,
+) -> NominalIdentity {
+    NominalIdentity {
+        def: def.clone(),
+        args: args
+            .iter()
+            .map(|arg| canonical(arg, function, depth))
+            .collect(),
+    }
+}
+
+fn struct_identity(schema: &StructSchema, function: &super::Function) -> StructIdentity {
+    StructIdentity {
+        nominal: nominal(&schema.ctor, &schema.type_args, function, 0),
+        fields: schema
+            .fields
+            .iter()
+            .map(|field| (field.name.clone(), canonical(&field.ty, function, 0)))
+            .collect(),
+    }
+}
+
+fn enum_identity(schema: &EnumSchema, function: &super::Function) -> EnumIdentity {
+    EnumIdentity {
+        nominal: nominal(&schema.def_id, &schema.type_args, function, 0),
+        name: schema.name.clone(),
+        variants: schema
+            .variants
+            .iter()
+            .map(|variant| {
+                (
+                    variant.name.clone(),
+                    variant
+                        .fields
+                        .iter()
+                        .map(|field| (field.name.clone(), canonical(&field.ty, function, 0)))
+                        .collect(),
+                )
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
