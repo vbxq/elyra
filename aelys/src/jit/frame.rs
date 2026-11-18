@@ -1389,10 +1389,20 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.builder.switch_to_block(continuation);
     }
 
+    // a value not produced by machine code may be a heap-boxed int: leave before the instruction's effect
     fn unbox_int(&mut self, value: ClifValue) -> ClifValue {
         if let Some(raw) = self.known.get(&value).and_then(|known| known.int) {
             return raw;
         }
+        if self.current.is_some() {
+            let exit = self.exit();
+            let inline = self.tag_is(value, int_value(0) & TAG_BITS);
+            self.guard(inline, exit);
+        }
+        self.unbox_int_bits(value)
+    }
+
+    fn unbox_int_bits(&mut self, value: ClifValue) -> ClifValue {
         let shifted = self.builder.ins().ishl_imm_s(value, 16);
         self.builder.ins().sshr_imm_s(shifted, 16)
     }
@@ -2359,7 +2369,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                 let collection = self.get(inst.a + 2);
                 let counter = self.get(inst.a + 1);
                 let is_int = self.is_int(counter);
-                let raw = self.unbox_int(counter);
+                let raw = self.unbox_int_bits(counter);
                 let zero = self.builder.ins().iconst(types::I64, 0);
                 let index = self.builder.ins().select(is_int, raw, zero);
                 let array = self.builder.ins().iconst(
