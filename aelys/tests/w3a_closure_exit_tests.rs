@@ -300,9 +300,7 @@ fn exit_paths() -> Vec<(&'static str, String, &'static str)> {
         ),
         (
             "method_tail",
-            format!(
-                "struct R {{ fs: Vec<fn() -> int> }}\nimpl R {{\n    fn add(mut self, k: int) {{\n        let mut n = k\n        self.fs.push(fn() -> int {{\n            n += 1\n            n * 10\n        }})\n    }}\n}}\nfn reg(mut fs: Vec<fn() -> int>, k: int) {{\n    let mut r = R {{ fs: vec![] }}\n    r.add(k)\n    fs.push(r.fs[0])\n}}\n"
-            ),
+            "struct R { fs: Vec<fn() -> int> }\nimpl R {\n    fn add(mut self, k: int) {\n        let mut n = k\n        self.fs.push(fn() -> int {\n            n += 1\n            n * 10\n        })\n    }\n}\nfn reg(mut fs: Vec<fn() -> int>, k: int) {\n    let mut r = R { fs: vec![] }\n    r.add(k)\n    fs.push(r.fs[0])\n}\n".to_string(),
             unit_call,
         ),
         (
@@ -725,7 +723,7 @@ fn the_scanner_flags_a_return_that_leaves_an_upvalue_open() {
     let source = "fn make() -> fn() -> int {\n    let mut n = 0\n    let f = fn() -> int {\n        n += 1\n        n\n    }\n    return f\n}\nprintln(make()())\n";
     let mut pipeline = compilation_pipeline_with_opt(OptimizationLevel::None);
     let mut function = pipeline
-        .compile(Source::new("scan.aelys", &without_stdlib(source)))
+        .compile(Source::new("scan.aelys", without_stdlib(source)))
         .expect("compiles");
     let make = function
         .nested_functions
