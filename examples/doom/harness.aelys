@@ -26,6 +26,11 @@ let mut f_minor: Vec<int> = vec![]
 let mut f_major: Vec<int> = vec![]
 let mut f_slices: Vec<int> = vec![]
 let mut f_wait: Vec<int> = vec![]
+let mut f_bsp: Vec<int> = vec![]
+let mut f_walls: Vec<int> = vec![]
+let mut f_planes: Vec<int> = vec![]
+let mut f_spr: Vec<int> = vec![]
+let mut f_msk: Vec<int> = vec![]
 let mut own_allocs = 0
 
 let mut s_us: Vec<int> = vec![]
@@ -89,6 +94,18 @@ fn pct(s: Vec<int>, p: int) -> int {
     s[i]
 }
 
+fn mean(v: Vec<int>) -> int {
+    if v.len() == 0 { return 0 }
+    let mut t = 0
+    for x in v { t += x }
+    t / v.len()
+}
+
+fn phase_line(name: string, v: Vec<int>) -> string {
+    let s = sorted(v)
+    "{name} mean {ms(mean(v))} p50 {ms(pct(s, 50))} p99 {ms(pct(s, 99))}"
+}
+
 fn ms(us: int) -> string {
     "{us / 1000}.{(us % 1000) / 100}{(us % 100) / 10}{us % 10}"
 }
@@ -118,9 +135,9 @@ fn frame_line(i: int) -> string {
 }
 
 fn write_csv(path: string) {
-    let mut out = "frame,tic,total_us,logic_us,render_us,tics,wait_us,gc_pause_us,minor,major_slices,major_done,drawsegs,sprites,planes\n"
+    let mut out = "frame,tic,total_us,logic_us,render_us,tics,wait_us,gc_pause_us,minor,major_slices,major_done,drawsegs,sprites,planes,bsp_us,walls_us,planes_us,sprites_us,masked_us\n"
     for i in 0..f_total.len() {
-        out += "{i},{f_tic[i]},{f_total[i]},{f_logic[i]},{f_render[i]},{f_ntics[i]},{f_wait[i]},{f_pause[i]},{f_minor[i]},{f_slices[i]},{f_major[i]},{f_ds[i]},{f_vs[i]},{f_pl[i]}\n"
+        out += "{i},{f_tic[i]},{f_total[i]},{f_logic[i]},{f_render[i]},{f_ntics[i]},{f_wait[i]},{f_pause[i]},{f_minor[i]},{f_slices[i]},{f_major[i]},{f_ds[i]},{f_vs[i]},{f_pl[i]},{f_bsp[i]},{f_walls[i]},{f_planes[i]},{f_spr[i]},{f_msk[i]}\n"
     }
     match fs::write_text(path, out) {
         Ok(_) => println("gate csv {path}"),
@@ -151,6 +168,8 @@ fn report(variant: string, realtime: bool, wall_us: int) {
     println("gate cpu_frame_ms p50 {ms(pct(cs, 50))} p99 {ms(pct(cs, 99))} max {ms(cs[n - 1])}")
     println("gate render_ms p50 {ms(pct(sorted(f_render), 50))} p99 {ms(pct(sorted(f_render), 99))}")
     println("gate logic_ms p50 {ms(pct(sorted(f_logic), 50))} max {ms(pct(sorted(f_logic), 100))}")
+    let bsp_name = if engine::has_flag("--phases") { "bsp" } else { "bsp_and_walls" }
+    println("gate phase_ms {phase_line("logic", f_logic)} | {phase_line(bsp_name, f_bsp)} | {phase_line("walls", f_walls)} | {phase_line("planes", f_planes)} | {phase_line("sprites", f_spr)} | {phase_line("masked", f_msk)}")
     println("gate scene p50 drawsegs {ds50} sprites {vs50} planes {pl50} max drawsegs {pct(sorted(f_ds), 100)} sprites {pct(sorted(f_vs), 100)} planes {pct(sorted(f_pl), 100)}")
     println("gate slowest {frame_line(worst)}")
     println("gate slowest_cause {cause(worst, ds50, vs50, pl50)}")
@@ -211,6 +230,12 @@ pub fn run(present: fn() -> bool, variant: string) {
     f_major.reserve(cap * 4)
     f_slices.reserve(cap * 4)
     f_wait.reserve(cap * 4)
+    f_bsp.reserve(cap * 4)
+    f_walls.reserve(cap * 4)
+    f_planes.reserve(cap * 4)
+    f_spr.reserve(cap * 4)
+    f_msk.reserve(cap * 4)
+    render::set_phase_timers(engine::has_flag("--phases"))
     s_us.reserve(128)
     s_rss.reserve(128)
     s_heap.reserve(128)
@@ -254,6 +279,11 @@ pub fn run(present: fn() -> bool, variant: string) {
         f_ds.push(render::drawseg_count())
         f_vs.push(render::sprite_count())
         f_pl.push(render::plane_count())
+        f_bsp.push(render::phase_bsp_us())
+        f_walls.push(render::phase_walls_us())
+        f_planes.push(render::phase_planes_us())
+        f_spr.push(render::phase_sprites_us())
+        f_msk.push(render::phase_masked_us())
         f_pause.push(sys::gc_window_max_pause_us())
         f_minor.push(sys::gc_minor_collections() - minor0)
         f_major.push(sys::gc_major_collections() - major0)

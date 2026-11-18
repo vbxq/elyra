@@ -153,6 +153,13 @@ let mut plane_zrow = 0
 let mut time_bsp = 0.0
 let mut time_planes = 0.0
 let mut time_masked = 0.0
+let phase_clock = time::timer()
+let mut phases_on = false
+let mut ph_bsp = 0
+let mut ph_walls = 0
+let mut ph_planes = 0
+let mut ph_sprites = 0
+let mut ph_masked = 0
 
 fn iabs(a: int) -> int {
     if a < 0 { -a } else { a }
@@ -1091,7 +1098,13 @@ fn store_wall_range(start: int, stop: int) {
     wall_steps(has_back)
     if w_markceiling { ceilingplane = check_plane(ceilingplane, start, stop) }
     if w_markfloor { floorplane = check_plane(floorplane, start, stop) }
-    seg_loop(fb, start, stop + 1)
+    if phases_on {
+        let tw = time::elapsed_us(phase_clock)
+        seg_loop(fb, start, stop + 1)
+        ph_walls += time::elapsed_us(phase_clock) - tw
+    } else {
+        seg_loop(fb, start, stop + 1)
+    }
     wall_finish(start, stop)
 }
 
@@ -1800,12 +1813,16 @@ fn draw_masked() {
         }
         vs_order[j + 1] = cur
     }
+    let ts = time::elapsed_us(phase_clock)
     for i in 0..num_vs { draw_sprite(vs_order[i]) }
+    let tm = time::elapsed_us(phase_clock)
+    ph_sprites = tm - ts
     let mut d = num_ds - 1
     while d >= 0 {
         if ds_masked[d] != -1000000 { render_masked_seg(d, ds_x1[d], ds_x2[d]) }
         d--
     }
+    ph_masked = time::elapsed_us(phase_clock) - tm
 }
 
 fn clear_frame() {
@@ -1837,18 +1854,28 @@ pub fn render_frame(view_x: int, view_y: int, view_z: int, angle: int) {
     let fi = viewangle >> 19
     viewsin = fixed::finesine[fi]
     viewcos = fixed::finesine[fi + 2048]
-    let t0 = time::timer()
+    let t0 = time::elapsed_us(phase_clock)
+    ph_walls = 0
     clear_frame()
     render_node(num_nodes - 1)
-    let t1 = time::elapsed(t0)
+    let t1 = time::elapsed_us(phase_clock)
     draw_planes()
-    let t2 = time::elapsed(t0)
+    let t2 = time::elapsed_us(phase_clock)
     draw_masked()
-    let t3 = time::elapsed(t0)
-    time_bsp += t1 * 1000.0
-    time_planes += (t2 - t1) * 1000.0
-    time_masked += (t3 - t2) * 1000.0
+    let t3 = time::elapsed_us(phase_clock)
+    ph_bsp = t1 - t0 - ph_walls
+    ph_planes = t2 - t1
+    time_bsp += convert::to_float(t1 - t0) / 1000.0
+    time_planes += convert::to_float(t2 - t1) / 1000.0
+    time_masked += convert::to_float(t3 - t2) / 1000.0
 }
+
+pub fn set_phase_timers(on: bool) { phases_on = on }
+pub fn phase_bsp_us() -> int { ph_bsp }
+pub fn phase_walls_us() -> int { ph_walls }
+pub fn phase_planes_us() -> int { ph_planes }
+pub fn phase_sprites_us() -> int { ph_sprites }
+pub fn phase_masked_us() -> int { ph_masked }
 
 pub fn reset_times() {
     time_bsp = 0.0
