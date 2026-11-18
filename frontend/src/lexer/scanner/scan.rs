@@ -10,7 +10,10 @@ impl Lexer {
             ' ' | '\r' | '\t' => {}
 
             '\n' => {
-                if self.pending_semicolon && self.nesting_depth == 0 && !self.next_token_is_else() {
+                if self.pending_semicolon
+                    && !matches!(self.frames.last(), Some('(' | '['))
+                    && !self.next_token_is_else()
+                {
                     self.add_token(TokenKind::Semicolon);
                     self.pending_semicolon = false;
                 }
@@ -18,23 +21,22 @@ impl Lexer {
                 self.column = 1;
             }
 
-            '(' => {
-                self.nesting_depth += 1;
-                self.add_token(TokenKind::LParen);
+            // a newline ends a statement except directly inside `(…)` or `[…]`; a `{` opens a frame where it counts again
+            '(' | '[' | '{' => {
+                self.frames.push(c);
+                self.add_token(match c {
+                    '(' => TokenKind::LParen,
+                    '[' => TokenKind::LBracket,
+                    _ => TokenKind::LBrace,
+                });
             }
-            ')' => {
-                self.nesting_depth = self.nesting_depth.saturating_sub(1);
-                self.add_token(TokenKind::RParen);
-            }
-            '{' => self.add_token(TokenKind::LBrace),
-            '}' => self.add_token(TokenKind::RBrace),
-            '[' => {
-                self.nesting_depth += 1;
-                self.add_token(TokenKind::LBracket);
-            }
-            ']' => {
-                self.nesting_depth = self.nesting_depth.saturating_sub(1);
-                self.add_token(TokenKind::RBracket);
+            ')' | ']' | '}' => {
+                self.frames.pop();
+                self.add_token(match c {
+                    ')' => TokenKind::RParen,
+                    ']' => TokenKind::RBracket,
+                    _ => TokenKind::RBrace,
+                });
             }
             ',' => self.add_token(TokenKind::Comma),
             ';' => self.add_token(TokenKind::Semicolon),
@@ -166,7 +168,7 @@ impl Lexer {
 
             '"' => self.string()?,
 
-            '\'' if self.peek().is_alphabetic() || self.peek() == '_' => {
+            '\'' if (self.peek().is_alphabetic() || self.peek() == '_') && !self.quote_closes_after_name() => {
                 while self.peek().is_alphanumeric() || self.peek() == '_' {
                     self.advance();
                 }

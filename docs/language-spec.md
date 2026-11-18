@@ -39,7 +39,8 @@ trait impl and or not pub needs as from true false null
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
 
 `loop` is contextual: it opens a loop only when a `{` follows it, so `let loop = 1`
-still declares a variable. `step` is contextual too: it is a keyword only after
+still declares a variable. A quote followed by a name is a label unless another
+quote closes it right after the name (`'a'` is not a label). `step` is contextual too: it is a keyword only after
 the range of a `for` header, so a function, variable or field may be named `step`. A label is an identifier written after a quote,
 `'outer`, and is only meaningful before `for`, `while` or `loop` and after `break`
 or `continue`.
@@ -1213,6 +1214,18 @@ Explicit semicolons let you put multiple statements on one line:
 
 ```rust
 let x = 1; let y = 2; let z = 3
+```
+
+A newline directly inside `(...)` or `[...]` inserts nothing, so arguments and
+elements may span lines. A `{` opens a block where newlines end statements again,
+even inside parentheses or brackets, so a multi-line block, `if`, `match` or
+closure body works as an argument, a `vec!` element or a tuple element:
+
+```rust
+let total = apply(fn(a: int) -> int {
+    let doubled = a * 2
+    doubled + 1
+})
 ```
 
 ## Collections

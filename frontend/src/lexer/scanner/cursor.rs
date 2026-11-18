@@ -17,6 +17,19 @@ impl Lexer {
         c
     }
 
+    // `'a'` is a character literal and `'a` a label, as in rust
+    pub(super) fn quote_closes_after_name(&self) -> bool {
+        let mut index = self.current;
+        while self
+            .chars
+            .get(index)
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+        {
+            index += 1;
+        }
+        self.chars.get(index) == Some(&'\'')
+    }
+
     pub(super) fn peek(&self) -> char {
         self.chars.get(self.current).copied().unwrap_or('\0')
     }

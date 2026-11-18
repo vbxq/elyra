@@ -388,3 +388,77 @@ fn step_is_a_keyword_only_in_a_for_header() {
     let value = aelys_driver::run_file(&main).expect("lib::step() is callable");
     assert_eq!(value.as_int(), Some(42));
 }
+
+#[test]
+fn a_brace_inside_parentheses_or_brackets_restores_newline_statements() {
+    int_at_every_level(
+        r#"
+fn id(x: int) -> int { x }
+fn apply(f: fn(int) -> int) -> int { f(3) }
+let k = 1
+let a = id(if k == 0 {
+    let t = 5
+    t
+} else {
+    let u = 7
+    u + 1
+})
+let v = vec![
+    match k {
+        0 => 1,
+        _ => {
+            let q = 10
+            q + 1
+        }
+    },
+    2
+]
+let mut calls = 0
+let r = apply(fn(x: int) -> int {
+    calls += 1
+    x * 2
+})
+let t = (
+    {
+        let w = 4
+        w * w
+    },
+    9
+)
+let b = id({
+    let g = id
+    (5)
+})
+let arr = [
+    1,
+    2
+]
+a * 1000000 + v[0] * 10000 + r * 1000 + t.0 * 10 + calls + b + arr[1]
+        "#,
+        8 * 1_000_000 + 11 * 10_000 + 6 * 1000 + 16 * 10 + 1 + 5 + 2,
+    );
+    int_at_every_level(
+        r#"
+let mut launched = 0
+fn launch() -> int { launched += 1
+    launched }
+fn run(x: unit) -> int { 3 }
+let r = run({
+    let handler = launch
+    ()
+})
+r * 10 + launched
+        "#,
+        30,
+    );
+}
+
+#[test]
+fn a_quote_name_quote_is_not_a_label() {
+    let error = rejected("let t = 'a'\n1");
+    assert!(error.contains("E0002"), "{error}");
+    int_at_every_level(
+        "let mut n = 0\n'outer: for i in 0..3 { for j in 0..3 { if j == 1 { continue 'outer }\n n += 1 } }\nn",
+        3,
+    );
+}
