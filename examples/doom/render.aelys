@@ -150,7 +150,7 @@ let mut ph_sprites = 0
 let mut ph_masked = 0
 
 fn iabs(a: int) -> int {
-    if a < 0 { -a } else { a }
+    if a < 0 { 0 - a } else { a }
 }
 
 @inline_always
@@ -166,8 +166,8 @@ fn ang_sub(a: int, b: int) -> int { (a - b) & 0xFFFFFFFF }
 fn fine_index(a: int) -> int { (a & 0xFFFFFFFF) >> 19 }
 
 fn fdiv(a: int, b: int) -> int {
-    let aa = if a < 0 { -a } else { a }
-    let ab = if b < 0 { -b } else { b }
+    let aa = if a < 0 { 0 - a } else { a }
+    let ab = if b < 0 { 0 - b } else { b }
     if (aa >> 14) >= ab {
         if (a ^ b) < 0 { return -2147483648 }
         return 2147483647
@@ -783,7 +783,7 @@ fn point_to_angle(px: int, py: int) -> int {
                 den = y
             }
         } else {
-            y = -y
+            y = 0 - y
             num = y
             if x > y {
                 base = 0x100000000
@@ -795,7 +795,7 @@ fn point_to_angle(px: int, py: int) -> int {
             }
         }
     } else {
-        x = -x
+        x = 0 - x
         den = x
         if y >= 0 {
             if x > y {
@@ -807,7 +807,7 @@ fn point_to_angle(px: int, py: int) -> int {
                 den = y
             }
         } else {
-            y = -y
+            y = 0 - y
             num = y
             if x > y {
                 base = 0x80000000
@@ -830,8 +830,8 @@ fn point_to_angle(px: int, py: int) -> int {
 fn point_to_dist(px: int, py: int) -> int {
     let mut dx = px - viewx
     let mut dy = py - viewy
-    if dx < 0 { dx = -dx }
-    if dy < 0 { dy = -dy }
+    if dx < 0 { dx = 0 - dx }
+    if dy < 0 { dy = 0 - dy }
     if dy > dx {
         let t = dx
         dx = dy
@@ -852,8 +852,8 @@ fn scale_from_angle(visangle: int, normalangle: int, distance: int) -> int {
     let num = 160 * sineb
     let den = distance.mul_shr(sinea, 16)
     if den > (num >> 16) {
-        let an = if num < 0 { -num } else { num }
-        let ad = if den < 0 { -den } else { den }
+        let an = if num < 0 { 0 - num } else { num }
+        let ad = if den < 0 { 0 - den } else { den }
         let mut scale = 2147483647
         if (an >> 14) >= ad {
             if (num ^ den) < 0 { scale = -2147483648 }
@@ -1093,7 +1093,7 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
         if oa > 0x80000000 { oa = 0x100000000 - oa }
         if oa > 0x40000000 { oa = 0x40000000 }
         let mut off = hyp.mul_shr(sine[oa >> 19], 16)
-        if delta < 0x80000000 { off = -off }
+        if delta < 0x80000000 { off = 0 - off }
         offset = off + sg_xoff[si]
         centerangle = ang_sub(viewangle + 0x40000000, normal)
         let mut lightnum = (rm_light[front] >> 4) + sg_light[si]
@@ -1109,9 +1109,9 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
     if ceilingplane < 0 { markceiling = false }
     let top = worldtop >> 4
     let bottom = worldbottom >> 4
-    let topstep = -scalestep.mul_shr(top, 16)
+    let topstep = 0 - scalestep.mul_shr(top, 16)
     let mut topfrac = 409600 - top.mul_shr(scale1, 16)
-    let bottomstep = -scalestep.mul_shr(bottom, 16)
+    let bottomstep = 0 - scalestep.mul_shr(bottom, 16)
     let mut bottomfrac = 409600 - bottom.mul_shr(scale1, 16)
     let mut pixhigh = 0
     let mut pixhighstep = 0
@@ -1122,11 +1122,11 @@ fn store_wall_range(si: int, front: int, rw_angle: int, start: int, stop: int) {
         let low = worldlow >> 4
         if high < top {
             pixhigh = 409600 - high.mul_shr(scale1, 16)
-            pixhighstep = -scalestep.mul_shr(high, 16)
+            pixhighstep = 0 - scalestep.mul_shr(high, 16)
         }
         if low > bottom {
             pixlow = 409600 - low.mul_shr(scale1, 16)
-            pixlowstep = -scalestep.mul_shr(low, 16)
+            pixlowstep = 0 - scalestep.mul_shr(low, 16)
         }
     }
     if markceiling {
@@ -1494,13 +1494,13 @@ fn project_sprite(a: Actor, lightrow: int) {
     let tr_x = a.x - viewx
     let tr_y = a.y - viewy
     let gxt = tr_x.mul_shr(viewcos, 16)
-    let gyt = -tr_y.mul_shr(viewsin, 16)
+    let gyt = 0 - tr_y.mul_shr(viewsin, 16)
     let tz = gxt - gyt
     if tz < 262144 { return () }
     let xscale = fdiv(10485760, tz)
-    let gxt2 = -tr_x.mul_shr(viewsin, 16)
+    let gxt2 = 0 - tr_x.mul_shr(viewsin, 16)
     let gyt2 = tr_y.mul_shr(viewcos, 16)
-    let mut tx = -(gyt2 + gxt2)
+    let mut tx = 0 - (gyt2 + gxt2)
     if iabs(tx) > (tz << 2) { return () }
     let def = sprite_defs[a.def]
     let mut rot = 0
@@ -1533,7 +1533,7 @@ fn project_sprite(a: Actor, lightrow: int) {
     let mut xiscale = iscale
     if flip {
         startfrac = (pic.width << 16) - 1
-        xiscale = -iscale
+        xiscale = 0 - iscale
     }
     if vx1 > x1 { startfrac += xiscale * (vx1 - x1) }
     vs_startfrac[v] = startfrac
@@ -1659,7 +1659,7 @@ fn draw_planes() {
         if pic < 0 { continue }
         let litbase = pic * 32
         let mut height = pl_height[p] - viewz
-        if height < 0 { height = -height }
+        if height < 0 { height = 0 - height }
         let mut light = pl_light[p] >> 4
         if light < 0 { light = 0 }
         if light > 15 { light = 15 }
@@ -1709,7 +1709,7 @@ fn draw_planes() {
                     let length = distance.mul_shr(dscale[x1], 16)
                     let angle = fine_index(va + xtov[x1])
                     let xfrac = vx + sine[angle + 2048].mul_shr(length, 16)
-                    let yfrac = -vy - sine[angle].mul_shr(length, 16)
+                    let yfrac = 0 - vy - sine[angle].mul_shr(length, 16)
                     let mut index = distance >> 20
                     if index >= 128 { index = 127 }
                     let k = litbase + zl[zrow + index]
@@ -1973,7 +1973,7 @@ fn clear_frame() {
     frame_no++
     let angle = fine_index(viewangle - 0x40000000)
     basexscale = fdiv(fixed::finesine[angle + 2048], 10485760)
-    baseyscale = -fdiv(fixed::finesine[angle], 10485760)
+    baseyscale = 0 - fdiv(fixed::finesine[angle], 10485760)
 }
 
 pub fn render_frame(view_x: int, view_y: int, view_z: int, angle: int) {
