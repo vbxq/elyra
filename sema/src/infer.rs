@@ -474,9 +474,12 @@ impl TypeInference {
             if !ty.is_concrete() {
                 continue;
             }
-            if residual.nominal_only
-                && !matches!(ty, InferType::Struct(_) | InferType::Applied { .. })
-            {
+            let checked = if residual.trait_name == crate::prelude::DISPLAY_TRAIT {
+                crate::prelude::contains_nominal(&ty)
+            } else {
+                matches!(ty, InferType::Struct(_) | InferType::Applied { .. })
+            };
+            if residual.nominal_only && !checked {
                 continue;
             }
             let trait_args: Vec<InferType> = residual

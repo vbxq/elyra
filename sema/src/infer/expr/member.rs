@@ -614,6 +614,14 @@ impl TypeInference {
         };
 
         if separator == MemberSeparator::Dot && member == "to_string" {
+            self.bound_residuals.push(crate::infer::BoundResidual {
+                ty: typed_object.ty.clone(),
+                trait_name: crate::prelude::DISPLAY_TRAIT.to_string(),
+                trait_args: Vec::new(),
+                span: typed_object.span,
+                reason: crate::constraint::ConstraintReason::Other("to_string method".to_string()),
+                nominal_only: true,
+            });
             return (
                 TypedExprKind::Member {
                     object: Box::new(typed_object),

@@ -145,7 +145,7 @@ c["y"] = vec![2, 4]
 fn display_renders_entries_in_insertion_order() {
     assert_aelys_str(
         "let mut m: Map<string, int> = Map::new()\nm[\"b\"] = 2\nm[\"a\"] = 1\nlet e: Map<int, bool> = Map::new()\nto_string(m) + \" \" + to_string(e)",
-        "{b: 2, a: 1} {}",
+        "{\"b\": 2, \"a\": 1} {}",
     );
 }
 
