@@ -8,6 +8,7 @@ macro_rules! each_variant {
             VecData::Floats($v) => $body,
             VecData::Bools($v) => $body,
             VecData::Objects($v) => $body,
+            VecData::Bytes($v) => $body,
         }
     };
 }
@@ -18,6 +19,7 @@ pub enum VecData {
     Floats(Vec<f64>),
     Bools(Vec<u8>),
     Objects(Vec<Value>),
+    Bytes(Vec<u8>),
 }
 
 impl VecData {
@@ -27,6 +29,7 @@ impl VecData {
             Self::Floats(v) => v.len(),
             Self::Bools(v) => v.len(),
             Self::Objects(v) => v.len(),
+            Self::Bytes(v) => v.len(),
         }
     }
 
@@ -40,6 +43,7 @@ impl VecData {
             Self::Floats(v) => v.capacity(),
             Self::Bools(v) => v.capacity(),
             Self::Objects(v) => v.capacity(),
+            Self::Bytes(v) => v.capacity(),
         }
     }
 
@@ -49,6 +53,7 @@ impl VecData {
             Self::Floats(_) => TypeTag::Float,
             Self::Bools(_) => TypeTag::Bool,
             Self::Objects(_) => TypeTag::Object,
+            Self::Bytes(_) => TypeTag::Byte,
         }
     }
 
@@ -100,6 +105,22 @@ impl VecData {
             _ => None,
         }
     }
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Bytes(v) => Some(v),
+            _ => None,
+        }
+    }
+    pub fn as_bytes_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match self {
+            Self::Bytes(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+fn byte_of(value: Value) -> Option<u8> {
+    value.as_int().and_then(|int| u8::try_from(int).ok())
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +151,13 @@ impl AelysVec {
     pub fn new_objects() -> Self {
         Self {
             data: VecData::Objects(Vec::new()),
+            accounted_capacity: 0,
+        }
+    }
+
+    pub fn new_bytes() -> Self {
+        Self {
+            data: VecData::Bytes(Vec::new()),
             accounted_capacity: 0,
         }
     }
@@ -188,6 +216,13 @@ impl AelysVec {
             accounted_capacity,
         }
     }
+    pub fn from_bytes(data: Vec<u8>) -> Self {
+        let accounted_capacity = data.len();
+        Self {
+            data: VecData::Bytes(data),
+            accounted_capacity,
+        }
+    }
 
     pub fn from_array(array: &AelysArray) -> Self {
         match &array.data {
@@ -214,13 +249,9 @@ impl AelysVec {
             VecData::Floats(values) => VecData::Floats(values[start..end].to_vec()),
             VecData::Bools(values) => VecData::Bools(values[start..end].to_vec()),
             VecData::Objects(values) => VecData::Objects(values[start..end].to_vec()),
+            VecData::Bytes(values) => VecData::Bytes(values[start..end].to_vec()),
         };
-        let accounted_capacity = match &data {
-            VecData::Ints(values) => values.len(),
-            VecData::Floats(values) => values.len(),
-            VecData::Bools(values) => values.len(),
-            VecData::Objects(values) => values.len(),
-        };
+        let accounted_capacity = data.len();
         Self {
             data,
             accounted_capacity,
@@ -233,7 +264,7 @@ impl AelysVec {
 
     pub fn accepts(&self, value: Value) -> bool {
         match &self.data {
-            VecData::Ints(_) => value.as_int().is_some(),
+            VecData::Ints(_) | VecData::Bytes(_) => value.as_int().is_some(),
             VecData::Floats(_) => value.as_float().is_some(),
             VecData::Bools(_) => value.as_bool().is_some(),
             VecData::Objects(_) => true,
@@ -245,10 +276,47 @@ impl AelysVec {
 
     // packed ints only ever hold inline-range values; a boxed int turns the storage into objects first
     pub fn promote_ints_to_objects(&mut self) {
-        if let VecData::Ints(values) = &self.data {
-            let mut objects = Vec::with_capacity(values.capacity());
-            objects.extend(values.iter().map(|value| Value::int(*value)));
-            self.data = VecData::Objects(objects);
+        match &self.data {
+            VecData::Ints(values) => {
+                let mut objects = Vec::with_capacity(values.capacity());
+                objects.extend(values.iter().map(|value| Value::int(*value)));
+                self.data = VecData::Objects(objects);
+            }
+            VecData::Bytes(values) => {
+                let mut objects = Vec::with_capacity(values.capacity());
+                objects.extend(values.iter().map(|value| Value::int(i64::from(*value))));
+                self.data = VecData::Objects(objects);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn widen_bytes_to_ints(&mut self) {
+        if let VecData::Bytes(values) = &self.data {
+            let mut ints = Vec::with_capacity(values.capacity());
+            ints.extend(values.iter().map(|value| i64::from(*value)));
+            self.data = VecData::Ints(ints);
+        }
+    }
+
+    pub fn pack_bytes(&mut self) -> bool {
+        let packed: Option<Vec<u8>> = match &self.data {
+            VecData::Bytes(_) => return true,
+            VecData::Ints(values) => values
+                .iter()
+                .map(|value| u8::try_from(*value).ok())
+                .collect(),
+            VecData::Objects(values) => values.iter().map(|value| byte_of(*value)).collect(),
+            VecData::Floats(values) if values.is_empty() => Some(Vec::new()),
+            VecData::Bools(values) if values.is_empty() => Some(Vec::new()),
+            _ => None,
+        };
+        match packed {
+            Some(bytes) => {
+                self.data = VecData::Bytes(bytes);
+                true
+            }
+            None => false,
         }
     }
 
@@ -261,6 +329,7 @@ impl AelysVec {
             VecData::Floats(v) => Value::float(v[index]),
             VecData::Bools(v) => Value::bool(v[index] != 0),
             VecData::Objects(v) => v[index],
+            VecData::Bytes(v) => Value::int(i64::from(v[index])),
         })
     }
 
@@ -297,6 +366,14 @@ impl AelysVec {
                 v[index] = value;
                 true
             }
+            VecData::Bytes(v) => {
+                if let Some(byte) = byte_of(value) {
+                    v[index] = byte;
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -330,6 +407,14 @@ impl AelysVec {
                 v.push(value);
                 true
             }
+            VecData::Bytes(v) => {
+                if let Some(byte) = byte_of(value) {
+                    v.push(byte);
+                    true
+                } else {
+                    false
+                }
+            }
         };
         if pushed {
             self.accounted_capacity = self.accounted_capacity.max(self.len());
@@ -343,6 +428,7 @@ impl AelysVec {
             VecData::Floats(v) => v.pop().map(Value::float),
             VecData::Bools(v) => v.pop().map(|b| Value::bool(b != 0)),
             VecData::Objects(v) => v.pop(),
+            VecData::Bytes(v) => v.pop().map(|b| Value::int(i64::from(b))),
         }
     }
 
@@ -393,6 +479,7 @@ impl AelysVec {
             VecData::Floats(v) => v.try_reserve(additional).is_ok(),
             VecData::Bools(v) => v.try_reserve(additional).is_ok(),
             VecData::Objects(v) => v.try_reserve(additional).is_ok(),
+            VecData::Bytes(v) => v.try_reserve(additional).is_ok(),
         };
         if reserved && let Some(target) = target {
             self.accounted_capacity = self.accounted_capacity.max(target);
@@ -409,6 +496,7 @@ impl AelysVec {
             VecData::Floats(v) => v.try_reserve_exact(additional).is_ok(),
             VecData::Bools(v) => v.try_reserve_exact(additional).is_ok(),
             VecData::Objects(v) => v.try_reserve_exact(additional).is_ok(),
+            VecData::Bytes(v) => v.try_reserve_exact(additional).is_ok(),
         };
         if reserved {
             self.accounted_capacity = self.accounted_capacity.max(target);
@@ -422,6 +510,7 @@ impl AelysVec {
             VecData::Floats(v) => v.clear(),
             VecData::Bools(v) => v.clear(),
             VecData::Objects(v) => v.clear(),
+            VecData::Bytes(v) => v.clear(),
         }
     }
 
@@ -431,6 +520,7 @@ impl AelysVec {
             VecData::Floats(v) => v.shrink_to_fit(),
             VecData::Bools(v) => v.shrink_to_fit(),
             VecData::Objects(v) => v.shrink_to_fit(),
+            VecData::Bytes(v) => v.shrink_to_fit(),
         }
         self.accounted_capacity = self.capacity();
     }
@@ -442,6 +532,7 @@ impl AelysVec {
                 VecData::Floats(v) => ArrayData::Floats(v.clone().into_boxed_slice()),
                 VecData::Bools(v) => ArrayData::Bools(v.clone().into_boxed_slice()),
                 VecData::Objects(v) => ArrayData::Objects(v.clone().into_boxed_slice()),
+                VecData::Bytes(v) => ArrayData::Ints(v.iter().map(|b| i64::from(*b)).collect()),
             },
         }
     }
@@ -456,7 +547,7 @@ impl AelysVec {
     pub fn size_bytes_for(type_tag: TypeTag, capacity: usize) -> Option<usize> {
         let element_size = match type_tag {
             TypeTag::Int | TypeTag::Float | TypeTag::Object => 8,
-            TypeTag::Bool => 1,
+            TypeTag::Bool | TypeTag::Byte => 1,
         };
         std::mem::size_of::<Self>().checked_add(capacity.checked_mul(element_size)?)
     }

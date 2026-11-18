@@ -7,6 +7,7 @@ pub enum TypeTag {
     Float = 1,
     Bool = 2,
     Object = 3,
+    Byte = 4,
 }
 
 impl TypeTag {
@@ -16,6 +17,7 @@ impl TypeTag {
             1 => Some(Self::Float),
             2 => Some(Self::Bool),
             3 => Some(Self::Object),
+            4 => Some(Self::Byte),
             _ => None,
         }
     }
@@ -111,7 +113,7 @@ impl AelysArray {
     pub fn size_bytes_for(type_tag: TypeTag, len: usize) -> Option<usize> {
         let element_size = match type_tag {
             TypeTag::Int | TypeTag::Float | TypeTag::Object => 8,
-            TypeTag::Bool => 1,
+            TypeTag::Bool | TypeTag::Byte => 1,
         };
         std::mem::size_of::<Self>().checked_add(len.checked_mul(element_size)?)
     }

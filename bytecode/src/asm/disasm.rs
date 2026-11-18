@@ -1034,8 +1034,12 @@ impl<'a> DisasmContext<'a> {
             }
 
             OpCode::VecNewI => {
-                let (_, a, b, _) = decode_a(instr);
-                format!("VecNewI   r{}, r{}", a, b)
+                let (_, a, b, c) = decode_a(instr);
+                if c == crate::bytecode::VEC_NEW_BYTES {
+                    format!("VecNewI   r{}, r{}, bytes", a, b)
+                } else {
+                    format!("VecNewI   r{}, r{}", a, b)
+                }
             }
             OpCode::VecNewF => {
                 let (_, a, b, _) = decode_a(instr);

@@ -19,7 +19,8 @@ pub use int_ops::{
     wrapping_sized_op,
 };
 pub use opcode::{
-    CastTarget, FixedKind, InstructionFormat, OpCode, SizedInt, WideRegisterOperands, WrappingOp,
+    CastTarget, FixedKind, InstructionFormat, OpCode, SizedInt, VEC_NEW_BYTES,
+    WideRegisterOperands, WrappingOp,
 };
 pub use operand::{Arity, ConstantIndex, GlobalIndex, JumpOffset, OperandRangeError, Register};
 pub use schema::{
