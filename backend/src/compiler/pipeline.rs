@@ -515,31 +515,63 @@ struct DefinitionRestore {
 }
 
 fn stmt_ends_in_assignment(stmt: &aelys_sema::TypedStmt) -> bool {
+    stmt_tail(stmt) == Tail::Assignment
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tail {
+    Assignment,
+    Diverges,
+    Value,
+}
+
+// a branching tail is an assignment only when every branch that completes ends in one
+fn branch_tails(tails: impl IntoIterator<Item = Tail>) -> Tail {
+    let mut joined = Tail::Diverges;
+    for tail in tails {
+        match tail {
+            Tail::Value => return Tail::Value,
+            Tail::Assignment => joined = Tail::Assignment,
+            Tail::Diverges => {}
+        }
+    }
+    joined
+}
+
+fn stmts_tail(stmts: &[aelys_sema::TypedStmt]) -> Tail {
+    stmts.last().map_or(Tail::Value, stmt_tail)
+}
+
+fn stmt_tail(stmt: &aelys_sema::TypedStmt) -> Tail {
     match &stmt.kind {
-        TypedStmtKind::Expression(expr) => expr_ends_in_assignment(expr),
+        TypedStmtKind::Expression(expr) => expr_tail(expr),
         TypedStmtKind::If {
             then_branch,
             else_branch: Some(else_branch),
             ..
-        } => stmt_ends_in_assignment(then_branch) || stmt_ends_in_assignment(else_branch),
-        TypedStmtKind::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
-        _ => false,
+        } => branch_tails([stmt_tail(then_branch), stmt_tail(else_branch)]),
+        TypedStmtKind::Block(stmts) => stmts_tail(stmts),
+        TypedStmtKind::Return(_) | TypedStmtKind::Break { .. } | TypedStmtKind::Continue { .. } => {
+            Tail::Diverges
+        }
+        _ => Tail::Value,
     }
 }
 
-fn expr_ends_in_assignment(expr: &aelys_sema::TypedExpr) -> bool {
-    use aelys_sema::{TypedExprKind, TypedMatchArmBody};
+fn expr_tail(expr: &aelys_sema::TypedExpr) -> Tail {
+    use aelys_sema::{InferType, TypedExprKind, TypedMatchArmBody};
     match &expr.kind {
         TypedExprKind::Assign { .. }
         | TypedExprKind::MemberAssign { .. }
-        | TypedExprKind::IndexAssign { .. } => true,
-        TypedExprKind::Grouping(inner) => expr_ends_in_assignment(inner),
-        TypedExprKind::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
-        TypedExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
-            TypedMatchArmBody::Expr(body) => expr_ends_in_assignment(body),
-            TypedMatchArmBody::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
-        }),
-        _ => false,
+        | TypedExprKind::IndexAssign { .. } => Tail::Assignment,
+        TypedExprKind::Grouping(inner) => expr_tail(inner),
+        TypedExprKind::Block(stmts) => stmts_tail(stmts),
+        TypedExprKind::Match { arms, .. } => branch_tails(arms.iter().map(|arm| match &arm.body {
+            TypedMatchArmBody::Expr(body) => expr_tail(body),
+            TypedMatchArmBody::Block(stmts) => stmts_tail(stmts),
+        })),
+        _ if matches!(expr.ty, InferType::Never) => Tail::Diverges,
+        _ => Tail::Value,
     }
 }
 
