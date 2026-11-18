@@ -9,6 +9,15 @@ impl VM {
         self.maybe_collect_for(0);
     }
 
+    pub(crate) fn collection_pending(&self, additional: u64) -> bool {
+        u64::try_from(self.heap.bytes_allocated())
+            .unwrap_or(u64::MAX)
+            .saturating_add(additional)
+            > self.config.max_heap_bytes
+            || self.heap.major_collection_active()
+            || self.heap.should_collect()
+    }
+
     pub(crate) fn maybe_collect_for(&mut self, additional: u64) {
         let projected = u64::try_from(self.heap.bytes_allocated())
             .unwrap_or(u64::MAX)
