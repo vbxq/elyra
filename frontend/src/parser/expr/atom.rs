@@ -50,14 +50,16 @@ impl Parser {
     }
 
     pub(super) fn if_expression(&mut self, start_span: aelys_syntax::Span) -> Result<Expr> {
+        if self.check(&TokenKind::Let) {
+            return self.if_let_expression(start_span, true);
+        }
         let condition = self.with_brace_construction(false, Parser::expression)?;
         self.consume(&TokenKind::LBrace, "{")?;
 
         let then_branch = self.block_expression()?;
 
         self.consume(&TokenKind::Else, "else")?;
-        self.consume(&TokenKind::LBrace, "{")?;
-        let else_branch = self.block_expression()?;
+        let else_branch = self.else_expression()?;
 
         let end_span = self.previous().span;
 
@@ -68,6 +70,80 @@ impl Parser {
                 else_branch: Box::new(else_branch),
             },
             start_span.merge(end_span),
+        ))
+    }
+
+    fn else_expression(&mut self) -> Result<Expr> {
+        if self.match_token(&TokenKind::If) {
+            let span = self.previous().span;
+            return self.if_expression(span);
+        }
+        self.consume(&TokenKind::LBrace, "{")?;
+        self.block_expression()
+    }
+
+    pub(crate) fn if_let_expression(
+        &mut self,
+        start_span: aelys_syntax::Span,
+        else_required: bool,
+    ) -> Result<Expr> {
+        self.consume(&TokenKind::Let, "let")?;
+        let pattern = self.parse_pattern()?;
+        self.consume(&TokenKind::Eq, "=")?;
+        let scrutinee = self.with_brace_construction(false, Parser::expression)?;
+        self.consume(&TokenKind::LBrace, "{")?;
+        let then_start = self.previous().span;
+        let mut then_body = self.block_statements()?;
+        let then_span = then_start.merge(self.previous().span);
+
+        let (else_body, else_span) = if self.match_token(&TokenKind::Else) {
+            let else_start = self.peek().span;
+            let else_expr = self.else_expression()?;
+            let span = else_start.merge(self.previous().span);
+            let body = match else_expr.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => vec![Stmt::new(StmtKind::Expression(else_expr), span)],
+            };
+            (body, span)
+        } else if else_required {
+            return Err(self.error(CompileErrorKind::UnexpectedToken {
+                expected: "else".to_string(),
+                found: self.peek().kind.to_string(),
+            }));
+        } else {
+            then_body.push(Stmt::new(
+                StmtKind::Expression(Expr::new(ExprKind::Unit, then_span)),
+                then_span,
+            ));
+            (Vec::new(), then_span)
+        };
+
+        let span = start_span.merge(self.previous().span);
+        let arms = vec![
+            MatchArm {
+                span: pattern.span.merge(then_span),
+                pattern,
+                guard: None,
+                body: MatchArmBody::Block(then_body),
+                synthetic: false,
+            },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Wildcard,
+                    span: else_span,
+                },
+                guard: None,
+                body: MatchArmBody::Block(else_body),
+                span: else_span,
+                synthetic: true,
+            },
+        ];
+        Ok(Expr::new(
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            },
+            span,
         ))
     }
 
@@ -114,6 +190,7 @@ impl Parser {
                 guard,
                 body,
                 span,
+                synthetic: false,
             });
 
             if self.match_token(&TokenKind::Comma) || self.match_token(&TokenKind::Semicolon) {
@@ -130,7 +207,7 @@ impl Parser {
         Ok(arms)
     }
 
-    fn parse_pattern(&mut self) -> Result<Pattern> {
+    pub(crate) fn parse_pattern(&mut self) -> Result<Pattern> {
         let first = self.parse_pattern_atom()?;
         if !self.check(&TokenKind::Pipe) {
             return Ok(first);
@@ -260,7 +337,41 @@ impl Parser {
                     }
                 }
             }
-            TokenKind::Int(value) => PatternKind::Int(value),
+            TokenKind::LParen => {
+                let mut elements = Vec::new();
+                if !self.check(&TokenKind::RParen) {
+                    loop {
+                        elements.push(self.parse_pattern()?);
+                        if !self.match_token(&TokenKind::Comma) || self.check(&TokenKind::RParen) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(&TokenKind::RParen, ")")?;
+                match elements.len() {
+                    0 => {
+                        return Err(self.error(CompileErrorKind::InvalidPattern {
+                            reason: "`()` is not a pattern; use `_`".to_string(),
+                        }));
+                    }
+                    1 => return Ok(elements.remove(0)),
+                    arity => PatternKind::Struct {
+                        path: vec![self.tuple_struct_name(arity)?],
+                        type_args: Vec::new(),
+                        fields: elements
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, pattern)| StructPatternField {
+                                name: index.to_string(),
+                                span: pattern.span,
+                                pattern,
+                            })
+                            .collect(),
+                        has_rest: false,
+                    },
+                }
+            }
+            TokenKind::Int(value) => self.range_pattern_tail(value)?,
             TokenKind::Minus => {
                 let value = match self.advance().kind {
                     TokenKind::Int(value) => -value,
@@ -268,7 +379,13 @@ impl Parser {
                         return Err(self.error(CompileErrorKind::ExpectedPattern));
                     }
                 };
-                PatternKind::Int(value)
+                self.range_pattern_tail(value)?
+            }
+            TokenKind::DotDotEq | TokenKind::DotDot => {
+                let inclusive = token.kind == TokenKind::DotDotEq;
+                let end = self.range_pattern_bound()?;
+                range_pattern(None, Some(end), inclusive)
+                    .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))?
             }
             TokenKind::String(value) => PatternKind::String(value),
             TokenKind::True => PatternKind::Bool(true),
@@ -283,56 +400,59 @@ impl Parser {
         })
     }
 
-    pub(super) fn block_expression(&mut self) -> Result<Expr> {
-        self.with_brace_construction(true, |parser| {
-            let mut stmts = Vec::new();
-
-            while !parser.check(&TokenKind::RBrace) && !parser.is_at_end() {
-                if parser.is_expression_start() {
-                    let expr = parser.expression()?;
-
-                    if parser.check(&TokenKind::RBrace) {
-                        parser.consume(&TokenKind::RBrace, "}")?;
-
-                        return Ok(expr);
-                    }
-
-                    parser.consume_semicolon()?;
-                    let span = expr.span;
-                    stmts.push(Stmt::new(StmtKind::Expression(expr), span));
-                } else {
-                    if parser.match_token(&TokenKind::Semicolon) {
-                        continue;
-                    }
-                    stmts.push(parser.declaration()?);
-                }
-            }
-
-            parser.consume(&TokenKind::RBrace, "}")?;
-
-            Ok(Expr::new(ExprKind::Unit, parser.previous().span))
-        })
+    fn range_pattern_tail(&mut self, start: i64) -> Result<PatternKind> {
+        let inclusive = if self.match_token(&TokenKind::DotDotEq) {
+            true
+        } else if self.match_token(&TokenKind::DotDot) {
+            false
+        } else {
+            return Ok(PatternKind::Int(start));
+        };
+        let end = if matches!(self.peek().kind, TokenKind::Int(_) | TokenKind::Minus) {
+            Some(self.range_pattern_bound()?)
+        } else if inclusive {
+            return Err(self.error(CompileErrorKind::InvalidPattern {
+                reason: "an inclusive range pattern needs an end; write `lo..` for an open range"
+                    .to_string(),
+            }));
+        } else {
+            None
+        };
+        range_pattern(Some(start), end, inclusive)
+            .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))
     }
 
-    pub(super) fn is_expression_start(&self) -> bool {
-        matches!(
-            self.peek().kind,
-            TokenKind::Int(_)
-                | TokenKind::Float(_)
-                | TokenKind::String(_)
-                | TokenKind::FmtString(_)
-                | TokenKind::True
-                | TokenKind::False
-                | TokenKind::Null
-                | TokenKind::Match
-                | TokenKind::Identifier(_)
-                | TokenKind::LParen
-                | TokenKind::LBracket
-                | TokenKind::Minus
-                | TokenKind::Not
-                | TokenKind::If
-                | TokenKind::Fn
-        )
+    fn range_pattern_bound(&mut self) -> Result<i64> {
+        let negative = self.match_token(&TokenKind::Minus);
+        match self.advance().kind {
+            TokenKind::Int(value) => Ok(if negative { -value } else { value }),
+            _ => Err(self.error(CompileErrorKind::InvalidPattern {
+                reason: "a range pattern bound must be an integer literal".to_string(),
+            })),
+        }
+    }
+
+    pub(super) fn block_expression(&mut self) -> Result<Expr> {
+        let start_span = self.previous().span;
+        let mut stmts = self.block_statements()?;
+        let span = start_span.merge(self.previous().span);
+        if stmts.is_empty() {
+            return Ok(Expr::new(ExprKind::Unit, span));
+        }
+        if stmts.len() == 1
+            && let StmtKind::Expression(expr) = &stmts[0].kind
+            && !matches!(expr.kind, ExprKind::Loop { .. })
+        {
+            let Some(Stmt {
+                kind: StmtKind::Expression(expr),
+                ..
+            }) = stmts.pop()
+            else {
+                unreachable!("the single statement was matched as an expression above");
+            };
+            return Ok(expr);
+        }
+        Ok(Expr::new(ExprKind::Block(stmts), span))
     }
 
     pub(super) fn primary(&mut self) -> Result<Expr> {
@@ -373,7 +493,27 @@ impl Parser {
                 let name = name.clone();
                 return self.struct_literal(name, Vec::new(), span);
             }
+            TokenKind::Identifier(ref name)
+                if name == "loop"
+                    && self.check(&TokenKind::LBrace)
+                    && self.brace_construction_allowed() =>
+            {
+                return self.loop_expression(span, None);
+            }
+            TokenKind::Label(label)
+                if self.check(&TokenKind::Colon)
+                    && matches!(&self.peek_at(1).kind, TokenKind::Identifier(name) if name == "loop")
+                    && self.peek_at(2).kind == TokenKind::LBrace =>
+            {
+                self.advance();
+                let loop_span = self.advance().span;
+                return self.loop_expression(span.merge(loop_span), Some(label));
+            }
             TokenKind::Identifier(name) => ExprKind::Identifier(name),
+
+            TokenKind::LBrace if self.brace_construction_allowed() => {
+                return self.block_expression();
+            }
 
             TokenKind::LBracket => {
                 return self.array_literal(span);
@@ -385,6 +525,9 @@ impl Parser {
                     return Ok(Expr::new(ExprKind::Unit, span.merge(end_span)));
                 }
                 let inner = self.with_brace_construction(true, Parser::expression)?;
+                if self.check(&TokenKind::Comma) {
+                    return self.tuple_literal(inner, span);
+                }
                 self.consume(&TokenKind::RParen, ")")?;
                 let end_span = self.previous().span;
                 return Ok(Expr::new(
@@ -412,6 +555,45 @@ impl Parser {
         };
 
         Ok(Expr::new(kind, span))
+    }
+
+    fn tuple_literal(&mut self, first: Expr, start_span: aelys_syntax::Span) -> Result<Expr> {
+        let mut elements = vec![first];
+        self.with_brace_construction(true, |parser| {
+            while parser.match_token(&TokenKind::Comma) {
+                if parser.check(&TokenKind::RParen) {
+                    break;
+                }
+                elements.push(parser.expression()?);
+            }
+            Ok(())
+        })?;
+        self.consume(&TokenKind::RParen, ")")?;
+        let span = start_span.merge(self.previous().span);
+        if elements.len() < 2 {
+            return Err(self.error(CompileErrorKind::UnexpectedToken {
+                expected: "a second tuple element".to_string(),
+                found: ")".to_string(),
+            }));
+        }
+        let name = self.tuple_struct_name(elements.len())?;
+        let fields = elements
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| StructFieldInit {
+                name: index.to_string(),
+                span: value.span,
+                value: Box::new(value),
+            })
+            .collect();
+        Ok(Expr::new(
+            ExprKind::StructLiteral {
+                name,
+                type_args: Vec::new(),
+                fields,
+            },
+            span,
+        ))
     }
 
     fn array_literal(&mut self, start_span: aelys_syntax::Span) -> Result<Expr> {
@@ -713,6 +895,27 @@ impl Parser {
     }
 }
 
+fn range_pattern(
+    start: Option<i64>,
+    end: Option<i64>,
+    inclusive: bool,
+) -> std::result::Result<PatternKind, String> {
+    if let (Some(start), Some(end)) = (start, end) {
+        let empty = if inclusive { start > end } else { start >= end };
+        if empty {
+            return Err(format!(
+                "range pattern {start}{}{end} matches no value",
+                if inclusive { "..=" } else { ".." }
+            ));
+        }
+    }
+    Ok(PatternKind::Range {
+        start,
+        end,
+        inclusive,
+    })
+}
+
 fn remap_expr_spans(expr: &mut Expr, span: aelys_syntax::Span) {
     expr.span = span;
     if let Some(repeat) = &mut expr.repeat {
@@ -824,6 +1027,11 @@ fn remap_expr_spans(expr: &mut Expr, span: aelys_syntax::Span) {
         ExprKind::Cast { expr, .. } => {
             remap_expr_spans(expr, span);
         }
+        ExprKind::Block(body) | ExprKind::Loop { body, .. } => {
+            for stmt in body {
+                remap_stmt_spans(stmt, span);
+            }
+        }
         _ => {}
     }
 }
@@ -849,7 +1057,9 @@ fn remap_stmt_spans(stmt: &mut Stmt, span: aelys_syntax::Span) {
                 remap_stmt_spans(e, span);
             }
         }
-        StmtKind::While { condition, body } => {
+        StmtKind::While {
+            condition, body, ..
+        } => {
             remap_expr_spans(condition, span);
             remap_stmt_spans(body, span);
         }
@@ -867,7 +1077,14 @@ fn remap_stmt_spans(stmt: &mut Stmt, span: aelys_syntax::Span) {
             }
             remap_stmt_spans(body, span);
         }
-        StmtKind::Return(Some(expr)) => remap_expr_spans(expr, span),
+        StmtKind::Return(Some(expr))
+        | StmtKind::Break {
+            value: Some(expr), ..
+        } => remap_expr_spans(expr, span),
+        StmtKind::ForEach { iterable, body, .. } => {
+            remap_expr_spans(iterable, span);
+            remap_stmt_spans(body, span);
+        }
         StmtKind::Function(func) => {
             for s in &mut func.body {
                 remap_stmt_spans(s, span);

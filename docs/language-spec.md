@@ -2432,6 +2432,10 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
+| E0390 | UndefinedLabel | a `break` or `continue` names a label no enclosing loop declares |
+| E0391 | BreakValueOutsideLoop | `break` with a value targets a `while` or `for` |
+| E0392 | CapitalizedBindingPattern | a bare capitalised name in a pattern on an enum, which would bind instead of matching a variant |
+| E0393 | TupleFieldAssignment | a write to a tuple field; tuples are immutable |
 
 ### E04xx, modules, visibility, borrows, and associated items
 

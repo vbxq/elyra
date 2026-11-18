@@ -47,9 +47,11 @@ impl Compiler {
                 else_branch.as_deref(),
                 stmt.span,
             ),
-            TypedStmtKind::While { condition, body } => {
-                self.compile_typed_while(condition, body, stmt.span)
-            }
+            TypedStmtKind::While {
+                condition,
+                body,
+                label,
+            } => self.compile_typed_while(condition, body, stmt.span, label.as_ref()),
             TypedStmtKind::For {
                 iterator,
                 start,
@@ -57,6 +59,7 @@ impl Compiler {
                 inclusive,
                 step,
                 body,
+                label,
             } => self.compile_typed_for(
                 iterator,
                 start,
@@ -65,6 +68,7 @@ impl Compiler {
                 step.as_ref().as_ref(),
                 body,
                 stmt.span,
+                label.as_ref(),
             ),
             TypedStmtKind::ForEach {
                 iterator,
@@ -72,10 +76,22 @@ impl Compiler {
                 elem_type,
                 read_only: _,
                 body,
-            } => self.compile_typed_for_each(iterator, iterable, elem_type, body, stmt.span),
+                label,
+            } => self.compile_typed_for_each(
+                iterator,
+                iterable,
+                elem_type,
+                body,
+                stmt.span,
+                label.as_ref(),
+            ),
             TypedStmtKind::Return(expr) => self.compile_typed_return(expr.as_ref(), stmt.span),
-            TypedStmtKind::Break => self.compile_break(stmt.span),
-            TypedStmtKind::Continue => self.compile_continue(stmt.span),
+            TypedStmtKind::Break { label, value } => {
+                self.compile_typed_break(label.as_ref(), value.as_ref(), stmt.span)
+            }
+            TypedStmtKind::Continue { label } => {
+                self.compile_typed_continue(label.as_ref(), stmt.span)
+            }
             TypedStmtKind::Function(func) => self.compile_typed_function(func),
             TypedStmtKind::ImplDecl { methods, .. } => {
                 for method in methods {

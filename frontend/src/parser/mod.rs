@@ -18,6 +18,8 @@ pub struct Parser {
     type_depth: usize,
     legacy_collections: bool,
     no_brace_construction: bool,
+    pending: Vec<Stmt>,
+    destructure_count: usize,
 }
 
 impl Parser {
@@ -30,6 +32,8 @@ impl Parser {
             type_depth: 0,
             legacy_collections: false,
             no_brace_construction: false,
+            pending: Vec::new(),
+            destructure_count: 0,
         }
     }
 
@@ -46,6 +50,8 @@ impl Parser {
             type_depth: 0,
             legacy_collections: true,
             no_brace_construction: false,
+            pending: Vec::new(),
+            destructure_count: 0,
         }
     }
 
@@ -58,6 +64,7 @@ impl Parser {
             }
 
             statements.push(self.declaration()?);
+            statements.append(&mut self.pending);
         }
 
         Ok(statements)
@@ -160,6 +167,19 @@ impl Parser {
         } else {
             self.tokens.last().unwrap()
         }
+    }
+
+    pub(crate) fn tuple_struct_name(&self, arity: usize) -> Result<String> {
+        if arity > aelys_syntax::MAX_TUPLE_ARITY {
+            return Err(self.error(CompileErrorKind::UnexpectedToken {
+                expected: format!(
+                    "a tuple of at most {} elements",
+                    aelys_syntax::MAX_TUPLE_ARITY
+                ),
+                found: format!("{arity} elements"),
+            }));
+        }
+        Ok(aelys_syntax::tuple_struct_name(arity))
     }
 
     fn previous(&self) -> &Token {

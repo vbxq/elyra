@@ -95,12 +95,7 @@ impl Compiler {
 
         let body_start = self.current_offset();
 
-        self.loop_stack.push(LoopContext {
-            start: body_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        self.loop_stack.push(LoopContext::new(body_start, true, self.locals.len()));
 
         self.compile_stmt(body)?;
 

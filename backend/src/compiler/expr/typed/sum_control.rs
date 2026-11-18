@@ -175,27 +175,7 @@ impl Compiler {
     ) -> Result<()> {
         match body {
             TypedMatchArmBody::Expr(expr) => self.compile_typed_expr(expr, dest),
-            TypedMatchArmBody::Block(stmts) => {
-                self.begin_scope();
-                if stmts.is_empty() {
-                    self.compile_literal_unit(dest, span)?;
-                } else {
-                    for stmt in &stmts[..stmts.len() - 1] {
-                        self.compile_typed_stmt(stmt)?;
-                    }
-                    match &stmts[stmts.len() - 1].kind {
-                        aelys_sema::TypedStmtKind::Expression(expr) => {
-                            self.compile_typed_expr(expr, dest)?;
-                        }
-                        _ => {
-                            self.compile_typed_stmt(&stmts[stmts.len() - 1])?;
-                            self.compile_literal_unit(dest, span)?;
-                        }
-                    }
-                }
-                self.end_scope();
-                Ok(())
-            }
+            TypedMatchArmBody::Block(stmts) => self.compile_typed_stmts_value(stmts, dest, span),
         }
     }
 
@@ -239,6 +219,19 @@ impl Compiler {
                 failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
                 self.free_register(condition);
                 self.free_register(literal);
+                Ok(())
+            }
+            TypedPatternKind::Range { start, end } => {
+                for (bound, opcode) in [(start, OpCode::Ge), (end, OpCode::Le)] {
+                    let Some(bound) = bound else { continue };
+                    let literal = self.alloc_register()?;
+                    let condition = self.alloc_register()?;
+                    self.compile_literal_int(*bound, literal, pattern.span)?;
+                    self.emit_a(opcode, condition, source, literal, pattern.span);
+                    failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
+                    self.free_register(condition);
+                    self.free_register(literal);
+                }
                 Ok(())
             }
             TypedPatternKind::Bool(value) => {
@@ -391,7 +384,8 @@ impl Compiler {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
-            | TypedPatternKind::Bool(_) => {}
+            | TypedPatternKind::Bool(_)
+            | TypedPatternKind::Range { .. } => {}
         }
         Ok(())
     }

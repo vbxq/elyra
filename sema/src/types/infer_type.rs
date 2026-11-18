@@ -529,6 +529,16 @@ impl fmt::Display for InferType {
             }
             InferType::Range => write!(f, "range"),
             InferType::Struct(name) => write!(f, "{}", name),
+            InferType::Applied { name, args } if aelys_syntax::tuple_arity(name).is_some() => {
+                write!(f, "(")?;
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ")")
+            }
             InferType::Applied { name, args } => {
                 write!(f, "{name}<")?;
                 for (index, arg) in args.iter().enumerate() {
@@ -581,6 +591,15 @@ impl InferType {
                     .join(", "),
                 ret.source_spelling()
             ),
+            InferType::Applied { name, args } if aelys_syntax::tuple_arity(name).is_some() => {
+                format!(
+                    "({})",
+                    args.iter()
+                        .map(InferType::source_spelling)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             InferType::Applied { name, args } => format!(
                 "{name}<{}>",
                 args.iter()

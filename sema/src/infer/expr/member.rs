@@ -1434,6 +1434,17 @@ impl TypeInference {
     ) -> (TypedExprKind, InferType) {
         let typed_object = self.infer_expr(object);
         let typed_value = self.infer_expr(value);
+        if let InferType::Applied { name, .. } = &typed_object.ty
+            && aelys_syntax::tuple_arity(name).is_some()
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::TupleFieldAssignment {
+                    field: member.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("tuple field assignment".to_string()),
+            });
+        }
         let Some(root) = root_binding_name(object) else {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {

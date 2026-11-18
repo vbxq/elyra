@@ -166,6 +166,14 @@ impl Lexer {
 
             '"' => self.string()?,
 
+            '\'' if self.peek().is_alphabetic() || self.peek() == '_' => {
+                while self.peek().is_alphanumeric() || self.peek() == '_' {
+                    self.advance();
+                }
+                let name: String = self.chars[self.start + 1..self.current].iter().collect();
+                self.add_token(TokenKind::Label(name));
+            }
+
             c if c.is_ascii_digit() => self.number()?,
 
             c if c.is_alphabetic() || c == '_' => self.identifier(),

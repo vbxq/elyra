@@ -118,7 +118,10 @@ impl Compiler {
                 ),
             )),
             ExprKind::Cast { expr: inner, .. } => self.compile_expr(inner, dest),
-            ExprKind::Try(_) | ExprKind::Match { .. } => Err(
+            ExprKind::Try(_)
+            | ExprKind::Match { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Loop { .. } => Err(
                 aelys_common::error::AelysError::Compile(aelys_common::error::CompileError::new(
                     aelys_common::error::CompileErrorKind::TypeInferenceError(
                         "typed sum expressions are required for the VM backend".to_string(),

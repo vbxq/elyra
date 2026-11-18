@@ -147,13 +147,15 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
                     arm.guard.as_ref().is_some_and(has_side_effects)
                         || match &arm.body {
                             aelys_sema::TypedMatchArmBody::Expr(expr) => has_side_effects(expr),
-                            aelys_sema::TypedMatchArmBody::Block(stmts) => stmts.iter().any(|stmt| {
-                                matches!(stmt.kind, TypedStmtKind::Expression(ref expr) if has_side_effects(expr))
-                            }),
+                            aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                                stmts.iter().any(stmt_has_side_effects)
+                            }
                         }
                 })
             }
         }
+        TypedExprKind::Block(stmts) => stmts.iter().any(stmt_has_side_effects),
+        TypedExprKind::Loop { .. } => true,
         TypedExprKind::Identifier(_)
         | TypedExprKind::Int(_)
         | TypedExprKind::Float(_)
@@ -162,5 +164,14 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
         | TypedExprKind::Unit
         | TypedExprKind::AssociatedConst { .. }
         | TypedExprKind::Null => false,
+    }
+}
+
+fn stmt_has_side_effects(stmt: &TypedStmt) -> bool {
+    match &stmt.kind {
+        TypedStmtKind::Expression(expr) | TypedStmtKind::Let {
+            initializer: expr, ..
+        } => has_side_effects(expr),
+        _ => true,
     }
 }

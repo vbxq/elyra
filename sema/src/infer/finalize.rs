@@ -133,8 +133,8 @@ fn collect_declared_type_params(stmt: &TypedStmt, declared: &mut HashSet<String>
         TypedStmtKind::Expression(_)
         | TypedStmtKind::Let { .. }
         | TypedStmtKind::Return(_)
-        | TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        | TypedStmtKind::Break { .. }
+        | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_) => {}
     }
 }

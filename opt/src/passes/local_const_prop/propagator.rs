@@ -77,7 +77,9 @@ impl LocalConstantPropagator {
                 }
             }
 
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+            condition, body, ..
+        } => {
                 let mut assigned = Vec::new();
                 Self::collect_assigned_vars(body, &mut assigned);
                 for name in &assigned {
@@ -131,7 +133,10 @@ impl LocalConstantPropagator {
                 self.scopes.pop();
             }
 
-            TypedStmtKind::Return(Some(expr)) => {
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => {
                 self.propagate_expr(expr);
             }
 
@@ -146,8 +151,8 @@ impl LocalConstantPropagator {
             }
 
             TypedStmtKind::Return(None)
-            | TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
@@ -174,13 +179,18 @@ impl LocalConstantPropagator {
                     Self::collect_assigned_vars(e, out);
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+            condition, body, ..
+        } => {
                 Self::collect_assigned_vars_expr(condition, out);
                 Self::collect_assigned_vars(body, out);
             }
             TypedStmtKind::For { body, .. } => Self::collect_assigned_vars(body, out),
             TypedStmtKind::ForEach { body, .. } => Self::collect_assigned_vars(body, out),
-            TypedStmtKind::Return(Some(expr)) => Self::collect_assigned_vars_expr(expr, out),
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => Self::collect_assigned_vars_expr(expr, out),
             _ => {}
         }
     }
@@ -290,11 +300,32 @@ impl LocalConstantPropagator {
                     }
                 }
             }
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { body, .. }
+            | TypedExprKind::Block(body)
+            | TypedExprKind::Loop { body, .. } => {
                 for s in body {
                     Self::collect_assigned_vars(s, out);
                 }
             }
+            TypedExprKind::Match { scrutinee, arms } => {
+                Self::collect_assigned_vars_expr(scrutinee, out);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        Self::collect_assigned_vars_expr(guard, out);
+                    }
+                    match &arm.body {
+                        aelys_sema::TypedMatchArmBody::Expr(expr) => {
+                            Self::collect_assigned_vars_expr(expr, out)
+                        }
+                        aelys_sema::TypedMatchArmBody::Block(stmts) => {
+                            for stmt in stmts {
+                                Self::collect_assigned_vars(stmt, out);
+                            }
+                        }
+                    }
+                }
+            }
+            TypedExprKind::Try { operand, .. } => Self::collect_assigned_vars_expr(operand, out),
             _ => {}
         }
     }
@@ -326,7 +357,8 @@ impl LocalConstantPropagator {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
-            | TypedPatternKind::Bool(_) => {}
+            | TypedPatternKind::Bool(_)
+            | TypedPatternKind::Range { .. } => {}
         }
     }
 
@@ -501,6 +533,27 @@ impl LocalConstantPropagator {
                     }
                     self.scopes.pop();
                 }
+            }
+            TypedExprKind::Block(stmts) => {
+                self.scopes.push();
+                for stmt in stmts.iter_mut() {
+                    self.propagate_stmt(stmt);
+                }
+                self.scopes.pop();
+            }
+            TypedExprKind::Loop { body, .. } => {
+                let mut assigned = Vec::new();
+                for stmt in body.iter() {
+                    Self::collect_assigned_vars(stmt, &mut assigned);
+                }
+                for name in &assigned {
+                    self.scopes.invalidate(name);
+                }
+                self.scopes.push();
+                for stmt in body.iter_mut() {
+                    self.propagate_stmt(stmt);
+                }
+                self.scopes.pop();
             }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)

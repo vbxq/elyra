@@ -11,15 +11,13 @@ impl Compiler {
         condition: &aelys_sema::TypedExpr,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: false,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, false, self.locals.len());
+        context.label = label.cloned();
+        self.loop_stack.push(context);
 
         let cond_reg = self.alloc_register()?;
         self.compile_typed_expr(condition, cond_reg)?;
@@ -57,6 +55,7 @@ impl Compiler {
         step: Option<&aelys_sema::TypedExpr>,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         self.begin_scope();
 
@@ -93,12 +92,9 @@ impl Compiler {
 
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
+        context.label = label.cloned();
+        self.loop_stack.push(context);
 
         let opcode = if inclusive {
             OpCode::ForLoopIInc
@@ -149,9 +145,12 @@ impl Compiler {
         elem_type: &InferType,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         match &iterable.ty {
-            InferType::String => self.compile_string_for_each(iterator, iterable, body, span),
+            InferType::String => {
+                self.compile_string_for_each(iterator, iterable, body, span, label)
+            }
             InferType::Vec(inner) => self.compile_collection_for_each(
                 iterator,
                 iterable,
@@ -159,6 +158,7 @@ impl Compiler {
                 body,
                 OpCode::VecForLoop,
                 span,
+                label,
             ),
             InferType::Array(inner) | InferType::FixedArray(inner, _) => self
                 .compile_collection_for_each(
@@ -168,6 +168,7 @@ impl Compiler {
                     body,
                     OpCode::ArrayForLoop,
                     span,
+                    label,
                 ),
             InferType::Dynamic | InferType::Var(_) => self.compile_collection_for_each(
                 iterator,
@@ -176,6 +177,7 @@ impl Compiler {
                 body,
                 OpCode::VecForLoop,
                 span,
+                label,
             ),
             _ => Err(aelys_common::AelysError::Compile(CompileError::new(
                 CompileErrorKind::TypeInferenceError(format!(
@@ -200,6 +202,7 @@ impl Compiler {
         body: &aelys_sema::TypedStmt,
         opcode: OpCode,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         self.begin_scope();
 
@@ -220,12 +223,9 @@ impl Compiler {
 
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
+        context.label = label.cloned();
+        self.loop_stack.push(context);
 
         let resolved = Self::infer_to_resolved(inner_type);
         self.add_local(iterator.to_string(), false, elem_reg, resolved);
@@ -270,6 +270,7 @@ impl Compiler {
         iterable: &aelys_sema::TypedExpr,
         body: &aelys_sema::TypedStmt,
         span: Span,
+        label: Option<&String>,
     ) -> Result<()> {
         self.begin_scope();
 
@@ -290,12 +291,9 @@ impl Compiler {
 
         let loop_start = self.current_offset();
 
-        self.loop_stack.push(super::super::LoopContext {
-            start: loop_start,
-            break_jumps: Vec::new(),
-            continue_jumps: Vec::new(),
-            is_for_loop: true,
-        });
+        let mut context = super::super::LoopContext::new(loop_start, true, self.locals.len());
+        context.label = label.cloned();
+        self.loop_stack.push(context);
 
         self.add_local(
             iterator.to_string(),

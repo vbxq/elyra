@@ -30,6 +30,7 @@ pub enum TokenKind {
     Null,
 
     Identifier(String),
+    Label(String),
 
     Let,
     Mut,
@@ -124,6 +125,7 @@ impl TokenKind {
         matches!(
             self,
             Self::Identifier(_)
+                | Self::Label(_)
                 | Self::Int(_)
                 | Self::Float(_)
                 | Self::String(_)
@@ -156,6 +158,7 @@ impl std::fmt::Display for TokenKind {
             Self::False => write!(f, "false"),
             Self::Null => write!(f, "null"),
             Self::Identifier(s) => write!(f, "{}", s),
+            Self::Label(s) => write!(f, "'{}", s),
             Self::Let => write!(f, "let"),
             Self::Mut => write!(f, "mut"),
             Self::Fn => write!(f, "fn"),

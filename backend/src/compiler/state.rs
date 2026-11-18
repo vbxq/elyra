@@ -36,6 +36,23 @@ pub struct LoopContext {
     pub break_jumps: Vec<usize>,
     pub continue_jumps: Vec<usize>, // for-loop: forward patch to increment
     pub is_for_loop: bool,          // for: continue forward, while: continue back
+    pub label: Option<String>,
+    pub result: Option<u16>,
+    pub locals_start: usize,
+}
+
+impl LoopContext {
+    pub fn new(start: usize, is_for_loop: bool, locals_start: usize) -> Self {
+        Self {
+            start,
+            break_jumps: Vec::new(),
+            continue_jumps: Vec::new(),
+            is_for_loop,
+            label: None,
+            result: None,
+            locals_start,
+        }
+    }
 }
 
 pub struct Compiler {

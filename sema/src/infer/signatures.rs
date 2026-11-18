@@ -389,6 +389,16 @@ impl TypeInference {
                 StmtKind::ForEach { body, .. } => {
                     self.walk_signatures_in_stmt(body, prefix);
                 }
+                StmtKind::Expression(aelys_syntax::Expr {
+                    kind:
+                        aelys_syntax::ExprKind::Block(inner_stmts)
+                        | aelys_syntax::ExprKind::Loop {
+                            body: inner_stmts, ..
+                        },
+                    ..
+                }) => {
+                    self.walk_signatures(inner_stmts, prefix);
+                }
                 _ => {}
             }
         }

@@ -16,3 +16,4 @@ pub(crate) use type_table::{
 };
 pub(crate) use type_table::{instantiation_key, positional_spelling};
 pub use type_var::{TypeVarGen, TypeVarId};
+pub(crate) use aelys_syntax::tuple_arity;

@@ -318,6 +318,13 @@ pub enum ExprKind {
         expr: Box<Expr>,
         target: TypeAnnotation,
     },
+
+    Block(Vec<crate::ast::Stmt>),
+
+    Loop {
+        body: Vec<crate::ast::Stmt>,
+        label: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +339,7 @@ pub struct MatchArm {
     pub guard: Option<Expr>,
     pub body: MatchArmBody,
     pub span: Span,
+    pub synthetic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -365,6 +373,11 @@ pub enum PatternKind {
         has_rest: bool,
     },
     Or(Vec<Pattern>),
+    Range {
+        start: Option<i64>,
+        end: Option<i64>,
+        inclusive: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

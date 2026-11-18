@@ -178,7 +178,9 @@ impl Analyzer {
                     self.visit_stmt(else_branch);
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+                condition, body, ..
+            } => {
                 self.visit_expr(condition);
                 self.visit_stmt(body);
             }
@@ -213,7 +215,7 @@ impl Analyzer {
                 self.visit_stmt(body);
                 self.pop_scope();
             }
-            TypedStmtKind::Return(expr) => {
+            TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
                 if let Some(expr) = expr {
                     self.visit_consuming_expr(expr);
                 }
@@ -224,8 +226,7 @@ impl Analyzer {
                     self.visit_function(method);
                 }
             }
-            TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::EnumDecl { .. }
@@ -361,6 +362,11 @@ impl Analyzer {
                     }
                 }
             }
+            TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+                self.push_scope();
+                self.visit_stmts(stmts);
+                self.pop_scope();
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
@@ -402,7 +408,8 @@ impl Analyzer {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
-            | TypedPatternKind::Bool(_) => {}
+            | TypedPatternKind::Bool(_)
+            | TypedPatternKind::Range { .. } => {}
         }
     }
 }

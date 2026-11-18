@@ -505,6 +505,12 @@ impl ModuleLoader {
                 _ => {}
             }
         }
+        for ty in exported_types.globals.values_mut() {
+            *ty = inference_result.type_table.reapply_tuple_instances(ty);
+        }
+        for ty in inferred_export_signatures.values_mut() {
+            *ty = inference_result.type_table.reapply_tuple_instances(ty);
+        }
         let module_global_names: Vec<String> = exported_types.globals.keys().cloned().collect();
         if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
             module_info.native_signatures = inferred_export_signatures;

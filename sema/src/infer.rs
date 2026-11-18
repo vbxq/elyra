@@ -3,6 +3,7 @@ mod captures;
 mod constraints;
 pub mod entry;
 mod expr;
+mod exhaustive;
 mod expr_sum;
 mod finalize;
 mod functions;
@@ -196,6 +197,8 @@ pub struct TypeInference {
     must_use_values: Vec<expr_sum::MustUseResidual>,
     sum_method_residuals: Vec<expr_sum::SumMethodResidual>,
     match_exhaustivity_residuals: Vec<expr_sum::MatchExhaustivityResidual>,
+    loop_frames: Vec<stmt::LoopFrame>,
+    match_unit_residuals: Vec<(InferType, Vec<aelys_syntax::Span>)>,
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
     surface_dynamic_spans: HashSet<(usize, usize)>,

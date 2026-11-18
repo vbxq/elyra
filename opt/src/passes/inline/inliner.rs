@@ -72,7 +72,9 @@ impl FunctionInliner {
                 }
             }
 
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+            condition, body, ..
+        } => {
                 self.inline_in_expr(condition, analysis);
                 self.inline_in_stmt(body, analysis);
             }
@@ -97,7 +99,9 @@ impl FunctionInliner {
                 self.inline_in_stmt(body, analysis);
             }
 
-            TypedStmtKind::Return(Some(e)) => self.inline_in_expr(e, analysis),
+            TypedStmtKind::Return(Some(e)) | TypedStmtKind::Break { value: Some(e), .. } => {
+                self.inline_in_expr(e, analysis)
+            }
 
             TypedStmtKind::Function(f) => {
                 for s in f.body.iter_mut() {
@@ -180,7 +184,9 @@ impl FunctionInliner {
                 self.inline_in_expr(object, analysis);
                 self.inline_in_expr(range, analysis);
             }
-            TypedExprKind::LambdaInner { body, .. } => {
+            TypedExprKind::LambdaInner { body, .. }
+            | TypedExprKind::Block(body)
+            | TypedExprKind::Loop { body, .. } => {
                 for s in body.iter_mut() {
                     self.inline_in_stmt(s, analysis);
                 }

@@ -520,6 +520,73 @@ impl TypeTable {
         self.finalize_schema_indices();
     }
 
+    // a tuple instance is local to the module that built it; an importer materializes its own
+    pub fn reapply_tuple_instances(&self, ty: &InferType) -> InferType {
+        let recurse = |inner: &InferType| Box::new(self.reapply_tuple_instances(inner));
+        match ty {
+            InferType::Struct(name) => match (
+                self.nominal_instance_origin(name),
+                self.nominal_instance_args(name),
+            ) {
+                (Some(origin), Some(args)) if aelys_syntax::tuple_arity(origin).is_some() => {
+                    InferType::Applied {
+                        name: origin.to_string(),
+                        args: args
+                            .iter()
+                            .map(|arg| self.reapply_tuple_instances(arg))
+                            .collect(),
+                    }
+                }
+                _ => ty.clone(),
+            },
+            InferType::Applied { name, args } => InferType::Applied {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| self.reapply_tuple_instances(arg))
+                    .collect(),
+            },
+            InferType::Function { params, ret } => InferType::Function {
+                params: params
+                    .iter()
+                    .map(|param| self.reapply_tuple_instances(param))
+                    .collect(),
+                ret: recurse(ret),
+            },
+            InferType::Option(inner) => InferType::Option(recurse(inner)),
+            InferType::Result(ok, error) => InferType::Result(recurse(ok), recurse(error)),
+            InferType::Array(inner) => InferType::Array(recurse(inner)),
+            InferType::FixedArray(inner, length) => InferType::FixedArray(recurse(inner), *length),
+            InferType::Vec(inner) => InferType::Vec(recurse(inner)),
+            _ => ty.clone(),
+        }
+    }
+
+    pub fn rewrite_field_types(&mut self, rewrite: impl Fn(&InferType) -> InferType) {
+        for definition in self.structs.values_mut() {
+            for field in &mut definition.fields {
+                field.ty = rewrite(&field.ty);
+            }
+        }
+        for definition in self.enums.values_mut() {
+            for variant in &mut definition.variants {
+                match &mut variant.fields {
+                    EnumVariantFieldsDef::Unit => {}
+                    EnumVariantFieldsDef::Tuple(fields) => {
+                        for field in fields {
+                            *field = rewrite(field);
+                        }
+                    }
+                    EnumVariantFieldsDef::Named(fields) => {
+                        for field in fields {
+                            field.ty = rewrite(&field.ty);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn field_offset(&self, structure: &str, field: &str) -> Option<u16> {
         self.structs
             .get(structure)?

@@ -57,7 +57,9 @@ impl TypeInference {
                     self.collect_captures_from_stmt(els, bound, captures, seen);
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+                condition, body, ..
+            } => {
                 self.collect_captures_inner(condition, bound, captures, seen);
                 self.collect_captures_from_stmt(body, bound, captures, seen);
             }
@@ -91,10 +93,15 @@ impl TypeInference {
                 self.collect_captures_from_stmt(body, bound, captures, seen);
                 *bound = outer;
             }
-            TypedStmtKind::Return(Some(expr)) => {
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => {
                 self.collect_captures_inner(expr, bound, captures, seen);
             }
-            TypedStmtKind::Return(None) | TypedStmtKind::Break | TypedStmtKind::Continue => {}
+            TypedStmtKind::Return(None)
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. } => {}
             TypedStmtKind::Function(_) => {}
             TypedStmtKind::ImplDecl { .. } => {}
             TypedStmtKind::Needs(_) => {}
@@ -261,6 +268,13 @@ impl TypeInference {
             TypedExprKind::Cast { expr, .. } => {
                 self.collect_captures_inner(expr, bound, captures, seen);
             }
+            TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+                let outer = bound.clone();
+                for stmt in stmts {
+                    self.collect_captures_from_stmt(stmt, bound, captures, seen);
+                }
+                *bound = outer;
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
@@ -291,6 +305,7 @@ fn collect_pattern_bindings(pattern: &crate::typed_ast::TypedPattern, bound: &mu
         TypedPatternKind::Wildcard
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }

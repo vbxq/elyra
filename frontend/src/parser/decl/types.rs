@@ -84,6 +84,29 @@ impl Parser {
             return Err(self.error(CompileErrorKind::NullIsNotInSurface));
         }
 
+        if self.match_token(&TokenKind::LParen) {
+            if self.match_token(&TokenKind::RParen) {
+                return Ok(TypeAnnotation::new(
+                    "unit".to_string(),
+                    start_span.merge(self.previous().span),
+                ));
+            }
+            let mut elements = vec![self.parse_type_annotation()?];
+            while self.match_token(&TokenKind::Comma) {
+                if self.check(&TokenKind::RParen) {
+                    break;
+                }
+                elements.push(self.parse_type_annotation()?);
+            }
+            self.consume(&TokenKind::RParen, ")")?;
+            let span = start_span.merge(self.previous().span);
+            if elements.len() == 1 {
+                return Ok(elements.remove(0));
+            }
+            let name = self.tuple_struct_name(elements.len())?;
+            return Ok(TypeAnnotation::with_params(name, elements, span));
+        }
+
         self.reject_trait_object()?;
 
         let first_name = self.consume_identifier("type name")?;

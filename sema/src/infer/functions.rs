@@ -2,7 +2,7 @@ use super::{GENERATED_SYMBOL_PREFIX, TypeInference};
 use crate::constraint::{ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedFunction, TypedParam};
 use crate::types::InferType;
-use aelys_syntax::{Function, Stmt, StmtKind, TypeAnnotation};
+use aelys_syntax::{ExprKind, Function, Stmt, StmtKind, TypeAnnotation};
 
 pub(crate) fn struct_method_symbol(structure: &str, method: &str) -> String {
     format!(
@@ -120,6 +120,7 @@ impl TypeInference {
         }
 
         let saved_forwarded_borrows = std::mem::take(&mut self.forwarded_mutable_borrows);
+        let saved_loop_frames = std::mem::take(&mut self.loop_frames);
         let mut func_env = self.env.for_closure();
         func_env.set_current_function(Some(func.name.clone()));
 
@@ -179,6 +180,7 @@ impl TypeInference {
         self.current_function_bindings = saved_function_bindings;
         self.current_function_bounds = saved_function_bounds;
         self.forwarded_mutable_borrows = saved_forwarded_borrows;
+        self.loop_frames = saved_loop_frames;
 
         TypedFunction {
             name: func.name.clone(),
@@ -354,6 +356,10 @@ fn stmt_returns_value(stmt: &Stmt) -> bool {
         StmtKind::While { body, .. }
         | StmtKind::For { body, .. }
         | StmtKind::ForEach { body, .. } => stmt_returns_value(body),
+        StmtKind::Expression(aelys_syntax::Expr {
+            kind: ExprKind::Block(stmts) | ExprKind::Loop { body: stmts, .. },
+            ..
+        }) => stmts.iter().any(stmt_returns_value),
         _ => false,
     }
 }
@@ -374,6 +380,10 @@ fn tail_yields_value(stmt: &Stmt) -> bool {
 fn stmt_always_returns(stmt: &Stmt, implicit_tail: bool) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) => true,
+        StmtKind::Expression(aelys_syntax::Expr {
+            kind: ExprKind::Loop { body, label },
+            ..
+        }) if !body.iter().any(|stmt| breaks_out(stmt, label.as_deref(), 0)) => true,
         StmtKind::Expression(_) => implicit_tail,
         StmtKind::If {
             then_branch,
@@ -384,6 +394,72 @@ fn stmt_always_returns(stmt: &Stmt, implicit_tail: bool) -> bool {
                 && stmt_always_returns(else_branch, implicit_tail)
         }
         StmtKind::Block(stmts) => body_always_returns(stmts, implicit_tail),
+        _ => false,
+    }
+}
+
+// depth counts the loops nested between the statement and the loop being tested
+fn breaks_out(stmt: &Stmt, label: Option<&str>, depth: usize) -> bool {
+    match &stmt.kind {
+        StmtKind::Break {
+            label: target,
+            value,
+        } => {
+            let targets = match target {
+                Some(target) => Some(target.as_str()) == label,
+                None => depth == 0,
+            };
+            targets || value.as_ref().is_some_and(|value| expr_breaks_out(value, label, depth))
+        }
+        StmtKind::Expression(expr) | StmtKind::Let {
+            initializer: expr, ..
+        } => expr_breaks_out(expr, label, depth),
+        StmtKind::Return(Some(expr)) => expr_breaks_out(expr, label, depth),
+        StmtKind::Block(stmts) => stmts.iter().any(|stmt| breaks_out(stmt, label, depth)),
+        StmtKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_breaks_out(condition, label, depth)
+                || breaks_out(then_branch, label, depth)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|branch| breaks_out(branch, label, depth))
+        }
+        StmtKind::While {
+            condition, body, ..
+        } => expr_breaks_out(condition, label, depth) || breaks_out(body, label, depth + 1),
+        StmtKind::For { body, .. } | StmtKind::ForEach { body, .. } => {
+            breaks_out(body, label, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn expr_breaks_out(expr: &aelys_syntax::Expr, label: Option<&str>, depth: usize) -> bool {
+    match &expr.kind {
+        ExprKind::Block(stmts) => stmts.iter().any(|stmt| breaks_out(stmt, label, depth)),
+        ExprKind::Loop { body, .. } => body.iter().any(|stmt| breaks_out(stmt, label, depth + 1)),
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_breaks_out(condition, label, depth)
+                || expr_breaks_out(then_branch, label, depth)
+                || expr_breaks_out(else_branch, label, depth)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_breaks_out(scrutinee, label, depth)
+                || arms.iter().any(|arm| match &arm.body {
+                    aelys_syntax::MatchArmBody::Expr(body) => expr_breaks_out(body, label, depth),
+                    aelys_syntax::MatchArmBody::Block(stmts) => {
+                        stmts.iter().any(|stmt| breaks_out(stmt, label, depth))
+                    }
+                })
+        }
+        ExprKind::Grouping(inner) => expr_breaks_out(inner, label, depth),
         _ => false,
     }
 }

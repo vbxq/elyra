@@ -48,6 +48,7 @@ pub(super) struct SumTypeResidual {
 pub(super) struct MatchArmCoverage {
     pub pattern: Pattern,
     pub guarded: bool,
+    pub synthetic: bool,
     pub span: Span,
 }
 
@@ -90,73 +91,88 @@ impl TypeInference {
 
     pub(super) fn validate_match_reachability(&mut self, subst: &Substitution) {
         let mut reported = Vec::new();
-        for residual in &self.match_exhaustivity_residuals {
-            let ty = subst.apply(&residual.ty);
-            let mut covering: Vec<&Pattern> = Vec::new();
-            for arm in &residual.arms {
-                if !covering.is_empty() && self.pattern_is_unreachable(&ty, &covering, &arm.pattern)
-                {
+        for (result, spans) in &self.match_unit_residuals {
+            let resolved = subst.apply(result);
+            if !matches!(
+                resolved,
+                InferType::Unit
+                    | InferType::Var(_)
+                    | InferType::Dynamic
+                    | InferType::Poison
+                    | InferType::Never
+            ) {
+                for span in spans {
                     reported.push(TypeError {
-                        kind: TypeErrorKind::UnreachablePattern {
-                            pattern: describe_pattern(&arm.pattern),
-                        },
-                        span: arm.span,
-                        reason: ConstraintReason::Other("match arm reachability".to_string()),
+                        kind: TypeErrorKind::MatchArmValueRequired,
+                        span: *span,
+                        reason: ConstraintReason::Other("match arm tail value".to_string()),
                     });
-                }
-                if !arm.guarded {
-                    covering.push(&arm.pattern);
                 }
             }
         }
-        self.errors.extend(reported);
-    }
-
-    pub(super) fn validate_match_exhaustivity(&mut self, subst: &Substitution) {
+        let checker = super::exhaustive::Checker::new(&self.type_table);
         for residual in &self.match_exhaustivity_residuals {
             let ty = subst.apply(&residual.ty);
             if matches!(ty, InferType::Poison) {
                 continue;
             }
-            let patterns: Vec<&Pattern> = residual
+            let mut capitalized = Vec::new();
+            for arm in &residual.arms {
+                checker.capitalized_bindings(&arm.pattern, &ty, &mut capitalized);
+            }
+            let rejected_bindings = !capitalized.is_empty();
+            for (name, suggestion, span) in capitalized {
+                reported.push(TypeError {
+                    kind: TypeErrorKind::CapitalizedBindingPattern { name, suggestion },
+                    span,
+                    reason: ConstraintReason::Other("match arm pattern".to_string()),
+                });
+            }
+            if rejected_bindings {
+                continue;
+            }
+            let arms: Vec<(&Pattern, bool)> = residual
                 .arms
                 .iter()
-                .filter(|arm| !arm.guarded)
-                .map(|arm| &arm.pattern)
+                .map(|arm| (&arm.pattern, arm.guarded))
                 .collect();
-            if enum_type_name(&ty).is_some_and(|name| self.type_table.get_enum(&name).is_some()) {
-                let missing = self.enum_missing_patterns(&ty, &patterns);
-                if !missing.is_empty() {
-                    self.errors.push(TypeError {
-                        kind: TypeErrorKind::NonExhaustiveMatch { missing },
-                        span: residual.span,
-                        reason: ConstraintReason::Other("enum match exhaustivity".to_string()),
-                    });
+            let analysis = checker.analyze(&ty, &arms);
+            for index in analysis.unreachable {
+                let arm = &residual.arms[index];
+                if arm.synthetic {
+                    continue;
                 }
+                reported.push(TypeError {
+                    kind: TypeErrorKind::UnreachablePattern {
+                        pattern: describe_pattern(&arm.pattern),
+                    },
+                    span: arm.span,
+                    reason: ConstraintReason::Other("match arm reachability".to_string()),
+                });
+            }
+            if analysis.missing.is_empty() {
                 continue;
             }
-            if let InferType::Struct(name) = &ty {
-                if !self.struct_patterns_cover(name, &patterns) {
-                    self.errors.push(TypeError {
-                        kind: TypeErrorKind::NonExhaustiveStruct {
-                            structure: name.clone(),
-                        },
-                        span: residual.span,
-                        reason: ConstraintReason::Other("struct match exhaustivity".to_string()),
-                    });
-                }
-                continue;
-            }
-            let missing = missing_patterns(&ty, &patterns);
-            if !missing.is_empty() {
-                self.errors.push(TypeError {
-                    kind: TypeErrorKind::NonExhaustiveMatch { missing },
+            if let Some(structure) = checker.is_struct(&ty) {
+                reported.push(TypeError {
+                    kind: TypeErrorKind::NonExhaustiveStruct { structure },
+                    span: residual.span,
+                    reason: ConstraintReason::Other("struct match exhaustivity".to_string()),
+                });
+            } else {
+                reported.push(TypeError {
+                    kind: TypeErrorKind::NonExhaustiveMatch {
+                        missing: analysis.missing,
+                    },
                     span: residual.span,
                     reason: ConstraintReason::Other("match exhaustivity".to_string()),
                 });
             }
         }
+        self.errors.extend(reported);
     }
+
+    pub(super) fn validate_match_exhaustivity(&mut self, _subst: &Substitution) {}
 
     pub(super) fn infer_sum_method_call(
         &mut self,
@@ -1342,6 +1358,8 @@ impl TypeInference {
         let result_type = self.type_gen.fresh();
         let mut dynamic_result = false;
         let mut typed_arms = Vec::with_capacity(arms.len());
+        let mut implicit_unit_arms = Vec::new();
+        let mut value_arms = 0usize;
 
         for arm in arms {
             self.env.push_scope();
@@ -1371,6 +1389,7 @@ impl TypeInference {
             let typed_body = match &arm.body {
                 MatchArmBody::Expr(expr) => {
                     let typed_expr = self.infer_expr(expr);
+                    value_arms += 1;
                     dynamic_result |= matches!(typed_expr.ty, InferType::Dynamic);
                     if !self.reject_dynamic(
                         &typed_expr.ty,
@@ -1388,48 +1407,20 @@ impl TypeInference {
                     TypedMatchArmBody::Expr(typed_expr)
                 }
                 MatchArmBody::Block(stmts) => {
-                    if stmts.is_empty() {
-                        self.errors.push(TypeError {
-                            kind: TypeErrorKind::MatchArmValueRequired,
-                            span: arm.span,
-                            reason: ConstraintReason::Other("empty match arm".to_string()),
-                        });
-                    }
-                    let typed_stmts = if stmts.is_empty() {
-                        Vec::new()
-                    } else {
-                        let mut typed_stmts: Vec<_> = stmts[..stmts.len() - 1]
-                            .iter()
-                            .map(|stmt| self.infer_stmt(stmt))
-                            .collect();
-                        typed_stmts.push(self.infer_stmt_with_implicit_return(
-                            &stmts[stmts.len() - 1],
-                            &result_type,
-                        ));
-                        typed_stmts
-                    };
-                    let body_type = typed_stmts.last().and_then(|stmt| match &stmt.kind {
-                        crate::typed_ast::TypedStmtKind::Expression(expr) => Some(expr.ty.clone()),
-                        crate::typed_ast::TypedStmtKind::Return(_)
-                        | crate::typed_ast::TypedStmtKind::Break
-                        | crate::typed_ast::TypedStmtKind::Continue => None,
-                        _ => {
-                            self.errors.push(TypeError {
-                                kind: TypeErrorKind::MatchArmValueRequired,
-                                span: stmt.span,
-                                reason: ConstraintReason::Other("match arm tail value".to_string()),
-                            });
-                            None
-                        }
-                    });
+                    let (typed_stmts, body_type) = self.infer_stmts_value(stmts);
                     dynamic_result |= matches!(body_type, Some(InferType::Dynamic));
                     if let Some(body_type) = body_type {
-                        self.constraints.push(Constraint::equal(
-                            result_type.clone(),
-                            body_type,
-                            arm.span,
-                            ConstraintReason::IfBranches,
-                        ));
+                        if tail_is_implicit_unit(stmts) {
+                            implicit_unit_arms.push(arm.span);
+                        } else {
+                            value_arms += 1;
+                            self.constraints.push(Constraint::equal(
+                                result_type.clone(),
+                                body_type,
+                                arm.span,
+                                ConstraintReason::IfBranches,
+                            ));
+                        }
                     }
                     TypedMatchArmBody::Block(typed_stmts)
                 }
@@ -1448,6 +1439,20 @@ impl TypeInference {
             });
         }
 
+        if !implicit_unit_arms.is_empty() {
+            if value_arms == 0 {
+                self.constraints.push(Constraint::equal(
+                    result_type.clone(),
+                    InferType::Unit,
+                    span,
+                    ConstraintReason::IfBranches,
+                ));
+            } else {
+                self.match_unit_residuals
+                    .push((result_type.clone(), implicit_unit_arms));
+            }
+        }
+
         self.match_exhaustivity_residuals
             .push(MatchExhaustivityResidual {
                 ty: typed_scrutinee.ty.clone(),
@@ -1456,6 +1461,7 @@ impl TypeInference {
                     .map(|arm| MatchArmCoverage {
                         pattern: arm.pattern.clone(),
                         guarded: arm.guard.is_some(),
+                        synthetic: arm.synthetic,
                         span: arm.span,
                     })
                     .collect(),
@@ -1475,6 +1481,32 @@ impl TypeInference {
         )
     }
 
+    fn constrain_integer_pattern(&mut self, ty: &InferType, bounds: &[Option<i64>], span: Span) {
+        if ty.is_integer() {
+            if bounds
+                .iter()
+                .flatten()
+                .any(|value| !InferType::int_fits(*value, ty))
+            {
+                self.errors.push(TypeError {
+                    kind: TypeErrorKind::Mismatch {
+                        expected: ty.clone(),
+                        found: InferType::I64,
+                    },
+                    span,
+                    reason: ConstraintReason::Comparison,
+                });
+            }
+            return;
+        }
+        self.constraints.push(Constraint::equal(
+            ty.clone(),
+            InferType::I64,
+            span,
+            ConstraintReason::Comparison,
+        ));
+    }
+
     fn infer_pattern(&mut self, pattern: &Pattern, ty: &InferType) -> TypedPattern {
         let kind = match &pattern.kind {
             PatternKind::Wildcard => TypedPatternKind::Wildcard,
@@ -1488,13 +1520,17 @@ impl TypeInference {
                 TypedPatternKind::Binding(name.clone())
             }
             PatternKind::Int(value) => {
-                self.constraints.push(Constraint::equal(
-                    ty.clone(),
-                    InferType::I64,
-                    pattern.span,
-                    ConstraintReason::Comparison,
-                ));
+                self.constrain_integer_pattern(ty, &[Some(*value)], pattern.span);
                 TypedPatternKind::Int(*value)
+            }
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let end = end.map(|end| if *inclusive { end } else { end - 1 });
+                self.constrain_integer_pattern(ty, &[*start, end], pattern.span);
+                TypedPatternKind::Range { start: *start, end }
             }
             PatternKind::String(value) => {
                 self.constraints.push(Constraint::equal(
@@ -1980,16 +2016,68 @@ impl TypeInference {
                         span: pattern.span,
                     };
                 };
-                if !matches!(ty, InferType::Struct(actual) if actual == &name) {
-                    self.errors.push(TypeError {
-                        kind: TypeErrorKind::Mismatch {
-                            expected: InferType::Struct(name.clone()),
-                            found: ty.clone(),
-                        },
-                        span: pattern.span,
-                        reason: ConstraintReason::Other("struct pattern type".to_string()),
-                    });
-                }
+                let field_substitutions: std::collections::HashMap<String, InferType> =
+                    if def.type_params.is_empty() {
+                        if let InferType::Var(_) = ty {
+                            self.constraints.push(Constraint::equal(
+                                ty.clone(),
+                                InferType::Struct(name.clone()),
+                                pattern.span,
+                                ConstraintReason::Other("struct pattern type".to_string()),
+                            ));
+                        } else if !matches!(ty, InferType::Struct(actual) if actual == &name) {
+                            self.errors.push(TypeError {
+                                kind: TypeErrorKind::Mismatch {
+                                    expected: InferType::Struct(name.clone()),
+                                    found: ty.clone(),
+                                },
+                                span: pattern.span,
+                                reason: ConstraintReason::Other("struct pattern type".to_string()),
+                            });
+                        }
+                        std::collections::HashMap::new()
+                    } else {
+                        let args: Vec<InferType> = match ty {
+                            InferType::Applied {
+                                name: actual,
+                                args,
+                            } if actual == &name && args.len() == def.type_params.len() => {
+                                args.clone()
+                            }
+                            _ => {
+                                let fresh: Vec<InferType> = def
+                                    .type_params
+                                    .iter()
+                                    .map(|_| self.type_gen.fresh())
+                                    .collect();
+                                let expected = InferType::Applied {
+                                    name: name.clone(),
+                                    args: fresh.clone(),
+                                };
+                                if let InferType::Var(_) = ty {
+                                    self.constraints.push(Constraint::equal(
+                                        ty.clone(),
+                                        expected,
+                                        pattern.span,
+                                        ConstraintReason::Other("struct pattern type".to_string()),
+                                    ));
+                                } else {
+                                    self.errors.push(TypeError {
+                                        kind: TypeErrorKind::Mismatch {
+                                            expected,
+                                            found: ty.clone(),
+                                        },
+                                        span: pattern.span,
+                                        reason: ConstraintReason::Other(
+                                            "struct pattern type".to_string(),
+                                        ),
+                                    });
+                                }
+                                fresh
+                            }
+                        };
+                        def.type_params.iter().cloned().zip(args).collect()
+                    };
                 let mut seen = std::collections::HashSet::new();
                 let schema_index = self.type_table.schema_index(&name).unwrap_or(0);
                 let mut typed_fields = Vec::with_capacity(fields.len());
@@ -2031,9 +2119,10 @@ impl TypeInference {
                     }) {
                         continue;
                     }
+                    let field_ty = field_def.ty.substitute_params(&field_substitutions);
                     typed_fields.push((
                         field.name.clone(),
-                        self.infer_pattern(&field.pattern, &field_def.ty),
+                        self.infer_pattern(&field.pattern, &field_ty),
                         field_def.ordinal,
                     ));
                 }
@@ -2124,346 +2213,17 @@ impl TypeInference {
         }
     }
 
-    fn struct_patterns_cover(&self, name: &str, patterns: &[&Pattern]) -> bool {
-        self.patterns_cover_type(&InferType::Struct(name.to_string()), patterns)
-    }
 
-    fn enum_missing_patterns(&self, ty: &InferType, patterns: &[&Pattern]) -> Vec<String> {
-        let Some(name) = enum_type_name(ty) else {
-            return vec!["_".to_string()];
-        };
-        let Some(def) = self.type_table.get_enum(&name) else {
-            return vec!["_".to_string()];
-        };
-        let substitutions = enum_substitutions(ty, def);
-        if patterns.iter().any(|pattern| pattern_covers_all(pattern)) {
-            return Vec::new();
-        }
-        def.variants
-            .iter()
-            .filter_map(|variant| {
-                if self.enum_patterns_cover_variant(&name, variant, patterns, &substitutions) {
-                    None
-                } else {
-                    Some(enum_variant_pattern(&name, variant))
-                }
-            })
-            .collect()
-    }
 
-    fn enum_patterns_cover_variant(
-        &self,
-        name: &str,
-        variant: &crate::types::EnumVariantDef,
-        patterns: &[&Pattern],
-        substitutions: &std::collections::HashMap<String, InferType>,
-    ) -> bool {
-        if patterns.iter().any(|pattern| pattern_covers_all(pattern)) {
-            return true;
-        }
-        match &variant.fields {
-            crate::types::EnumVariantFieldsDef::Unit => patterns.iter().any(|pattern| {
-                self.enum_pattern_covers_variant(name, variant, pattern, substitutions)
-            }),
-            crate::types::EnumVariantFieldsDef::Tuple(expected) => {
-                let expected: Vec<InferType> = expected
-                    .iter()
-                    .map(|ty| ty.substitute_params(substitutions))
-                    .collect();
-                let mut rows = Vec::new();
-                for pattern in patterns {
-                    collect_enum_tuple_rows(pattern, name, &variant.name, &mut rows);
-                }
-                !rows.is_empty() && self.tuple_patterns_cover_product(&expected, &rows)
-            }
-            _ => patterns.iter().any(|pattern| {
-                self.enum_pattern_covers_variant(name, variant, pattern, substitutions)
-            }),
-        }
-    }
 
-    fn enum_pattern_covers_variant(
-        &self,
-        name: &str,
-        variant: &crate::types::EnumVariantDef,
-        pattern: &Pattern,
-        substitutions: &std::collections::HashMap<String, InferType>,
-    ) -> bool {
-        match &pattern.kind {
-            PatternKind::Variant { path, fields, .. }
-                if path.first().is_some_and(|segment| segment == name)
-                    && path.last().is_some_and(|segment| segment == &variant.name) =>
-            {
-                match &variant.fields {
-                    crate::types::EnumVariantFieldsDef::Unit => fields.is_empty(),
-                    crate::types::EnumVariantFieldsDef::Tuple(expected) => {
-                        fields.len() == expected.len()
-                            && fields.iter().zip(expected).all(|(field, expected)| {
-                                let expected = expected.substitute_params(substitutions);
-                                self.pattern_covers_type(field, &expected)
-                            })
-                    }
-                    crate::types::EnumVariantFieldsDef::Named(_) => false,
-                }
-            }
-            PatternKind::Struct {
-                path,
-                fields,
-                has_rest,
-                ..
-            } if path.first().is_some_and(|segment| segment == name)
-                && path.last().is_some_and(|segment| segment == &variant.name) =>
-            {
-                let crate::types::EnumVariantFieldsDef::Named(expected) = &variant.fields else {
-                    return false;
-                };
-                fields.len() <= expected.len()
-                    && (*has_rest || fields.len() == expected.len())
-                    && fields.iter().all(|field| {
-                        expected
-                            .iter()
-                            .find(|candidate| candidate.name == field.name)
-                            .is_some_and(|expected| {
-                                let expected = expected.ty.substitute_params(substitutions);
-                                self.pattern_covers_type(&field.pattern, &expected)
-                            })
-                    })
-            }
-            PatternKind::Or(alternatives) => alternatives.iter().any(|alternative| {
-                self.enum_pattern_covers_variant(name, variant, alternative, substitutions)
-            }),
-            _ => false,
-        }
-    }
 
-    fn pattern_is_unreachable(
-        &self,
-        ty: &InferType,
-        covering: &[&Pattern],
-        candidate: &Pattern,
-    ) -> bool {
-        if covering.iter().any(|pattern| pattern_covers_all(pattern)) {
-            return true;
-        }
-        match &candidate.kind {
-            PatternKind::Wildcard | PatternKind::Binding(_) => {
-                self.patterns_cover_type(ty, covering)
-            }
-            PatternKind::Or(alternatives) => alternatives
-                .iter()
-                .all(|alternative| self.pattern_is_unreachable(ty, covering, alternative)),
-            PatternKind::Bool(value) => covering
-                .iter()
-                .any(|pattern| pattern_covers_literal(pattern, *value)),
-            PatternKind::Int(_) | PatternKind::String(_) => covering
-                .iter()
-                .any(|pattern| literal_patterns_match(pattern, candidate)),
-            _ => self.constructor_is_covered(ty, covering, candidate),
-        }
-    }
 
-    fn constructor_is_covered(
-        &self,
-        ty: &InferType,
-        covering: &[&Pattern],
-        candidate: &Pattern,
-    ) -> bool {
-        let Some(variant_name) = pattern_variant_name(candidate) else {
-            return false;
-        };
-        if let Some(name) = enum_type_name(ty)
-            && let Some(def) = self.type_table.get_enum(&name)
-        {
-            let Some(variant) = def
-                .variants
-                .iter()
-                .find(|variant| variant.name == variant_name)
-            else {
-                return false;
-            };
-            let substitutions = enum_substitutions(ty, def);
-            return self.enum_patterns_cover_variant(&name, variant, covering, &substitutions);
-        }
-        match ty {
-            InferType::Option(inner) => match variant_name.as_str() {
-                "None" => covering
-                    .iter()
-                    .any(|pattern| pattern_covers_variant(pattern, "None", None, inner)),
-                "Some" => self.payload_is_covered(covering, "Some", inner),
-                _ => false,
-            },
-            InferType::Result(ok, error) => match variant_name.as_str() {
-                "Ok" => self.payload_is_covered(covering, "Ok", ok),
-                "Err" => self.payload_is_covered(covering, "Err", error),
-                _ => false,
-            },
-            InferType::Struct(_) => self.patterns_cover_type(ty, covering),
-            _ => false,
-        }
-    }
 
-    fn payload_is_covered(&self, covering: &[&Pattern], variant: &str, inner: &InferType) -> bool {
-        let mut fields = Vec::new();
-        for pattern in covering {
-            collect_variant_fields(pattern, variant, &mut fields);
-        }
-        !fields.is_empty() && missing_patterns(inner, &fields).is_empty()
-    }
 
-    fn patterns_cover_type(&self, ty: &InferType, patterns: &[&Pattern]) -> bool {
-        if patterns.iter().any(|pattern| pattern_covers_all(pattern)) {
-            return true;
-        }
-        if let Some(name) = enum_type_name(ty)
-            && let Some(def) = self.type_table.get_enum(&name)
-        {
-            let substitutions = enum_substitutions(ty, def);
-            return def.variants.iter().all(|variant| {
-                self.enum_patterns_cover_variant(&name, variant, patterns, &substitutions)
-            });
-        }
-        patterns
-            .iter()
-            .any(|pattern| self.pattern_covers_type(pattern, ty))
-    }
 
-    fn pattern_covers_type(&self, pattern: &Pattern, ty: &InferType) -> bool {
-        match &pattern.kind {
-            PatternKind::Wildcard | PatternKind::Binding(_) => true,
-            PatternKind::Or(alternatives) => {
-                let alternatives: Vec<&Pattern> = alternatives.iter().collect();
-                self.patterns_cover_type(ty, &alternatives)
-            }
-            _ => match ty {
-                ty if enum_type_name(ty)
-                    .is_some_and(|name| self.type_table.get_enum(&name).is_some()) =>
-                {
-                    let Some(name) = enum_type_name(ty) else {
-                        return false;
-                    };
-                    let Some(def) = self.type_table.get_enum(&name) else {
-                        return false;
-                    };
-                    let substitutions = enum_substitutions(ty, def);
-                    def.variants.iter().all(|variant| {
-                        self.enum_pattern_covers_variant(&name, variant, pattern, &substitutions)
-                    })
-                }
-                InferType::Struct(name) => self.struct_pattern_covers_type(name, pattern),
-                _ => self.pattern_is_irrefutable(pattern),
-            },
-        }
-    }
 
-    fn tuple_patterns_cover_product(&self, types: &[InferType], rows: &[Vec<&Pattern>]) -> bool {
-        if types.is_empty() {
-            return !rows.is_empty();
-        }
-        let Some(first_type) = types.first() else {
-            return false;
-        };
-        if let Some(name) = enum_type_name(first_type)
-            && let Some(definition) = self.type_table.get_enum(&name)
-        {
-            let substitutions = enum_substitutions(first_type, definition);
-            return definition.variants.iter().all(|variant| {
-                let matching_rows: Vec<Vec<&Pattern>> = rows
-                    .iter()
-                    .filter_map(|row| {
-                        let first = row.first()?;
-                        (pattern_covers_all(first)
-                            || self.enum_pattern_covers_variant(
-                                &name,
-                                variant,
-                                first,
-                                &substitutions,
-                            ))
-                        .then(|| row[1..].to_vec())
-                    })
-                    .collect();
-                self.tuple_patterns_cover_product(&types[1..], &matching_rows)
-            });
-        }
-        let suffixes: Vec<Vec<&Pattern>> = rows
-            .iter()
-            .filter_map(|row| {
-                let first = row.first()?;
-                self.pattern_covers_type(first, first_type)
-                    .then(|| row[1..].to_vec())
-            })
-            .collect();
-        self.tuple_patterns_cover_product(&types[1..], &suffixes)
-    }
 
-    fn struct_pattern_covers_type(&self, name: &str, pattern: &Pattern) -> bool {
-        let PatternKind::Struct {
-            path,
-            fields,
-            has_rest,
-            ..
-        } = &pattern.kind
-        else {
-            return false;
-        };
-        if path.last().is_none_or(|candidate| candidate != name) {
-            return false;
-        }
-        let Some(def) = self.type_table.get_struct(name) else {
-            return false;
-        };
-        fields.len() <= def.fields.len()
-            && (*has_rest || fields.len() == def.fields.len())
-            && fields.iter().all(|field| {
-                def.fields
-                    .iter()
-                    .find(|candidate| candidate.name == field.name)
-                    .is_some_and(|expected| self.pattern_covers_type(&field.pattern, &expected.ty))
-            })
-    }
 
-    fn pattern_is_irrefutable(&self, pattern: &Pattern) -> bool {
-        match &pattern.kind {
-            PatternKind::Wildcard | PatternKind::Binding(_) => true,
-            PatternKind::Struct {
-                path,
-                fields,
-                has_rest,
-                ..
-            } => {
-                let Some(name) = path.last() else {
-                    return false;
-                };
-                if let Some(enum_name) = path.first()
-                    && let Some(enum_def) = self.type_table.get_enum(enum_name)
-                    && let Some(variant) = enum_def
-                        .variants
-                        .iter()
-                        .find(|variant| variant.name == *name)
-                {
-                    let crate::types::EnumVariantFieldsDef::Named(expected) = &variant.fields
-                    else {
-                        return false;
-                    };
-                    return fields.len() <= expected.len()
-                        && (*has_rest || fields.len() == expected.len())
-                        && fields
-                            .iter()
-                            .all(|field| self.pattern_is_irrefutable(&field.pattern));
-                }
-                let Some(def) = self.type_table.get_struct(name) else {
-                    return false;
-                };
-                fields
-                    .iter()
-                    .all(|field| self.pattern_is_irrefutable(&field.pattern))
-                    && (*has_rest || fields.len() == def.fields.len())
-            }
-            PatternKind::Or(alternatives) => alternatives
-                .iter()
-                .any(|alternative| self.pattern_is_irrefutable(alternative)),
-            _ => false,
-        }
-    }
 }
 
 fn enum_type_name(ty: &InferType) -> Option<String> {
@@ -2492,17 +2252,6 @@ fn enum_substitutions(
         .collect()
 }
 
-fn enum_variant_pattern(name: &str, variant: &crate::types::EnumVariantDef) -> String {
-    match &variant.fields {
-        crate::types::EnumVariantFieldsDef::Unit => format!("{name}::{}", variant.name),
-        crate::types::EnumVariantFieldsDef::Tuple(_) => {
-            format!("{name}::{}(..)", variant.name)
-        }
-        crate::types::EnumVariantFieldsDef::Named(_) => {
-            format!("{name}::{} {{ .. }}", variant.name)
-        }
-    }
-}
 
 fn contains_dynamic_type(ty: &InferType) -> bool {
     match ty {
@@ -2620,105 +2369,8 @@ fn collect_pattern_bindings(pattern: &TypedPattern, bindings: &mut Vec<(String, 
     }
 }
 
-fn missing_patterns(ty: &InferType, patterns: &[&Pattern]) -> Vec<String> {
-    if patterns.iter().any(|pattern| pattern_covers_all(pattern)) {
-        return Vec::new();
-    }
 
-    match ty {
-        InferType::Bool => {
-            let true_covered = patterns
-                .iter()
-                .any(|pattern| pattern_covers_literal(pattern, true));
-            let false_covered = patterns
-                .iter()
-                .any(|pattern| pattern_covers_literal(pattern, false));
-            let mut missing = Vec::new();
-            if !true_covered {
-                missing.push("true".to_string());
-            }
-            if !false_covered {
-                missing.push("false".to_string());
-            }
-            missing
-        }
-        InferType::Option(inner) => {
-            let none_covered = patterns
-                .iter()
-                .any(|pattern| pattern_covers_variant(pattern, "None", None, inner));
-            let mut some_patterns = Vec::new();
-            for pattern in patterns {
-                collect_variant_fields(pattern, "Some", &mut some_patterns);
-            }
-            let mut missing = Vec::new();
-            if !none_covered {
-                missing.push("None".to_string());
-            }
-            if !some_patterns.is_empty() {
-                if !missing_patterns(inner, &some_patterns).is_empty() {
-                    missing.push("Some(_)".to_string());
-                }
-            } else {
-                missing.push("Some(_)".to_string());
-            }
-            missing
-        }
-        InferType::Result(ok, err) => {
-            let mut ok_patterns = Vec::new();
-            let mut err_patterns = Vec::new();
-            for pattern in patterns {
-                collect_variant_fields(pattern, "Ok", &mut ok_patterns);
-                collect_variant_fields(pattern, "Err", &mut err_patterns);
-            }
-            let mut missing = Vec::new();
-            if ok_patterns.is_empty() || !missing_patterns(ok, &ok_patterns).is_empty() {
-                missing.push("Ok(_)".to_string());
-            }
-            if err_patterns.is_empty() || !missing_patterns(err, &err_patterns).is_empty() {
-                missing.push("Err(_)".to_string());
-            }
-            missing
-        }
-        InferType::Error => {
-            if patterns.iter().any(|pattern| {
-                pattern_covers_variant(
-                    pattern,
-                    "Message",
-                    Some(&Pattern {
-                        kind: PatternKind::Wildcard,
-                        span: Span::dummy(),
-                    }),
-                    &InferType::String,
-                )
-            }) {
-                Vec::new()
-            } else {
-                vec!["Message(_)".to_string()]
-            }
-        }
-        _ => vec!["_".to_string()],
-    }
-}
 
-fn pattern_variant_name(pattern: &Pattern) -> Option<String> {
-    match &pattern.kind {
-        PatternKind::Variant { path, .. } | PatternKind::Struct { path, .. } => {
-            path.last().cloned()
-        }
-        _ => None,
-    }
-}
-
-fn literal_patterns_match(pattern: &Pattern, candidate: &Pattern) -> bool {
-    match (&pattern.kind, &candidate.kind) {
-        (PatternKind::Int(left), PatternKind::Int(right)) => left == right,
-        (PatternKind::String(left), PatternKind::String(right)) => left == right,
-        (PatternKind::Or(alternatives), _) => alternatives
-            .iter()
-            .any(|alternative| literal_patterns_match(alternative, candidate)),
-        _ => false,
-    }
-}
 
 fn describe_pattern(pattern: &Pattern) -> String {
     match &pattern.kind {
@@ -2735,6 +2387,16 @@ fn describe_pattern(pattern: &Pattern) -> String {
             }
         }
         PatternKind::Struct { path, .. } => format!("{} {{ .. }}", path.join("::")),
+        PatternKind::Range {
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}{}{}",
+            start.map(|value| value.to_string()).unwrap_or_default(),
+            if *inclusive { "..=" } else { ".." },
+            end.map(|value| value.to_string()).unwrap_or_default()
+        ),
         PatternKind::Or(alternatives) => alternatives
             .iter()
             .map(describe_pattern)
@@ -2743,92 +2405,10 @@ fn describe_pattern(pattern: &Pattern) -> String {
     }
 }
 
-fn pattern_covers_all(pattern: &Pattern) -> bool {
-    match &pattern.kind {
-        PatternKind::Wildcard | PatternKind::Binding(_) => true,
-        PatternKind::Or(alternatives) => alternatives.iter().any(pattern_covers_all),
-        _ => false,
-    }
-}
 
-fn pattern_covers_literal(pattern: &Pattern, value: bool) -> bool {
-    match &pattern.kind {
-        PatternKind::Bool(other) => *other == value,
-        PatternKind::Or(alternatives) => alternatives
-            .iter()
-            .any(|alternative| pattern_covers_literal(alternative, value)),
-        _ => false,
-    }
-}
 
-fn collect_variant_fields<'a>(
-    pattern: &'a Pattern,
-    variant: &str,
-    collected: &mut Vec<&'a Pattern>,
-) {
-    match &pattern.kind {
-        PatternKind::Variant {
-            path,
-            fields: payloads,
-            ..
-        } if path.last().is_some_and(|name| name == variant) => {
-            if let Some(field) = payloads.first() {
-                collected.push(field);
-            }
-        }
-        PatternKind::Or(alternatives) => {
-            for alternative in alternatives {
-                collect_variant_fields(alternative, variant, collected);
-            }
-        }
-        _ => {}
-    }
-}
 
-fn collect_enum_tuple_rows<'a>(
-    pattern: &'a Pattern,
-    enum_name: &str,
-    variant: &str,
-    collected: &mut Vec<Vec<&'a Pattern>>,
-) {
-    match &pattern.kind {
-        PatternKind::Variant { path, fields, .. }
-            if path.first().is_some_and(|name| name == enum_name)
-                && path.last().is_some_and(|name| name == variant) =>
-        {
-            collected.push(fields.iter().collect());
-        }
-        PatternKind::Or(alternatives) => {
-            for alternative in alternatives {
-                collect_enum_tuple_rows(alternative, enum_name, variant, collected);
-            }
-        }
-        _ => {}
-    }
-}
 
-fn pattern_covers_variant(
-    pattern: &Pattern,
-    variant: &str,
-    field: Option<&Pattern>,
-    field_ty: &InferType,
-) -> bool {
-    match &pattern.kind {
-        PatternKind::Variant { path, fields, .. }
-            if path.last().is_some_and(|name| name == variant) =>
-        {
-            match (field, fields.first()) {
-                (None, None) => true,
-                (Some(_), Some(inner)) => missing_patterns(field_ty, &[inner]).is_empty(),
-                _ => false,
-            }
-        }
-        PatternKind::Or(alternatives) => alternatives
-            .iter()
-            .any(|alternative| pattern_covers_variant(alternative, variant, field, field_ty)),
-        _ => false,
-    }
-}
 
 fn variant_family(variant: &str) -> Option<&'static str> {
     match variant {
@@ -2860,5 +2440,28 @@ fn type_is_unresolved(ty: &InferType) -> bool {
         InferType::Result(ok, error) => type_is_unresolved(ok) || type_is_unresolved(error),
         InferType::Tuple(elements) => elements.iter().any(type_is_unresolved),
         _ => false,
+    }
+}
+
+fn tail_is_implicit_unit(stmts: &[aelys_syntax::Stmt]) -> bool {
+    use aelys_syntax::StmtKind;
+    let Some(last) = stmts.last() else {
+        return true;
+    };
+    match &last.kind {
+        StmtKind::Expression(_)
+        | StmtKind::Return(_)
+        | StmtKind::Break { .. }
+        | StmtKind::Continue { .. } => false,
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            tail_is_implicit_unit(std::slice::from_ref(then_branch.as_ref()))
+                && tail_is_implicit_unit(std::slice::from_ref(else_branch.as_ref()))
+        }
+        StmtKind::Block(inner) => tail_is_implicit_unit(inner),
+        _ => true,
     }
 }

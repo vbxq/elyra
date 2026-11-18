@@ -4,7 +4,9 @@ use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKi
 impl DeadCodeEliminator {
     fn is_terminator(stmt: &TypedStmt) -> bool {
         match &stmt.kind {
-            TypedStmtKind::Return(_) | TypedStmtKind::Break | TypedStmtKind::Continue => true,
+            TypedStmtKind::Return(_)
+            | TypedStmtKind::Break { .. }
+            | TypedStmtKind::Continue { .. } => true,
             TypedStmtKind::Block(stmts) => stmts.last().map(Self::is_terminator).unwrap_or(false),
             TypedStmtKind::If {
                 then_branch,
@@ -101,7 +103,9 @@ impl DeadCodeEliminator {
                     self.eliminate_in_stmt(else_b);
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+            condition, body, ..
+        } => {
                 if Self::is_const_bool(condition) == Some(false) {
                     stmt.kind = TypedStmtKind::Block(vec![]);
                     self.stats.branches_eliminated += 1;
@@ -119,9 +123,12 @@ impl DeadCodeEliminator {
             }
             TypedStmtKind::Expression(expr) => self.eliminate_in_expr(expr),
             TypedStmtKind::Let { initializer, .. } => self.eliminate_in_expr(initializer),
+            TypedStmtKind::Break {
+                value: Some(value), ..
+            } => self.eliminate_in_expr(value),
             TypedStmtKind::Return(_)
-            | TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }

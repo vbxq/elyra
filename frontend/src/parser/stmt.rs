@@ -1,32 +1,66 @@
 use super::Parser;
 use aelys_common::Result;
 use aelys_common::error::CompileErrorKind;
-use aelys_syntax::{ExprKind, Stmt, StmtKind, TokenKind};
+use aelys_syntax::{
+    Expr, ExprKind, MatchArm, MatchArmBody, Pattern, PatternKind, Stmt, StmtKind, TokenKind,
+};
 
 impl Parser {
     pub fn statement(&mut self) -> Result<Stmt> {
+        if let TokenKind::Label(label) = self.peek().kind.clone()
+            && self.peek_at(1).kind == TokenKind::Colon
+        {
+            self.advance();
+            self.advance();
+            return self.labeled_loop_statement(label);
+        }
+
+        if self.check(&TokenKind::If) && self.peek_at(1).kind == TokenKind::Let {
+            let span = self.advance().span;
+            let expr = self.if_let_expression(span, false)?;
+            self.match_token(&TokenKind::Semicolon);
+            let span = expr.span;
+            return Ok(Stmt::new(StmtKind::Expression(expr), span));
+        }
+
         if self.match_token(&TokenKind::If) {
             return self.if_statement();
         }
 
-        if self.match_token(&TokenKind::While) {
-            return self.while_statement();
+        if self.check(&TokenKind::While) {
+            return self.labeled_loop_statement_body(None);
+        }
+
+        if self.is_loop_keyword() {
+            return self.labeled_loop_statement_body(None);
         }
 
         if self.match_token(&TokenKind::For) {
-            return self.for_statement();
+            return self.for_statement(None);
         }
 
         if self.match_token(&TokenKind::Break) {
             let span = self.previous().span;
+            let label = self.optional_label();
+            let value = if matches!(
+                self.peek().kind,
+                TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof
+            ) {
+                None
+            } else {
+                Some(self.expression()?)
+            };
             self.consume_semicolon()?;
-            return Ok(Stmt::new(StmtKind::Break, span));
+            let span = span.merge(self.previous().span);
+            return Ok(Stmt::new(StmtKind::Break { label, value }, span));
         }
 
         if self.match_token(&TokenKind::Continue) {
             let span = self.previous().span;
+            let label = self.optional_label();
             self.consume_semicolon()?;
-            return Ok(Stmt::new(StmtKind::Continue, span));
+            let span = span.merge(self.previous().span);
+            return Ok(Stmt::new(StmtKind::Continue { label }, span));
         }
 
         if self.match_token(&TokenKind::Return) {
@@ -41,6 +75,118 @@ impl Parser {
         }
 
         self.expression_statement()
+    }
+
+    pub(crate) fn is_loop_keyword(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "loop")
+            && self.peek_at(1).kind == TokenKind::LBrace
+    }
+
+    fn optional_label(&mut self) -> Option<String> {
+        if let TokenKind::Label(label) = self.peek().kind.clone() {
+            self.advance();
+            Some(label)
+        } else {
+            None
+        }
+    }
+
+    fn labeled_loop_statement(&mut self, label: String) -> Result<Stmt> {
+        if self.match_token(&TokenKind::For) {
+            return self.for_statement(Some(label));
+        }
+        if self.check(&TokenKind::While) || self.is_loop_keyword() {
+            return self.labeled_loop_statement_body(Some(label));
+        }
+        Err(self.error(CompileErrorKind::UnexpectedToken {
+            expected: "for, while, or loop after a label".to_string(),
+            found: self.peek().kind.to_string(),
+        }))
+    }
+
+    fn labeled_loop_statement_body(&mut self, label: Option<String>) -> Result<Stmt> {
+        if self.is_loop_keyword() {
+            let span = self.advance().span;
+            let expr = self.loop_expression(span, label)?;
+            self.match_token(&TokenKind::Semicolon);
+            let span = expr.span;
+            return Ok(Stmt::new(StmtKind::Expression(expr), span));
+        }
+        self.consume(&TokenKind::While, "while")?;
+        if self.check(&TokenKind::Let) {
+            let span = self.previous().span;
+            let expr = self.while_let_expression(span, label)?;
+            self.match_token(&TokenKind::Semicolon);
+            let span = expr.span;
+            return Ok(Stmt::new(StmtKind::Expression(expr), span));
+        }
+        self.while_statement(label)
+    }
+
+    pub(crate) fn loop_expression(
+        &mut self,
+        start_span: aelys_syntax::Span,
+        label: Option<String>,
+    ) -> Result<Expr> {
+        self.consume(&TokenKind::LBrace, "{")?;
+        let body = self.block_statements()?;
+        let span = start_span.merge(self.previous().span);
+        Ok(Expr::new(ExprKind::Loop { body, label }, span))
+    }
+
+    fn while_let_expression(
+        &mut self,
+        start_span: aelys_syntax::Span,
+        label: Option<String>,
+    ) -> Result<Expr> {
+        self.consume(&TokenKind::Let, "let")?;
+        let pattern = self.parse_pattern()?;
+        self.consume(&TokenKind::Eq, "=")?;
+        let scrutinee = self.with_brace_construction(false, Parser::expression)?;
+        self.consume(&TokenKind::LBrace, "{")?;
+        let body = self.block_statements()?;
+        let span = start_span.merge(self.previous().span);
+        let mut body_stmts = body;
+        body_stmts.push(Stmt::new(StmtKind::Expression(Expr::new(ExprKind::Unit, span)), span));
+        let arms = vec![
+            MatchArm {
+                span: pattern.span,
+                pattern,
+                guard: None,
+                body: MatchArmBody::Block(body_stmts),
+                synthetic: false,
+            },
+            MatchArm {
+                pattern: Pattern {
+                    kind: PatternKind::Wildcard,
+                    span,
+                },
+                guard: None,
+                body: MatchArmBody::Block(vec![Stmt::new(
+                    StmtKind::Break {
+                        label: None,
+                        value: None,
+                    },
+                    span,
+                )]),
+                span,
+                synthetic: true,
+            },
+        ];
+        let matcher = Expr::new(
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            },
+            span,
+        );
+        Ok(Expr::new(
+            ExprKind::Loop {
+                body: vec![Stmt::new(StmtKind::Expression(matcher), span)],
+                label,
+            },
+            span,
+        ))
     }
 
     fn if_statement(&mut self) -> Result<Stmt> {
@@ -72,7 +218,7 @@ impl Parser {
         ))
     }
 
-    fn while_statement(&mut self) -> Result<Stmt> {
+    fn while_statement(&mut self, label: Option<String>) -> Result<Stmt> {
         let start_span = self.previous().span;
         let condition = self.with_brace_construction(false, Parser::expression)?;
         self.consume(&TokenKind::LBrace, "{")?;
@@ -83,12 +229,13 @@ impl Parser {
             StmtKind::While {
                 condition,
                 body: Box::new(body),
+                label,
             },
             start_span.merge(end_span),
         ))
     }
 
-    fn for_statement(&mut self) -> Result<Stmt> {
+    fn for_statement(&mut self, label: Option<String>) -> Result<Stmt> {
         let start_span = self.previous().span;
         let iterator = self.consume_identifier("loop variable")?;
         self.consume(&TokenKind::In, "in")?;
@@ -120,6 +267,7 @@ impl Parser {
                     inclusive,
                     step: Box::new(step),
                     body: Box::new(body),
+                    label,
                 },
                 start_span.merge(end_span),
             ));
@@ -152,6 +300,7 @@ impl Parser {
                     inclusive,
                     step: Box::new(step),
                     body: Box::new(body),
+                    label,
                 },
                 start_span.merge(end_span),
             ))
@@ -166,6 +315,7 @@ impl Parser {
                         iterator,
                         iterable: first_expr,
                         body: Box::new(body),
+                        label,
                     },
                     start_span.merge(end_span),
                 )
@@ -175,6 +325,7 @@ impl Parser {
                         iterator,
                         iterable: first_expr,
                         body: Box::new(body),
+                        label,
                     },
                     start_span.merge(end_span),
                 )
@@ -226,6 +377,7 @@ impl Parser {
                     continue;
                 }
                 stmts.push(parser.declaration()?);
+                stmts.append(&mut parser.pending);
             }
 
             parser.consume(&TokenKind::RBrace, "}")?;

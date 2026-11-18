@@ -151,6 +151,13 @@ impl GlobalConstantPropagator {
                     self.shadows.pop();
                 }
             }
+            TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+                self.shadows.push();
+                for stmt in stmts {
+                    self.substitute_in_stmt(stmt);
+                }
+                self.shadows.pop();
+            }
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
@@ -192,7 +199,9 @@ impl GlobalConstantPropagator {
                     self.shadows.pop();
                 }
             }
-            TypedStmtKind::While { condition, body } => {
+            TypedStmtKind::While {
+            condition, body, ..
+        } => {
                 self.substitute_constants(condition);
                 self.shadows.push();
                 self.substitute_in_stmt(body);
@@ -228,7 +237,10 @@ impl GlobalConstantPropagator {
                 self.substitute_in_stmt(body);
                 self.shadows.pop();
             }
-            TypedStmtKind::Return(Some(expr)) => self.substitute_constants(expr),
+            TypedStmtKind::Return(Some(expr))
+            | TypedStmtKind::Break {
+                value: Some(expr), ..
+            } => self.substitute_constants(expr),
             TypedStmtKind::Function(func) => self.substitute_in_function(func),
             TypedStmtKind::ImplDecl { methods, .. } => {
                 for method in methods {
@@ -236,8 +248,8 @@ impl GlobalConstantPropagator {
                 }
             }
             TypedStmtKind::Return(None)
-            | TypedStmtKind::Break
-            | TypedStmtKind::Continue
+            | TypedStmtKind::Break { value: None, .. }
+            | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
@@ -272,7 +284,8 @@ impl GlobalConstantPropagator {
             TypedPatternKind::Wildcard
             | TypedPatternKind::Int(_)
             | TypedPatternKind::String(_)
-            | TypedPatternKind::Bool(_) => {}
+            | TypedPatternKind::Bool(_)
+            | TypedPatternKind::Range { .. } => {}
         }
     }
 }

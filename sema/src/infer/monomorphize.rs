@@ -455,7 +455,9 @@ fn rewrite_nominal_stmt(
                 rewrite_nominal_stmt(else_branch, replacements, type_table);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             rewrite_nominal_expr(condition, replacements, type_table);
             rewrite_nominal_stmt(body, replacements, type_table);
         }
@@ -483,7 +485,7 @@ fn rewrite_nominal_stmt(
             rewrite_nominal_expr(iterable, replacements, type_table);
             rewrite_nominal_stmt(body, replacements, type_table);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 rewrite_nominal_expr(expr, replacements, type_table);
             }
@@ -534,8 +536,7 @@ fn rewrite_nominal_stmt(
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. } => {}
     }
@@ -596,6 +597,11 @@ fn rewrite_nominal_expr(
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                rewrite_nominal_stmt(stmt, replacements, type_table);
             }
         }
         TypedExprKind::LambdaInner {
@@ -792,7 +798,8 @@ fn rewrite_nominal_pattern(
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }
 
@@ -848,7 +855,9 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
                 collect_stmt_types(else_branch, types);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_expr_types(condition, types);
             collect_stmt_types(body, types);
         }
@@ -876,7 +885,7 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
             collect_expr_types(iterable, types);
             collect_stmt_types(body, types);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 collect_expr_types(expr, types);
             }
@@ -909,8 +918,7 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::Needs(_) => {}
     }
@@ -978,6 +986,11 @@ fn collect_expr_types(expr: &TypedExpr, types: &mut Vec<(InferType, Span)>) {
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                collect_stmt_types(stmt, types);
             }
         }
         TypedExprKind::LambdaInner {
@@ -1104,7 +1117,8 @@ fn collect_pattern_types(pattern: &TypedPattern, types: &mut Vec<(InferType, Spa
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }
 
@@ -1283,6 +1297,13 @@ impl TypeInference {
             });
             visit_exprs_stmt(stmt, &mut |expr| {
                 resolve_deferred_call_type(expr);
+                if let TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } =
+                    &mut expr.kind
+                {
+                    for stmt in stmts {
+                        resolve_deferred_statement_types(stmt);
+                    }
+                }
             });
             resolve_deferred_statement_types(stmt);
         }
@@ -2009,6 +2030,8 @@ impl TypeInference {
             }
         }
         self.type_table.remove_open_nominals();
+        self.type_table
+            .rewrite_field_types(|ty| replace_nominal_type(ty, &replacements));
         for stmt in stmts {
             rewrite_nominal_stmt(stmt, &replacements, &self.type_table);
         }
@@ -2261,7 +2284,9 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
                 collect_impl_calls_stmt(else_branch, calls);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             collect_impl_calls_expr(condition, calls);
             collect_impl_calls_stmt(body, calls);
         }
@@ -2283,7 +2308,7 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
             collect_impl_calls_expr(iterable, calls);
             collect_impl_calls_stmt(body, calls);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 collect_impl_calls_expr(expr, calls);
             }
@@ -2300,8 +2325,7 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -2376,6 +2400,11 @@ fn collect_impl_calls_expr(expr: &TypedExpr, calls: &mut Vec<ImplCallSite>) {
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                collect_impl_calls_stmt(stmt, calls);
             }
         }
         TypedExprKind::LambdaInner { body, .. } => {
@@ -2478,7 +2507,9 @@ fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr))
                 visit_exprs_stmt(else_branch, visit);
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             visit_exprs_expr(condition, visit);
             visit_exprs_stmt(body, visit);
         }
@@ -2500,7 +2531,7 @@ fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr))
             visit_exprs_expr(iterable, visit);
             visit_exprs_stmt(body, visit);
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 visit_exprs_expr(expr, visit);
             }
@@ -2517,8 +2548,7 @@ fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut TypedExpr))
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -2569,6 +2599,11 @@ fn visit_exprs_expr(expr: &mut TypedExpr, visit: &mut dyn FnMut(&mut TypedExpr))
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                visit_exprs_stmt(stmt, visit);
             }
         }
         TypedExprKind::LambdaInner { body, .. } => {
@@ -3429,8 +3464,8 @@ fn resolve_deferred_statement_types(stmt: &mut TypedStmt) {
         }
         TypedStmtKind::Expression(_)
         | TypedStmtKind::Return(_)
-        | TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        | TypedStmtKind::Break { .. }
+        | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -3613,7 +3648,9 @@ fn rewrite_stmt(
                 );
             }
         }
-        TypedStmtKind::While { condition, body } => {
+        TypedStmtKind::While {
+            condition, body, ..
+        } => {
             rewrite_expr(
                 inference,
                 condition,
@@ -3707,7 +3744,7 @@ fn rewrite_stmt(
                 errors,
             );
         }
-        TypedStmtKind::Return(expr) => {
+        TypedStmtKind::Return(expr) | TypedStmtKind::Break { value: expr, .. } => {
             if let Some(expr) = expr {
                 rewrite_expr(
                     inference,
@@ -3751,8 +3788,7 @@ fn rewrite_stmt(
                 }
             }
         }
-        TypedStmtKind::Break
-        | TypedStmtKind::Continue
+        TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
@@ -3943,6 +3979,20 @@ fn rewrite_expr(
                         }
                     }
                 }
+            }
+        }
+        TypedExprKind::Block(stmts) | TypedExprKind::Loop { body: stmts, .. } => {
+            for stmt in stmts {
+                rewrite_stmt(
+                    inference,
+                    stmt,
+                    generic_defs,
+                    queue,
+                    queued,
+                    symbols,
+                    symbol_keys,
+                    errors,
+                );
             }
         }
         TypedExprKind::LambdaInner { body, .. } => {
@@ -4203,7 +4253,8 @@ fn rewrite_pattern(pattern: &mut TypedPattern) {
         | TypedPatternKind::Binding(_)
         | TypedPatternKind::Int(_)
         | TypedPatternKind::String(_)
-        | TypedPatternKind::Bool(_) => {}
+        | TypedPatternKind::Bool(_)
+        | TypedPatternKind::Range { .. } => {}
     }
 }
 

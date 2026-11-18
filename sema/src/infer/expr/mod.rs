@@ -176,6 +176,11 @@ impl TypeInference {
                 type_args,
                 fields,
             } => self.infer_enum_literal(path, type_args, fields, expr.span),
+            ExprKind::Block(stmts) => {
+                let (typed, ty) = self.infer_block_value(stmts);
+                (TypedExprKind::Block(typed), ty)
+            }
+            ExprKind::Loop { body, label } => self.infer_loop_expr(body, label.as_ref()),
             ExprKind::Cast {
                 expr: inner,
                 target,

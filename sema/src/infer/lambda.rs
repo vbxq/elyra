@@ -38,6 +38,7 @@ impl TypeInference {
 
         let saved_env = std::mem::replace(&mut self.env, closure_env);
         let saved_forwarded_borrows = std::mem::take(&mut self.forwarded_mutable_borrows);
+        let saved_loop_frames = std::mem::take(&mut self.loop_frames);
 
         for (param, syntax_param) in typed_params.iter().zip(params) {
             if param.ty.contains_dynamic() {
@@ -90,6 +91,7 @@ impl TypeInference {
         self.pop_return_type();
         self.env = saved_env;
         self.forwarded_mutable_borrows = saved_forwarded_borrows;
+        self.loop_frames = saved_loop_frames;
 
         let param_types: Vec<InferType> = typed_params.iter().map(|p| p.ty.clone()).collect();
         let fn_type = InferType::Function {
