@@ -1437,7 +1437,9 @@ println(score(BulletKind::Directed { damage: 2, speed: 1.5 }))
 A `match` used as a statement (not as a value and not as the last statement of a
 block that gives a value) discards its arm values, so its arms need not agree:
 `match o { Ok(v) => total = v, Err(_) => {} }` and arms that all `return` are
-accepted. A discarded `Result` or `Option` arm value is still E0303/E0304.
+accepted. A discarded `Result` or `Option` arm value is still E0303/E0304. The
+last statement of a script is its value, so a `match` there keeps its arm values.
+An assignment (`r = Some(3)`) is never a discarded value, whatever its type.
 
 ### Unreachable patterns
 
