@@ -288,9 +288,29 @@ impl Parser {
         ))
     }
 
+    fn bind_before(mut bindings: Vec<Stmt>, body: Stmt) -> Stmt {
+        if bindings.is_empty() {
+            return body;
+        }
+        let span = body.span;
+        bindings.push(body);
+        Stmt::new(StmtKind::Block(bindings), span)
+    }
+
     fn for_statement(&mut self, label: Option<String>) -> Result<Stmt> {
         let start_span = self.previous().span;
-        let iterator = self.consume_declared_identifier("loop variable")?;
+        let pattern = if self.starts_destructuring_pattern() {
+            Some(self.parse_pattern()?)
+        } else {
+            None
+        };
+        let (iterator, bindings) = match &pattern {
+            Some(pattern) => self.destructure(pattern, "for", false)?,
+            None => (
+                self.consume_declared_identifier("loop variable")?,
+                Vec::new(),
+            ),
+        };
         self.consume(&TokenKind::In, "in")?;
         let read_only = self.match_token(&TokenKind::Ampersand);
 
@@ -309,7 +329,7 @@ impl Parser {
             };
 
             self.consume(&TokenKind::LBrace, "{")?;
-            let body = self.block_statement()?;
+            let body = Self::bind_before(bindings, self.block_statement()?);
             let end_span = self.previous().span;
 
             return Ok(Stmt::new(
@@ -342,7 +362,7 @@ impl Parser {
             };
 
             self.consume(&TokenKind::LBrace, "{")?;
-            let body = self.block_statement()?;
+            let body = Self::bind_before(bindings, self.block_statement()?);
             let end_span = self.previous().span;
 
             Ok(Stmt::new(
@@ -359,7 +379,7 @@ impl Parser {
             ))
         } else {
             self.consume(&TokenKind::LBrace, "{")?;
-            let body = self.block_statement()?;
+            let body = Self::bind_before(bindings, self.block_statement()?);
             let end_span = self.previous().span;
 
             Ok(if read_only {

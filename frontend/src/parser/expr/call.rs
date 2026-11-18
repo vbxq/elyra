@@ -67,11 +67,7 @@ impl Parser {
                     span,
                 );
             } else if self.match_token(&TokenKind::ColonColon) {
-                let member = if self.match_token(&TokenKind::From) {
-                    "from".to_string()
-                } else {
-                    self.consume_identifier("path segment")?
-                };
+                let member = self.consume_identifier("path segment")?;
                 if !matches!(
                     &expr.kind,
                     ExprKind::Identifier(_)

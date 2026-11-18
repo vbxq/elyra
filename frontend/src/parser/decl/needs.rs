@@ -2,6 +2,7 @@
 
 use super::Parser;
 use aelys_common::Result;
+use aelys_common::error::CompileErrorKind;
 use aelys_syntax::{ImportKind, NeedsStmt, Stmt, StmtKind, TokenKind};
 
 impl Parser {
@@ -21,6 +22,14 @@ impl Parser {
         Ok(path)
     }
 
+    fn match_from_keyword(&mut self) -> bool {
+        let is_from = matches!(&self.peek().kind, TokenKind::Identifier(word) if word == "from");
+        if is_from {
+            self.advance();
+        }
+        is_from
+    }
+
     pub(super) fn needs_declaration(&mut self) -> Result<Stmt> {
         let start_span = self.peek().span;
         self.advance();
@@ -35,7 +44,12 @@ impl Parser {
                 symbols.push(self.consume_identifier("symbol name")?);
             }
 
-            self.consume(&TokenKind::From, "from")?;
+            if !self.match_from_keyword() {
+                return Err(self.error(CompileErrorKind::UnexpectedToken {
+                    expected: "from".to_string(),
+                    found: self.peek().kind.to_string(),
+                }));
+            }
             let module_name = self.consume_identifier("module name")?;
             let path = self.module_path(vec![module_name])?;
 
@@ -52,7 +66,7 @@ impl Parser {
             ));
         }
 
-        if self.match_token(&TokenKind::From) {
+        if self.match_from_keyword() {
             let symbols = vec![first_ident];
             let module_name = self.consume_identifier("module name")?;
             let path = self.module_path(vec![module_name])?;

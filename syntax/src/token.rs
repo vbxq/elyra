@@ -48,7 +48,6 @@ pub enum TokenKind {
     Pub,
     Needs,
     As,
-    From, // module system
     For,
     In,
     Struct,
@@ -177,7 +176,6 @@ impl std::fmt::Display for TokenKind {
             Self::Pub => write!(f, "pub"),
             Self::Needs => write!(f, "needs"),
             Self::As => write!(f, "as"),
-            Self::From => write!(f, "from"),
             Self::For => write!(f, "for"),
             Self::In => write!(f, "in"),
             Self::Struct => write!(f, "struct"),
