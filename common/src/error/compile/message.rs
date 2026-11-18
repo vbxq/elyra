@@ -162,9 +162,13 @@ impl CompileErrorKind {
                         "import '{}' from one module only; a selective import has no 'as' form",
                         symbol
                     ),
-                    super::kind::SymbolConflictRepair::Qualify(owners) => format!(
+                    super::kind::SymbolConflictRepair::Qualify => format!(
                         "both modules were imported whole; write the qualified name: {}",
-                        owners.join(" or ")
+                        modules
+                            .iter()
+                            .map(|module| format!("{module}::{symbol}"))
+                            .collect::<Vec<_>>()
+                            .join(" or ")
                     ),
                     super::kind::SymbolConflictRepair::RenameLocal => format!(
                         "rename this file's '{}'; a selective import has no 'as' form to alias the other",

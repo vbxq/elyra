@@ -78,7 +78,7 @@ pub fn ambiguous_use_error(
                 .map(str::to_string)
                 .collect(),
             carried_by: Vec::new(),
-            repair: aelys_common::error::SymbolConflictRepair::Qualify(owners.to_vec()),
+            repair: aelys_common::error::SymbolConflictRepair::Qualify,
         },
         span,
         source,

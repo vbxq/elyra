@@ -175,6 +175,7 @@ impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
 
     /// construct a descriptor at an FFI boundary
+    #[allow(clippy::missing_safety_doc)]
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
         abi_version: u32,

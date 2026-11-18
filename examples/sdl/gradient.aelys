@@ -1,4 +1,3 @@
-// palette-cycling gradient through the sdl native module
 // build the module and copy it here as sdl.so first, see docs/native-modules.md
 needs std::bytes as bytes
 needs std::sys as sys

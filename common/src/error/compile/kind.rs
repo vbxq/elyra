@@ -199,5 +199,5 @@ pub enum SymbolConflictRepair {
     Alias,
     NameOne,
     RenameLocal,
-    Qualify(Vec<String>),
+    Qualify,
 }

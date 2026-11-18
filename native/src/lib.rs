@@ -68,6 +68,7 @@ pub unsafe fn alloc_string_from_context(
 }
 
 /// read a string value from the VM using the stored API. # safety `VM` must be a valid pointer to a live VM instance (clippy moment)
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn read_string_from_value(
     context: *mut NativeContext,
     value: AelysValue,
