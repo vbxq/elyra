@@ -39,6 +39,8 @@ pub struct AelysEnum {
     pub variant_id: u16,
     pub slot_count: u16,
     pub slots: Box<[Value]>,
+    // set once EnumNew checked every slot, so a later schema check stops at this object
+    pub validated: bool,
 }
 
 impl AelysEnum {
@@ -49,6 +51,7 @@ impl AelysEnum {
             variant_id,
             slot_count,
             slots: slots.into_boxed_slice(),
+            validated: false,
         })
     }
 

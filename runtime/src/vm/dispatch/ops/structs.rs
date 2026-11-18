@@ -118,6 +118,11 @@ impl VM {
                     slots.push(value);
                 }
                 let reference = self.alloc_enum(runtime_enum_id, c, slots)?;
+                if let Some(object) = self.heap.get_mut(reference)
+                    && let ObjectKind::Enum(value) = &mut object.kind
+                {
+                    value.validated = true;
+                }
                 state.write_register(
                     self,
                     base + usize::from(a),
@@ -494,13 +499,14 @@ impl VM {
                 {
                     return false;
                 }
-                variant
-                    .fields
-                    .iter()
-                    .zip(value.slots.iter())
-                    .all(|(field, value)| {
-                        self.value_satisfies_schema(*value, &field.ty, tables, depth + 1)
-                    })
+                value.validated
+                    || variant
+                        .fields
+                        .iter()
+                        .zip(value.slots.iter())
+                        .all(|(field, value)| {
+                            self.value_satisfies_schema(*value, &field.ty, tables, depth + 1)
+                        })
             }
             TypeDescriptor::Function { .. } => self.is_object_kind(value, |kind| {
                 matches!(
