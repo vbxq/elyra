@@ -195,7 +195,7 @@ impl Compiler {
         span: Span,
     ) -> Result<()> {
         let count = operands.len() + 1;
-        let base = self.alloc_consecutive_registers_for_call(count, span)?;
+        let base = self.alloc_call_window(count, span)?;
         self.alloc_consecutive_from(base, count)?;
         for (offset, operand) in operands.iter().enumerate() {
             let register = base
@@ -238,14 +238,14 @@ impl Compiler {
             state,
             span,
         )?;
-        let call_base = self.alloc_consecutive_registers_for_call(4, span)?;
+        let more = self.alloc_register()?;
+        let slot = self.alloc_register()?;
+        let call_base = self.alloc_call_window(4, span)?;
         self.alloc_consecutive_from(call_base, 4)?;
         let result = call_base + 1;
         let left = call_base + 2;
         let right = call_base + 3;
         self.compile_typed_expr(comparator, call_base)?;
-        let more = self.alloc_register()?;
-        let slot = self.alloc_register()?;
         self.emit_b(OpCode::LoadI, result, 0, span);
         let load = match &object.ty {
             InferType::Vec(_) => Self::element_load(

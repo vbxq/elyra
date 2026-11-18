@@ -171,12 +171,11 @@ impl Compiler {
             }
         }
 
-        let is_hoisted = |stmt: &&aelys_sema::TypedStmt| match &stmt.kind {
-            TypedStmtKind::Function(func) => func.captures.is_empty(),
-            TypedStmtKind::ImplDecl { methods, .. } => {
-                methods.iter().all(|method| method.captures.is_empty())
-            }
-            _ => false,
+        let is_hoisted = |stmt: &&aelys_sema::TypedStmt| {
+            matches!(
+                stmt.kind,
+                TypedStmtKind::Function(_) | TypedStmtKind::ImplDecl { .. }
+            )
         };
         let ordered: Vec<&aelys_sema::TypedStmt> = program
             .stmts
@@ -210,7 +209,7 @@ impl Compiler {
             self.leave_definition_module(restore_last);
         }
 
-        self.current.num_registers = self.next_register;
+        self.finish_registers()?;
         self.current.global_layout = self.build_global_layout()?;
         self.current.compute_global_layout_hash();
         self.current.finalize_bytecode();

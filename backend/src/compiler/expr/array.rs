@@ -33,7 +33,7 @@ impl Compiler {
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
-        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
+        let start_reg = self.alloc_consecutive_registers(count, span)?;
 
         for i in 0..count {
             let reg = start_reg + u16::try_from(i).expect("register offset was range checked");
@@ -74,7 +74,7 @@ impl Compiler {
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
-        let start_reg = self.alloc_consecutive_registers_for_call(count, span)?;
+        let start_reg = self.alloc_consecutive_registers(count, span)?;
 
         for i in 0..count {
             let reg = start_reg + u16::try_from(i).expect("register offset was range checked");

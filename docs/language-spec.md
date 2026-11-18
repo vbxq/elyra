@@ -577,6 +577,38 @@ fn foo() -> int {
 Functions without a returned value have type `unit`. A function with a concrete
 return type must return that type on every reachable path.
 
+In a function or lambda without a return annotation, a bare `return` (also
+directly before `}`) and `return ()` return `unit`, and a trailing assignment
+(`x = v`, `x += v`, `s.f = v`, `v[i] = v`, an `if`/`else` or a `match` whose
+branches all end in an assignment) is a statement, not a returned value: such a
+function has type `unit` and returns `()` at run time. With an explicit return
+type, a trailing assignment still yields the assigned value.
+
+An unannotated function that returns a value with `return v` takes the type of
+`v`, so every path must yield a value: ending on a trailing assignment (or any
+other statement) after such a `return` is E0215.
+
+```rust
+let mut g = 0
+fn f(c: bool) {
+    if c { return 7 }
+    g = 5          // E0215: this path falls through without a value
+}
+```
+
+Every top-level `fn` and `impl` of a file is bound before the file's top-level
+code runs, so a top-level `let` initializer may call a function declared further
+down the same file or module. Top-level `let` bindings still run in source order:
+a function that reads a global whose `let` has not run yet stops the program with
+the runtime error ``global `b` read before its initialiser ran``, pointing at the
+reading line. The value is never read as a default.
+
+```rust
+let a = f()        // runtime error: global `b` read before its initialiser ran
+let b = 10
+fn f() -> int { b + 1 }
+```
+
 ### Lambdas (Anonymous Functions)
 
 ```rust
@@ -1639,7 +1671,12 @@ let answer = match item {
 ```
 
 Indexing with a constant index that is provably outside a known collection
-length is a compile error. Other invalid indices trap at runtime; they never
+length is a compile error. A length is known for an array or Vec literal indexed
+directly, for a fixed-size array type `[T; N]`, and for an immutable array
+binding. A Vec binding never has a known length, even when it is immutable,
+because `push` and any `mut` parameter it is handed can grow it; neither does a
+`let mut` array of unsized type, which another function or a closure can
+replace. Those indices are checked at run time. Other invalid indices trap at runtime; they never
 produce a null value. `len` and `is_empty` are available on arrays and Vecs.
 
 For-each accepts an array, Vec, or string. `for item in &values` makes the
@@ -3027,7 +3064,6 @@ last spelling is the only discard; there is no `discard` keyword. E0303 (Result)
 E0304 (Option) print these repairs. The check covers expression statements, block
 and closure bodies, match arms, and named bindings; a `Result` stored inside a
 collection literal such as `vec![r(), r()]` is not tracked.
-match it, call a consuming method, or write `let _ = expression` explicitly.
 Assigning one to a variable, a field or an element (`a.next = Some(x)`,
 `v[i] = Ok(1)`) uses it. A function or lambda without a declared return type
 whose last statement is an assignment returns unit, so a setter such as
@@ -3236,7 +3272,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0202 | VariableAlreadyDefined | a name is declared twice in one scope |
 | E0203 | AssignToImmutable | assignment to a binding without `mut` |
 | E0204 | TooManyConstants | the constant pool limit is exceeded |
-| E0205 | TooManyRegisters | the register limit is exceeded |
+| E0205 | TooManyRegisters | the register limit is exceeded, or an instruction with no wide form would need a register above 255; reported at the line that needs it, never compiled into a truncated register |
 | E0206 | TooManyArguments | the argument limit is exceeded |
 | E0207 | BreakOutsideLoop | `break` outside a loop |
 | E0208 | ContinueOutsideLoop | `continue` outside a loop |
@@ -3247,6 +3283,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0213 | JumpOffsetTooLarge | a jump exceeds the encodable range |
 | E0214 | CompilationLimitExceeded | a compilation limit is exceeded |
 | E0215 | MissingReturnValue | a path falls through without a value |
+| E0216 | CallWindowOverlap | internal compiler error: a call frame would overwrite a register that is still live; the program is refused instead of run with a corrupted local |
 
 ### E03xx, types
 

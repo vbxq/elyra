@@ -32,6 +32,10 @@ impl Value {
     pub fn is_char(&self) -> bool {
         (self.0 & (QNAN | TAG_MASK | CHAR_FLAG)) == (QNAN | TAG_NULL | CHAR_FLAG)
     }
+    #[inline(always)]
+    pub fn is_uninit(&self) -> bool {
+        self.0 == (QNAN | TAG_NULL | 1)
+    }
     pub fn is_ptr(&self) -> bool {
         (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_PTR)
     }

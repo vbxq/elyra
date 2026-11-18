@@ -21,6 +21,7 @@ pub enum RuntimeErrorKind {
     },
     DivisionByZero,
     UndefinedVariable(String),
+    UninitializedGlobal(String),
     NotCallable(String),
     ArityMismatch {
         expected: u16,
@@ -149,6 +150,10 @@ impl RuntimeErrorKind {
             }
             Self::DivisionByZero => "division by zero".to_string(),
             Self::UndefinedVariable(name) => crate::naming::undefined_variable_message(name),
+            Self::UninitializedGlobal(name) => format!(
+                "global `{}` read before its initialiser ran",
+                crate::naming::unscoped_global_name(name)
+            ),
             Self::NotCallable(ty) => format!("'{}' is not callable", ty),
             Self::ArityMismatch { expected, got } => {
                 format!("expected {} arguments, got {}", expected, got)

@@ -361,6 +361,9 @@ impl Parser {
             self.consume_semicolon()?;
             return Ok(Stmt::new(StmtKind::Return(None), start_span));
         }
+        if self.check(&TokenKind::RBrace) {
+            return Ok(Stmt::new(StmtKind::Return(None), start_span));
+        }
 
         let value = self.expression()?;
         self.consume_semicolon()?;

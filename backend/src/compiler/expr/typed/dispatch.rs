@@ -56,10 +56,17 @@ impl Compiler {
             TypedExprKind::Lambda(inner) => self.compile_typed_expr(inner, dest),
             TypedExprKind::LambdaInner {
                 params,
-                return_type: _,
+                return_type,
                 body,
                 captures,
-            } => self.compile_typed_lambda_with_stmts(params, body, captures, dest, expr.span),
+            } => self.compile_typed_lambda_with_stmts(
+                params,
+                matches!(return_type, aelys_sema::InferType::Unit),
+                body,
+                captures,
+                dest,
+                expr.span,
+            ),
             TypedExprKind::Member {
                 object,
                 member,

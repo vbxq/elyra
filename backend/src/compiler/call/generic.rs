@@ -14,7 +14,7 @@ impl Compiler {
     ) -> Result<()> {
         let nargs = self.checked_call_arity(args.len(), span)?;
         let register_count = args.len().saturating_add(1);
-        let func_reg = self.alloc_consecutive_registers_for_call(register_count, span)?;
+        let func_reg = self.alloc_call_window(register_count, span)?;
 
         for i in 0..register_count {
             let reg = func_reg + u16::try_from(i).expect("argument count was range checked");

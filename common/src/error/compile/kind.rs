@@ -62,6 +62,10 @@ pub enum CompileErrorKind {
         distance: usize,
     },
     CompilationLimitExceeded(String),
+    CallWindowOverlap {
+        register: u16,
+        window_base: u16,
+    },
     BreakOutsideLoop,
     ContinueOutsideLoop,
     ReturnOutsideFunction,

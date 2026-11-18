@@ -45,7 +45,7 @@ impl Compiler {
 
         // Allocate 3 consecutive registers for iter, end, step.
         // ForLoopI requires these to be adjacent in the register window.
-        let iter_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let iter_reg = self.alloc_consecutive_registers(3, span)?;
         let end_reg = iter_reg + 1;
         let step_reg = iter_reg + 2;
 

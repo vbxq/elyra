@@ -8,6 +8,7 @@ impl Compiler {
     pub(super) fn compile_typed_lambda_with_stmts(
         &mut self,
         params: &[aelys_sema::TypedParam],
+        unit_return: bool,
         body: &[aelys_sema::TypedStmt],
         captures: &[(String, aelys_sema::InferType)],
         dest: u16,
@@ -96,7 +97,7 @@ impl Compiler {
             }
 
             let last_stmt = &body[body.len() - 1];
-            if Compiler::typed_stmt_yields_value(last_stmt) {
+            if !unit_return && Compiler::typed_stmt_yields_value(last_stmt) {
                 let result_reg = nested_compiler.alloc_register()?;
                 nested_compiler.compile_typed_stmt_value(last_stmt, result_reg)?;
                 nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
@@ -111,7 +112,7 @@ impl Compiler {
         }
 
         nested_compiler.end_scope();
-        nested_compiler.current.num_registers = nested_compiler.next_register;
+        nested_compiler.finish_registers()?;
         nested_compiler.current.global_layout = nested_compiler.build_global_layout()?;
         nested_compiler.current.compute_global_layout_hash();
         nested_compiler.current.finalize_bytecode();

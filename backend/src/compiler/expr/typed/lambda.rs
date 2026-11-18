@@ -57,7 +57,7 @@ impl Compiler {
         nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, body.span);
 
         nested_compiler.end_scope();
-        nested_compiler.current.num_registers = nested_compiler.next_register;
+        nested_compiler.finish_registers()?;
         nested_compiler.current.global_layout = nested_compiler.build_global_layout()?;
         nested_compiler.current.compute_global_layout_hash();
 

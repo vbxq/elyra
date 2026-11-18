@@ -108,7 +108,8 @@ impl TypeInference {
                 }
             });
 
-        if func.return_type.is_none() && !body_yields_value(&func.body) {
+        let unit_body = func.return_type.is_none() && !body_yields_value(&func.body);
+        if unit_body {
             self.constraints.push(crate::constraint::Constraint::equal(
                 return_type.clone(),
                 InferType::Unit,
@@ -151,12 +152,27 @@ impl TypeInference {
                 .collect();
 
             let last_stmt = &func.body[func.body.len() - 1];
-            stmts.extend(self.infer_body_tail(last_stmt, &return_type, func.return_type.is_some()));
+            if unit_body {
+                stmts.push(self.infer_stmt(last_stmt));
+            } else {
+                stmts.extend(self.infer_body_tail(
+                    last_stmt,
+                    &return_type,
+                    func.return_type.is_some(),
+                ));
+            }
 
             stmts
         };
 
+        let missing = match func.return_type {
+            Some(_) => {
+                !matches!(return_type, InferType::Unit) && !body_always_returns(&func.body, true)
+            }
+            None => falls_through_without_value(&func.body),
+        };
         if func.return_type.is_none()
+            && !missing
             && body_yields_value(&func.body)
             && !body_always_returns(&func.body, true)
         {
@@ -164,10 +180,7 @@ impl TypeInference {
                 .push((return_type.clone(), func.span, func.name.clone()));
         }
 
-        if func.return_type.is_some()
-            && !matches!(return_type, InferType::Unit)
-            && !body_always_returns(&func.body, true)
-        {
+        if missing {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MissingReturnValue {
                     expected: return_type.clone(),
@@ -348,7 +361,7 @@ pub(super) fn body_yields_value(stmts: &[Stmt]) -> bool {
 
 fn stmt_returns_value(stmt: &Stmt) -> bool {
     match &stmt.kind {
-        StmtKind::Return(value) => value.is_some(),
+        StmtKind::Return(value) => value.as_ref().is_some_and(|value| !is_unit_literal(value)),
         StmtKind::Block(stmts) => stmts.iter().any(stmt_returns_value),
         StmtKind::If {
             then_branch,
@@ -389,9 +402,82 @@ pub(super) fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
     }
 }
 
+fn is_unit_literal(expr: &aelys_syntax::Expr) -> bool {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Unit => true,
+        aelys_syntax::ExprKind::Grouping(inner) => is_unit_literal(inner),
+        _ => false,
+    }
+}
+
+fn expr_yields_value(expr: &aelys_syntax::Expr) -> bool {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Match { arms, .. } => {
+            arms.iter().any(|arm| match &arm.body {
+                aelys_syntax::MatchArmBody::Expr(body) => expr_yields_value(body),
+                aelys_syntax::MatchArmBody::Block(stmts) => {
+                    stmts.last().is_some_and(tail_yields_value)
+                }
+            }) || !expr_ends_in_assignment(expr)
+        }
+        _ => !is_assignment(expr),
+    }
+}
+
+fn expr_ends_in_assignment(expr: &aelys_syntax::Expr) -> bool {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
+            aelys_syntax::MatchArmBody::Expr(body) => expr_ends_in_assignment(body),
+            aelys_syntax::MatchArmBody::Block(stmts) => {
+                stmts.last().is_some_and(stmt_ends_in_assignment)
+            }
+        }),
+        _ => is_assignment(expr),
+    }
+}
+
+fn stmt_ends_in_assignment(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Expression(expr) => expr_ends_in_assignment(expr),
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => stmt_ends_in_assignment(then_branch) || stmt_ends_in_assignment(else_branch),
+        StmtKind::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
+        _ => false,
+    }
+}
+
+// a value returned with `return` gives the function a type, so every other path must yield one too
+pub(super) fn falls_through_without_value(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_returns_value) && !body_always_yields(stmts)
+}
+
+fn body_always_yields(stmts: &[Stmt]) -> bool {
+    let Some((last, prefix)) = stmts.split_last() else {
+        return false;
+    };
+    prefix.iter().any(|stmt| stmt_always_returns(stmt, false)) || stmt_always_yields(last)
+}
+
+fn stmt_always_yields(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(_) => true,
+        StmtKind::Expression(expr) => expr_yields_value(expr),
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => stmt_always_yields(then_branch) && stmt_always_yields(else_branch),
+        StmtKind::Block(stmts) => body_always_yields(stmts),
+        _ => false,
+    }
+}
+
 fn tail_yields_value(stmt: &Stmt) -> bool {
     match &stmt.kind {
-        StmtKind::Expression(expr) => !is_assignment(expr),
+        StmtKind::Expression(expr) => expr_yields_value(expr),
         StmtKind::If {
             then_branch,
             else_branch: Some(else_branch),

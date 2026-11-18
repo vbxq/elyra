@@ -89,12 +89,9 @@ impl TypeInference {
         if name != "_" {
             let explicit_dynamic_annotation =
                 type_annotation.is_some() && var_type.contains_dynamic();
-            let known_length = self.constant_collection_length(initializer).filter(|_| {
-                matches!(
-                    &var_type,
-                    InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_)
-                )
-            });
+            let known_length = self
+                .constant_collection_length(initializer)
+                .filter(|_| crate::infer::length_is_fixed(&var_type, mutable));
             if let Some(length) = known_length
                 && !explicit_dynamic_annotation
                 && !self.is_explicit_dynamic_expr(&typed_init)

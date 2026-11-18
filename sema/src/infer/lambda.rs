@@ -28,11 +28,12 @@ impl TypeInference {
             });
         }
 
+        let unit_body = return_type_ann.is_none() && !super::functions::body_yields_value(body);
         let return_type = match return_type_ann {
             Some(ann) => {
                 self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
             }
-            None if !super::functions::body_yields_value(body) => InferType::Unit,
+            None if unit_body => InferType::Unit,
             None => self.type_gen.fresh(),
         };
 
@@ -65,12 +66,28 @@ impl TypeInference {
             }
 
             let last_stmt = &body[body.len() - 1];
-            stmts.extend(self.infer_body_tail(last_stmt, &return_type, return_type_ann.is_some()));
+            if unit_body {
+                stmts.push(self.infer_stmt(last_stmt));
+            } else {
+                stmts.extend(self.infer_body_tail(
+                    last_stmt,
+                    &return_type,
+                    return_type_ann.is_some(),
+                ));
+            }
 
             stmts
         };
 
+        let missing = match return_type_ann {
+            Some(_) => {
+                !matches!(return_type, InferType::Unit)
+                    && !super::functions::body_always_returns(body, true)
+            }
+            None => super::functions::falls_through_without_value(body),
+        };
         if return_type_ann.is_none()
+            && !missing
             && super::functions::body_yields_value(body)
             && !super::functions::body_always_returns(body, true)
         {
@@ -78,10 +95,7 @@ impl TypeInference {
                 .push((return_type.clone(), span, "<lambda>".to_string()));
         }
 
-        if return_type_ann.is_some()
-            && !matches!(return_type, InferType::Unit)
-            && !super::functions::body_always_returns(body, true)
-        {
+        if missing {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MissingReturnValue {
                     expected: return_type.clone(),

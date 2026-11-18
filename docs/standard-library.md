@@ -547,7 +547,22 @@ let _ = fs::close(f)
 | `write_text(path, content)` | Write string to file (overwrite) |
 | `append_text(path, content)` | Append string to file |
 | `write(handle, data)` | Write to handle |
+| `write_bytes(handle, data)` | Same as `write`: `data` is a string and is written as UTF-8 |
 | `write_line(handle, line)` | Write with newline |
+| `write_buffer(handle, buffer)` | Write the raw bytes of a `std::bytes` buffer to a handle as `Result<int, string>` (bytes written) |
+| `write_file_bytes(path, buffer)` | Write the raw bytes of a `std::bytes` buffer to `path` (overwrite) as `Result<unit, string>` |
+
+Strings are UTF-8, so a byte of 0x80 or more cannot pass through `write`,
+`write_bytes` or `write_text` unchanged. Binary files go through a byte buffer:
+
+```rust
+needs std::fs
+needs std::bytes as bytes
+let buffer = bytes::alloc(2)
+bytes::write_u8(buffer, 0, 0xC8)
+bytes::write_u8(buffer, 1, 0xFF)
+let _ = fs::write_file_bytes("out.bin", buffer)
+```
 
 ```rust
 let _ = fs::write_text("output.txt", "Hello, file!")

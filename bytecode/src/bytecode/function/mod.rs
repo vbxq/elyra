@@ -21,6 +21,7 @@ pub struct Function {
     bytecode_builder: Vec<u32>, // temp storage during compilation
     jump_overflow: Option<usize>,
     wide_operand_error: Option<OpCode>,
+    wide_operand_line: Option<u32>,
     pub constants: Vec<Constant>,
     pub nested_functions: Vec<Function>,
     pub upvalue_descriptors: Vec<UpvalueDescriptor>,
@@ -45,6 +46,7 @@ impl Function {
             bytecode_builder: Vec::new(),
             jump_overflow: None,
             wide_operand_error: None,
+            wide_operand_line: None,
             constants: Vec::new(),
             nested_functions: Vec::new(),
             upvalue_descriptors: Vec::new(),
@@ -76,8 +78,15 @@ impl Function {
         })
     }
 
-    pub fn record_wide_operand_error(&mut self, op: OpCode) {
-        self.wide_operand_error.get_or_insert(op);
+    pub fn record_wide_operand_error(&mut self, op: OpCode, line: u32) {
+        if self.wide_operand_error.is_none() {
+            self.wide_operand_error = Some(op);
+            self.wide_operand_line = Some(line);
+        }
+    }
+
+    pub fn own_wide_operand_fault(&self) -> Option<(OpCode, u32)> {
+        self.wide_operand_error.zip(self.wide_operand_line)
     }
 
     pub fn finalize_bytecode(&mut self) {
@@ -309,7 +318,7 @@ impl Function {
         if op.supports_wide_registers() {
             self.emit_wide_abc(op, a, b, c, line);
         } else {
-            self.record_wide_operand_error(op);
+            self.record_wide_operand_error(op, line);
         }
     }
 

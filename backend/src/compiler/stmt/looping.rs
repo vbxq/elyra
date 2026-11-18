@@ -60,7 +60,7 @@ impl Compiler {
     ) -> Result<()> {
         self.begin_scope();
 
-        let iter_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let iter_reg = self.alloc_consecutive_registers(3, span)?;
         let end_reg = iter_reg + 1;
         let step_reg = iter_reg + 2;
 
@@ -221,7 +221,7 @@ impl Compiler {
     ) -> Result<()> {
         self.begin_scope();
 
-        let elem_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let elem_reg = self.alloc_consecutive_registers(3, span)?;
         let index_reg = elem_reg + 1;
         let coll_reg = elem_reg + 2;
 
@@ -291,7 +291,7 @@ impl Compiler {
     ) -> Result<()> {
         self.begin_scope();
 
-        let char_reg = self.alloc_consecutive_registers_for_call(3, span)?;
+        let char_reg = self.alloc_consecutive_registers(3, span)?;
         let offset_reg = char_reg + 1;
         let str_reg = char_reg + 2;
 

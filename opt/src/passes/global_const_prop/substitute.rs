@@ -8,7 +8,10 @@ impl GlobalConstantPropagator {
     pub(super) fn substitute_constants(&mut self, expr: &mut TypedExpr) {
         match &mut expr.kind {
             TypedExprKind::Identifier(name) => {
-                let known = if self.shadows.is_shadowed(name) {
+                let known = if self.shadows.is_shadowed(name)
+                    || (self.late.contains(name)
+                        && (self.function_depth > 0 || !self.late_bound.contains(name)))
+                {
                     None
                 } else {
                     self.constants.get(name)
@@ -52,6 +55,7 @@ impl GlobalConstantPropagator {
             }
             TypedExprKind::Lambda(inner) => self.substitute_constants(inner),
             TypedExprKind::LambdaInner { params, body, .. } => {
+                self.function_depth += 1;
                 self.shadows.push();
                 for param in params.iter() {
                     self.shadows.shadow(param.name.clone());
@@ -60,6 +64,7 @@ impl GlobalConstantPropagator {
                     self.substitute_in_stmt(stmt);
                 }
                 self.shadows.pop();
+                self.function_depth -= 1;
             }
             TypedExprKind::Member { object, .. } => self.substitute_constants(object),
             TypedExprKind::StructField { object, .. }
@@ -259,6 +264,7 @@ impl GlobalConstantPropagator {
     }
 
     fn substitute_in_function(&mut self, func: &mut TypedFunction) {
+        self.function_depth += 1;
         self.shadows.push();
         for param in &func.params {
             self.shadows.shadow(param.name.clone());
@@ -267,6 +273,7 @@ impl GlobalConstantPropagator {
             self.substitute_in_stmt(stmt);
         }
         self.shadows.pop();
+        self.function_depth -= 1;
     }
 
     fn shadow_pattern(&mut self, pattern: &TypedPattern) {
