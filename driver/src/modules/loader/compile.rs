@@ -61,18 +61,23 @@ impl ModuleLoader {
             if !func.is_pub || !func.type_params.is_empty() {
                 continue;
             }
+            let params: Vec<InferType> = func
+                .params
+                .iter()
+                .map(|param| {
+                    param
+                        .type_annotation
+                        .as_ref()
+                        .map(InferType::from_annotation)
+                        .unwrap_or(InferType::Dynamic)
+                })
+                .collect();
             let signature = InferType::Function {
-                params: func
-                    .params
-                    .iter()
-                    .map(|param| {
-                        param
-                            .type_annotation
-                            .as_ref()
-                            .map(InferType::from_annotation)
-                            .unwrap_or(InferType::Dynamic)
-                    })
-                    .collect(),
+                modes: aelys_sema::types::ParamModes::declared(
+                    &params,
+                    func.params.iter().map(|param| param.mutable),
+                ),
+                params,
                 ret: Box::new(
                     func.return_type
                         .as_ref()
@@ -578,12 +583,17 @@ impl ModuleLoader {
         for stmt in &typed_program.stmts {
             match &stmt.kind {
                 TypedStmtKind::Function(function) if function.is_pub => {
+                    let params: Vec<InferType> = function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect();
                     let signature = InferType::Function {
-                        params: function
-                            .params
-                            .iter()
-                            .map(|param| param.ty.clone())
-                            .collect(),
+                        modes: aelys_sema::types::ParamModes::declared(
+                            &params,
+                            function.params.iter().map(|param| param.mutable),
+                        ),
+                        params,
                         ret: Box::new(function.return_type.clone()),
                     };
                     inferred_export_signatures.insert(function.name.clone(), signature.clone());
@@ -626,6 +636,14 @@ impl ModuleLoader {
                             .type_table
                             .deinstantiate(&InferType::Function {
                                 params: function.params.iter().map(|p| p.ty.clone()).collect(),
+                                modes: aelys_sema::types::ParamModes::declared(
+                                    &function
+                                        .params
+                                        .iter()
+                                        .map(|p| p.ty.clone())
+                                        .collect::<Vec<_>>(),
+                                    function.params.iter().map(|p| p.mutable),
+                                ),
                                 ret: Box::new(function.return_type.clone()),
                             }),
                     );
@@ -683,6 +701,14 @@ impl ModuleLoader {
                     exported_types.globals.insert(
                         function.name.clone(),
                         InferType::Function {
+                            modes: aelys_sema::types::ParamModes::declared(
+                                &function
+                                    .params
+                                    .iter()
+                                    .map(|p| p.ty.clone())
+                                    .collect::<Vec<_>>(),
+                                function.params.iter().map(|param| param.mutable),
+                            ),
                             params: function.params.iter().map(|p| p.ty.clone()).collect(),
                             ret: Box::new(function.return_type.clone()),
                         },

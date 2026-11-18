@@ -304,6 +304,16 @@ pub(crate) struct BoundResidual {
 }
 
 impl TypeInference {
+    pub(crate) fn fresh_param_modes(&mut self, count: usize) -> crate::types::ParamModes {
+        crate::types::ParamModes::from_modes(
+            (0..count)
+                .map(|_| crate::types::ParamMode::Var(self.type_gen.fresh_id()))
+                .collect(),
+        )
+    }
+}
+
+impl TypeInference {
     pub(super) fn reject_untyped_native(
         &mut self,
         found: &InferType,
@@ -385,10 +395,12 @@ fn dynamic_target(found: &InferType, expected: &InferType) -> Option<InferType> 
             InferType::Function {
                 params: found_params,
                 ret: found_ret,
+                ..
             },
             InferType::Function {
                 params: expected_params,
                 ret: expected_ret,
+                ..
             },
         ) => found_params
             .iter()
@@ -486,10 +498,12 @@ fn contains_concrete_dynamic(found: &InferType, expected: &InferType) -> bool {
             InferType::Function {
                 params: found_params,
                 ret: found_ret,
+                ..
             },
             InferType::Function {
                 params: expected_params,
                 ret: expected_ret,
+                ..
             },
         ) => {
             found_params

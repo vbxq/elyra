@@ -232,12 +232,7 @@ impl TypeInference {
                     crate::infer::module_scoped_global(module.as_str(), &name),
                 );
             }
-            // the defining module already checked this body's calls against its own mut parameters
-            let function = matches!(ty, crate::types::InferType::Function { .. });
-            self.env.define_local(name.clone(), ty);
-            if function {
-                self.env.define_function_value(&name, Vec::new());
-            }
+            self.env.define_local(name, ty);
         }
         true
     }

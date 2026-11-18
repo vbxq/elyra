@@ -119,7 +119,7 @@ pub enum AliasSite {
     Binding,
     Parameter(String),
     Assignment(String),
-    FunctionValue,
+    FunctionValue { position: usize, ty: String },
 }
 
 #[derive(Debug, Clone)]
@@ -640,6 +640,12 @@ impl TypeError {
                 if let Some(help) = sum_wrapping_help(expected, found, &self.reason) {
                     write!(f, "\n   = help: {help}")?;
                 }
+                if differs_only_by_mut(expected, found) {
+                    write!(
+                        f,
+                        "\n   = help: a `mut` parameter is part of a function's type: declare the parameter `mut` on both sides or on neither"
+                    )?;
+                }
                 Ok(())
             }
             TypeErrorKind::InfiniteType { var, ty } => {
@@ -1060,8 +1066,8 @@ impl TypeError {
                     AliasSite::Assignment(target) => {
                         format!("assign `{place}` to the mutable binding `{target}`")
                     }
-                    AliasSite::FunctionValue => format!(
-                        "pass `{place}` to a call through a function value, whose parameter may be `mut`"
+                    AliasSite::FunctionValue { position, ty } => format!(
+                        "pass `{place}` to the `mut` parameter {position} of a function value of type `{ty}`"
                     ),
                 };
                 write!(
@@ -1987,5 +1993,31 @@ fn alike_side(ty: &InferType, text: &str) -> String {
         }
         InferType::Param(_) => format!("'{text}' of its impl or type is another parameter"),
         _ => format!("'{text}' is the type of that name"),
+    }
+}
+
+fn differs_only_by_mut(expected: &InferType, found: &InferType) -> bool {
+    match (expected, found) {
+        (
+            InferType::Function {
+                params: expected_params,
+                modes: expected_modes,
+                ret: expected_ret,
+            },
+            InferType::Function {
+                params: found_params,
+                modes: found_modes,
+                ret: found_ret,
+            },
+        ) => {
+            expected_modes != found_modes
+                && expected_params.len() == found_params.len()
+                && expected_params
+                    .iter()
+                    .zip(found_params)
+                    .all(|(expected, found)| expected.source_spelling() == found.source_spelling())
+                && expected_ret.source_spelling() == found_ret.source_spelling()
+        }
+        _ => false,
     }
 }

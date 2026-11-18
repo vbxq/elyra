@@ -230,7 +230,7 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
                 encode_type_key(element, result);
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             push_len_prefixed(result, "function");
             push_len_prefixed(result, &params.len().to_string());
             for param in params {
@@ -261,7 +261,7 @@ fn nominal_instance_name(name: &str, args: &[InferType]) -> String {
 
 fn is_structural_subterm(candidate: &InferType, parent: &InferType) -> bool {
     match parent {
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params
                 .iter()
                 .any(|param| candidate == param || is_structural_subterm(candidate, param))
@@ -327,7 +327,7 @@ fn collect_nominal_applications(
         InferType::Projection { self_ty, .. } => {
             collect_nominal_applications(self_ty, type_table, applications);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_nominal_applications(param, type_table, applications);
             }
@@ -389,7 +389,8 @@ fn replace_nominal_type(ty: &InferType, replacements: &HashMap<String, String>) 
         };
     }
     match ty {
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params
                 .iter()
                 .map(|param| replace_nominal_type(param, replacements))
@@ -1129,7 +1130,7 @@ fn collect_pattern_types(pattern: &TypedPattern, types: &mut Vec<(InferType, Spa
 fn collect_type(ty: &InferType, span: Span, types: &mut Vec<(InferType, Span)>) {
     types.push((ty.clone(), span));
     match ty {
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_type(param, span, types);
             }
@@ -1164,7 +1165,7 @@ fn contains_open_generic_type(ty: &InferType) -> bool {
         | InferType::Var(_)
         | InferType::Dynamic
         | InferType::UntypedNative(_) => true,
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_open_generic_type) || contains_open_generic_type(ret)
         }
         InferType::Array(inner)
@@ -3349,10 +3350,10 @@ fn resolve_deferred_member(
     }
     // a projection the receiver's impls answer alike is that answer, as on the member route
     let function_type = settle_projections(
-        &InferType::Function {
-            params: method.params.into_iter().skip(1).collect(),
-            ret: Box::new(method.return_type),
-        },
+        &InferType::function(
+            method.params.into_iter().skip(1).collect(),
+            method.return_type,
+        ),
         type_table,
     );
     // the call site fixes the method's own parameters, and nothing else
@@ -3392,7 +3393,8 @@ fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> I
             Some(resolved) if resolved != *ty => settle(&resolved),
             _ => ty.clone(),
         },
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params.iter().map(settle).collect(),
             ret: Box::new(settle(ret)),
         },
@@ -3435,10 +3437,12 @@ fn fits_call_site(
             InferType::Function {
                 params: formal_params,
                 ret: formal_ret,
+                ..
             },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) => {
             formal_params.len() == actual_params.len()
@@ -3570,10 +3574,7 @@ pub(crate) fn mark_display_argument(arg: &mut TypedExpr) {
             method: crate::prelude::DISPLAY_METHOD.to_string(),
             separator: aelys_syntax::MemberSeparator::Dot,
         },
-        InferType::Function {
-            params: vec![object_ty],
-            ret: Box::new(InferType::String),
-        },
+        InferType::function(vec![object_ty], InferType::String),
         span,
     );
     *arg = TypedExpr::new(
@@ -4764,7 +4765,7 @@ fn instance_arguments(
     for (formal, actual) in template.params.iter().zip(args) {
         match_types(&formal.ty, &actual.ty, &mut mapping)?;
     }
-    if let InferType::Function { params, ret } = &callee.ty {
+    if let InferType::Function { params, ret, .. } = &callee.ty {
         for (formal, actual) in template.params.iter().map(|param| &param.ty).zip(params) {
             match_types(formal, actual, &mut mapping)?;
         }
@@ -4796,10 +4797,12 @@ pub(crate) fn match_types(
             InferType::Function {
                 params,
                 ret: formal_ret,
+                ..
             },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) if params.len() == actual_params.len() => {
             for (formal, actual) in params.iter().zip(actual_params) {

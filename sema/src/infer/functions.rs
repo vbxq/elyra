@@ -44,7 +44,7 @@ impl TypeInference {
         let fn_signature = self.env.lookup_function(&func.name).cloned();
 
         let (sig_params, sig_ret) = match fn_signature.as_deref() {
-            Some(InferType::Function { params, ret }) => {
+            Some(InferType::Function { params, ret, .. }) => {
                 (Some(params.clone()), Some((**ret).clone()))
             }
             _ => (None, None),

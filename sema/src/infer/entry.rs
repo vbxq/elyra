@@ -193,7 +193,7 @@ impl TypeInference {
 
     fn type_from_annotation_inner(&mut self, ann: &TypeAnnotation) -> InferType {
         if ann.is_function_type() {
-            let params = ann
+            let params: Vec<InferType> = ann
                 .fn_params
                 .as_ref()
                 .map(|params| {
@@ -209,6 +209,7 @@ impl TypeInference {
                 .map(|ret| self.type_from_annotation_argument(ret))
                 .unwrap_or(InferType::Unit);
             return InferType::Function {
+                modes: crate::types::function_annotation_modes(ann, &params),
                 params,
                 ret: Box::new(ret),
             };
@@ -1675,6 +1676,7 @@ impl TypeInference {
         inf.validate_match_reachability(&subst);
         inf.validate_match_exhaustivity(&subst);
         inf.validate_sum_types(&subst);
+        subst.close_modes();
 
         let mut resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
         inf.resolve_deferred_members(&mut resolved_stmts);
@@ -1924,7 +1926,7 @@ fn collect_type_params(ty: &InferType, out: &mut Vec<String>) {
             collect_type_params(ok, out);
             collect_type_params(error, out);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_type_params(param, out);
             }

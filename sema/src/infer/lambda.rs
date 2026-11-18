@@ -92,6 +92,10 @@ impl TypeInference {
 
         let param_types: Vec<InferType> = typed_params.iter().map(|p| p.ty.clone()).collect();
         let fn_type = InferType::Function {
+            modes: crate::types::ParamModes::declared(
+                &param_types,
+                params.iter().map(|param| param.mutable),
+            ),
             params: param_types,
             ret: Box::new(return_type.clone()),
         };

@@ -25,6 +25,7 @@ pub struct TypeAnnotation {
     pub array_length_path: Option<Vec<String>>,
     pub associated_bindings: Vec<(String, AssociatedBinding, Span)>,
     pub reference: Option<ReferenceKind>,
+    pub mutable: bool,
     pub span: Span,
 }
 
@@ -40,6 +41,7 @@ impl TypeAnnotation {
             array_length_path: None,
             associated_bindings: Vec::new(),
             reference: None,
+            mutable: false,
             span,
         }
     }
@@ -55,6 +57,7 @@ impl TypeAnnotation {
             array_length_path: None,
             associated_bindings: Vec::new(),
             reference: None,
+            mutable: false,
             span,
         }
     }
@@ -74,6 +77,7 @@ impl TypeAnnotation {
             array_length_path: None,
             associated_bindings: Vec::new(),
             reference: None,
+            mutable: false,
             span,
         }
     }
@@ -89,6 +93,7 @@ impl TypeAnnotation {
             array_length_path: None,
             associated_bindings: Vec::new(),
             reference: None,
+            mutable: false,
             span,
         }
     }
@@ -104,6 +109,7 @@ impl TypeAnnotation {
             array_length_path: Some(path),
             associated_bindings: Vec::new(),
             reference: None,
+            mutable: false,
             span,
         }
     }

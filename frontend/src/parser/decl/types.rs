@@ -190,9 +190,9 @@ impl Parser {
         self.consume(&TokenKind::LParen, "(")?;
         let mut params = Vec::new();
         if !self.check(&TokenKind::RParen) {
-            params.push(self.parse_type_annotation()?);
+            params.push(self.parse_function_type_parameter()?);
             while self.match_token(&TokenKind::Comma) {
-                params.push(self.parse_type_annotation()?);
+                params.push(self.parse_function_type_parameter()?);
             }
         }
         self.consume(&TokenKind::RParen, ")")?;
@@ -204,6 +204,13 @@ impl Parser {
             ret,
             start_span.merge(end_span),
         ))
+    }
+
+    fn parse_function_type_parameter(&mut self) -> Result<TypeAnnotation> {
+        let mutable = self.match_token(&TokenKind::Mut);
+        let mut param = self.parse_type_annotation()?;
+        param.mutable = mutable;
+        Ok(param)
     }
 
     fn reject_trait_object(&self) -> Result<()> {

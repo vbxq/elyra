@@ -636,6 +636,10 @@ impl TypeInference {
         self.current_function_bindings = saved_bindings;
 
         let fn_type = Rc::new(InferType::Function {
+            modes: crate::types::ParamModes::declared(
+                &param_types,
+                func.params.iter().map(|param| param.mutable),
+            ),
             params: param_types,
             ret: Box::new(ret_type),
         });
@@ -2164,6 +2168,10 @@ impl TypeInference {
                 symbol.clone(),
                 Rc::new(InferType::Function {
                     params: params.clone(),
+                    modes: crate::types::ParamModes::declared(
+                        &params,
+                        method.params.iter().map(|param| param.mutable),
+                    ),
                     ret: Box::new(ret.clone()),
                 }),
             );
@@ -2476,7 +2484,8 @@ impl TypeInference {
                     )),
                 }
             }
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
+                modes: modes.clone(),
                 params: params
                     .iter()
                     .map(|param| {
@@ -2891,7 +2900,7 @@ fn collect_projections(ty: &InferType, out: &mut Vec<InferType>) {
             out.push(ty.clone());
             collect_projections(self_ty, out);
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_projections(param, out);
             }
@@ -3112,10 +3121,11 @@ fn own_params_conform(
                     .all(|(expected, actual)| conform(expected, actual, pairing))
         }
         (
-            InferType::Function { params, ret },
+            InferType::Function { params, ret, .. },
             InferType::Function {
                 params: actual_params,
                 ret: actual_ret,
+                ..
             },
         ) => {
             params.len() == actual_params.len()

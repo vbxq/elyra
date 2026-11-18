@@ -113,6 +113,7 @@ impl ModuleLoader {
                         native_signatures.insert(
                             format!("{}::{}", module_alias, name),
                             aelys_sema::InferType::Function {
+                                modes: aelys_sema::types::ParamModes::plain(),
                                 params: signature
                                     .params
                                     .iter()

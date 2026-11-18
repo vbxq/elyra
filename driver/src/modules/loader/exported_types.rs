@@ -796,7 +796,7 @@ fn mentions_nominal(ty: &aelys_sema::InferType, type_table: &TypeTable) -> Optio
         InferType::Tuple(elements) => elements
             .iter()
             .find_map(|element| mentions_nominal(element, type_table)),
-        InferType::Function { params, ret } => params
+        InferType::Function { params, ret, .. } => params
             .iter()
             .find_map(|param| mentions_nominal(param, type_table))
             .or_else(|| mentions_nominal(ret, type_table)),
@@ -887,8 +887,9 @@ fn rename_nominals(
             name: renames.get(name).unwrap_or(name).clone(),
             args: each(args),
         },
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
             params: each(params),
+            modes: modes.clone(),
             ret: Box::new(rename_nominals(ret, renames)),
         },
         InferType::Option(inner) => InferType::Option(Box::new(rename_nominals(inner, renames))),

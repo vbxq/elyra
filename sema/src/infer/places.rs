@@ -9,6 +9,7 @@ pub(crate) struct AliasResidual {
     place: String,
     root: String,
     site: AliasSite,
+    through: Option<(InferType, usize)>,
 }
 
 pub(crate) fn place_root(expr: &Expr) -> Option<&str> {
@@ -149,6 +150,31 @@ impl TypeInference {
     }
 
     pub(crate) fn record_mutable_alias(&mut self, source: &Expr, ty: &InferType, site: AliasSite) {
+        self.record_alias(source, ty, site, None);
+    }
+
+    // the callee type is read once solved: only a position it marks `mut` aliases the argument
+    pub(crate) fn record_function_value_alias(
+        &mut self,
+        source: &Expr,
+        ty: &InferType,
+        callee: &InferType,
+        position: usize,
+    ) {
+        let site = AliasSite::FunctionValue {
+            position: position + 1,
+            ty: String::new(),
+        };
+        self.record_alias(source, ty, site, Some((callee.clone(), position)));
+    }
+
+    fn record_alias(
+        &mut self,
+        source: &Expr,
+        ty: &InferType,
+        site: AliasSite,
+        through: Option<(InferType, usize)>,
+    ) {
         let mut places = Vec::new();
         source_places(source, &mut places);
         for place in places {
@@ -160,6 +186,7 @@ impl TypeInference {
                         place: render_place(place),
                         root,
                         site: site.clone(),
+                        through: through.clone(),
                     });
                 }
                 continue;
@@ -178,6 +205,7 @@ impl TypeInference {
                 place: render_place(place),
                 root: root.to_string(),
                 site: site.clone(),
+                through: through.clone(),
             });
         }
     }
@@ -204,16 +232,27 @@ impl TypeInference {
         let residuals = std::mem::take(&mut self.alias_residuals);
         for residual in residuals {
             let ty = subst.apply(&residual.ty);
-            let generic =
-                residual.site == AliasSite::FunctionValue && matches!(ty, InferType::Param(_));
-            if !generic && !self.is_mutable_aggregate(&ty) {
+            if !self.is_mutable_aggregate(&ty) {
                 continue;
+            }
+            let mut site = residual.site;
+            if let Some((callee, position)) = &residual.through {
+                let callee = subst.apply(callee);
+                let InferType::Function { modes, .. } = &callee else {
+                    continue;
+                };
+                if subst.apply_mode(modes.get(*position)) != crate::types::ParamMode::Mut {
+                    continue;
+                }
+                if let AliasSite::FunctionValue { ty, .. } = &mut site {
+                    *ty = callee.source_spelling();
+                }
             }
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MutableCollectionAlias {
                     place: residual.place,
                     root: residual.root,
-                    site: residual.site,
+                    site,
                 },
                 span: residual.span,
                 reason: ConstraintReason::Other("mutable alias".to_string()),
