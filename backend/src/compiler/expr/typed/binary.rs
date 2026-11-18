@@ -11,6 +11,9 @@ impl Compiler {
         {
             return Some(reg);
         }
+        if let aelys_sema::TypedExprKind::Int(literal) = &expr.kind {
+            return self.hoisted_literal(*literal);
+        }
         None
     }
 
@@ -32,14 +35,24 @@ impl Compiler {
             && let Some(immediate) = match (op, opcode) {
                 (BinaryOp::Add, OpCode::AddII) => Some(OpCode::AddI),
                 (BinaryOp::Sub, OpCode::SubII) => Some(OpCode::SubI),
+                (BinaryOp::Shr, OpCode::ShrII) => Some(OpCode::ShrIImm),
+                (BinaryOp::BitAnd, OpCode::AndII) => Some(OpCode::AndIImm),
+                (BinaryOp::BitOr, OpCode::OrII) => Some(OpCode::OrIImm),
+                (BinaryOp::BitXor, OpCode::XorII) => Some(OpCode::XorIImm),
                 _ => None,
             }
-            && let Some(left_local_reg) = self.get_typed_local_register(left)
         {
+            let left_reg = match self.get_typed_local_register(left) {
+                Some(register) => register,
+                None => {
+                    self.compile_typed_expr(left, dest)?;
+                    dest
+                }
+            };
             self.emit_a(
                 immediate,
                 dest,
-                left_local_reg,
+                left_reg,
                 u8::try_from(*literal).expect("immediate was range checked"),
                 span,
             );

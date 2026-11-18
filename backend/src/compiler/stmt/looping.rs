@@ -13,6 +13,7 @@ impl Compiler {
         span: Span,
         label: Option<&String>,
     ) -> Result<()> {
+        let hoisted = self.hoist_loop_literals(Some(condition), body)?;
         let loop_start = self.current_offset();
 
         let mut context = super::super::LoopContext::new(loop_start, false, self.locals.len());
@@ -42,6 +43,7 @@ impl Compiler {
         for jump in ctx.break_jumps {
             self.patch_jump(jump);
         }
+        self.release_loop_literals(hoisted);
 
         Ok(())
     }
@@ -85,6 +87,8 @@ impl Compiler {
             aelys_sema::ResolvedType::I64,
         );
         self.loop_variables.push(iterator.to_string());
+
+        let hoisted = self.hoist_loop_literals(None, body)?;
 
         // this ensures that for empty ranges (like 0..0), the loop body is never executed
         self.emit_a(OpCode::Sub, iter_reg, iter_reg, step_reg, span);
@@ -134,6 +138,7 @@ impl Compiler {
         }
 
         self.loop_variables.pop();
+        self.release_loop_literals(hoisted);
         self.free_register(step_reg);
         self.free_register(end_reg);
         self.end_scope();

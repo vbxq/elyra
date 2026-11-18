@@ -15,6 +15,29 @@ The final 0.22 local gate used 30 samples, a 1 second warmup, a 2 second measure
 
 Run `cargo bench -p aelys --bench criterion_runtime` to reproduce the suite locally.
 
+## Interpreter hot path (2026-11)
+
+The interpreter runs the current frame in a dedicated hot loop. It covers register moves and loads, integer and float arithmetic (the wrapping `i8` to `u32` operations included), comparisons, branches and counted loops, `Vec` and array element loads and scalar stores, lengths, reads of initialised globals, scalar struct field loads and stores (`char` fields included), `Option` tests and payloads, reads and scalar writes of captured variables, and calls and returns between functions and closures. Every other instruction, and every edge case of a covered one (a non-integer operand, an overflow, a division by zero, an index out of bounds, an object store that needs a write barrier), leaves the hot loop before any effect and runs through the general loop. A runtime error reports the line of the instruction that raised it, the same in the hot loop, the general loop and the JIT. With `--max-instructions`, `--timeout-ms`, an interrupt handle or execution statistics enabled, only the general loop runs.
+
+The compiler side writes a discarded assignment's value straight into its variable, uses immediate operands for `+ - >> & | ^` with a literal from 0 to 255, reads locals in place for field accesses and `if` conditions, and loads up to four wider literal operands of a loop once before the loop.
+
+User-space machine instructions (`perf stat -e instructions:u`) per run of the suite in `elyra-runs/bench`, release build, interpreter, before (`198257d`) and after:
+
+| bench | before | after | ratio |
+|---|---|---|---|
+| int_loop (10 M iterations) | 13 234 M | 2 744 M | 4.8x |
+| array_fill (20 M element operations) | 14 993 M | 4 334 M | 3.5x |
+| nested_calls | 7 630 M | 2 639 M | 2.9x |
+| struct_field | 18 436 M | 5 769 M | 3.2x |
+| pixel_buffer (6.4 M pixels) | 10 704 M | 2 893 M | 3.7x |
+| method_dispatch | 14 612 M | 5 343 M | 2.7x |
+| fib(31) | 4 692 M | 1 825 M | 2.6x |
+| fixed_mul | 6 984 M | 1 926 M | 3.6x |
+| Doom renderer, one frame of E1M1 | 327 M | 84 M | 3.9x |
+| closure call in a loop (1 M calls) | 1 555 M | 574 M | 2.7x |
+
+`-ae.jit=on` now gives the interpreter's results at the interpreter's cost on these benches (it was up to 1.5x slower on method_dispatch): functions the JIT refuses, functions handed a struct and loops past their back-edge threshold stay on the hot path.
+
 ## Recursive Fibonacci
 
 Computing `fib(35)` with naive recursive implementation (no memoization)  
@@ -110,8 +133,8 @@ The compiler emits type-specific opcodes too. `arr[i]` compiles to `ArrayLoadI` 
 ### Vec growth
 
 Vecs double in capacity when they run out of space:
-- Start at 4
-- Growth: 4 → 8 → 16 → 32 → ...
+- Start at 1
+- Growth: 1 → 2 → 4 → 8 → ...
 - Use `reserve(n)` to pre-allocate if you know the final size
 
 ```rust

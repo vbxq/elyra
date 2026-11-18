@@ -85,6 +85,28 @@ impl VM {
         }
 
         loop {
+            if !CONTROL
+                && !REPORT
+                && ip < bytecode_len
+                && super::hot::HOT[(unsafe { *bytecode_ptr.add(ip) } >> 24) as usize]
+            {
+                let (hot_ip, changed) = self.run_hot::<JIT>(
+                    ip,
+                    base,
+                    func_ref,
+                    bytecode_ptr,
+                    bytecode_len,
+                    constants_ptr,
+                    constants_len,
+                );
+                if changed {
+                    let last = self.frames.len() - 1;
+                    self.frames[last].ip = hot_ip;
+                    reload_frame_state!();
+                } else {
+                    ip = hot_ip;
+                }
+            }
             if ip >= bytecode_len {
                 let previous_gmap = global_mapping_id;
                 let caller_gmap = if self.frames.len() > 1 {
@@ -112,6 +134,7 @@ impl VM {
 
             let instr = unsafe { *bytecode_ptr.add(ip) };
             ip += 1;
+            self.frames[current_frame_idx].ip = ip;
 
             let opcode_byte = u8::try_from(instr >> 24).expect("opcode occupies one byte");
             if REPORT {
@@ -882,25 +905,22 @@ impl VM {
 
                             callee_ref = GcRef::new(current_func_ptr);
 
-                            let cache_key = crate::vm::core::InlineCacheKey {
-                                function: func_ref,
-                                instruction_pointer: ip - 1,
-                            };
-                            let global_generation =
-                                self.global_generations.get(idx).copied().unwrap_or(0);
-                            let cache_hit = self.probe_inline_call_cache(
-                                cache_key,
-                                idx,
-                                global_generation,
-                                callee_ref,
-                            );
-                            if cache_hit {
-                                if REPORT {
+                            if REPORT {
+                                let cache_key = crate::vm::core::InlineCacheKey {
+                                    function: func_ref,
+                                    instruction_pointer: ip - 1,
+                                };
+                                let global_generation =
+                                    self.global_generations.get(idx).copied().unwrap_or(0);
+                                if self.probe_inline_call_cache(
+                                    cache_key,
+                                    idx,
+                                    global_generation,
+                                    callee_ref,
+                                ) {
                                     self.execution_stats.cache_hits =
                                         self.execution_stats.cache_hits.saturating_add(1);
-                                }
-                            } else {
-                                if REPORT {
+                                } else {
                                     self.execution_stats.cache_misses =
                                         self.execution_stats.cache_misses.saturating_add(1);
                                 }

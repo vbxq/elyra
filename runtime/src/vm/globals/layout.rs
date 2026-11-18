@@ -1,4 +1,7 @@
+use super::super::core::PreparedGlobals;
 use super::super::{GcRef, ObjectKind, VM, Value};
+
+pub(crate) const UNNAMED_GLOBAL: u32 = u32::MAX;
 use std::sync::Arc;
 
 impl VM {
@@ -66,27 +69,65 @@ impl VM {
     /// mapping ids come from a process wide counter, so an unusual number of layouts stops being cached
     const MAX_PREPARED_MAPPING: usize = 1 << 20;
 
+    #[inline]
+    pub(crate) fn switch_globals(&mut self, mapping_id: usize, function: GcRef) {
+        if mapping_id != self.current_global_mapping_id
+            && !self.install_prepared_mapping(mapping_id)
+        {
+            self.prepare_globals_for_function(function);
+        }
+    }
+
+    #[inline]
     fn install_prepared_mapping(&mut self, mapping_id: usize) -> bool {
-        let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id).cloned() else {
+        let Some(Some(prepared)) = self.globals_by_index_cache.get(mapping_id) else {
             return false;
         };
         self.globals_by_index.clear();
-        self.globals_by_index.extend_from_slice(&prepared);
-        if self.global_generations.len() != prepared.len() {
-            self.sync_global_generation_len(prepared.len());
+        self.globals_by_index.extend_from_slice(&prepared.values);
+        let len = prepared.values.len();
+        if self.global_generations.len() != len {
+            self.sync_global_generation_len(len);
         }
         self.current_global_mapping_id = mapping_id;
         true
     }
 
-    fn store_prepared_mapping(&mut self, mapping_id: usize, prepared: Arc<Vec<Value>>) {
+    fn store_prepared_mapping(&mut self, mapping_id: usize, prepared: PreparedGlobals) {
         if mapping_id > Self::MAX_PREPARED_MAPPING {
             return;
         }
         if self.globals_by_index_cache.len() <= mapping_id {
-            self.globals_by_index_cache.resize(mapping_id + 1, None);
+            self.globals_by_index_cache
+                .resize_with(mapping_id + 1, || None);
+        }
+        for (slot, &name_id) in prepared.name_ids.iter().enumerate() {
+            if name_id != UNNAMED_GLOBAL {
+                self.global_users[name_id as usize].push((mapping_id, slot as u32));
+            }
         }
         self.globals_by_index_cache[mapping_id] = Some(prepared);
+    }
+
+    pub(crate) fn clear_prepared_globals(&mut self) {
+        self.globals_by_index_cache.clear();
+        for users in &mut self.global_users {
+            users.clear();
+        }
+    }
+
+    fn global_name_id(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.global_name_ids.get(name) {
+            return id;
+        }
+        let id = u32::try_from(self.global_names_by_id.len()).unwrap_or(UNNAMED_GLOBAL);
+        if id == UNNAMED_GLOBAL {
+            return id;
+        }
+        self.global_name_ids.insert(name.to_string(), id);
+        self.global_names_by_id.push(name.to_string());
+        self.global_users.push(Vec::new());
+        id
     }
 
     pub fn prepare_globals_for_layout(&mut self, layout: &super::super::GlobalLayout) -> usize {
@@ -105,20 +146,26 @@ impl VM {
         if self.globals_by_index.len() < needed_len {
             self.globals_by_index.resize(needed_len, Value::null());
         }
+        let mut name_ids = Vec::with_capacity(needed_len);
         for (idx, name) in names.iter().enumerate() {
             if !name.is_empty() {
                 self.globals_by_index[idx] =
                     self.globals.get(name).copied().unwrap_or(Value::uninit());
+                name_ids.push(self.global_name_id(name));
             } else {
                 self.globals_by_index[idx] = Value::null();
+                name_ids.push(UNNAMED_GLOBAL);
             }
         }
         self.globals_by_index.truncate(needed_len);
         self.sync_global_generation_len(needed_len);
 
         self.current_global_mapping_id = mapping_id;
-        let snapshot = Arc::new(self.globals_by_index.clone());
-        self.store_prepared_mapping(mapping_id, snapshot);
+        let prepared = PreparedGlobals {
+            values: self.globals_by_index.clone(),
+            name_ids: name_ids.into_boxed_slice(),
+        };
+        self.store_prepared_mapping(mapping_id, prepared);
         mapping_id
     }
 
@@ -128,7 +175,13 @@ impl VM {
         }
         self.globals_by_index.clear();
         self.current_global_mapping_id = mapping_id;
-        self.store_prepared_mapping(mapping_id, Arc::new(Vec::new()));
+        self.store_prepared_mapping(
+            mapping_id,
+            PreparedGlobals {
+                values: Vec::new(),
+                name_ids: Box::new([]),
+            },
+        );
         mapping_id
     }
 }

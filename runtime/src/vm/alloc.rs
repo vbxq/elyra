@@ -71,7 +71,9 @@ impl VM {
         let previous_size_u64 = u64::try_from(previous_size).unwrap_or(u64::MAX);
         let minimum_growth = required_size.saturating_sub(previous_size_u64);
         self.ensure_heap_capacity(minimum_growth)?;
-        let vector_root = HostRoot::new(&self.host_roots, vector_ref, self.id);
+        let vector_root = self
+            .collection_pending(0)
+            .then(|| HostRoot::new(&self.host_roots, vector_ref, self.id));
 
         let reserve_failed = match self.heap.get_mut(vector_ref) {
             Some(object) => match &mut object.kind {
@@ -143,7 +145,13 @@ impl VM {
                 got: "incompatible type".to_string(),
             }));
         }
-        self.reserve_vec(vector_ref, 1)?;
+        let (length, spare) = match self.heap.get(vector_ref).map(|object| &object.kind) {
+            Some(ObjectKind::Vec(vector)) => (vector.len(), vector.len() < vector.capacity()),
+            _ => (0, false),
+        };
+        if !spare && self.reserve_vec(vector_ref, length.max(1)).is_err() {
+            self.reserve_vec(vector_ref, 1)?;
+        }
         match self.heap.get_mut(vector_ref) {
             Some(object) => match &mut object.kind {
                 ObjectKind::Vec(vector) => {
@@ -376,11 +384,9 @@ impl VM {
     }
 
     pub fn alloc_sum(&mut self, tag: SumTag, payload: Value) -> Result<GcRef, RuntimeError> {
-        let payload_root = payload
-            .as_ptr()
-            .map(|raw| HostRoot::new(&self.host_roots, GcRef::new(raw), self.id));
         let obj = GcObject::new(ObjectKind::Sum(AelysSum::new(tag, payload)));
         let size = u64::try_from(Heap::estimate_object_size(&obj)).unwrap_or(u64::MAX);
+        let payload_root = self.pin_values_if_collecting(size, &[payload]);
         self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         drop(payload_root);
@@ -398,13 +404,12 @@ impl VM {
                 "enum payload exceeds u16 slot limit".to_string(),
             )));
         }
-        let slots_root = slots
-            .iter()
-            .filter_map(|value| value.as_ptr())
-            .map(|raw| HostRoot::new(&self.host_roots, GcRef::new(raw), self.id))
-            .collect::<Vec<_>>();
         let object = GcObject::new(ObjectKind::Enum(AelysEnum::new(enum_id, variant_id, slots)));
         let size = u64::try_from(Heap::estimate_object_size(&object)).unwrap_or(u64::MAX);
+        let slots_root = match &object.kind {
+            ObjectKind::Enum(value) => self.pin_values_if_collecting(size, &value.slots),
+            _ => Vec::new(),
+        };
         self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         let reference = self.heap.alloc(object);
@@ -417,20 +422,30 @@ impl VM {
         schema_id: aelys_bytecode::SchemaId,
         slots: Vec<Value>,
     ) -> Result<GcRef, RuntimeError> {
-        let slots_root = slots
-            .iter()
-            .filter_map(|value| value.as_ptr())
-            .map(|raw| HostRoot::new(&self.host_roots, GcRef::new(raw), self.id))
-            .collect::<Vec<_>>();
         let object = GcObject::new(ObjectKind::Struct(Box::new(AelysStruct::new(
             schema_id, slots,
         ))));
         let size = u64::try_from(Heap::estimate_object_size(&object)).unwrap_or(u64::MAX);
+        let slots_root = match &object.kind {
+            ObjectKind::Struct(value) => self.pin_values_if_collecting(size, &value.slots),
+            _ => Vec::new(),
+        };
         self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         let reference = self.heap.alloc(object);
         drop(slots_root);
         Ok(reference)
+    }
+
+    fn pin_values_if_collecting(&self, additional: u64, values: &[Value]) -> Vec<HostRoot> {
+        if !self.collection_pending(additional) {
+            return Vec::new();
+        }
+        values
+            .iter()
+            .filter_map(|value| value.as_ptr())
+            .map(|raw| HostRoot::new(&self.host_roots, GcRef::new(raw), self.id))
+            .collect()
     }
 
     pub fn heap(&self) -> &Heap {

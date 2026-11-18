@@ -322,7 +322,7 @@ impl Compiler {
     }
 
     /// an operand already in a local's register is read where it is
-    fn operand_register(&mut self, expr: &TypedExpr) -> Result<(u16, bool)> {
+    pub(crate) fn operand_register(&mut self, expr: &TypedExpr) -> Result<(u16, bool)> {
         if let TypedExprKind::Identifier(name) = &expr.kind
             && let Some((register, _)) = self.resolve_variable(name)
         {
@@ -377,15 +377,21 @@ impl Compiler {
         Ok(())
     }
 
-    pub(super) fn compile_typed_index_assign(
+    pub(crate) fn compile_typed_index_assign(
         &mut self,
         object: &TypedExpr,
         index: &TypedExpr,
         value: &TypedExpr,
-        dest: u16,
+        dest: Option<u16>,
         span: Span,
     ) -> Result<()> {
         if matches!(object.ty, InferType::Map(_, _)) {
+            let Some(dest) = dest else {
+                let result = self.alloc_register()?;
+                self.compile_map_index_assign(object, index, value, result, span)?;
+                self.free_register(result);
+                return Ok(());
+            };
             return self.compile_map_index_assign(object, index, value, dest, span);
         }
         let (obj_reg, obj_owned) = self.operand_register(object)?;
@@ -413,7 +419,9 @@ impl Compiler {
 
         self.emit_a(opcode, obj_reg, idx_reg, val_reg, span);
 
-        if dest != val_reg {
+        if let Some(dest) = dest
+            && dest != val_reg
+        {
             self.emit_a(OpCode::Move, dest, val_reg, 0, span);
         }
 

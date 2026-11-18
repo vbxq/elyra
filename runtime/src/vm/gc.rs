@@ -170,6 +170,16 @@ impl VM {
     }
 
     #[inline]
+    pub(crate) fn collection_pending(&self, additional: u64) -> bool {
+        u64::try_from(self.heap.bytes_allocated())
+            .unwrap_or(u64::MAX)
+            .saturating_add(additional)
+            > self.config.max_heap_bytes
+            || self.heap.major_collection_active()
+            || self.heap.should_collect()
+    }
+
+    #[inline]
     pub(crate) fn maybe_collect_for(&mut self, additional: u64) {
         let projected = u64::try_from(self.heap.bytes_allocated())
             .unwrap_or(u64::MAX)
@@ -260,7 +270,7 @@ impl VM {
         self.heap
             .note_minor_cost(thread_cpu_nanos().saturating_sub(cpu));
         self.sweep_jit_metadata();
-        self.globals_by_index_cache.clear();
+        self.clear_prepared_globals();
         self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
         self.execution_stats.minor_collections =
             self.execution_stats.minor_collections.saturating_add(1);
@@ -278,7 +288,7 @@ impl VM {
                 }
                 MajorStep::Complete { .. } => {
                     self.sweep_jit_metadata();
-                    self.globals_by_index_cache.clear();
+                    self.clear_prepared_globals();
                     self.execution_stats.collections =
                         self.execution_stats.collections.saturating_add(1);
                     self.execution_stats.major_collections =
