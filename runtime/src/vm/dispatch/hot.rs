@@ -129,6 +129,16 @@ fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
 }
 
 impl VM {
+    // once a frame has passed its back-edge threshold, recording further back edges changes nothing the jit reads
+    fn jit_loops_settled(&self, function: GcRef) -> bool {
+        self.jit_ignores(function)
+            || self.frames.last().is_some_and(|frame| {
+                frame.jit_backedge_compiled
+                    || (frame.jit_backedges_initialized
+                        && frame.jit_backedge_base >= crate::JIT_TIER1_BACKEDGE_THRESHOLD)
+            })
+    }
+
     fn jit_ignores(&self, function: GcRef) -> bool {
         let unsupported = matches!(
             self.heap.get(function).map(|object| &object.kind),
@@ -169,7 +179,7 @@ impl VM {
         }
         let mut regs = unsafe { self.registers.as_mut_ptr().add(base) };
         let mut schemas: Option<Arc<FunctionSchemas>> = None;
-        let mut loops_stay = !JIT || self.jit_ignores(function);
+        let mut loops_stay = !JIT || self.jit_loops_settled(function);
 
         macro_rules! get {
             ($index:expr) => {
@@ -837,7 +847,7 @@ impl VM {
                     }
                     self.registers[base + destination] = result;
                     schemas = None;
-                    loops_stay = !JIT || self.jit_ignores(function);
+                    loops_stay = !JIT || self.jit_loops_settled(function);
                     match base.checked_add(REGISTER_WINDOW) {
                         Some(end) if end <= self.registers.len() => {}
                         _ => leave!(),
