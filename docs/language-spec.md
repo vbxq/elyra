@@ -1186,11 +1186,18 @@ and Maps are reference types, doing that with an aggregate element would make
 every slot share one object, so it is E0472; push a fresh value per slot instead.
 Scalars, strings, chars and closures are fine.
 
+Inside a generic function the element type may be a type parameter. E0471 and
+E0472 are then checked on every instantiation, and reported at the `sort`,
+`fill` or `resize` call when one instantiation's element type breaks the rule.
+
 ### Maps
 
 `Map<K, V>` is a built-in hash map with reference semantics, like `Vec`. The key
 type is `int`, a sized integer, `string`, `char` or `bool`; any other key type,
-written or inferred, is E0470.
+written or inferred, is E0470. A generic `Map<K, V>` is checked on every
+instantiation of the generic code, so `mk(1.5, 2)` for a generic `mk` is E0470
+at compile time. A Map that would grow past `-ae.max-heap` fails with
+`out of memory` at the insert.
 
 ```rust
 let mut ages: Map<string, int> = Map::new()

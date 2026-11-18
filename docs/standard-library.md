@@ -292,6 +292,10 @@ value. `s += x` (and `s + x` where `s` is the most recent string built on its
 buffer) appends in place in amortised O(1): the result shares the left operand's
 buffer when nothing else has extended it, so a loop that appends n times costs
 O(n) overall, and every earlier string value keeps its own contents.
+A shared buffer counts against `-ae.max-heap` once, for its whole reserved
+capacity, for as long as any string that views it is alive: a short string that
+once had a long string appended to it keeps that long buffer alive. Appending
+past the budget is a clean `out of memory` error at the append.
 
 ### Predicates
 
