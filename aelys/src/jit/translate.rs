@@ -925,7 +925,9 @@ fn constant_ir(constant: &Constant) -> Option<(IrType, IrInstructionKind)> {
             IrType::F64,
             IrInstructionKind::Iconst(i64::from_ne_bytes(bits.to_ne_bytes())),
         )),
-        Constant::Null | Constant::String(_) | Constant::NestedFunction(_) => None,
+        Constant::Null | Constant::Char(_) | Constant::String(_) | Constant::NestedFunction(_) => {
+            None
+        }
     }
 }
 
@@ -1399,7 +1401,7 @@ fn transfer_types(
                 Constant::Bool(_) => *registers.get_mut(destination)? = Some(IrType::Bool),
                 Constant::Int(_) => *registers.get_mut(destination)? = Some(IrType::I64),
                 Constant::Float(_) => *registers.get_mut(destination)? = Some(IrType::F64),
-                Constant::Null | Constant::String(_) => return None,
+                Constant::Null | Constant::Char(_) | Constant::String(_) => return None,
             }
         }
         OpCode::ArrayLen => {

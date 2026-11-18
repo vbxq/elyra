@@ -6,6 +6,9 @@ pub enum CompileErrorKind {
     InvalidEscape(char),
     UnterminatedFmtExpr,
     UnmatchedCloseBrace,
+    InvalidCharLiteral {
+        reason: String,
+    },
 
     UnexpectedToken {
         expected: String,

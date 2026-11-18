@@ -26,6 +26,7 @@ mod arithmetic;
 mod call_data;
 mod calls;
 mod closures;
+pub(crate) mod collections;
 mod comparison;
 mod dispatch;
 mod helpers;

@@ -138,6 +138,12 @@ impl Heap {
                     );
                 }
             }
+            ObjectKind::Map(map) => {
+                for (key, value) in map.entries() {
+                    children.extend(key.as_ptr().map(GcRef::new));
+                    children.extend(value.as_ptr().map(GcRef::new));
+                }
+            }
             ObjectKind::Sum(sum) => {
                 if let Some(pointer) = sum.payload.as_ptr() {
                     children.push(GcRef::new(pointer));
@@ -201,8 +207,17 @@ impl Heap {
         self.bytes_allocated = self
             .bytes_allocated
             .saturating_sub(Self::estimate_object_size(&object));
-        if let ObjectKind::String(string) = &object.kind {
-            self.intern_table.remove(&string.hash());
+        if let ObjectKind::String(string) = &object.kind
+            && string.is_interned()
+        {
+            let key = Self::fnv1a_hash(string.as_bytes());
+            let this = GcRef::from_parts(
+                u32::try_from(index).expect("heap slot index exceeds u32"),
+                slot.generation,
+            );
+            if self.intern_table.get(&key) == Some(&this) {
+                self.intern_table.remove(&key);
+            }
         }
         if slot.generation != GcRef::MAX_GENERATION {
             slot.generation += 1;
@@ -273,13 +288,14 @@ impl Heap {
 
     pub fn estimate_object_size(obj: &crate::object::GcObject) -> usize {
         match &obj.kind {
-            ObjectKind::String(s) => std::mem::size_of::<AelysString>() + s.len(),
+            ObjectKind::String(s) => std::mem::size_of::<AelysString>() + s.accounted_bytes(),
             ObjectKind::Function(f) => Self::estimate_function_size(&f.function),
             ObjectKind::Native(_) => std::mem::size_of::<crate::object::NativeFunction>(),
             ObjectKind::Upvalue(_) => std::mem::size_of::<AelysUpvalue>(),
             ObjectKind::Closure(c) => std::mem::size_of::<AelysClosure>() + c.upvalues.len() * 8,
             ObjectKind::Array(a) => a.size_bytes(),
             ObjectKind::Vec(v) => v.size_bytes(),
+            ObjectKind::Map(map) => map.accounted_bytes(),
             ObjectKind::Range(_) => std::mem::size_of::<crate::object::AelysRange>(),
             ObjectKind::Sum(_) => std::mem::size_of::<crate::object::AelysSum>(),
             ObjectKind::Enum(value) => value.size_bytes(),
@@ -368,7 +384,9 @@ fn descriptor_size(descriptor: &crate::TypeDescriptor) -> usize {
             TypeDescriptor::Option(inner)
             | TypeDescriptor::Array(inner)
             | TypeDescriptor::Vec(inner) => descriptor_size(inner),
-            TypeDescriptor::Result(ok, err) => descriptor_size(ok) + descriptor_size(err),
+            TypeDescriptor::Result(ok, err) | TypeDescriptor::Map(ok, err) => {
+                descriptor_size(ok) + descriptor_size(err)
+            }
             TypeDescriptor::FixedArray(inner, _) => descriptor_size(inner),
             _ => 0,
         }

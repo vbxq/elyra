@@ -86,6 +86,13 @@ pub enum RuntimeErrorKind {
         index: i64,
         length: i64,
     },
+    MapKeyNotFound {
+        key: String,
+    },
+    InvalidCharScalar {
+        value: i64,
+    },
+    VecChangedDuringSort,
 }
 
 impl RuntimeError {
@@ -201,6 +208,13 @@ impl RuntimeErrorKind {
                     "index out of bounds: index {} is out of bounds for length {}",
                     index, length
                 )
+            }
+            Self::MapKeyNotFound { key } => format!("map key not found: {key}"),
+            Self::InvalidCharScalar { value } => {
+                format!("invalid char: {value} is not a Unicode scalar value")
+            }
+            Self::VecChangedDuringSort => {
+                "vector changed length while sort_by was running its comparator".to_string()
             }
         }
     }

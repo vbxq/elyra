@@ -1253,6 +1253,7 @@ impl Isolate {
                 ObjectKind::Native(_) => Err(StructuredCloneError::Unsupported("native function")),
                 ObjectKind::Upvalue(_) => Err(StructuredCloneError::Unsupported("upvalue")),
                 ObjectKind::Range(_) => Err(StructuredCloneError::Unsupported("range")),
+                ObjectKind::Map(_) => Err(StructuredCloneError::Unsupported("map")),
                 ObjectKind::Sum(_) => Err(StructuredCloneError::Unsupported("sum")),
                 ObjectKind::Enum(_) => Err(StructuredCloneError::Unsupported("enum")),
                 ObjectKind::Struct(_) => Err(StructuredCloneError::StructValuesUnsupported),

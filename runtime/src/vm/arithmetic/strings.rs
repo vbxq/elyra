@@ -1,5 +1,5 @@
 use super::super::VM;
-use super::super::{GcRef, ObjectKind, Value};
+use super::super::{GcRef, Heap, ObjectKind, Value};
 use aelys_common::error::RuntimeError;
 
 impl VM {
@@ -11,27 +11,20 @@ impl VM {
         let (Some(left_ptr), Some(right_ptr)) = (left.as_ptr(), right.as_ptr()) else {
             return Ok(None);
         };
-
-        let concatenated = {
-            let left_obj = self.heap.get(GcRef::new(left_ptr));
-            let right_obj = self.heap.get(GcRef::new(right_ptr));
-
-            if let (Some(l), Some(r)) = (left_obj, right_obj) {
-                if let (ObjectKind::String(ls), ObjectKind::String(rs)) = (&l.kind, &r.kind) {
-                    Some(format!("{}{}", ls.as_str(), rs.as_str()))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        let (left_ref, right_ref) = (GcRef::new(left_ptr), GcRef::new(right_ptr));
+        let added = match (self.heap.get(left_ref), self.heap.get(right_ref)) {
+            (Some(l), Some(r)) => match (&l.kind, &r.kind) {
+                (ObjectKind::String(ls), ObjectKind::String(rs)) => ls.len() + rs.len(),
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
         };
-
-        if let Some(result) = concatenated {
-            let str_ref = self.alloc_string(&result)?;
-            return Ok(Some(Value::ptr(str_ref.index())));
-        }
-
-        Ok(None)
+        let size = u64::try_from(Heap::estimate_string_size(added)).unwrap_or(u64::MAX);
+        self.maybe_collect_for(size);
+        self.ensure_heap_capacity(size)?;
+        Ok(self
+            .heap
+            .concat_strings(left_ref, right_ref)
+            .map(|joined| Value::ptr(joined.index())))
     }
 }

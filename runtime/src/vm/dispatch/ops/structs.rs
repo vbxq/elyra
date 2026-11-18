@@ -430,6 +430,22 @@ impl VM {
             TypeDescriptor::String => {
                 self.is_object_kind(value, |kind| matches!(kind, ObjectKind::String(_)))
             }
+            TypeDescriptor::Char => value.is_char(),
+            TypeDescriptor::Map(key, item) => {
+                let Some(object) = value
+                    .as_ptr()
+                    .and_then(|raw| self.heap.get(GcRef::new(raw)))
+                else {
+                    return false;
+                };
+                let ObjectKind::Map(map) = &object.kind else {
+                    return false;
+                };
+                map.entries().all(|(entry_key, entry_value)| {
+                    self.value_satisfies_schema(entry_key, key, tables, depth + 1)
+                        && self.value_satisfies_schema(entry_value, item, tables, depth + 1)
+                })
+            }
             TypeDescriptor::Option(inner) => {
                 if value.is_none() {
                     true

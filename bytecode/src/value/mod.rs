@@ -32,6 +32,8 @@ const TAG_NESTED_FN: u64 = 0x0005_0000_0000_0000; // marker for nested functions
 const TAG_UNIT: u64 = 0x0006_0000_0000_0000;
 const TAG_NONE: u64 = 0x0007_0000_0000_0000;
 const PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+// a char shares the null tag and is told apart by the top payload bit, so every other tag check stays one mask
+const CHAR_FLAG: u64 = 0x0000_8000_0000_0000;
 const CANONICAL_NAN: u64 = QNAN | TAG_NAN | 1;
 
 impl Value {

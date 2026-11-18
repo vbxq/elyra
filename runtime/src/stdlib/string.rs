@@ -19,8 +19,9 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
 
     reg_fn!("len", 1, native_len);
     reg_fn!("char_len", 1, native_char_len);
-    reg_fn!("chars", 1, native_chars);
-    reg_fn!("bytes", 1, native_bytes);
+    reg_fn!("chars", 1, crate::vm::collections::string_chars);
+    reg_fn!("bytes", 1, crate::vm::collections::string_bytes);
+    reg_fn!("from_char", 1, crate::vm::collections::string_from_char);
     reg_fn!("char_at", 2, native_char_at);
     reg_fn!("byte_at", 2, native_byte_at);
     reg_fn!("substr", 3, native_substr);
@@ -35,7 +36,7 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("count", 2, native_count);
     reg_fn!("replace", 3, native_replace);
     reg_fn!("replace_first", 3, native_replace_first);
-    reg_fn!("split", 2, native_split);
+    reg_fn!("split", 2, crate::vm::collections::string_split);
     reg_fn!("join", 2, native_join);
     reg_fn!("repeat", 2, native_repeat);
     reg_fn!("reverse", 1, native_reverse);
@@ -50,7 +51,7 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("is_numeric", 1, native_is_numeric);
     reg_fn!("is_alphabetic", 1, native_is_alphabetic);
     reg_fn!("is_alphanumeric", 1, native_is_alphanumeric);
-    reg_fn!("lines", 1, native_lines);
+    reg_fn!("lines", 1, crate::vm::collections::string_lines);
     reg_fn!("line_count", 1, native_line_count);
 
     Ok(StdModuleExports {
@@ -69,21 +70,6 @@ fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 fn native_char_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.char_len")?;
     Ok(Value::int(s.chars().count() as i64))
-}
-
-/// chars(s) - Get characters as newline-separated string.
-// TODO: this is awkward, should return an actual array once we have proper iterators
-fn native_chars(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let s = get_string(vm, args[0], "string.chars")?;
-    let chars: Vec<String> = s.chars().map(|c| c.to_string()).collect();
-    make_string(vm, &chars.join("\n"))
-}
-
-/// bytes(s) - Get bytes as space-separated integers.
-fn native_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let s = get_string(vm, args[0], "string.bytes")?;
-    let bytes: Vec<String> = s.bytes().map(|b| b.to_string()).collect();
-    make_string(vm, &bytes.join(" "))
 }
 
 /// char_at(s, index) - Get character at index (0-based).
@@ -215,22 +201,6 @@ fn native_replace_first(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
     make_string(vm, &s.replacen(old, new, 1))
 }
 
-/// split(s, sep) - Split string by separator.
-/// Returns parts separated by newlines.
-fn native_split(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let s = get_string(vm, args[0], "string.split")?;
-    let sep = get_string(vm, args[1], "string.split")?;
-
-    if sep.is_empty() {
-        // Split into characters
-        let parts: Vec<&str> = s.split("").filter(|x| !x.is_empty()).collect();
-        make_string(vm, &parts.join("\n"))
-    } else {
-        let parts: Vec<&str> = s.split(sep).collect();
-        make_string(vm, &parts.join("\n"))
-    }
-}
-
 /// join(parts, sep) - Join parts by separator.
 /// parts are expected to be newline-separated.
 fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -357,14 +327,6 @@ fn native_is_alphanumeric(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
     Ok(Value::bool(
         !s.is_empty() && s.chars().all(|c| c.is_alphanumeric()),
     ))
-}
-
-/// lines(s) - Split string into lines (returns newline-separated, but normalized).
-fn native_lines(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let s = get_string(vm, args[0], "string.lines")?;
-    // This normalizes line endings
-    let result: Vec<&str> = s.lines().collect();
-    make_string(vm, &result.join("\n"))
 }
 
 /// line_count(s) - Count number of lines.

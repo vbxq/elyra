@@ -24,9 +24,21 @@ impl Heap {
             return r;
         }
 
-        let r = self.alloc(GcObject::new(ObjectKind::String(AelysString::new(s))));
+        let string = AelysString::new(s);
+        string.mark_interned();
+        let r = self.alloc(GcObject::new(ObjectKind::String(string)));
         self.intern_table.insert(hash, r);
         r
+    }
+
+    pub fn concat_strings(&mut self, left: GcRef, right: GcRef) -> Option<GcRef> {
+        let joined = match (&self.get(left)?.kind, &self.get(right)?.kind) {
+            (ObjectKind::String(left), ObjectKind::String(right)) => {
+                AelysString::concat(left, right)
+            }
+            _ => return None,
+        };
+        Some(self.alloc(GcObject::new(ObjectKind::String(joined))))
     }
 
     // FNV-1a - simple and fast enough for string interning

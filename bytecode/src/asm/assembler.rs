@@ -747,6 +747,17 @@ impl<'a> AasmParser<'a> {
                         })
                     }
                 }
+                "char" => match self.advance()? {
+                    Token::Int(n) => u32::try_from(n)
+                        .ok()
+                        .filter(|scalar| char::from_u32(*scalar).is_some())
+                        .map(Constant::Char)
+                        .ok_or_else(|| AssemblerError::InvalidNumber(format!("invalid char {n}"))),
+                    t => Err(AssemblerError::Expected {
+                        expected: "char scalar".to_string(),
+                        got: format!("{:?}", t),
+                    }),
+                },
                 "float" => match self.advance()? {
                     Token::Float(f) => Ok(Constant::Float(f.to_bits())),
                     Token::Int(n) => Ok(Constant::Float((n as f64).to_bits())),
@@ -1002,6 +1013,9 @@ impl<'a> TypeDescriptorParser<'a> {
         if self.consume("string") {
             return Ok(TypeDescriptor::String);
         }
+        if self.consume("char") {
+            return Ok(TypeDescriptor::Char);
+        }
         if self.consume("any") {
             return Ok(TypeDescriptor::Any);
         }
@@ -1073,6 +1087,13 @@ impl<'a> TypeDescriptorParser<'a> {
             }
             self.expect('>')?;
             return Ok(TypeDescriptor::Array(Box::new(inner)));
+        }
+        if self.consume("map<") {
+            let key = self.parse_descriptor()?;
+            self.expect(',')?;
+            let value = self.parse_descriptor()?;
+            self.expect('>')?;
+            return Ok(TypeDescriptor::Map(Box::new(key), Box::new(value)));
         }
         if self.consume("vec<") {
             let inner = self.parse_descriptor()?;

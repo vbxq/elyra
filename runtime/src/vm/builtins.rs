@@ -5,6 +5,10 @@ use aelys_common::error::RuntimeError;
 pub fn register_builtins(vm: &mut VM) -> Result<(), RuntimeError> {
     let tostring_fn = vm.alloc_native("__tostring", 1, builtin_tostring)?;
     vm.set_global("__tostring".to_string(), Value::ptr(tostring_fn.index()));
+    for &(name, arity, function) in super::collections::COLLECTION_NATIVES {
+        let native = vm.alloc_native(name, arity, function)?;
+        vm.set_global(name.to_string(), Value::ptr(native.index()));
+    }
 
     Ok(())
 }

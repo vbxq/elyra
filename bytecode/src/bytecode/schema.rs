@@ -67,6 +67,8 @@ pub enum TypeDescriptor {
     Array(Box<TypeDescriptor>),
     FixedArray(Box<TypeDescriptor>, u32),
     Vec(Box<TypeDescriptor>),
+    Char,
+    Map(Box<TypeDescriptor>, Box<TypeDescriptor>),
     Struct(u32),
     Enum(u16),
     Function {
@@ -91,6 +93,8 @@ impl fmt::Display for TypeDescriptor {
             Self::Array(inner) => write!(formatter, "array<{inner}>"),
             Self::FixedArray(inner, len) => write!(formatter, "array<{inner};{len}>"),
             Self::Vec(inner) => write!(formatter, "vec<{inner}>"),
+            Self::Char => formatter.write_str("char"),
+            Self::Map(key, value) => write!(formatter, "map<{key},{value}>"),
             Self::Struct(schema_id) => write!(formatter, "struct:{schema_id}"),
             Self::Enum(schema_id) => write!(formatter, "enum:{schema_id}"),
             Self::Function { params, ret } => {

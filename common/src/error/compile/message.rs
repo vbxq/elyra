@@ -13,6 +13,7 @@ impl CompileErrorKind {
                 "unterminated expression in format string (missing '}')".to_string()
             }
             Self::UnmatchedCloseBrace => "unmatched '}' in string (use '}}' to escape)".to_string(),
+            Self::InvalidCharLiteral { reason } => format!("invalid char literal: {reason}"),
             Self::UnexpectedToken { expected, found } => {
                 format!("expected {}, found {}", expected, found)
             }
