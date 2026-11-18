@@ -155,9 +155,10 @@ fn iabs(a: int) -> int {
     if a < 0 { -a } else { a }
 }
 
+// fixed section: same split math as fixed.aelys; only single-expression bodies get inlined
+@inline_always
 fn fmul(a: int, b: int) -> int {
-    let al = a & 0xFFFF
-    (a >> 16) * b + al * (b >> 16) + ((al * (b & 0xFFFF)) >> 16)
+    (a >> 16) * b + (a & 0xFFFF) * (b >> 16) + (((a & 0xFFFF) * (b & 0xFFFF)) >> 16)
 }
 
 fn fdiv(a: int, b: int) -> int {
@@ -764,8 +765,7 @@ fn scale_from_angle(visangle: int, normalangle: int, distance: int) -> int {
     let sinea = fixed::finesine[anglea >> 19]
     let sineb = fixed::finesine[angleb >> 19]
     let num = 160 * sineb
-    let dl = distance & 0xFFFF
-    let den = (distance >> 16) * sinea + dl * (sinea >> 16) + ((dl * (sinea & 0xFFFF)) >> 16)
+    let den = fmul(distance, sinea)
     if den > (num >> 16) {
         let an = if num < 0 { -num } else { num }
         let ad = if den < 0 { -den } else { den }
@@ -1067,6 +1067,7 @@ fn store_wall_range(start: int, stop: int) {
     wall_finish(start, stop)
 }
 
+// shifts and masks arrive as parameters: literals are reloaded on every pixel
 fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
     let markceiling = w_markceiling
     let markfloor = w_markfloor
@@ -1093,8 +1094,6 @@ fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
     let bot_wm = botpic.widthmask
     let bot_hm = botpic.heightmask
     let dist = w_distance
-    let dist_hi = dist >> 16
-    let dist_lo = dist & 0xFFFF
     let offset = w_offset
     let centerangle = w_centerangle
     let lightrow = w_lightrow
@@ -1138,9 +1137,7 @@ fn seg_loop(mut out: Vec<int>, start: int, stopx: int, sh: int) {
         let mut level = 0
         let mut iscale = 0
         if segtextured {
-            let t = ftan[((centerangle + xtov[x]) >> 19) & 4095]
-            let tl = t & 0xFFFF
-            texcol = (offset - ((t >> 16) * dist + tl * dist_hi + ((tl * dist_lo) >> 16))) >> 16
+            texcol = (offset - fmul(ftan[((centerangle + xtov[x]) >> 19) & 4095], dist)) >> 16
             let mut index = scale >> 12
             if index >= 48 { index = 47 }
             level = scalelight[lightrow + index]
@@ -1545,18 +1542,10 @@ fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: i
         xstep = cachedxstep[y]
         ystep = cachedystep[y]
     }
-    let ds = distscale[x1]
-    let dl = distance & 0xFFFF
-    let length = (distance >> 16) * ds + dl * (ds >> 16) + ((dl * (ds & 0xFFFF)) >> 16)
+    let length = fmul(distance, distscale[x1])
     let angle = ((viewangle + fixed::xtoviewangle[x1]) & 0xFFFFFFFF) >> 19
-    let c = fixed::finesine[angle + 2048]
-    let sn = fixed::finesine[angle]
-    let ll = length & 0xFFFF
-    let lh = length >> 16
-    let cl = c & 0xFFFF
-    let sl = sn & 0xFFFF
-    let xfrac = viewx + (c >> 16) * length + cl * lh + ((cl * ll) >> 16)
-    let yfrac = -viewy - ((sn >> 16) * length + sl * lh + ((sl * ll) >> 16))
+    let xfrac = viewx + fmul(fixed::finesine[angle + 2048], length)
+    let yfrac = -viewy - fmul(fixed::finesine[angle], length)
     let mut index = distance >> 20
     if index >= 128 { index = 127 }
     let cmrow = cmap_rows[zlight[plane_zrow + index]]
