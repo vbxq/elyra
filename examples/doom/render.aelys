@@ -1,4 +1,3 @@
-needs std::bytes
 needs std::fs as fs
 needs std::convert as convert
 needs println from std::io
@@ -7,8 +6,8 @@ needs wad
 needs fixed
 needs gfx
 
-let mut fb: Vec<int> = vec![0; 64000]
-let mut cmap_rows: Vec<Vec<int>> = vec![vec![0; 256]]
+let mut fb: Vec<u8> = vec![0; 64000]
+let mut cmap_rows: Vec<Vec<u8>> = vec![vec![0; 256]]
 let mut sg_x1: Vec<int> = vec![]
 let mut sg_y1: Vec<int> = vec![]
 let mut sg_x2: Vec<int> = vec![]
@@ -42,8 +41,8 @@ let mut num_nodes = 0
 let mut tex_pics: Vec<Picture> = vec![]
 let mut tex_heights: Vec<int> = vec![]
 let mut flat_pix: Vec<Vec<int>> = vec![]
-let mut lit_flats: Vec<Vec<int>> = vec![]
-let mut sky_lit: Vec<Vec<int>> = vec![]
+let mut lit_flats: Vec<Vec<u8>> = vec![]
+let mut sky_lit: Vec<Vec<u8>> = vec![]
 let mut sky_flat = -1
 let mut sky_tex = 0
 let mut actors: Vec<Actor> = vec![]
@@ -263,7 +262,7 @@ fn build_texture(w: Wad, g: Graphics, tex: TextureDef) -> Picture {
                 for i in 0..post.length {
                     let ty = y0 + i
                     if ty >= 0 and ty < height {
-                        pix[256 + col + ty] = bytes::read_u8(w.buf, post.data + i)
+                        pix[256 + col + ty] = w.buf.read_u8(post.data + i)
                         opaque[col + ty] = 1
                     }
                 }
@@ -306,7 +305,7 @@ fn build_patch(w: Wad, li: int) -> Picture {
             posts.push(post.length)
             posts.push(8 + post.top)
             for i in 0..post.length {
-                m[8 + post.top + i] = bytes::read_u8(w.buf, post.data + i)
+                m[8 + post.top + i] = w.buf.read_u8(post.data + i)
             }
         }
         posts.push(-1)
@@ -555,8 +554,8 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
     let t0 = time::timer()
     cmap_rows = vec![]
     for m in 0..(g.colormap.len() / 256) {
-        let mut row: Vec<int> = vec![0; 256]
-        for i in 0..256 { row[i] = g.colormap[m * 256 + i] }
+        let mut row: Vec<u8> = vec![0; 256]
+        for i in 0..256 { row[i] = g.colormap[m * 256 + i] as u8 }
         cmap_rows.push(row)
     }
     init_lights()
@@ -624,14 +623,15 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
     let sky = tex_pics[sky_tex]
     sky_lit = vec![]
     for c in 0..sky.width {
-        let mut col: Vec<int> = vec![0; 200]
+        let mut col: Vec<u8> = vec![0; 200]
         if sky.heightmask >= 0 {
             for y in 0..200 { col[y] = cmap_rows[0][sky.cols[c][y & sky.heightmask]] }
         }
         sky_lit.push(col)
     }
     lit_flats = vec![]
-    for i in 0..(flat_pix.len() * 32) { lit_flats.push(no_flat) }
+    let no_lit: Vec<u8> = vec![]
+    for i in 0..(flat_pix.len() * 32) { lit_flats.push(no_lit) }
     for s in 0..rm_light.len() {
         let mut light = rm_light[s] >> 4
         if light < 0 { light = 0 }
@@ -748,7 +748,7 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
     println("render setup: {ntex} textures, {nflat} flats, {actors.len()} things ({skipped_things} unknown), {sprite_pics.len()} sprite patches, {time::elapsed(t0) * 1000.0} ms")
 }
 
-pub fn framebuffer() -> Vec<int> { fb }
+pub fn framebuffer() -> Vec<u8> { fb }
 
 pub fn set_skill_bit(b: int) { skill_bit = b }
 
@@ -937,7 +937,7 @@ fn check_plane(p: int, start: int, stop: int) -> int {
     n
 }
 
-fn draw_column(mut out: Vec<int>, cmrow: Vec<int>, col: Vec<int>, x: int, yl: int, yh: int, texturemid: int, iscale: int, mask: int, height: int) {
+fn draw_column(mut out: Vec<u8>, cmrow: Vec<u8>, col: Vec<int>, x: int, yl: int, yh: int, texturemid: int, iscale: int, mask: int, height: int) {
     if yh >= yl {
         let mut frac = texturemid + (yl - 100) * iscale
         if mask >= 0 {
@@ -1597,12 +1597,12 @@ fn render_node(n: int) {
     }
 }
 
-fn lit_flat(k: int) -> Vec<int> {
+fn lit_flat(k: int) -> Vec<u8> {
     let lit = lit_flats[k]
     if lit.len() > 0 { return lit }
     let flat = flat_pix[k / 32]
     let cmrow = cmap_rows[k % 32]
-    let mut made: Vec<int> = vec![0; 4096]
+    let mut made: Vec<u8> = vec![0; 4096]
     for i in 0..4096 { made[i] = cmrow[flat[i]] }
     lit_flats[k] = made
     made
@@ -2047,14 +2047,9 @@ pub fn write_ppm(path: string, pal: Vec<int>) -> Result<(), string> {
         rgb[3 * i + 1] = (c >> 8) & 255
         rgb[3 * i + 2] = c & 255
     }
-    let header = "P6\n320 200\n255\n"
-    let buf = bytes::alloc(header.len() + 192000)
-    let _ = bytes::write_string(buf, 0, header)
-    let copied = bytes::copy_from_vec(buf, header.len(), rgb)
-    let written = match copied {
-        Ok(_) => fs::write_file_bytes(path, buf),
-        Err(e) => Err(e),
-    }
-    let _ = bytes::free(buf)
-    written
+    let mut out = "P6\n320 200\n255\n".to_bytes()
+    let start = out.len()
+    out.resize(start + 192000, 0)
+    for i in 0..192000 { out[start + i] = rgb[i] as u8 }
+    fs::write_bytes(path, &out)
 }

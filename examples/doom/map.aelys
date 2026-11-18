@@ -1,4 +1,3 @@
-needs std::bytes
 needs wad
 
 fn none_or(v: int) -> int {
@@ -14,159 +13,159 @@ fn map_lump(w: Wad, marker: int, name: string) -> Lump {
     w.lumps[i]
 }
 
-fn load_vertexes(buf: int, l: Lump) -> Vec<Vertex> {
+fn load_vertexes(buf: Vec<u8>, l: Lump) -> Vec<Vertex> {
     let mut out: Vec<Vertex> = vec![]
     let n = l.size / 4
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 4 * i
-        out.push(Vertex { x: bytes::read_i16(buf, p), y: bytes::read_i16(buf, p + 2) })
+        out.push(Vertex { x: buf.read_i16_le(p), y: buf.read_i16_le(p + 2) })
     }
     out
 }
 
-fn load_linedefs(buf: int, l: Lump) -> Vec<Linedef> {
+fn load_linedefs(buf: Vec<u8>, l: Lump) -> Vec<Linedef> {
     let mut out: Vec<Linedef> = vec![]
     let n = l.size / 14
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 14 * i
         out.push(Linedef {
-            v1: bytes::read_u16(buf, p),
-            v2: bytes::read_u16(buf, p + 2),
-            flags: bytes::read_u16(buf, p + 4),
-            special: bytes::read_u16(buf, p + 6),
-            tag: bytes::read_u16(buf, p + 8),
-            front: none_or(bytes::read_u16(buf, p + 10)),
-            back: none_or(bytes::read_u16(buf, p + 12)),
+            v1: buf.read_u16_le(p),
+            v2: buf.read_u16_le(p + 2),
+            flags: buf.read_u16_le(p + 4),
+            special: buf.read_u16_le(p + 6),
+            tag: buf.read_u16_le(p + 8),
+            front: none_or(buf.read_u16_le(p + 10)),
+            back: none_or(buf.read_u16_le(p + 12)),
         })
     }
     out
 }
 
-fn load_sidedefs(buf: int, l: Lump) -> Vec<Sidedef> {
+fn load_sidedefs(buf: Vec<u8>, l: Lump) -> Vec<Sidedef> {
     let mut out: Vec<Sidedef> = vec![]
     let n = l.size / 30
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 30 * i
         out.push(Sidedef {
-            xoff: bytes::read_i16(buf, p),
-            yoff: bytes::read_i16(buf, p + 2),
+            xoff: buf.read_i16_le(p),
+            yoff: buf.read_i16_le(p + 2),
             upper: wad::name8(buf, p + 4),
             lower: wad::name8(buf, p + 12),
             middle: wad::name8(buf, p + 20),
-            sector: bytes::read_i16(buf, p + 28),
+            sector: buf.read_i16_le(p + 28),
         })
     }
     out
 }
 
-fn load_sectors(buf: int, l: Lump) -> Vec<Sector> {
+fn load_sectors(buf: Vec<u8>, l: Lump) -> Vec<Sector> {
     let mut out: Vec<Sector> = vec![]
     let n = l.size / 26
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 26 * i
         out.push(Sector {
-            floor_h: bytes::read_i16(buf, p),
-            ceil_h: bytes::read_i16(buf, p + 2),
+            floor_h: buf.read_i16_le(p),
+            ceil_h: buf.read_i16_le(p + 2),
             floor_flat: wad::name8(buf, p + 4),
             ceil_flat: wad::name8(buf, p + 12),
-            light: bytes::read_i16(buf, p + 20),
-            special: bytes::read_i16(buf, p + 22),
-            tag: bytes::read_i16(buf, p + 24),
+            light: buf.read_i16_le(p + 20),
+            special: buf.read_i16_le(p + 22),
+            tag: buf.read_i16_le(p + 24),
         })
     }
     out
 }
 
-fn load_segs(buf: int, l: Lump) -> Vec<Seg> {
+fn load_segs(buf: Vec<u8>, l: Lump) -> Vec<Seg> {
     let mut out: Vec<Seg> = vec![]
     let n = l.size / 12
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 12 * i
         out.push(Seg {
-            v1: bytes::read_u16(buf, p),
-            v2: bytes::read_u16(buf, p + 2),
-            angle: bytes::read_i16(buf, p + 4),
-            linedef: bytes::read_u16(buf, p + 6),
-            direction: bytes::read_i16(buf, p + 8),
-            offset: bytes::read_i16(buf, p + 10),
+            v1: buf.read_u16_le(p),
+            v2: buf.read_u16_le(p + 2),
+            angle: buf.read_i16_le(p + 4),
+            linedef: buf.read_u16_le(p + 6),
+            direction: buf.read_i16_le(p + 8),
+            offset: buf.read_i16_le(p + 10),
         })
     }
     out
 }
 
-fn load_subsectors(buf: int, l: Lump) -> Vec<Subsector> {
+fn load_subsectors(buf: Vec<u8>, l: Lump) -> Vec<Subsector> {
     let mut out: Vec<Subsector> = vec![]
     let n = l.size / 4
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 4 * i
-        out.push(Subsector { count: bytes::read_u16(buf, p), first_seg: bytes::read_u16(buf, p + 2) })
+        out.push(Subsector { count: buf.read_u16_le(p), first_seg: buf.read_u16_le(p + 2) })
     }
     out
 }
 
-fn bbox_at(buf: int, p: int) -> [int; 4] {
-    [bytes::read_i16(buf, p), bytes::read_i16(buf, p + 2), bytes::read_i16(buf, p + 4), bytes::read_i16(buf, p + 6)]
+fn bbox_at(buf: Vec<u8>, p: int) -> [int; 4] {
+    [buf.read_i16_le(p), buf.read_i16_le(p + 2), buf.read_i16_le(p + 4), buf.read_i16_le(p + 6)]
 }
 
-fn load_nodes(buf: int, l: Lump) -> Vec<Node> {
+fn load_nodes(buf: Vec<u8>, l: Lump) -> Vec<Node> {
     let mut out: Vec<Node> = vec![]
     let n = l.size / 28
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 28 * i
         out.push(Node {
-            x: bytes::read_i16(buf, p),
-            y: bytes::read_i16(buf, p + 2),
-            dx: bytes::read_i16(buf, p + 4),
-            dy: bytes::read_i16(buf, p + 6),
+            x: buf.read_i16_le(p),
+            y: buf.read_i16_le(p + 2),
+            dx: buf.read_i16_le(p + 4),
+            dy: buf.read_i16_le(p + 6),
             bbox_right: bbox_at(buf, p + 8),
             bbox_left: bbox_at(buf, p + 16),
-            right: child_of(bytes::read_u16(buf, p + 24)),
-            left: child_of(bytes::read_u16(buf, p + 26)),
+            right: child_of(buf.read_u16_le(p + 24)),
+            left: child_of(buf.read_u16_le(p + 26)),
         })
     }
     out
 }
 
-fn load_things(buf: int, l: Lump) -> Vec<Thing> {
+fn load_things(buf: Vec<u8>, l: Lump) -> Vec<Thing> {
     let mut out: Vec<Thing> = vec![]
     let n = l.size / 10
     out.reserve(n)
     for i in 0..n {
         let p = l.filepos + 10 * i
         out.push(Thing {
-            x: bytes::read_i16(buf, p),
-            y: bytes::read_i16(buf, p + 2),
-            angle: bytes::read_i16(buf, p + 4),
-            kind: bytes::read_i16(buf, p + 6),
-            flags: bytes::read_i16(buf, p + 8),
+            x: buf.read_i16_le(p),
+            y: buf.read_i16_le(p + 2),
+            angle: buf.read_i16_le(p + 4),
+            kind: buf.read_i16_le(p + 6),
+            flags: buf.read_i16_le(p + 8),
         })
     }
     out
 }
 
-fn load_blockmap(buf: int, l: Lump) -> Blockmap {
+fn load_blockmap(buf: Vec<u8>, l: Lump) -> Blockmap {
     let base = l.filepos
-    let columns = bytes::read_i16(buf, base + 4)
-    let rows = bytes::read_i16(buf, base + 6)
+    let columns = buf.read_i16_le(base + 4)
+    let rows = buf.read_i16_le(base + 6)
     let count = columns * rows
     let mut offsets: Vec<int> = vec![]
     let mut lists: Vec<Vec<int>> = vec![]
     offsets.reserve(count)
     lists.reserve(count)
     for b in 0..count {
-        let off = bytes::read_u16(buf, base + 8 + 2 * b)
+        let off = buf.read_u16_le(base + 8 + 2 * b)
         offsets.push(off)
         let mut list: Vec<int> = vec![]
         let mut p = base + off * 2
         while true {
-            let v = bytes::read_u16(buf, p)
+            let v = buf.read_u16_le(p)
             p += 2
             if v == 0xFFFF { break }
             list.push(v)
@@ -174,8 +173,8 @@ fn load_blockmap(buf: int, l: Lump) -> Blockmap {
         lists.push(list)
     }
     Blockmap {
-        origin_x: bytes::read_i16(buf, base),
-        origin_y: bytes::read_i16(buf, base + 2),
+        origin_x: buf.read_i16_le(base),
+        origin_y: buf.read_i16_le(base + 2),
         columns: columns,
         rows: rows,
         offsets: offsets,

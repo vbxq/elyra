@@ -1,5 +1,4 @@
 needs std::sys
-needs std::bytes
 needs wad
 needs map
 needs gfx

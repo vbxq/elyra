@@ -1,5 +1,4 @@
 // build the module and copy it here as sdl.so first, see docs/native-modules.md
-needs std::bytes as bytes
 needs std::sys as sys
 needs sdl
 
@@ -17,12 +16,12 @@ fn frame_count() -> int {
     }
 }
 
-fn paint_palette(palette: int, shift: int) {
+fn paint_palette(mut palette: Vec<u8>, shift: int) {
     let mut i = 0
     while i < 256 {
-        bytes::write_u8(palette, i * 3, (i + shift) % 256)
-        bytes::write_u8(palette, i * 3 + 1, i)
-        bytes::write_u8(palette, i * 3 + 2, 255 - i)
+        palette.write_u8(i * 3, (i + shift) % 256)
+        palette.write_u8(i * 3 + 1, i)
+        palette.write_u8(i * 3 + 2, 255 - i)
         i += 1
     }
 }
@@ -39,13 +38,13 @@ match sdl::open("Elyra SDL gradient", W, H, 3) {
     }
 }
 
-let pixels = bytes::alloc(W * H)
+let mut pixels: Vec<u8> = vec![0; W * H]
 let mut y = 0
 while y < H {
-    bytes::fill(pixels, y * W, W, y)
+    for x in 0..W { pixels[y * W + x] = y as u8 }
     y += 1
 }
-let palette = bytes::alloc(768)
+let mut palette: Vec<u8> = vec![0; 768]
 
 let frames = frame_count()
 let escape = sdl::scancode("Escape")
@@ -54,7 +53,7 @@ let mut shown = 0
 let mut quit = false
 while shown < frames and not quit {
     paint_palette(palette, shown)
-    match sdl::present_indexed(pixels, palette) {
+    match sdl::present_indexed(&pixels, &palette) {
         Ok(_) => (),
         Err(e) => {
             println("present failed: {e}")
@@ -83,9 +82,9 @@ let indexed_ok = indexed == expected_rgb(20, last)
 let bottom = match sdl::read_pixel(319, 199) { Ok(p) => p, Err(e) => -1 }
 let bottom_ok = bottom == expected_rgb(199, last)
 
-let argb = bytes::alloc(W * H * 4)
-bytes::fill(argb, 0, W * H * 4, 90)
-match sdl::present_argb(argb) {
+let mut argb: Vec<u8> = vec![0; W * H * 4]
+argb.fill(90)
+match sdl::present_argb(&argb) {
     Ok(_) => (),
     Err(e) => println("present_argb failed: {e}")
 }

@@ -1,5 +1,4 @@
 needs std::fs as fs
-needs std::bytes
 needs std::convert as convert
 needs println from std::io
 
@@ -7,7 +6,7 @@ pub struct Lump { pub name: string, pub filepos: int, pub size: int, pub key_lo:
 
 pub struct NameKey { pub lo: int, pub hi: int }
 
-pub struct Wad { pub buf: int, pub ident: string, pub lumps: Vec<Lump>, pub table: Vec<int> }
+pub struct Wad { pub buf: Vec<u8>, pub ident: string, pub lumps: Vec<Lump>, pub table: Vec<int> }
 
 pub struct Vertex { pub x: int, pub y: int }
 
@@ -98,32 +97,32 @@ pub struct SpriteDef { pub rotate: bool, pub pics: [int; 8], pub flips: [int; 8]
 
 pub struct Actor { pub x: int, pub y: int, pub z: int, pub angle: int, pub def: int, pub bright: bool, pub sector: int }
 
-pub fn u8(buf: int, off: int) -> int { bytes::read_u8(buf, off) }
-pub fn u16(buf: int, off: int) -> int { bytes::read_u16(buf, off) }
-pub fn i16(buf: int, off: int) -> int { bytes::read_i16(buf, off) }
-pub fn i32(buf: int, off: int) -> int { bytes::read_i32(buf, off) }
-pub fn u32(buf: int, off: int) -> int { bytes::read_u32(buf, off) }
+pub fn u8(buf: Vec<u8>, off: int) -> int { buf.read_u8(off) }
+pub fn u16(buf: Vec<u8>, off: int) -> int { buf.read_u16_le(off) }
+pub fn i16(buf: Vec<u8>, off: int) -> int { buf.read_i16_le(off) }
+pub fn i32(buf: Vec<u8>, off: int) -> int { buf.read_i32_le(off) }
+pub fn u32(buf: Vec<u8>, off: int) -> int { buf.read_u32_le(off) }
 
 fn upper_byte(b: int) -> int {
     if b >= 97 and b <= 122 { b - 32 } else { b }
 }
 
-pub fn name8(buf: int, off: int) -> string {
-    let mut end = bytes::find(buf, off, off + 8, 0)
-    if end < 0 { end = off + 8 }
+pub fn name8(buf: Vec<u8>, off: int) -> string {
     let mut s = ""
-    for i in off..end {
-        s += convert::chr(upper_byte(bytes::read_u8(buf, i)))
+    for i in off..off + 8 {
+        let b = buf.read_u8(i)
+        if b == 0 { break }
+        s += convert::chr(upper_byte(b))
     }
     s
 }
 
-pub fn key_of_buf(buf: int, off: int) -> NameKey {
+pub fn key_of_buf(buf: Vec<u8>, off: int) -> NameKey {
     let mut lo = 0
     let mut hi = 0
     let mut done = false
     for i in 0..8 {
-        let mut b = bytes::read_u8(buf, off + i)
+        let mut b = buf.read_u8(off + i)
         if b == 0 { done = true }
         if done { b = 0 }
         b = upper_byte(b)
@@ -148,37 +147,21 @@ fn slot_of(k: NameKey) -> int {
     ((k.lo * 31 + k.hi) % 8191 + 8191) % 8191
 }
 
-fn read_file(path: string) -> int {
-    let total = match fs::size(path) {
-        Ok(n) => n,
-        Err(e) => { println("wad: {e}"); return -1 },
+fn read_file(path: string) -> Vec<u8> {
+    match fs::read_bytes(path) {
+        Ok(buf) => buf,
+        Err(e) => { println("wad: {e}"); vec![] },
     }
-    let f = match fs::open(path, "r") {
-        Ok(h) => h,
-        Err(e) => { println("wad: {e}"); return -1 },
-    }
-    let buf = bytes::alloc(total)
-    let mut pos = 0
-    while pos < total {
-        let chunk = match fs::read_bytes(f, 1048576) {
-            Ok(h) => h,
-            Err(e) => { println("wad: {e}"); return -1 },
-        }
-        let got = bytes::size(chunk)
-        if got == 0 { break }
-        bytes::copy(chunk, 0, buf, pos, got)
-        bytes::free(chunk)
-        pos += got
-    }
-    let _ = fs::close(f)
-    buf
 }
 
 pub fn open_wad(path: string) -> Wad {
     let buf = read_file(path)
-    let ident = bytes::decode(buf, 0, 4)
-    let count = bytes::read_i32(buf, 4)
-    let dirofs = bytes::read_i32(buf, 8)
+    let ident = match buf[0..4].to_utf8() {
+        Some(s) => s,
+        None => "",
+    }
+    let count = buf.read_i32_le(4)
+    let dirofs = buf.read_i32_le(8)
     let mut lumps: Vec<Lump> = vec![]
     lumps.reserve(count)
     let mut table = vec![0; 8192]
@@ -187,8 +170,8 @@ pub fn open_wad(path: string) -> Wad {
         let k = key_of_buf(buf, e + 8)
         lumps.push(Lump {
             name: name8(buf, e + 8),
-            filepos: bytes::read_i32(buf, e),
-            size: bytes::read_i32(buf, e + 4),
+            filepos: buf.read_i32_le(e),
+            size: buf.read_i32_le(e + 4),
             key_lo: k.lo,
             key_hi: k.hi,
         })
