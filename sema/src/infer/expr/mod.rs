@@ -269,17 +269,13 @@ impl TypeInference {
             .iter()
             .filter(|branch| !literal_shaped(branch))
             .map(|branch| branch.ty.clone())
-            .find(|ty| ty.is_sized_integer() || matches!(ty, InferType::Var(_)));
+            .find(InferType::is_sized_integer);
         let Some(target) = target else {
             return;
         };
         for branch in branches.iter_mut() {
             if literal_shaped(branch) {
-                if target.is_sized_integer() {
-                    self.retype_int_literal(branch, &target);
-                } else {
-                    self.defer_int_literal(branch, target.clone());
-                }
+                self.retype_int_literal(branch, &target);
             }
         }
     }
