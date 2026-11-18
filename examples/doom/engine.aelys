@@ -196,6 +196,19 @@ fn report(wall_total_ms: float) {
     if i99 >= n { i99 = n - 1 }
     println("frame ms p50 {s[n / 2]} p99 {s[i99]} max {s[n - 1]} fps {convert::to_float(n) * 1000.0 / wall_ms}")
     println("slowest frame {worst} at tic {frame_tic[worst]} pos {frame_x[worst] >> 16},{frame_y[worst] >> 16} angle {frame_a[worst] * 360 / 4294967296} {frame_ms[worst]} ms")
+    let mut over33 = 0
+    let mut over50 = 0
+    let mut over100 = 0
+    for i in 0..n {
+        let ms = frame_ms[i]
+        if ms > 33.3 { over33++ }
+        if ms > 50.0 { over50++ }
+        if ms > 100.0 {
+            over100++
+            println("spike frame {i} tic {frame_tic[i]} pos {frame_x[i] >> 16},{frame_y[i] >> 16} angle {frame_a[i] * 360 / 4294967296} {ms} ms")
+        }
+    }
+    println("frames over 33.3 ms {over33}, over 50 ms {over50}, over 100 ms {over100}")
     ()
 }
 
