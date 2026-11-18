@@ -372,9 +372,16 @@ fn stmt_returns_value(stmt: &Stmt) -> bool {
     }
 }
 
+pub(super) fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Assign { .. } | ExprKind::MemberAssign { .. } | ExprKind::IndexAssign { .. }
+    )
+}
+
 fn tail_yields_value(stmt: &Stmt) -> bool {
     match &stmt.kind {
-        StmtKind::Expression(_) => true,
+        StmtKind::Expression(expr) => !is_assignment(expr),
         StmtKind::If {
             then_branch,
             else_branch: Some(else_branch),

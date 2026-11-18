@@ -34,6 +34,7 @@ impl TypeInference {
         }
         let kind = match &stmt.kind {
             StmtKind::Expression(expr) => {
+                self.statement_match = matches!(expr.kind, aelys_syntax::ExprKind::Match { .. });
                 let typed_expr = self.infer_expr(expr);
                 self.record_must_use_value(&typed_expr);
                 TypedStmtKind::Expression(typed_expr)

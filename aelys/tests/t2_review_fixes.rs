@@ -290,3 +290,101 @@ fn closures_in_a_loop_share_outer_variables_and_keep_their_iteration_locals() {
         (11 * 100 + 22 * 10000 + 33 * 1_000_000) * 100_000 + 3 + 50 + 700 + 1000 + 20000,
     );
 }
+
+#[test]
+fn a_statement_match_discards_its_arm_values() {
+    int_at_every_level(
+        r#"
+        fn pick(o: Option<int>) -> int {
+            match o {
+                Some(a) => { if a > 0 { return a } },
+                None => { return -1 },
+            }
+            0
+        }
+        fn walk(v: Vec<Option<int>>) -> int {
+            for x in v {
+                match x { Some(a) => { if a > 2 { return a } }, None => { return 0 } }
+            }
+            99
+        }
+        fn mixed(o: Result<int, string>) -> int {
+            let mut r = 0
+            match o { Ok(a) => r = a, Err(_) => { } }
+            match o { Ok(a) => a, Err(_) => { r += 1000 } }
+            match o { Ok(a) => { r += a }, Err(_) => println("e") }
+            if let Ok(a) = o { a } else { r += 1 }
+            r
+        }
+        let low = pick(Some(5)) + pick(None) + pick(Some(-2)) + walk(vec![Some(1), Some(4)]) * 10
+        low + walk(vec![Some(1), None]) + walk(vec![Some(1)]) * 100 + mixed(Ok(3)) * 100000 + mixed(Err("x")) * 1000000
+        "#,
+        4 + 40 + 9900 + 6 * 100_000 + 1001 * 1_000_000,
+    );
+    rejected_with(
+        "fn f(o: Option<int>) -> int { let mut v: Vec<int> = vec![1]\n match o { Some(a) => v.pop(), None => { } }\n 0 }\nf(None)",
+        "E0304",
+    );
+}
+
+#[test]
+fn an_assignment_tail_makes_a_unit_function() {
+    int_at_every_level(
+        r#"
+        let mut count = 0
+        let mut name = "a"
+        fn bump(c: bool) {
+            if c { count = count + 1 } else { name = "b" }
+        }
+        fn bump2(c: bool) {
+            if c { count += 10 } else { println("side") }
+        }
+        let f = fn(k: int) { if k > 0 { count += k } else { name = "neg" } }
+        bump(true)
+        bump(false)
+        bump2(true)
+        bump2(false)
+        f(100)
+        f(-1)
+        let tag = if name == "neg" { 1000 } else { 0 }
+        count + tag
+        "#,
+        1111,
+    );
+    rejected_with(
+        "let mut count = 0\nlet g = fn(k: int) { count = k }\nlet x: int = g(3)\nx",
+        "E0301",
+    );
+    rejected_with(
+        "fn h(mut v: Vec<int>, c: bool) { if c { v.push(1) } else { v.pop() } }\nh(vec![1], true)",
+        "E0301",
+    );
+    int_at_every_level("let mut z = 0\nfn set(v: int) -> int { z = v }\nset(41) + 1", 42);
+}
+
+#[test]
+fn step_is_a_keyword_only_in_a_for_header() {
+    int_at_every_level(
+        r#"
+        fn step(k: int) -> int { k + 1 }
+        let step_size = 3
+        let mut s = 0
+        for i in 1..step(4) { s += 100000 }
+        for i in 0..10 step step_size { s += i }
+        let stride = step(1)
+        for i in 0..=10 step stride { s += i * 100 }
+        for i in 0..step(2) step 2 { s += 10000000 }
+        struct T { step: int }
+        let t = T { step: 7 }
+        fn local() -> int { let step = 1
+            step }
+        s + t.step + local()
+        "#,
+        20_000_000 + 400_000 + 3000 + 18 + 7 + 1,
+    );
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(&dir, "lib.aelys", "pub fn step() -> int { 7 }\n");
+    let main = write(&dir, "main.aelys", "needs lib\nlib::step() * 6\n");
+    let value = aelys_driver::run_file(&main).expect("lib::step() is callable");
+    assert_eq!(value.as_int(), Some(42));
+}

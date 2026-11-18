@@ -202,6 +202,7 @@ pub struct TypeInference {
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
     fall_through_residuals: Vec<(InferType, aelys_syntax::Span, String)>,
+    statement_match: bool,
     surface_dynamic_spans: HashSet<(usize, usize)>,
     sum_type_residuals: Vec<expr_sum::SumTypeResidual>,
     explicit_dynamic_functions: HashSet<String>,

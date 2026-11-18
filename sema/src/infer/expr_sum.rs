@@ -1354,8 +1354,13 @@ impl TypeInference {
         arms: &[MatchArm],
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        let discarded = std::mem::take(&mut self.statement_match);
         let typed_scrutinee = self.infer_expr(scrutinee);
-        let result_type = self.type_gen.fresh();
+        let result_type = if discarded {
+            InferType::Unit
+        } else {
+            self.type_gen.fresh()
+        };
         let mut dynamic_result = false;
         let mut typed_arms = Vec::with_capacity(arms.len());
         let mut implicit_unit_arms = Vec::new();
@@ -1387,6 +1392,22 @@ impl TypeInference {
                 typed_guard
             });
             let typed_body = match &arm.body {
+                MatchArmBody::Expr(expr) if discarded => {
+                    let typed_expr = self.infer_expr(expr);
+                    self.record_must_use_value(&typed_expr);
+                    TypedMatchArmBody::Expr(typed_expr)
+                }
+                MatchArmBody::Block(stmts) if discarded => {
+                    let (typed_stmts, _) = self.infer_stmts_value(stmts);
+                    if let Some(crate::typed_ast::TypedStmt {
+                        kind: crate::typed_ast::TypedStmtKind::Expression(tail),
+                        ..
+                    }) = typed_stmts.last()
+                    {
+                        self.record_must_use_value(tail);
+                    }
+                    TypedMatchArmBody::Block(typed_stmts)
+                }
                 MatchArmBody::Expr(expr) => {
                     let typed_expr = self.infer_expr(expr);
                     value_arms += 1;

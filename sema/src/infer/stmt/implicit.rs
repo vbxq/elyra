@@ -11,6 +11,12 @@ impl TypeInference {
         return_type: &InferType,
     ) -> TypedStmt {
         match &stmt.kind {
+            aelys_syntax::StmtKind::Expression(expr)
+                if matches!(return_type, InferType::Var(_))
+                    && super::super::functions::is_assignment(expr) =>
+            {
+                self.infer_stmt(stmt)
+            }
             aelys_syntax::StmtKind::Expression(expr) => {
                 let mut typed_expr = self.infer_expr(expr);
 

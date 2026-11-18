@@ -32,14 +32,15 @@ Thing2
 ### Reserved Words
 
 ```
-let mut fn if else while for in step return break continue match struct enum
+let mut fn if else while for in return break continue match struct enum
 trait impl and or not pub needs as from true false null
 ```
 
 `null` is reserved only so that it can be rejected; see [Booleans](#literals) below.
 
 `loop` is contextual: it opens a loop only when a `{` follows it, so `let loop = 1`
-still declares a variable. A label is an identifier written after a quote,
+still declares a variable. `step` is contextual too: it is a keyword only after
+the range of a `for` header, so a function, variable or field may be named `step`. A label is an identifier written after a quote,
 `'outer`, and is only meaningful before `for`, `while` or `loop` and after `break`
 or `continue`.
 
@@ -614,8 +615,12 @@ All branches must have the same type. In expression position an `if` needs an
 `unit`, an `if` without `else` can fall through and is E0215 `function can fall
 through without returning int`, never a silent `unit`. A function or closure
 without a return type whose tail is not a value (an `if` without `else`, a `let`,
-a loop) returns `unit`, so `let x: int = f(1)` is E0301; if such a body also
-returns a value with `return`, it can fall through and is E0215.
+a loop, an assignment) returns `unit`, so `let x: int = f(1)` is E0301; if such
+a body also returns a value with `return`, it can fall through and is E0215. An
+assignment `x = v` or `x += v` is never the value of such a tail, so
+`fn set(c: bool) { if c { count = 1 } else { name = "b" } }` is a `unit` function.
+Branches that are both values must still agree: `if c { v.push(1) } else { v.pop() }`
+as the tail of a function without a return type is E0301.
 
 ### Block expressions
 
@@ -1413,6 +1418,11 @@ fn score(kind: BulletKind) -> int {
 
 println(score(BulletKind::Directed { damage: 2, speed: 1.5 }))
 ```
+
+A `match` used as a statement (not as a value and not as the last statement of a
+block that gives a value) discards its arm values, so its arms need not agree:
+`match o { Ok(v) => total = v, Err(_) => {} }` and arms that all `return` are
+accepted. A discarded `Result` or `Option` arm value is still E0303/E0304.
 
 ### Unreachable patterns
 

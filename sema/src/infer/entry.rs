@@ -64,6 +64,7 @@ impl Default for TypeInference {
             dynamic_residuals: Vec::new(),
             bound_residuals: Vec::new(),
             fall_through_residuals: Vec::new(),
+            statement_match: false,
             surface_dynamic_spans: HashSet::new(),
             sum_type_residuals: Vec::new(),
             explicit_dynamic_functions: HashSet::new(),
