@@ -4,8 +4,10 @@ use aelys::{
 };
 use aelys_driver::run_file;
 use aelys_opt::OptimizationLevel;
-use aelys_runtime::VmConfig;
+use aelys_runtime::{FrameRequest, FrameSubmission, FrameTarget, JitExecutor, VmConfig};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tempfile::TempDir;
 
 const LEVELS: [OptimizationLevel; 3] = [
@@ -683,4 +685,68 @@ first
         "global `g` read before its initialiser ran",
         3,
     );
+}
+
+// a compiler that accepts every request and never delivers, so the vm keeps interpreting with the jit active
+#[derive(Default)]
+struct NeverDelivers {
+    calls: AtomicU64,
+    loops: AtomicU64,
+}
+
+impl JitExecutor for NeverDelivers {
+    fn submit_frame(&self, request: FrameRequest<'_>) -> FrameSubmission {
+        match request.target {
+            FrameTarget::Call => self.calls.fetch_add(1, Ordering::Relaxed),
+            FrameTarget::Loop(_) => self.loops.fetch_add(1, Ordering::Relaxed),
+        };
+        FrameSubmission::Queued
+    }
+
+    fn frame_call_threshold(&self) -> u64 {
+        100
+    }
+}
+
+#[test]
+fn hot_code_with_the_jit_active_counts_back_edges_and_calls_without_leaving() {
+    let source = "fn step(x: int) -> int { (x * 7 + 3) % 1000003 }
+fn run(n: int) -> int {
+    let mut acc = 1
+    let mut i = 0
+    while i < n {
+        acc = step(acc + i)
+        i = i + 1
+    }
+    for j in 0..n {
+        acc = (acc + j) % 1000003
+    }
+    acc
+}
+run(30000)
+";
+    let mut acc = 1i64;
+    for i in 0..30000i64 {
+        acc = ((acc + i) * 7 + 3) % 1_000_003;
+    }
+    for j in 0..30000i64 {
+        acc = (acc + j) % 1_000_003;
+    }
+    let jit = Arc::new(NeverDelivers::default());
+    let mut vm = new_vm_with_config(VmConfig::default(), Vec::new()).expect("vm");
+    vm.configure_jit(Some(Arc::clone(&jit) as Arc<dyn JitExecutor>));
+    let value = run_with_vm_and_opt(&mut vm, source, "<r7>", OptimizationLevel::None)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(value.as_int(), Some(acc));
+    let exits = vm.execution_stats().hot_exits;
+    assert!(
+        exits < 200,
+        "{exits} exits for 60000 back-edges and 30000 calls"
+    );
+    assert_eq!(
+        jit.calls.load(Ordering::Relaxed),
+        1,
+        "one call compile requested"
+    );
+    assert_eq!(jit.loops.load(Ordering::Relaxed), 2, "one compile per loop");
 }
