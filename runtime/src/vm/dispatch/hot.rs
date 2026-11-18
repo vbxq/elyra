@@ -1,5 +1,5 @@
 use super::ops::structs::integer_fits;
-use crate::vm::{GcRef, ObjectKind, VM, Value};
+use crate::vm::{CallFrame, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
 use aelys_bytecode::{FunctionSchemas, OpCode, TypeDescriptor};
 use std::sync::Arc;
 
@@ -89,6 +89,9 @@ const VEC_STORE_I: u8 = OpCode::VecStoreI as u8;
 const VEC_STORE_F: u8 = OpCode::VecStoreF as u8;
 const STRUCT_LOAD: u8 = OpCode::StructLoad as u8;
 const STRUCT_STORE: u8 = OpCode::StructStore as u8;
+const CALL_GLOBAL: u8 = OpCode::CallGlobal as u8;
+const RETURN: u8 = OpCode::Return as u8;
+const RETURN0: u8 = OpCode::Return0 as u8;
 
 #[inline(always)]
 fn int48(value: i64) -> Option<Value> {
@@ -139,18 +142,24 @@ impl VM {
     pub(super) fn run_hot<const JIT: bool>(
         &mut self,
         mut ip: usize,
-        base: usize,
-        function: GcRef,
-        code: *const u32,
-        code_len: usize,
-        constants: *const Value,
-        constants_len: usize,
-    ) -> usize {
+        mut base: usize,
+        mut function: GcRef,
+        mut code: *const u32,
+        mut code_len: usize,
+        mut constants: *const Value,
+        mut constants_len: usize,
+    ) -> (usize, bool) {
+        let mut changed = false;
+        macro_rules! leave {
+            () => {
+                return (ip, changed)
+            };
+        }
         match base.checked_add(REGISTER_WINDOW) {
             Some(end) if end <= self.registers.len() => {}
-            _ => return ip,
+            _ => leave!(),
         }
-        let regs = unsafe { self.registers.as_mut_ptr().add(base) };
+        let mut regs = unsafe { self.registers.as_mut_ptr().add(base) };
         let mut schemas: Option<Arc<FunctionSchemas>> = None;
 
         macro_rules! get {
@@ -173,7 +182,7 @@ impl VM {
             ($option:expr) => {
                 match $option {
                     Some(value) => value,
-                    None => return ip,
+                    None => leave!(),
                 }
             };
         }
@@ -181,7 +190,7 @@ impl VM {
             ($b:expr, $c:expr) => {
                 match (get!($b).as_int(), get!($c).as_int()) {
                     (Some(left), Some(right)) => (left, right),
-                    _ => return ip,
+                    _ => leave!(),
                 }
             };
         }
@@ -190,9 +199,9 @@ impl VM {
                 match $value.as_ptr() {
                     Some(raw) => match self.heap.get(GcRef::new(raw)) {
                         Some(object) => &object.kind,
-                        None => return ip,
+                        None => leave!(),
                     },
-                    None => return ip,
+                    None => leave!(),
                 }
             };
         }
@@ -201,9 +210,9 @@ impl VM {
                 match $value.as_ptr() {
                     Some(raw) => match self.heap.get_mut_for_scalar_write(GcRef::new(raw)) {
                         Some(object) => &mut object.kind,
-                        None => return ip,
+                        None => leave!(),
                     },
-                    None => return ip,
+                    None => leave!(),
                 }
             };
         }
@@ -211,7 +220,7 @@ impl VM {
             ($index:expr) => {
                 match get!($index).as_int() {
                     Some(index) if index >= 0 => index as usize,
-                    _ => return ip,
+                    _ => leave!(),
                 }
             };
         }
@@ -219,14 +228,14 @@ impl VM {
             ($instr:ident, $next:ident) => {{
                 let (instr, next) = ($instr, $next);
                 if next + 1 >= code_len || instr & 0x00ff_0000 != 0 {
-                    return ip;
+                    leave!();
                 }
                 let first = unsafe { *code.add(next) };
                 let second = unsafe { *code.add(next + 1) };
                 let target = (first >> 16) as usize;
                 let source = (first & 0xffff) as usize;
                 if second & 0xffff != 0 || target >= REGISTER_WINDOW || source >= REGISTER_WINDOW {
-                    return ip;
+                    leave!();
                 }
                 if schemas.is_none() {
                     schemas = self.hot_schemas(function);
@@ -235,7 +244,7 @@ impl VM {
                 let schema_index = (instr & 0xffff) as usize;
                 let schema = or_leave!(tables.structs.get(schema_index));
                 if schema.schema_id as usize != schema_index {
-                    return ip;
+                    leave!();
                 }
                 let field = (second >> 16) as usize;
                 (
@@ -251,7 +260,7 @@ impl VM {
             ($target:expr) => {{
                 let target = $target;
                 if JIT && target <= ip {
-                    return ip;
+                    leave!();
                 }
                 target
             }};
@@ -259,7 +268,7 @@ impl VM {
 
         loop {
             if ip >= code_len {
-                return ip;
+                leave!();
             }
             let instr = unsafe { *code.add(ip) };
             let a = ((instr >> 16) & 0xff) as usize;
@@ -279,11 +288,11 @@ impl VM {
                 LOAD_K => {
                     let index = (instr & 0xffff) as usize;
                     if index >= constants_len {
-                        return ip;
+                        leave!();
                     }
                     let constant = unsafe { *constants.add(index) };
                     if constant.as_nested_fn_marker().is_some() {
-                        return ip;
+                        leave!();
                     }
                     set!(a, constant);
                     next
@@ -338,7 +347,7 @@ impl VM {
                 DIV_II => {
                     let right = int!(c);
                     if right == 0 {
-                        return ip;
+                        leave!();
                     }
                     set!(a, or_leave!(int!(b).checked_div(right).and_then(int48)));
                     next
@@ -346,7 +355,7 @@ impl VM {
                 MOD_II => {
                     let right = int!(c);
                     if right == 0 {
-                        return ip;
+                        leave!();
                     }
                     set!(a, or_leave!(int!(b).checked_rem(right).and_then(int48)));
                     next
@@ -540,7 +549,7 @@ impl VM {
                 }
                 JUMP_LONG | JUMP_IF_LONG | JUMP_IF_NOT_LONG => {
                     if next >= code_len {
-                        return ip;
+                        leave!();
                     }
                     let offset = unsafe { *code.add(next) } as i32;
                     let after = next + 1;
@@ -575,7 +584,7 @@ impl VM {
                     };
                     let target = next.wrapping_add_signed(imm as isize);
                     if again && JIT && target <= ip {
-                        return ip;
+                        leave!();
                     }
                     set!(a, value);
                     if again { target } else { next }
@@ -595,11 +604,11 @@ impl VM {
                 VEC_LOAD_I => {
                     let index = index!(c);
                     let ObjectKind::Vec(vector) = object!(get!(b)) else {
-                        return ip;
+                        leave!();
                     };
                     let Some(&value) = vector.data.as_ints().and_then(|items| items.get(index))
                     else {
-                        return ip;
+                        leave!();
                     };
                     set!(a, or_leave!(int48(value)));
                     next
@@ -607,7 +616,7 @@ impl VM {
                 VEC_LOAD_F | VEC_LOAD_B | VEC_LOAD_P => {
                     let index = index!(c);
                     let ObjectKind::Vec(vector) = object!(get!(b)) else {
-                        return ip;
+                        leave!();
                     };
                     set!(a, or_leave!(vector.get(index)));
                     next
@@ -615,11 +624,11 @@ impl VM {
                 ARRAY_LOAD_I => {
                     let index = index!(c);
                     let ObjectKind::Array(array) = object!(get!(b)) else {
-                        return ip;
+                        leave!();
                     };
                     let Some(&value) = array.data.as_ints().and_then(|items| items.get(index))
                     else {
-                        return ip;
+                        leave!();
                     };
                     set!(a, or_leave!(int48(value)));
                     next
@@ -627,7 +636,7 @@ impl VM {
                 ARRAY_LOAD_F | ARRAY_LOAD_B | ARRAY_LOAD_P => {
                     let index = index!(c);
                     let ObjectKind::Array(array) = object!(get!(b)) else {
-                        return ip;
+                        leave!();
                     };
                     set!(a, or_leave!(array.get(index)));
                     next
@@ -636,14 +645,14 @@ impl VM {
                     let index = index!(b);
                     let value = or_leave!(get!(c).as_int());
                     let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
-                        return ip;
+                        leave!();
                     };
                     let Some(slot) = vector
                         .data
                         .as_ints_mut()
                         .and_then(|items| items.get_mut(index))
                     else {
-                        return ip;
+                        leave!();
                     };
                     *slot = value;
                     next
@@ -652,14 +661,14 @@ impl VM {
                     let index = index!(b);
                     let value = or_leave!(get!(c).as_float());
                     let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
-                        return ip;
+                        leave!();
                     };
                     let Some(slot) = vector
                         .data
                         .as_floats_mut()
                         .and_then(|items| items.get_mut(index))
                     else {
-                        return ip;
+                        leave!();
                     };
                     *slot = value;
                     next
@@ -668,14 +677,14 @@ impl VM {
                     let index = index!(b);
                     let value = or_leave!(get!(c).as_int());
                     let ObjectKind::Array(array) = object_mut!(get!(a)) else {
-                        return ip;
+                        leave!();
                     };
                     let Some(slot) = array
                         .data
                         .as_ints_mut()
                         .and_then(|items| items.get_mut(index))
                     else {
-                        return ip;
+                        leave!();
                     };
                     *slot = value;
                     next
@@ -684,14 +693,14 @@ impl VM {
                     let index = index!(b);
                     let value = or_leave!(get!(c).as_float());
                     let ObjectKind::Array(array) = object_mut!(get!(a)) else {
-                        return ip;
+                        leave!();
                     };
                     let Some(slot) = array
                         .data
                         .as_floats_mut()
                         .and_then(|items| items.get_mut(index))
                     else {
-                        return ip;
+                        leave!();
                     };
                     *slot = value;
                     next
@@ -699,10 +708,10 @@ impl VM {
                 STRUCT_LOAD => {
                     let (target, source, field, _, schema_id) = struct_operands!(instr, next);
                     let ObjectKind::Struct(structure) = object!(get!(source)) else {
-                        return ip;
+                        leave!();
                     };
                     if structure.schema_id != schema_id {
-                        return ip;
+                        leave!();
                     }
                     set!(target, *or_leave!(structure.slots.get(field)));
                     next + 2
@@ -711,27 +720,126 @@ impl VM {
                     let (target, source, field, schema, schema_id) = struct_operands!(instr, next);
                     let value = get!(source);
                     if !scalar_fits(value, &or_leave!(schema.fields.get(field)).ty) {
-                        return ip;
+                        leave!();
                     }
                     let ObjectKind::Struct(structure) = object_mut!(get!(target)) else {
-                        return ip;
+                        leave!();
                     };
                     if structure.schema_id != schema_id {
-                        return ip;
+                        leave!();
                     }
                     *or_leave!(structure.slots.get_mut(field)) = value;
                     next + 2
+                }
+                CALL_GLOBAL => {
+                    if JIT {
+                        leave!();
+                    }
+                    let callee = GcRef::new(or_leave!(
+                        self.globals_by_index
+                            .get(b)
+                            .and_then(|value| value.as_ptr())
+                    ));
+                    let ObjectKind::Function(target) = &or_leave!(self.heap.get(callee)).kind
+                    else {
+                        leave!();
+                    };
+                    if !target.verified || target.arity() != c as u16 {
+                        leave!();
+                    }
+                    let callee_code = target.function.bytecode.as_ptr();
+                    let callee_code_len = target.function.bytecode.len();
+                    let callee_constants = target.constants.as_ptr();
+                    let callee_constants_len = target.constants.len();
+                    let registers = target.num_registers();
+                    let mapping = target.function.global_layout.id();
+                    let callee_base = base + a + 1;
+                    match callee_base.checked_add((registers as usize).max(REGISTER_WINDOW)) {
+                        Some(end) if end <= self.registers.len() => {}
+                        _ => leave!(),
+                    }
+                    let depth = self.frames.len();
+                    if depth >= MAX_FRAMES {
+                        leave!();
+                    }
+                    let caller = &mut self.frames[depth - 1];
+                    caller.ip = next;
+                    if mapping != caller.global_mapping_id {
+                        self.sync_current_function_globals();
+                        self.prepare_globals_for_function(callee);
+                    }
+                    let mut frame = CallFrame::with_return_dest(
+                        callee,
+                        callee_base,
+                        a as u16,
+                        callee_code,
+                        callee_code_len,
+                        callee_constants,
+                        callee_constants_len,
+                        registers,
+                    );
+                    frame.global_mapping_id = mapping;
+                    self.frames.push(frame);
+                    changed = true;
+                    base = callee_base;
+                    function = callee;
+                    code = callee_code;
+                    code_len = callee_code_len;
+                    constants = callee_constants;
+                    constants_len = callee_constants_len;
+                    regs = unsafe { self.registers.as_mut_ptr().add(base) };
+                    schemas = None;
+                    0
+                }
+                RETURN | RETURN0 => {
+                    let depth = self.frames.len();
+                    if depth < 2 {
+                        leave!();
+                    }
+                    let result = if (instr >> 24) as u8 == RETURN {
+                        get!(a)
+                    } else {
+                        Value::unit()
+                    };
+                    let returning = &self.frames[depth - 1];
+                    let destination = usize::from(returning.return_dest());
+                    let switch =
+                        returning.global_mapping_id != self.frames[depth - 2].global_mapping_id;
+                    if switch {
+                        self.sync_current_function_globals();
+                    }
+                    self.pop_frame_with_jit_metadata();
+                    changed = true;
+                    let frame = &self.frames[depth - 2];
+                    ip = frame.ip;
+                    base = frame.base;
+                    function = frame.function;
+                    code = frame.bytecode_ptr;
+                    code_len = frame.bytecode_len;
+                    constants = frame.constants_ptr;
+                    constants_len = frame.constants_len;
+                    if switch {
+                        self.prepare_globals_for_function(function);
+                    }
+                    self.registers[base + destination] = result;
+                    schemas = None;
+                    match base.checked_add(REGISTER_WINDOW) {
+                        Some(end) if end <= self.registers.len() => {}
+                        _ => leave!(),
+                    }
+                    regs = unsafe { self.registers.as_mut_ptr().add(base) };
+                    ip
                 }
                 VEC_LEN | ARRAY_LEN => {
                     let length = match object!(get!(b)) {
                         ObjectKind::Vec(vector) => vector.len(),
                         ObjectKind::Array(array) => array.len(),
-                        _ => return ip,
+                        _ => leave!(),
                     };
                     set!(a, or_leave!(i64::try_from(length).ok().and_then(int48)));
                     next
                 }
-                _ => return ip,
+                _ => leave!(),
             };
         }
     }
