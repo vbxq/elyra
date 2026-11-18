@@ -385,11 +385,40 @@ fn is_assignment(expr: &aelys_syntax::Expr) -> bool {
 
 fn expr_yields_value(expr: &aelys_syntax::Expr) -> bool {
     match &expr.kind {
-        aelys_syntax::ExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
-            aelys_syntax::MatchArmBody::Expr(body) => expr_yields_value(body),
-            aelys_syntax::MatchArmBody::Block(stmts) => stmts.last().is_some_and(tail_yields_value),
-        }),
+        aelys_syntax::ExprKind::Match { arms, .. } => {
+            arms.iter().any(|arm| match &arm.body {
+                aelys_syntax::MatchArmBody::Expr(body) => expr_yields_value(body),
+                aelys_syntax::MatchArmBody::Block(stmts) => {
+                    stmts.last().is_some_and(tail_yields_value)
+                }
+            }) || !expr_ends_in_assignment(expr)
+        }
         _ => !is_assignment(expr),
+    }
+}
+
+fn expr_ends_in_assignment(expr: &aelys_syntax::Expr) -> bool {
+    match &expr.kind {
+        aelys_syntax::ExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
+            aelys_syntax::MatchArmBody::Expr(body) => expr_ends_in_assignment(body),
+            aelys_syntax::MatchArmBody::Block(stmts) => {
+                stmts.last().is_some_and(stmt_ends_in_assignment)
+            }
+        }),
+        _ => is_assignment(expr),
+    }
+}
+
+fn stmt_ends_in_assignment(stmt: &Stmt) -> bool {
+    match &stmt.kind {
+        StmtKind::Expression(expr) => expr_ends_in_assignment(expr),
+        StmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => stmt_ends_in_assignment(then_branch) || stmt_ends_in_assignment(else_branch),
+        StmtKind::Block(stmts) => stmts.last().is_some_and(stmt_ends_in_assignment),
+        _ => false,
     }
 }
 
