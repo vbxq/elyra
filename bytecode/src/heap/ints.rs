@@ -23,7 +23,9 @@ impl Heap {
     pub fn int64_value(&self, value: Value) -> Option<i64> {
         match value.as_int() {
             Some(inline) => Some(inline),
-            None => self.boxed_int(value).and_then(|wide| i64::try_from(wide).ok()),
+            None => self
+                .boxed_int(value)
+                .and_then(|wide| i64::try_from(wide).ok()),
         }
     }
 

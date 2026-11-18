@@ -1199,7 +1199,8 @@ impl VM {
                     next
                 }
                 NEG_W | NOT_W => {
-                    let kind = or_leave!(SizedInt::from_u8(c as u8).filter(|kind| kind.bits() < 64));
+                    let kind =
+                        or_leave!(SizedInt::from_u8(c as u8).filter(|kind| kind.bits() < 64));
                     let opcode = if (instr >> 24) as u8 == NEG_W {
                         OpCode::NegW
                     } else {

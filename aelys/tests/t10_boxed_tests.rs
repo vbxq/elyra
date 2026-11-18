@@ -15,7 +15,12 @@ fn assert_lines(source: &str, expected: &str) {
     let expected: Vec<&str> = expected.lines().collect();
     for flags in MODES {
         let outcome = run_with(source, flags);
-        assert_eq!(outcome.code, Some(0), "flags {flags:?}\nstderr: {}", outcome.stderr);
+        assert_eq!(
+            outcome.code,
+            Some(0),
+            "flags {flags:?}\nstderr: {}",
+            outcome.stderr
+        );
         assert_eq!(outcome.lines(), expected, "flags {flags:?}\n{source}");
     }
 }
@@ -198,7 +203,9 @@ println(\"{f(9.2e18) as int} {f(-9.2e18) as int} {f(9007199254740992.0) as int}\
     );
     for value in ["9.3e18", "-9.3e18", "9223372036854775808.0"] {
         assert_trap(
-            &format!("fn f(x: float) -> float {{ x }}\nlet y = f({value}) as int\nprintln(\"{{y}}\")\n"),
+            &format!(
+                "fn f(x: float) -> float {{ x }}\nlet y = f({value}) as int\nprintln(\"{{y}}\")\n"
+            ),
             "integer overflow",
         );
     }

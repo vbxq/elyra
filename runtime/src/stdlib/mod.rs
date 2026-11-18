@@ -239,9 +239,8 @@ pub mod helpers {
     // the range test runs on the f64 itself: `f as i64` saturates and would hide the overflow
     pub fn float_to_i64(f: f64) -> Option<i64> {
         let truncated = f.trunc();
-        (truncated.is_finite()
-            && truncated >= -9_223_372_036_854_775_808.0
-            && truncated < 9_223_372_036_854_775_808.0)
+        (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0)
+            .contains(&truncated)
             .then_some(truncated as i64)
     }
 

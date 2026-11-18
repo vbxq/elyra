@@ -100,7 +100,9 @@ pub(crate) fn execute(
             let left = reg_get!(base + b as usize);
             let right = reg_get!(base + c as usize);
             let fast = match (left.as_int(), right.as_int()) {
-                (Some(l), Some(r)) => aelys_bytecode::checked_int_op(IntOp::Shl, l, r).ok().and_then(Value::inline_int),
+                (Some(l), Some(r)) => aelys_bytecode::checked_int_op(IntOp::Shl, l, r)
+                    .ok()
+                    .and_then(Value::inline_int),
                 _ => None,
             };
             let result = match fast {
@@ -169,7 +171,9 @@ pub(crate) fn execute(
             let right = reg_get!(base + c as usize);
             let fast = if left.both_inline_int_bits(&right) {
                 let (l, r) = (left.as_int_unchecked(), right.as_int_unchecked());
-                aelys_bytecode::checked_int_op(IntOp::Shl, l, r).ok().and_then(Value::inline_int)
+                aelys_bytecode::checked_int_op(IntOp::Shl, l, r)
+                    .ok()
+                    .and_then(Value::inline_int)
             } else {
                 None
             };
@@ -260,7 +264,9 @@ pub(crate) fn execute(
             let r = c as i64;
             let fast = if left.has_inline_int_bit() {
                 let l = left.as_int_unchecked();
-                aelys_bytecode::checked_int_op(IntOp::Shl, l, r).ok().and_then(Value::inline_int)
+                aelys_bytecode::checked_int_op(IntOp::Shl, l, r)
+                    .ok()
+                    .and_then(Value::inline_int)
             } else {
                 None
             };

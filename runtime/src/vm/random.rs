@@ -51,7 +51,8 @@ impl VM {
         let range: u128 = 1 << 96;
         let limit = range - range % bound;
         loop {
-            let value = (u128::from(self.next_random_u48()) << 48) | u128::from(self.next_random_u48());
+            let value =
+                (u128::from(self.next_random_u48()) << 48) | u128::from(self.next_random_u48());
             if value < limit {
                 return value % bound;
             }

@@ -67,11 +67,12 @@ pub(crate) fn sized_unary_value(opcode: OpCode, kind: SizedInt, value: i64) -> i
 }
 
 pub(crate) fn wide_parts(opcode_byte: u8) -> (IntOp, SizedInt) {
-    let kind = if (opcode_byte - OpCode::AddWI64 as u8) % 2 == 0 && opcode_byte != OpCode::ModWU64 as u8 {
-        SizedInt::I64
-    } else {
-        SizedInt::U64
-    };
+    let kind =
+        if (opcode_byte - OpCode::AddWI64 as u8) & 1 == 0 && opcode_byte != OpCode::ModWU64 as u8 {
+            SizedInt::I64
+        } else {
+            SizedInt::U64
+        };
     let op = match (opcode_byte - OpCode::AddWI64 as u8) / 2 {
         0 => IntOp::Add,
         1 => IntOp::Sub,

@@ -778,7 +778,7 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
         ExprKind::Binary { left, op, right } => {
             let left = constant_int_value(left)?;
             let right = constant_int_value(right)?;
-            let folded = match op {
+            match op {
                 BinaryOp::Add => left.checked_add(right),
                 BinaryOp::Sub => left.checked_sub(right),
                 BinaryOp::Mul => left.checked_mul(right),
@@ -795,8 +795,7 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
                 | BinaryOp::Le
                 | BinaryOp::Gt
                 | BinaryOp::Ge => None,
-            };
-            folded
+            }
         }
         _ => resolve(expr),
     }

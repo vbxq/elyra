@@ -1,6 +1,6 @@
 use super::{
-    BoxedInt, AelysArray, AelysClosure, AelysEnum, AelysFunction, AelysMap, AelysRange, AelysString,
-    AelysStruct, AelysSum, AelysUpvalue, AelysVec, NativeFunction,
+    AelysArray, AelysClosure, AelysEnum, AelysFunction, AelysMap, AelysRange, AelysString,
+    AelysStruct, AelysSum, AelysUpvalue, AelysVec, BoxedInt, NativeFunction,
 };
 
 #[derive(Debug)]

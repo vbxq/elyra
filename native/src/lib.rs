@@ -69,13 +69,11 @@ pub unsafe fn alloc_string_from_context(
 }
 
 // a host built before api version 5 passes a shorter table: its size says whether a field exists
-fn vm_api_field<T: Copy>(
-    api: &AelysVmApi,
-    offset: usize,
-    field: Option<T>,
-) -> Option<T> {
+fn vm_api_field<T: Copy>(api: &AelysVmApi, offset: usize, field: Option<T>) -> Option<T> {
     let size = usize::try_from(api.size).ok()?;
-    (size >= offset + core::mem::size_of::<usize>()).then_some(field).flatten()
+    (size >= offset + core::mem::size_of::<usize>())
+        .then_some(field)
+        .flatten()
 }
 
 // an int in -2^47..2^47 is inline, a larger one is a VM box read through the api
@@ -85,7 +83,11 @@ pub unsafe fn read_int_from_value(context: *mut NativeContext, value: AelysValue
         return Some(value_as_int(value));
     }
     let api = VM_API.get()?;
-    let read = vm_api_field(api, core::mem::offset_of!(AelysVmApi, read_int), api.read_int)?;
+    let read = vm_api_field(
+        api,
+        core::mem::offset_of!(AelysVmApi, read_int),
+        api.read_int,
+    )?;
     let mut out = 0i64;
     (read(context, value, &mut out) == 0).then_some(out)
 }
@@ -100,8 +102,12 @@ pub unsafe fn alloc_int_from_context(
         return Ok(inline);
     }
     let api = VM_API.get().ok_or(AELYS_NATIVE_INTEGER_OVERFLOW)?;
-    let alloc = vm_api_field(api, core::mem::offset_of!(AelysVmApi, alloc_int), api.alloc_int)
-        .ok_or(AELYS_NATIVE_INTEGER_OVERFLOW)?;
+    let alloc = vm_api_field(
+        api,
+        core::mem::offset_of!(AelysVmApi, alloc_int),
+        api.alloc_int,
+    )
+    .ok_or(AELYS_NATIVE_INTEGER_OVERFLOW)?;
     let mut output = value_null();
     let status = alloc(context, value, &mut output);
     if status == 0 { Ok(output) } else { Err(status) }

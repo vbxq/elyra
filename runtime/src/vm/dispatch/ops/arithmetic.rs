@@ -177,7 +177,8 @@ macro_rules! execute_arithmetic {
                 let left = *$reg_ref!($base + b as usize);
                 let right = *$reg_ref!($base + c as usize);
                 let product = if left.both_inline_int_bits(&right) {
-                    left.as_int_unchecked().checked_mul(right.as_int_unchecked())
+                    left.as_int_unchecked()
+                        .checked_mul(right.as_int_unchecked())
                 } else {
                     None
                 };

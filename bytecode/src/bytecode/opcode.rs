@@ -845,7 +845,7 @@ impl OpCode {
                 2 => WrappingOp::Mul,
                 _ => WrappingOp::Shl,
             };
-            let kind = if offset % 2 == 0 {
+            let kind = if offset & 1 == 0 {
                 SizedInt::I64
             } else {
                 SizedInt::U64

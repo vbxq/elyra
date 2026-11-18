@@ -60,7 +60,8 @@ impl VM {
             return Err(self.runtime_error(RuntimeErrorKind::IntegerOverflow));
         };
         let object = GcObject::new(ObjectKind::Int(boxed));
-        let size = u64::try_from(aelys_bytecode::Heap::estimate_object_size(&object)).unwrap_or(u64::MAX);
+        let size =
+            u64::try_from(aelys_bytecode::Heap::estimate_object_size(&object)).unwrap_or(u64::MAX);
         self.maybe_collect_for(size);
         self.ensure_heap_capacity(size)?;
         Ok(Value::ptr(self.heap.alloc_boxed_int(boxed).index()))

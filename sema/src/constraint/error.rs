@@ -1895,7 +1895,6 @@ impl TypeError {
             reason: ConstraintReason::Other("recursion limit".to_string()),
         }
     }
-
 }
 
 impl TypeErrorKind {

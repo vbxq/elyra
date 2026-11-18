@@ -53,7 +53,12 @@ pub fn checked_int_neg(value: i64) -> Result<i64, IntFault> {
 }
 
 // operands and result are bit patterns of the kind: a u64 above i64::MAX is negative here
-pub fn wrapping_sized_op(op: IntOp, kind: SizedInt, left: i64, right: i64) -> Result<i64, IntFault> {
+pub fn wrapping_sized_op(
+    op: IntOp,
+    kind: SizedInt,
+    left: i64,
+    right: i64,
+) -> Result<i64, IntFault> {
     let count = (right & i64::from(kind.bits() - 1)) as u32;
     let unsigned64 = matches!(kind, SizedInt::U64);
     let raw = match op {

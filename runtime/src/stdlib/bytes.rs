@@ -70,7 +70,9 @@ macro_rules! impl_read {
                 match ReadOut::from($to_val(v)) {
                     ReadOut::Value(value) => Ok(value),
                     ReadOut::Int(Some(n)) => vm.make_int(n),
-                    ReadOut::Int(None) => Err(err(vm, $op, format!("value {v} exceeds the int range"))),
+                    ReadOut::Int(None) => {
+                        Err(err(vm, $op, format!("value {v} exceeds the int range")))
+                    }
                 }
             } else {
                 Err(err(vm, $op, "invalid handle".into()))

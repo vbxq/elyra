@@ -43,7 +43,10 @@ fn make_ann(name: &str) -> aelys_syntax::TypeAnnotation {
 #[test]
 fn infer_type_from_annotation_sized_integers() {
     assert_eq!(InferType::from_annotation(&make_ann("int")), InferType::I64);
-    assert_eq!(InferType::from_annotation(&make_ann("i64")), InferType::Int64);
+    assert_eq!(
+        InferType::from_annotation(&make_ann("i64")),
+        InferType::Int64
+    );
     assert_eq!(InferType::from_annotation(&make_ann("i32")), InferType::I32);
     assert_eq!(InferType::from_annotation(&make_ann("i16")), InferType::I16);
     assert_eq!(InferType::from_annotation(&make_ann("i8")), InferType::I8);

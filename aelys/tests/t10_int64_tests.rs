@@ -14,7 +14,12 @@ fn assert_lines(source: &str, expected: &str) {
     let expected: Vec<&str> = expected.lines().collect();
     for flags in MODES {
         let outcome = run_with(source, flags);
-        assert_eq!(outcome.code, Some(0), "flags {flags:?}\nstderr: {}", outcome.stderr);
+        assert_eq!(
+            outcome.code,
+            Some(0),
+            "flags {flags:?}\nstderr: {}",
+            outcome.stderr
+        );
         let got = outcome.lines();
         assert_eq!(got.len(), expected.len(), "flags {flags:?}: line count");
         for (index, (got, want)) in got.iter().zip(&expected).enumerate() {
@@ -25,7 +30,11 @@ fn assert_lines(source: &str, expected: &str) {
 }
 
 fn assert_overflow(outcome: &Outcome, flags: &[&str], expression: &str) {
-    assert_ne!(outcome.code, Some(0), "flags {flags:?}: {expression} must trap");
+    assert_ne!(
+        outcome.code,
+        Some(0),
+        "flags {flags:?}: {expression} must trap"
+    );
     assert!(
         outcome.stderr.contains("integer overflow"),
         "flags {flags:?}: {expression}: {}",

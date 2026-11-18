@@ -94,9 +94,7 @@ pub(crate) fn fold_const(
         ExprKind::String(value) => Some(ConstValue::Str(value.clone())),
         ExprKind::Grouping(inner) => fold(inner, context),
         ExprKind::Unary { op, operand } => match (op, fold(operand, context)?) {
-            (UnaryOp::Neg, ConstValue::Int(value)) => {
-                int_in(context, -context.exact_int(value))
-            }
+            (UnaryOp::Neg, ConstValue::Int(value)) => int_in(context, -context.exact_int(value)),
             (UnaryOp::Neg, ConstValue::Float(value)) => Some(ConstValue::Float(-value)),
             (UnaryOp::BitNot, ConstValue::Int(value)) => int_in(context, i128::from(!value)),
             (UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
@@ -156,7 +154,8 @@ fn fold_cast(value: ConstValue, source: &InferType, target: &InferType) -> Optio
         (ConstValue::Float(value), InferType::F64) => Some(ConstValue::Float(value)),
         (ConstValue::Float(value), InferType::I64) if value.is_finite() => {
             let truncated = value.trunc();
-            (truncated >= -9_223_372_036_854_775_808.0 && truncated < 9_223_372_036_854_775_808.0)
+            (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0)
+                .contains(&truncated)
                 .then_some(ConstValue::Int(truncated as i64))
         }
         (ConstValue::Float(value), target) if target.is_sized_integer() && value.is_finite() => {

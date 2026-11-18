@@ -229,7 +229,8 @@ fn native_to_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     if let Ok(s) = get_string(vm, value, "convert.to_int") {
-        let parsed = parse_int_text(s).ok_or_else(|| format!("{s:?} is not an integer in the i64 range"));
+        let parsed =
+            parse_int_text(s).ok_or_else(|| format!("{s:?} is not an integer in the i64 range"));
         return match parsed {
             Ok(n) => vm.make_int(n),
             Err(message) => Err(convert_error(vm, "convert.to_int", message)),

@@ -762,7 +762,9 @@ fn calls_and_checks_integers(ir: &FunctionIr) -> bool {
         && instructions().any(|instruction| {
             matches!(
                 instruction.kind,
-                IrInstructionKind::Iadd(..) | IrInstructionKind::Isub(..) | IrInstructionKind::Imul(..)
+                IrInstructionKind::Iadd(..)
+                    | IrInstructionKind::Isub(..)
+                    | IrInstructionKind::Imul(..)
             ) && matches!(instruction.result, Some((_, IrType::I64)))
         })
 }
