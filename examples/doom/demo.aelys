@@ -1,0 +1,251 @@
+needs std::sys
+needs println from std::io
+needs wad
+needs play
+
+let mut wp_x: Vec<int> = vec![0]
+let mut wp_y: Vec<int> = vec![0]
+let mut wp_flag: Vec<int> = vec![0]
+let mut wp_arg: Vec<int> = vec![0]
+let mut num_wp = 0
+let mut cur = 0
+let mut mode = 0
+let mut mode_tics = 0
+let mut finished = false
+let mut last_x = 0
+let mut last_y = 0
+let mut still = 0
+let mut trace = false
+let mut holding = false
+
+fn add(x: int, y: int, flag: int, arg: int) {
+    wp_x.push(x << 16)
+    wp_y.push(y << 16)
+    wp_flag.push(flag)
+    wp_arg.push(arg)
+}
+
+fn build_path(monsters: bool) {
+    wp_x = vec![]
+    wp_y = vec![]
+    wp_flag = vec![]
+    wp_arg = vec![]
+    add(-300, 256, 0, 0)
+    add(-160, 256, 0, 0)
+    add(0, 200, 0, 0)
+    add(60, 150, 0, 0)
+    add(300, 120, 0, 0)
+    add(700, 120, 0, 0)
+    add(960, 40, 0, 0)
+    add(990, -110, 1, 0)
+    add(990, -200, 0, 0)
+    add(1100, -300, 0, 0)
+    add(1200, -444, 0, 0)
+    add(1236, -444, 1, 0)
+    add(1430, -444, 3, 136)
+    add(1650, -444, 0, 0)
+    add(1820, -444, 0, 0)
+    add(1960, -430, 0, 0)
+    add(2100, -420, 0, 0)
+    add(2350, -430, 0, 0)
+    if monsters {
+        add(2420, -330, 4, 0)
+    } else {
+        add(2440, -380, 0, 0)
+        add(2440, -130, 0, 0)
+        add(2330, -100, 4, 0)
+        add(2300, -300, 0, 0)
+    }
+    add(2100, -420, 0, 0)
+    add(1960, -430, 0, 0)
+    add(1800, -444, 0, 0)
+    add(1650, -444, 0, 0)
+    add(1500, -444, 6, 8)
+    add(1240, -444, 0, 0)
+    add(1100, -300, 0, 0)
+    add(990, -200, 0, 0)
+    add(990, -190, 1, 0)
+    add(990, -50, 0, 0)
+    add(960, 60, 0, 0)
+    add(700, 110, 0, 0)
+    add(300, 110, 0, 0)
+    add(128, 150, 0, 0)
+    add(128, 230, 6, -100)
+    add(200, 240, 0, 0)
+    add(400, 240, 0, 0)
+    add(640, 250, 0, 0)
+    if monsters {
+        for k in 0..6 {
+            add(690, 262, 4, 0)
+            add(260, 240, 0, 0)
+            add(230, 240, 4, 0)
+            add(640, 250, 0, 0)
+        }
+        num_wp = wp_x.len()
+        return ()
+    }
+    add(720, 290, 0, 0)
+    add(780, 340, 0, 0)
+    add(840, 400, 0, 0)
+    add(866, 440, 0, 0)
+    add(866, 470, 1, 0)
+    add(866, 560, 0, 0)
+    add(832, 640, 0, 0)
+    add(832, 1000, 0, 0)
+    add(832, 1400, 4, 0)
+    add(950, 1100, 0, 0)
+    add(1060, 1000, 0, 0)
+    add(1150, 1000, 0, 0)
+    add(1400, 800, 0, 0)
+    add(1650, 1000, 0, 0)
+    add(1500, 1400, 0, 0)
+    add(1250, 1300, 0, 0)
+    add(1150, 1000, 0, 0)
+    add(1060, 1010, 0, 0)
+    add(900, 1020, 0, 0)
+    add(640, 1024, 0, 0)
+    add(600, 1024, 1, 0)
+    add(470, 1024, 0, 0)
+    add(250, 1100, 0, 0)
+    add(250, 1300, 0, 0)
+    add(330, 1440, 0, 0)
+    add(330, 1560, 0, 0)
+    add(100, 1600, 4, 0)
+    add(-80, 1560, 0, 0)
+    num_wp = wp_x.len()
+}
+
+pub fn init_demo(with_trace: bool, monsters: bool) {
+    build_path(monsters)
+    cur = 0
+    mode = 0
+    mode_tics = 0
+    finished = false
+    still = 0
+    trace = with_trace
+    last_x = play::player_x()
+    last_y = play::player_y()
+}
+
+pub fn done() -> bool { finished }
+pub fn waypoint() -> int { cur }
+
+fn signed_angle(a: int) -> int {
+    let d = a & 0xFFFFFFFF
+    if d >= 0x80000000 { d - 0x100000000 } else { d }
+}
+
+fn turn_toward(d: int) -> int {
+    let mut t = d >> 16
+    if t > 1280 { t = 1280 }
+    if t < -1280 { t = -1280 }
+    t
+}
+
+fn next_waypoint() {
+    cur++
+    mode = 0
+    mode_tics = 0
+    if cur >= num_wp { finished = true }
+}
+
+fn walk_cmd(x: int, y: int) {
+    let d = signed_angle(play::angle_to(wp_x[cur] - x, wp_y[cur] - y) - play::player_angle())
+    let ad = if d < 0 { -d } else { d }
+    let mut fwd = 0
+    if ad < 0x10000000 {
+        fwd = 25
+        if wp_flag[cur] == 2 { fwd = 50 }
+    } else {
+        if ad < 0x20000000 { fwd = 12 }
+    }
+    play::tic(fwd, 0, turn_toward(d), false)
+}
+
+pub fn advance() {
+    if finished { return () }
+    let x = play::player_x()
+    let y = play::player_y()
+    let dx = wp_x[cur] - x
+    let dy = wp_y[cur] - y
+    let near = dx > -1048576 and dx < 1048576 and dy > -1048576 and dy < 1048576
+    if mode == 0 and near {
+        let f = wp_flag[cur]
+        if f == 1 { mode = 1 }
+        if f == 3 { mode = 3 }
+        if f == 4 { mode = 4 }
+        if f == 6 { mode = 6 }
+        if mode == 0 {
+            next_waypoint()
+            if finished {
+                play::tic(0, 0, 0, false)
+                trace_line()
+                return ()
+            }
+        }
+    }
+    holding = false
+    if mode == 0 { walk_cmd(x, y) }
+    if mode == 1 {
+        let ahead = cur + 1
+        let d = signed_angle(play::angle_to(wp_x[ahead] - x, wp_y[ahead] - y) - play::player_angle())
+        let pressed = d > -0x01000000 and d < 0x01000000
+        play::tic(0, 0, turn_toward(d), pressed)
+        if pressed {
+            println("demo use at tic {play::level_time()} pos {x >> 16},{y >> 16} doors {play::door_count()} lifts {play::lift_count()}")
+            next_waypoint()
+        }
+    }
+    if mode == 3 {
+        holding = true
+        mode_tics++
+        play::tic(0, 0, 320, false)
+        if play::player_z() >= (wp_arg[cur] << 16) { next_waypoint() }
+        if mode_tics > 400 {
+            println("demo HOLD TIMEOUT at tic {play::level_time()} waypoint {cur} z {play::player_z() >> 16}")
+            sys::exit(1)
+        }
+    }
+    if mode == 6 {
+        holding = true
+        mode_tics++
+        play::tic(0, 0, 320, false)
+        if play::player_z() <= (wp_arg[cur] << 16) { next_waypoint() }
+        if mode_tics > 400 {
+            println("demo HOLD TIMEOUT at tic {play::level_time()} waypoint {cur} z {play::player_z() >> 16}")
+            sys::exit(1)
+        }
+    }
+    if mode == 4 {
+        holding = true
+        mode_tics++
+        play::tic(0, 0, 1280, false)
+        if mode_tics >= 52 { next_waypoint() }
+    }
+    let nx = play::player_x()
+    let ny = play::player_y()
+    let ddx = nx - last_x
+    let ddy = ny - last_y
+    if ddx > -524288 and ddx < 524288 and ddy > -524288 and ddy < 524288 and not holding {
+        still++
+        if still >= 70 {
+            println("demo STUCK at tic {play::level_time()} pos {nx >> 16},{ny >> 16} waypoint {cur} target {wp_x[cur] >> 16},{wp_y[cur] >> 16}")
+            sys::exit(1)
+        }
+    } else {
+        still = 0
+        last_x = nx
+        last_y = ny
+    }
+    if play::level_time() > 9000 {
+        println("demo TIMEOUT at tic {play::level_time()} waypoint {cur}")
+        sys::exit(1)
+    }
+    trace_line()
+}
+
+fn trace_line() {
+    if trace {
+        println("trace {play::level_time()} {play::player_x() >> 16} {play::player_y() >> 16} {play::player_z() >> 16} {play::player_viewz() >> 16} {play::player_angle() >> 16} {cur}")
+    }
+}

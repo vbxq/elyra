@@ -1,0 +1,24 @@
+// needs modules/sdl built per docs/native-modules.md and copied next to this file as sdl.so
+needs std::sys
+needs std::convert as convert
+needs println from std::io
+needs screen
+needs engine
+needs harness
+
+let wad_path = engine::flag_value("--wad", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
+let g = engine::load(wad_path)
+// scale 1 by default: on Xvfb every scaled blit runs on the cpu in llvmpipe and waits on the X server
+let scale = match convert::parse_int(engine::flag_value("--scale", "1")) {
+    Some(n) => n,
+    None => 1,
+}
+match screen::open("Elyra E1M1 gate", g.playpal, scale) {
+    Ok(_) => (),
+    Err(e) => {
+        println("sdl: {e}")
+        sys::exit(1)
+    },
+}
+harness::run(screen::present, "sdl")
+screen::close()

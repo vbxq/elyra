@@ -1,0 +1,209 @@
+needs std::sys
+needs std::time as time
+needs std::convert as convert
+needs println from std::io
+needs wad
+needs map
+needs gfx
+needs fixed
+needs render
+needs play
+needs demo
+
+let mut pal: Vec<int> = vec![0]
+let mut snap_dir = ""
+let mut snaps = false
+let mut frame_ms: Vec<float> = vec![0.0]
+let mut frame_tic: Vec<int> = vec![0]
+let mut frame_x: Vec<int> = vec![0]
+let mut frame_y: Vec<int> = vec![0]
+let mut frame_a: Vec<int> = vec![0]
+let mut tic_ms_total = 0.0
+let mut tic_ms_max = 0.0
+let mut tics = 0
+let mut next_mark = 1.0
+let mut snap_ms = 0.0
+let mut print_sectors = false
+let mut last_sector = -1
+
+fn arg_at(i: int) -> string {
+    match sys::arg(i) {
+        Some(a) => a,
+        None => "",
+    }
+}
+
+pub fn has_flag(name: string) -> bool {
+    for i in 0..16 {
+        if arg_at(i) == name { return true }
+    }
+    false
+}
+
+pub fn flag_value(name: string, fallback: string) -> string {
+    for i in 0..15 {
+        if arg_at(i) == name and arg_at(i + 1) != "" { return arg_at(i + 1) }
+    }
+    fallback
+}
+
+fn skill_from_args() -> int {
+    let s = flag_value("--skill", "3")
+    if s == "1" or s == "2" { return 1 }
+    if s == "3" { return 2 }
+    4
+}
+
+pub fn tic_count() -> int { tics }
+
+pub fn clock() -> int { time::timer() }
+
+pub fn ms_since(t: int) -> float { time::elapsed(t) * 1000.0 }
+
+pub fn load(path: string) -> Graphics {
+    let t = clock()
+    let w = wad::open_wad(path)
+    let mut level = map::load_level(w, "E1M1")
+    let g = gfx::load_graphics(w)
+    let skill = skill_from_args()
+    let nomonsters = not has_flag("--monsters")
+    render::set_skill_bit(skill)
+    render::set_no_monsters(nomonsters)
+    render::setup(w, g, level)
+    play::init_level(level, skill, nomonsters)
+    pal = render::palette_rgb(g)
+    snaps = has_flag("--snaps")
+    snap_dir = flag_value("--snapdir", "/home/vbxq/.local/share/elyra-runs/engine")
+    demo::init_demo(has_flag("--trace"), not nomonsters)
+    print_sectors = has_flag("--sectors")
+    frame_ms = vec![]
+    frame_ms.reserve(40000)
+    frame_tic = vec![]
+    frame_tic.reserve(40000)
+    frame_x = vec![]
+    frame_x.reserve(40000)
+    frame_y = vec![]
+    frame_y.reserve(40000)
+    frame_a = vec![]
+    frame_a.reserve(40000)
+    println("load {ms_since(t)} ms")
+    g
+}
+
+pub fn draw_view() {
+    render::render_frame(play::player_x(), play::player_y(), play::player_viewz(), play::player_angle())
+}
+
+fn snapshot() {
+    let t = clock()
+    draw_view()
+    let path = "{snap_dir}/demo_{tics}.ppm"
+    match render::write_ppm(path, pal) {
+        Ok(_) => (),
+        Err(e) => println("snap: {e}"),
+    }
+    println("snap {path} tic {tics} pos {play::player_x() >> 16},{play::player_y() >> 16},{play::player_z() >> 16} angle {play::player_angle() * 360 / 4294967296} sector {play::player_sector()}")
+    snap_ms += ms_since(t)
+}
+
+pub fn run_tic() {
+    let t = clock()
+    demo::advance()
+    let ms = ms_since(t)
+    tic_ms_total += ms
+    if ms > tic_ms_max { tic_ms_max = ms }
+    tics++
+    if print_sectors {
+        let s = play::player_sector()
+        if s != last_sector {
+            println("sector {s} tic {tics}")
+            last_sector = s
+        }
+    }
+    if snaps and tics % 350 == 0 { snapshot() }
+}
+
+fn draw_frame(present: fn() -> bool) -> bool {
+    let t = clock()
+    draw_view()
+    let ok = present()
+    frame_ms.push(ms_since(t))
+    frame_tic.push(tics)
+    frame_x.push(play::player_x())
+    frame_y.push(play::player_y())
+    frame_a.push(play::player_angle())
+    ok
+}
+
+fn mark(t0: int) {
+    let now = time::elapsed(t0)
+    if now >= next_mark {
+        println("mark sec {convert::to_int(next_mark)} frame {frame_ms.len()} tic {tics}")
+        next_mark += 1.0
+    }
+}
+
+fn report(wall_total_ms: float) {
+    let wall_ms = wall_total_ms - snap_ms
+    let n = frame_ms.len()
+    println("tics {tics} frames {n} wall {wall_ms} ms (snapshots {snap_ms} ms excluded) game {convert::to_float(tics) / 35.0} s")
+    println("final pos {play::player_x() >> 16},{play::player_y() >> 16},{play::player_z() >> 16} angle {play::player_angle() * 360 / 4294967296} sector {play::player_sector()} waypoint {demo::waypoint()} doors {play::door_count()} lifts {play::lift_count()} crossed {play::crossed_count()}")
+    println("final fixed {play::player_x()} {play::player_y()} {play::player_z()} {play::player_angle()}")
+    println("tic logic avg {tic_ms_total / convert::to_float(tics)} ms max {tic_ms_max} ms, trymoves {play::moves_count()} slides {play::slide_count()}")
+    if n == 0 { return () }
+    let mut s = frame_ms.clone()
+    s.sort()
+    let mut worst = 0
+    for i in 0..n {
+        if frame_ms[i] > frame_ms[worst] { worst = i }
+    }
+    let mut i99 = n * 99 / 100
+    if i99 >= n { i99 = n - 1 }
+    println("frame ms p50 {s[n / 2]} p99 {s[i99]} max {s[n - 1]} fps {convert::to_float(n) * 1000.0 / wall_ms}")
+    println("slowest frame {worst} at tic {frame_tic[worst]} pos {frame_x[worst] >> 16},{frame_y[worst] >> 16} angle {frame_a[worst] * 360 / 4294967296} {frame_ms[worst]} ms")
+    let mut over33 = 0
+    let mut over50 = 0
+    let mut over100 = 0
+    for i in 0..n {
+        let ms = frame_ms[i]
+        if ms > 33.3 { over33++ }
+        if ms > 50.0 { over50++ }
+        if ms > 100.0 {
+            over100++
+            println("spike frame {i} tic {frame_tic[i]} pos {frame_x[i] >> 16},{frame_y[i] >> 16} angle {frame_a[i] * 360 / 4294967296} {ms} ms")
+        }
+    }
+    println("frames over 33.3 ms {over33}, over 50 ms {over50}, over 100 ms {over100}")
+    ()
+}
+
+pub fn run_logic() {
+    let t0 = clock()
+    if snaps { snapshot() }
+    while not demo::done() { run_tic() }
+    report(ms_since(t0))
+}
+
+pub fn run_timedemo(present: fn() -> bool) {
+    if snaps { snapshot() }
+    let t0 = clock()
+    while not demo::done() {
+        run_tic()
+        if not draw_frame(present) { break }
+        mark(t0)
+    }
+    report(ms_since(t0))
+}
+
+pub fn run_realtime(present: fn() -> bool) {
+    if snaps { snapshot() }
+    let t0 = clock()
+    let mut quit = false
+    while not demo::done() and not quit {
+        let due = convert::to_int(time::elapsed(t0) * 35.0)
+        while tics < due and not demo::done() { run_tic() }
+        if not draw_frame(present) { quit = true }
+        mark(t0)
+    }
+    report(ms_since(t0))
+}

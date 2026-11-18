@@ -1,0 +1,166 @@
+needs std::sys
+needs wad
+needs map
+needs gfx
+
+fn mix(h: int, v: int) -> int {
+    let r = (h * 31 + v) % 1000000007
+    if r < 0 { r + 1000000007 } else { r }
+}
+
+fn name_hash(mut h: int, name: string) -> int {
+    for i in 0..name.len() {
+        h = mix(h, name.byte_at(i))
+    }
+    mix(h, 0)
+}
+
+fn hash_vec(v: Vec<int>) -> int {
+    let mut h = 0
+    for b in v { h = mix(h, b) }
+    h
+}
+
+fn child_hash(h: int, c: Child) -> int {
+    match c {
+        Child::Leaf(i) => mix(mix(h, 1), i),
+        Child::Node(i) => mix(mix(h, 0), i),
+    }
+}
+
+fn is_leaf(c: Child) -> int {
+    match c {
+        Child::Leaf(_) => 1,
+        Child::Node(_) => 0,
+    }
+}
+
+fn summarize_level(lv: Level) {
+    let mut h = 0
+    let mut p1 = -1
+    for i in 0..lv.things.len() {
+        let t = lv.things[i]
+        h = mix(mix(mix(mix(mix(h, t.x), t.y), t.angle), t.kind), t.flags)
+        if p1 < 0 and t.kind == 1 { p1 = i }
+    }
+    println("things {lv.things.len()} hash {h}")
+    let start = lv.things[p1]
+    println("player1 x {start.x} y {start.y} angle {start.angle}")
+
+    h = 0
+    let mut twosided = 0
+    for ld in lv.linedefs {
+        if ld.back >= 0 { twosided++ }
+        h = mix(mix(mix(mix(mix(mix(mix(h, ld.v1), ld.v2), ld.flags), ld.special), ld.tag), ld.front), ld.back)
+    }
+    println("linedefs {lv.linedefs.len()} twosided {twosided} hash {h}")
+
+    h = 0
+    for sd in lv.sidedefs {
+        h = mix(mix(h, sd.xoff), sd.yoff)
+        h = name_hash(h, sd.upper)
+        h = name_hash(h, sd.lower)
+        h = name_hash(h, sd.middle)
+        h = mix(h, sd.sector)
+    }
+    println("sidedefs {lv.sidedefs.len()} hash {h}")
+
+    h = 0
+    for v in lv.vertexes { h = mix(mix(h, v.x), v.y) }
+    println("vertexes {lv.vertexes.len()} hash {h}")
+
+    h = 0
+    for s in lv.segs {
+        h = mix(mix(mix(mix(mix(mix(h, s.v1), s.v2), s.angle), s.linedef), s.direction), s.offset)
+    }
+    println("segs {lv.segs.len()} hash {h}")
+
+    h = 0
+    for ss in lv.subsectors { h = mix(mix(h, ss.count), ss.first_seg) }
+    println("ssectors {lv.subsectors.len()} hash {h}")
+
+    h = 0
+    let mut leaves = 0
+    for n in lv.nodes {
+        h = mix(mix(mix(mix(h, n.x), n.y), n.dx), n.dy)
+        for k in 0..4 { h = mix(h, n.bbox_right[k]) }
+        for k in 0..4 { h = mix(h, n.bbox_left[k]) }
+        leaves += is_leaf(n.right) + is_leaf(n.left)
+        h = child_hash(h, n.right)
+        h = child_hash(h, n.left)
+    }
+    println("nodes {lv.nodes.len()} leaves {leaves} hash {h}")
+
+    h = 0
+    for s in lv.sectors {
+        h = mix(mix(h, s.floor_h), s.ceil_h)
+        h = name_hash(h, s.floor_flat)
+        h = name_hash(h, s.ceil_flat)
+        h = mix(mix(mix(h, s.light), s.special), s.tag)
+    }
+    println("sectors {lv.sectors.len()} hash {h}")
+
+    println("reject bytes {lv.reject_size}")
+
+    let bm = lv.blockmap
+    h = 0
+    let mut entries = 0
+    for b in 0..bm.lists.len() {
+        for v in bm.lists[b] {
+            entries++
+            h = mix(h, v)
+        }
+        h = mix(h, b)
+    }
+    println("blockmap origin {bm.origin_x} {bm.origin_y} size {bm.columns}x{bm.rows} blocks {bm.lists.len()} entries {entries} hash {h}")
+}
+
+fn summarize_graphics(w: Wad, g: Graphics) {
+    println("playpal palettes {g.playpal.len() / 768} hash {hash_vec(g.playpal)}")
+    println("colormap maps {g.colormap.len() / 256} hash {hash_vec(g.colormap)}")
+    let mut missing = 0
+    for li in g.patch_lumps { if li < 0 { missing++ } }
+    println("pnames {g.pnames.len()} missing {missing}")
+    let mut refs = 0
+    for t in g.textures { refs += t.patches.len() }
+    println("textures {g.textures.len()} patchrefs {refs}")
+    let t0 = g.textures[0]
+    let pix = gfx::compose_texture(w, g, t0)
+    println("texture0 {t0.name} {t0.width}x{t0.height} patches {t0.patches.len()} hash {hash_vec(pix)}")
+    let mut h = 0
+    for t in g.textures {
+        h = mix(h, t.name.len())
+        for b in gfx::compose_texture(w, g, t) { h = mix(h, b) }
+    }
+    println("alltextures hash {h}")
+    let f0 = g.flats[0]
+    println("flats {g.flats.len()} flat0 {f0.name} hash {hash_vec(gfx::flat_pixels(w, f0))}")
+}
+
+let path = match sys::arg(0) {
+    Some(p) => p,
+    None => "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad",
+}
+let timing = match sys::arg(1) {
+    Some(flag) => flag == "--time",
+    None => false,
+}
+
+let t_all = time::timer()
+let w = Wad::open(path)
+let t_wad = time::elapsed(t_all) * 1000.0
+let level = map::load_level(w, "E1M1")
+let t_map = time::elapsed(t_all) * 1000.0
+let g = gfx::load_graphics(w)
+let t_gfx = time::elapsed(t_all) * 1000.0
+
+println("wad {w.ident} lumps {w.num_lumps()}")
+summarize_level(level)
+let t_sum0 = time::elapsed(t_all) * 1000.0
+summarize_graphics(w, g)
+let t_end = time::elapsed(t_all) * 1000.0
+
+if timing {
+    println("time wad {t_wad}ms map {t_map - t_wad}ms gfx {t_gfx - t_map}ms load-total {t_gfx}ms")
+    println("time compose-all-textures+summary {t_end - t_sum0}ms total {t_end}ms")
+}
