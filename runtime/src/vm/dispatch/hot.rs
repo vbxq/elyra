@@ -249,7 +249,7 @@ struct HotCall {
     upvalues_len: usize,
     registers: u32,
     mapping: usize,
-    loops_stay: bool,
+    loops_stay: Option<bool>,
 }
 
 fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
@@ -311,11 +311,11 @@ impl VM {
             upvalues_len: 0,
             registers: target.num_registers(),
             mapping: target.function.global_layout.id(),
-            loops_stay: true,
+            loops_stay: Some(true),
         })
     }
 
-    fn hot_value_callee<const JIT: bool>(&self, value: Value, arity: usize) -> Option<HotCall> {
+    fn hot_value_callee(&self, value: Value, arity: usize) -> Option<HotCall> {
         let callee = GcRef::new(value.as_ptr()?);
         match &self.heap.get(callee)?.kind {
             ObjectKind::Function(target) => {
@@ -332,7 +332,7 @@ impl VM {
                     upvalues_len: 0,
                     registers: target.num_registers(),
                     mapping: target.function.global_layout.id(),
-                    loops_stay: !JIT || self.jit_ignores(callee),
+                    loops_stay: None,
                 })
             }
             ObjectKind::Closure(closure) => {
@@ -353,7 +353,7 @@ impl VM {
                     upvalues_len: closure.upvalues.len(),
                     registers: closure.num_registers,
                     mapping: target.function.global_layout.id(),
-                    loops_stay: !JIT || self.jit_ignores(inner),
+                    loops_stay: None,
                 })
             }
             _ => None,
@@ -493,7 +493,7 @@ impl VM {
         }
         let mut regs = unsafe { self.registers.as_mut_ptr().add(base) };
         let mut schemas: Option<Arc<FunctionSchemas>> = None;
-        let mut loops_stay = !JIT || self.jit_loops_settled(function);
+        let mut loops_stay = (!JIT).then_some(true);
 
         macro_rules! get {
             ($index:expr) => {
@@ -589,10 +589,22 @@ impl VM {
                 )
             }};
         }
+        macro_rules! settled {
+            () => {
+                match loops_stay {
+                    Some(settled) => settled,
+                    None => {
+                        let settled = self.jit_loops_settled(function);
+                        loops_stay = Some(settled);
+                        settled
+                    }
+                }
+            };
+        }
         macro_rules! branch {
             ($target:expr) => {{
                 let target = $target;
-                if (!loops_stay && target <= ip) || target >= code_len {
+                if (target <= ip && !settled!()) || target >= code_len {
                     leave!();
                 }
                 target
@@ -650,7 +662,7 @@ impl VM {
                     constants_len = target.constants_len;
                     regs = unsafe { self.registers.as_mut_ptr().add(base) };
                     schemas = None;
-                    loops_stay = target.loops_stay;
+                    loops_stay = if JIT { target.loops_stay } else { Some(true) };
                     0
                 }};
             }
@@ -961,7 +973,7 @@ impl VM {
                         advanced > end
                     };
                     let target = next.wrapping_add_signed(isize::from(instr as u16 as i16));
-                    if again && ((!loops_stay && target <= ip) || target >= code_len) {
+                    if again && ((target <= ip && !settled!()) || target >= code_len) {
                         leave!();
                     }
                     set!(a, value);
@@ -1110,7 +1122,7 @@ impl VM {
                     next + 2
                 }
                 CALL_GLOBAL => enter!(or_leave!(self.hot_global_callee::<JIT>(b, c))),
-                CALL_CACHED => enter!(or_leave!(self.hot_value_callee::<JIT>(get!(b), c))),
+                CALL_CACHED => enter!(or_leave!(self.hot_value_callee(get!(b), c))),
                 GET_UPVAL | SET_UPVAL | LOAD_NONE | SUM_TEST | SUM_PAYLOAD => {
                     if !self.hot_closure_and_sum(instr, regs, base) {
                         leave!();
@@ -1150,7 +1162,7 @@ impl VM {
                     }
                     self.registers[base + destination] = result;
                     schemas = None;
-                    loops_stay = !JIT || self.jit_loops_settled(function);
+                    loops_stay = (!JIT).then_some(true);
                     match base.checked_add(REGISTER_WINDOW) {
                         Some(end)
                             if end <= self.registers.len()
