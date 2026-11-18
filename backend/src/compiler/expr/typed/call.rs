@@ -375,8 +375,7 @@ impl Compiler {
         };
         let leading = usize::from(receiver.is_some());
         let nargs = args.len().saturating_add(leading);
-        let callee_reg =
-            self.alloc_consecutive_registers_for_call(nargs.saturating_add(1), span)?;
+        let callee_reg = self.alloc_call_window(nargs.saturating_add(1), span)?;
 
         for i in 0..=nargs {
             let reg = callee_reg + u16::try_from(i).expect("register offset was range checked");
@@ -515,8 +514,7 @@ impl Compiler {
     ) -> Result<()> {
         let total_args = 1 + args.len();
         let call_arity = self.checked_call_arity(total_args, span)?;
-        let callee_reg =
-            self.alloc_consecutive_registers_for_call(total_args.saturating_add(1), span)?;
+        let callee_reg = self.alloc_call_window(total_args.saturating_add(1), span)?;
 
         for i in 0..=total_args {
             let reg = callee_reg + u16::try_from(i).expect("register offset was range checked");
@@ -560,10 +558,7 @@ impl Compiler {
 
         if global_idx <= 255 {
             let arg_start = match dest.checked_add(1) {
-                Some(s)
-                    if (s as usize) < self.register_pool.len()
-                        && !self.register_pool[s as usize] =>
-                {
+                Some(s) if call_window_available(&self.register_pool, self.next_register, s, 1) => {
                     s
                 }
                 _ => {
@@ -593,7 +588,7 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let callee_reg = self.alloc_consecutive_registers_for_call(2, span)?;
+        let callee_reg = self.alloc_call_window(2, span)?;
 
         self.register_pool[callee_reg as usize] = true;
         self.register_pool[(callee_reg + 1) as usize] = true;
@@ -660,8 +655,7 @@ impl Compiler {
 
         let total_args = 1 + remaining_args.len();
         let call_arity = self.checked_call_arity(total_args, span)?;
-        let func_reg =
-            self.alloc_consecutive_registers_for_call(total_args.saturating_add(1), span)?;
+        let func_reg = self.alloc_call_window(total_args.saturating_add(1), span)?;
 
         for i in 0..=total_args {
             let reg = func_reg + u16::try_from(i).expect("register offset was range checked");

@@ -75,6 +75,12 @@ impl CompileErrorKind {
             Self::CompilationLimitExceeded(message) => {
                 format!("compilation limit exceeded: {message}")
             }
+            Self::CallWindowOverlap {
+                register,
+                window_base,
+            } => format!(
+                "internal compiler error: the call frame based at r{window_base} would overwrite live register r{register}"
+            ),
             Self::BreakOutsideLoop => "'break' outside of loop".to_string(),
             Self::ContinueOutsideLoop => "'continue' outside of loop".to_string(),
             Self::ReturnOutsideFunction => "'return' outside of function".to_string(),

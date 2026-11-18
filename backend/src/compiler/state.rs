@@ -53,6 +53,7 @@ pub struct Compiler {
     pub next_register: u32,
     pub(crate) register_pool: Box<[bool]>,
     pub(crate) register_search_start: usize,
+    pub(crate) call_window_fault: Option<(u16, u16, aelys_syntax::Span)>,
     pub globals: HashMap<String, bool>, // name -> mutable
     pub global_indices: HashMap<String, u32>,
     pub next_global_index: u32,

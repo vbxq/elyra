@@ -2413,6 +2413,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0213 | JumpOffsetTooLarge | a jump exceeds the encodable range |
 | E0214 | CompilationLimitExceeded | a compilation limit is exceeded |
 | E0215 | MissingReturnValue | a path falls through without a value |
+| E0216 | CallWindowOverlap | internal compiler error: a call frame would overwrite a register that is still live; the program is refused instead of run with a corrupted local |
 
 ### E03xx, types
 

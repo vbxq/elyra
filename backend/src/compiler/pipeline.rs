@@ -214,7 +214,7 @@ impl Compiler {
             }
         }
 
-        self.current.num_registers = self.next_register;
+        self.finish_registers()?;
         self.current.global_layout = self.build_global_layout()?;
         self.current.compute_global_layout_hash();
         self.current.finalize_bytecode();

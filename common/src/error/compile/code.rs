@@ -33,6 +33,7 @@ impl CompileErrorKind {
             Self::TooManyUpvalues => 211,
             Self::JumpOffsetTooLarge { .. } => 213,
             Self::CompilationLimitExceeded(_) => 214,
+            Self::CallWindowOverlap { .. } => 216,
             Self::BreakOutsideLoop => 207,
             Self::ContinueOutsideLoop => 208,
             Self::ReturnOutsideFunction => 212,
