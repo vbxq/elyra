@@ -67,6 +67,7 @@ pub struct Compiler {
     pub all_enclosing_locals: Vec<Vec<Local>>, // transitive capture chain
     pub loop_stack: Vec<LoopContext>,
     pub loop_variables: Vec<String>, // can't assign inside loop body
+    pub(crate) hoisted_literals: Vec<(i64, u16)>,
     pub scope_depth: usize,
     pub next_register: u32,
     pub(crate) register_pool: Box<[bool]>,

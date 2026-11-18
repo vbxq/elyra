@@ -70,6 +70,7 @@ impl VM {
             }
             self.prepare_globals_for_function(function);
         }
+        let mut unpassable = false;
         let result = (|| {
             let context = Some(self.jit_execution_context(
                 self.execution_control.report || self.execution_control_enabled(),
@@ -103,6 +104,10 @@ impl VM {
                         };
                         jit_arguments.push(JitArgument::IntegerVec(values));
                     }
+                    ObjectKind::Struct(_) | ObjectKind::Enum(_) => {
+                        unpassable = true;
+                        return JitCallResult::Unsupported;
+                    }
                     _ => return JitCallResult::Unsupported,
                 };
             }
@@ -123,6 +128,9 @@ impl VM {
         if let Some(globals) = saved_globals {
             self.globals_by_index = globals;
             self.current_global_mapping_id = previous_mapping;
+        }
+        if unpassable {
+            self.jit_refused.insert(function, ());
         }
         result
     }
@@ -367,9 +375,12 @@ impl VM {
         executor.observe_backedge(key, &function.function, backedges);
     }
 
+    #[inline]
     pub(crate) fn pop_frame_with_jit_metadata(&mut self) -> Option<CallFrame> {
         let frame = self.frames.pop()?;
-        self.flush_jit_backedges(&frame);
+        if frame.jit_backedges_initialized && frame.jit_backedges != 0 {
+            self.flush_jit_backedges(&frame);
+        }
         Some(frame)
     }
 

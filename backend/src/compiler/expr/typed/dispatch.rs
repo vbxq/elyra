@@ -148,7 +148,7 @@ impl Compiler {
                 object,
                 index,
                 value,
-            } => self.compile_typed_index_assign(object, index, value, dest, expr.span),
+            } => self.compile_typed_index_assign(object, index, value, Some(dest), expr.span),
             TypedExprKind::Range {
                 start,
                 end,

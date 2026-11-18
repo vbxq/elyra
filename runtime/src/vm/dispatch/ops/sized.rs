@@ -38,7 +38,7 @@ pub(crate) fn wrap_unchecked(opcode_byte: u8, left: i64, right: i64) -> i64 {
 }
 
 #[inline(always)]
-fn wrap_binary(opcode_byte: u8, left: i64, right: i64) -> Option<i64> {
+pub(crate) fn wrap_binary(opcode_byte: u8, left: i64, right: i64) -> Option<i64> {
     match opcode_byte {
         229..=231 => {
             if right == 0 {
