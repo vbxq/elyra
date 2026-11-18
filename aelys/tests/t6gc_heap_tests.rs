@@ -463,11 +463,20 @@ fn every_major_slice_stays_near_its_budget_on_a_large_heap() {
         heap.mark_young([holder]);
         heap.sweep_young();
     }
+    let mut garbage = Vec::with_capacity(100_000);
     for index in 0..100_000 {
-        let garbage = heap.alloc_string(&format!("old garbage {index}"));
-        heap.mark_young([holder, garbage]);
+        garbage.push(Value::ptr(
+            heap.alloc_string(&format!("old garbage {index}")).index(),
+        ));
     }
-    heap.sweep_young();
+    let garbage = heap.alloc(GcObject::new(ObjectKind::Vec(AelysVec::from_objects(
+        garbage,
+    ))));
+    for _ in 0..2 {
+        heap.mark_young([holder, garbage]);
+        heap.sweep_young();
+    }
+    assert_eq!(heap.heap_generation(garbage), Some(HeapGeneration::Old));
 
     assert!(heap.begin_major_collection(vec![holder]));
     let mut slices = Vec::new();
