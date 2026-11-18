@@ -95,6 +95,11 @@ macro_rules! execute_control_flow {
             }
 
             127 => {
+                if $ip + 1 >= $bytecode_len {
+                    return Err($vm.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                        "wide loop is missing an extension word".to_string(),
+                    )));
+                }
                 let (inner, _, _) = decode_abc($instr);
                 let register_word = unsafe { *$bytecode_ptr.add($ip) };
                 let offset =

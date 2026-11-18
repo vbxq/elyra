@@ -165,6 +165,16 @@ impl VM {
                     }
                 }};
             }
+            macro_rules! require_operand_words {
+                ($count:expr) => {{
+                    if ip + $count > bytecode_len {
+                        self.frames[current_frame_idx].ip = ip;
+                        return Err(self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                            format!("instruction at {} is missing operand words", ip - 1),
+                        )));
+                    }
+                }};
+            }
             macro_rules! int_value {
                 ($value:expr) => {{
                     match Value::int_checked($value) {
@@ -178,7 +188,35 @@ impl VM {
             }
 
             match opcode_byte {
-                0..=4 | 75..=76 | 180 | 182..=183 => {
+                0..=4 | 75..=76 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match self.execute_load_store(
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => {
+                            unreachable!("load/store handler cannot change frames")
+                        }
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!("load/store handler cannot change frames")
+                        }
+                    }
+                }
+
+                180 | 182..=183 => {
+                    require_operand_words!(1);
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -224,6 +262,7 @@ impl VM {
                 }
 
                 196..=198 => {
+                    require_operand_words!(2);
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -249,6 +288,7 @@ impl VM {
                 }
 
                 199..=201 => {
+                    require_operand_words!(2);
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -395,6 +435,7 @@ impl VM {
 
                         {
                             if opcode_byte == 34 {
+                                require_operand_words!(2);
                                 let first = unsafe { *bytecode_ptr.add(ip) };
                                 let second = unsafe { *bytecode_ptr.add(ip + 1) };
                                 ip += 2;
@@ -1196,7 +1237,38 @@ impl VM {
                     super::ops::globals::execute(self, &state, ip, opcode_byte, instr)?;
                 }
 
-                35..=38 | 126 | 181 => {
+                35..=38 => {
+                    let state = DispatchState {
+                        base,
+                        constants: constants_ptr,
+                        constants_len,
+                        registers: regs_ptr,
+                        registers_len: regs_len,
+                        frame_index: current_frame_idx,
+                    };
+                    match super::ops::closures::execute(
+                        self,
+                        &state,
+                        &mut ip,
+                        func_ref,
+                        bytecode_ptr,
+                        upvalues_ptr,
+                        upvalues_len,
+                        opcode_byte,
+                        instr,
+                    )? {
+                        DispatchControl::Continue => {}
+                        DispatchControl::ReloadFrame => {
+                            unreachable!("closure handler cannot change frames")
+                        }
+                        DispatchControl::Returned(_) | DispatchControl::ReturnToCaller { .. } => {
+                            unreachable!("closure handler cannot change frames")
+                        }
+                    }
+                }
+
+                126 | 181 => {
+                    require_operand_words!(if opcode_byte == 126 { 2 } else { 1 });
                     let state = DispatchState {
                         base,
                         constants: constants_ptr,
@@ -1250,7 +1322,22 @@ impl VM {
                     )?;
                 }
 
-                122..=123 | 130..=176 | 192..=195 => {
+                130..=176 | 192..=195 => {
+                    super::ops::arrays::execute_arrays!(
+                        self,
+                        opcode_byte,
+                        instr,
+                        base,
+                        current_frame_idx,
+                        ip,
+                        bytecode_ptr,
+                        reg_get,
+                        reg_set
+                    );
+                }
+
+                122..=123 => {
+                    require_operand_words!(2);
                     super::ops::arrays::execute_arrays!(
                         self,
                         opcode_byte,
@@ -1292,6 +1379,7 @@ impl VM {
                 }
 
                 234..=235 => {
+                    require_operand_words!(2);
                     let first = unsafe { *bytecode_ptr.add(ip) };
                     let second = unsafe { *bytecode_ptr.add(ip + 1) };
                     ip += 2;
@@ -1322,6 +1410,7 @@ impl VM {
                 }
 
                 184 => {
+                    require_operand_words!(2);
                     let branch_origin = ip;
                     let active_function = func_ref;
                     let wide_opcode =

@@ -49,8 +49,11 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
     verify_struct_schemas(func)?;
     verify_schema_descriptors(func)?;
 
+    let mut starts = vec![false; bytecode.len() + 1];
+    let mut targets = Vec::new();
     let mut ip = 0;
     while ip < bytecode.len() {
+        starts[ip] = true;
         let instr = bytecode[ip];
         let opcode_byte = (instr >> 24) as u8;
         let opcode = OpCode::from_u8(opcode_byte)
@@ -141,7 +144,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 let adjusted_ip = ip
                     .checked_add(2)
                     .ok_or_else(|| "wide while ip overflow".to_string())?;
-                super::checks::check_jump(adjusted_ip, offset, bytecode.len(), "wide while loop")?;
+                let target = super::checks::check_jump(
+                    adjusted_ip,
+                    offset,
+                    bytecode.len(),
+                    "wide while loop",
+                )?;
+                targets.push((ip, target));
             }
             ip += 3;
             continue;
@@ -343,12 +352,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             let adjusted_ip = ip
                 .checked_add(1)
                 .ok_or_else(|| format!("{opcode:?} ip overflow"))?;
-            super::checks::check_jump_i32(
+            let target = super::checks::check_jump_i32(
                 adjusted_ip,
                 offset,
                 bytecode.len(),
                 "wide conditional jump",
             )?;
+            targets.push((ip, target));
             ip += 3;
             continue;
         }
@@ -416,7 +426,9 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             let adjusted_ip = ip
                 .checked_add(1)
                 .ok_or_else(|| format!("{opcode:?} ip overflow"))?;
-            super::checks::check_jump_i32(adjusted_ip, offset, bytecode.len(), "wide loop")?;
+            let target =
+                super::checks::check_jump_i32(adjusted_ip, offset, bytecode.len(), "wide loop")?;
+            targets.push((ip, target));
             ip += 3;
             continue;
         }
@@ -440,7 +452,13 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
                 _ => return Err(format!("invalid long-offset opcode {opcode:?}")),
             }
             let offset = i32::from_ne_bytes(extension.to_ne_bytes());
-            super::checks::check_jump_i32(ip, offset, bytecode.len(), "long-offset instruction")?;
+            let target = super::checks::check_jump_i32(
+                ip,
+                offset,
+                bytecode.len(),
+                "long-offset instruction",
+            )?;
+            targets.push((ip, target));
             ip += 2;
             continue;
         }
@@ -518,7 +536,17 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
             ip += 1;
             continue;
         }
-        if control::verify(opcode, ip, a, b, c, imm, num_regs, bytecode.len())? {
+        if control::verify(
+            opcode,
+            ip,
+            a,
+            b,
+            c,
+            imm,
+            num_regs,
+            bytecode.len(),
+            &mut targets,
+        )? {
             ip += 1;
             continue;
         }
@@ -555,6 +583,14 @@ pub(super) fn verify_bytecode(func: &Function) -> Result<(), String> {
         }
 
         return Err(format!("unhandled opcode {:?} at {}", opcode, ip));
+    }
+    starts[bytecode.len()] = true;
+    for (origin, target) in targets {
+        if !starts[target] {
+            return Err(format!(
+                "jump at {origin} lands inside an instruction at {target}"
+            ));
+        }
     }
 
     Ok(())
@@ -799,7 +835,7 @@ pub(super) fn verify_jump(
     imm: i16,
     bytecode_len: usize,
     op: &str,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     check_jump(ip, imm, bytecode_len, op)
 }
 
