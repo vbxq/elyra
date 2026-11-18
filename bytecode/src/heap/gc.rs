@@ -206,7 +206,7 @@ impl Heap {
             .expect("sweep candidate must be occupied");
         self.bytes_allocated = self
             .bytes_allocated
-            .saturating_sub(Self::estimate_object_size(&object));
+            .saturating_sub(Self::freed_object_size(&object));
         if let ObjectKind::String(string) = &object.kind
             && string.is_interned()
         {
@@ -286,9 +286,16 @@ impl Heap {
         self.remembered_set = remembered;
     }
 
+    fn freed_object_size(obj: &crate::object::GcObject) -> usize {
+        match &obj.kind {
+            ObjectKind::String(s) => std::mem::size_of::<AelysString>() + s.released_charge(),
+            _ => Self::estimate_object_size(obj),
+        }
+    }
+
     pub fn estimate_object_size(obj: &crate::object::GcObject) -> usize {
         match &obj.kind {
-            ObjectKind::String(s) => std::mem::size_of::<AelysString>() + s.accounted_bytes(),
+            ObjectKind::String(s) => std::mem::size_of::<AelysString>() + s.pending_charge(),
             ObjectKind::Function(f) => Self::estimate_function_size(&f.function),
             ObjectKind::Native(_) => std::mem::size_of::<crate::object::NativeFunction>(),
             ObjectKind::Upvalue(_) => std::mem::size_of::<AelysUpvalue>(),

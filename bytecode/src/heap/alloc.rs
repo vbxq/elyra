@@ -8,6 +8,9 @@ use crate::object::{
 impl Heap {
     pub fn alloc(&mut self, mut obj: GcObject) -> GcRef {
         self.bytes_allocated += Self::estimate_object_size(&obj);
+        if let ObjectKind::String(string) = &obj.kind {
+            string.commit_charge();
+        }
         self.allocation_count = self.allocation_count.saturating_add(1);
         if self.major_collection_active() {
             obj.marked = true;

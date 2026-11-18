@@ -1,5 +1,5 @@
 use super::super::VM;
-use super::super::{GcRef, Heap, ObjectKind, Value};
+use super::super::{AelysString, GcRef, ObjectKind, Value};
 use aelys_common::error::RuntimeError;
 
 impl VM {
@@ -12,19 +12,26 @@ impl VM {
             return Ok(None);
         };
         let (left_ref, right_ref) = (GcRef::new(left_ptr), GcRef::new(right_ptr));
-        let added = match (self.heap.get(left_ref), self.heap.get(right_ref)) {
-            (Some(l), Some(r)) => match (&l.kind, &r.kind) {
-                (ObjectKind::String(ls), ObjectKind::String(rs)) => ls.len() + rs.len(),
-                _ => return Ok(None),
-            },
-            _ => return Ok(None),
+        let Some(charge) = self.concat_charge(left_ref, right_ref) else {
+            return Ok(None);
         };
-        let size = u64::try_from(Heap::estimate_string_size(added)).unwrap_or(u64::MAX);
-        self.maybe_collect_for(size);
-        self.ensure_heap_capacity(size)?;
+        self.maybe_collect_for(charge);
+        let charge = self.concat_charge(left_ref, right_ref).unwrap_or(charge);
+        self.ensure_heap_capacity(charge)?;
         Ok(self
             .heap
             .concat_strings(left_ref, right_ref)
             .map(|joined| Value::ptr(joined.index())))
+    }
+
+    fn concat_charge(&self, left: GcRef, right: GcRef) -> Option<u64> {
+        match (&self.heap.get(left)?.kind, &self.heap.get(right)?.kind) {
+            (ObjectKind::String(left), ObjectKind::String(right)) => {
+                let bytes = std::mem::size_of::<AelysString>()
+                    .saturating_add(AelysString::concat_charge(left, right));
+                Some(u64::try_from(bytes).unwrap_or(u64::MAX))
+            }
+            _ => None,
+        }
     }
 }

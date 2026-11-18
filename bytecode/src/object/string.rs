@@ -2,14 +2,16 @@ use std::cell::{Cell, UnsafeCell};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-struct SharedBytes(UnsafeCell<Vec<u8>>);
+struct SharedBytes {
+    bytes: UnsafeCell<Vec<u8>>,
+    charged: Cell<usize>,
+}
 
 // immutable string view over a buffer that later concatenations may extend past the view
 pub struct AelysString {
     hash: Cell<u64>,
     buffer: Rc<SharedBytes>,
     len: usize,
-    owned_bytes: usize,
     interned: Cell<bool>,
 }
 
@@ -22,10 +24,48 @@ impl AelysString {
         let len = bytes.len();
         Self {
             hash: Cell::new(0),
-            buffer: Rc::new(SharedBytes(UnsafeCell::new(bytes))),
+            buffer: Rc::new(SharedBytes {
+                bytes: UnsafeCell::new(bytes),
+                charged: Cell::new(0),
+            }),
             len,
-            owned_bytes: len,
             interned: Cell::new(false),
+        }
+    }
+
+    fn buffer_len(&self) -> usize {
+        unsafe { (*self.buffer.bytes.get()).len() }
+    }
+
+    fn buffer_capacity(&self) -> usize {
+        unsafe { (*self.buffer.bytes.get()).capacity() }
+    }
+
+    fn appends_in_place(left: &Self, right: &Self) -> bool {
+        !Rc::ptr_eq(&left.buffer, &right.buffer)
+            && right.len != 0
+            && left.len != 0
+            && left.buffer_len() == left.len
+    }
+
+    fn grown_capacity(&self, total: usize) -> usize {
+        let capacity = self.buffer_capacity();
+        if capacity >= total {
+            capacity
+        } else {
+            total.max(capacity.saturating_mul(2))
+        }
+    }
+
+    pub fn concat_charge(left: &Self, right: &Self) -> usize {
+        let total = left.len + right.len;
+        if Self::appends_in_place(left, right) {
+            return left.grown_capacity(total) - left.buffer_capacity();
+        }
+        if Rc::ptr_eq(&left.buffer, &right.buffer) || right.len == 0 || left.len == 0 {
+            total
+        } else {
+            total.saturating_mul(2)
         }
     }
 
@@ -38,22 +78,23 @@ impl AelysString {
             bytes.extend_from_slice(right.as_bytes());
             return Self::from_bytes(bytes);
         }
-        let tip = unsafe { (*left.buffer.0.get()).len() == left.len };
-        if !tip {
+        if !Self::appends_in_place(left, right) {
             let mut bytes = Vec::with_capacity(total.saturating_mul(2));
             bytes.extend_from_slice(left.as_bytes());
             bytes.extend_from_slice(right.as_bytes());
-            let mut result = Self::from_bytes(bytes);
-            result.owned_bytes = total;
-            return result;
+            return Self::from_bytes(bytes);
         }
+        let capacity = left.grown_capacity(total);
         // the right operand lives in another buffer, so growing this one cannot move its bytes
-        unsafe { (*left.buffer.0.get()).extend_from_slice(right.as_bytes()) };
+        unsafe {
+            let bytes = &mut *left.buffer.bytes.get();
+            bytes.reserve_exact(capacity - bytes.len());
+            bytes.extend_from_slice(right.as_bytes());
+        }
         Self {
             hash: Cell::new(0),
             buffer: Rc::clone(&left.buffer),
             len: total,
-            owned_bytes: right.len,
             interned: Cell::new(false),
         }
     }
@@ -69,7 +110,7 @@ impl AelysString {
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe { &(&*self.buffer.0.get())[..self.len] }
+        unsafe { &(&*self.buffer.bytes.get())[..self.len] }
     }
 
     pub fn len(&self) -> usize {
@@ -80,8 +121,22 @@ impl AelysString {
         self.len == 0
     }
 
-    pub fn accounted_bytes(&self) -> usize {
-        self.owned_bytes
+    pub fn pending_charge(&self) -> usize {
+        self.buffer_capacity()
+            .saturating_sub(self.buffer.charged.get())
+    }
+
+    pub(crate) fn commit_charge(&self) {
+        self.buffer.charged.set(self.buffer_capacity());
+    }
+
+    // the buffer outlives every view but the last one, so only the last view to die returns its bytes
+    pub(crate) fn released_charge(&self) -> usize {
+        if Rc::strong_count(&self.buffer) == 1 {
+            self.buffer.charged.get()
+        } else {
+            0
+        }
     }
 
     pub(crate) fn mark_interned(&self) {
