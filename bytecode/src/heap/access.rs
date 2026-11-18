@@ -46,6 +46,24 @@ impl Heap {
         }
     }
 
+    pub fn write_barrier_elements(&mut self, owner: GcRef, range: std::ops::Range<usize>) {
+        if self.heap_generation(owner) != Some(HeapGeneration::Old)
+            && self.phase != MajorPhase::Mark
+        {
+            return;
+        }
+        for index in range {
+            let Some(value) = self
+                .get(owner)
+                .and_then(Self::element_values)
+                .and_then(|values| values.get(index).copied())
+            else {
+                break;
+            };
+            self.write_barrier_element(owner, index, value);
+        }
+    }
+
     fn write_barrier(&mut self, owner: GcRef, element: u32, child: GcRef) {
         let old_to_young = match (
             self.objects.get(owner.slot_index()),
@@ -130,6 +148,10 @@ impl Heap {
             bits[word] |= bit;
             self.remembered.push(RememberedEntry { owner, element });
         }
+    }
+
+    pub fn interned_count(&self) -> usize {
+        self.intern_table.len()
     }
 
     pub fn remembered_count(&self) -> usize {

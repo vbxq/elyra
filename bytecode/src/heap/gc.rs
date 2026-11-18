@@ -70,7 +70,7 @@ impl Heap {
         )
     }
 
-    fn element_values(object: &GcObject) -> Option<&[Value]> {
+    pub(super) fn element_values(object: &GcObject) -> Option<&[Value]> {
         match &object.kind {
             ObjectKind::Vec(vector) => Some(vector.objects().unwrap_or(&[])),
             ObjectKind::Array(array) => Some(array.data.as_objects().unwrap_or(&[])),

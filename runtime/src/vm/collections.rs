@@ -152,6 +152,7 @@ fn write_sequence(
             .all(|(index, value)| array.set(index, *value)),
         _ => false,
     };
+    vm.heap.write_barrier_elements(sequence, 0..values.len());
     if written {
         Ok(())
     } else {
@@ -191,6 +192,7 @@ fn vec_insert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if with_vec(vm, vector, "vec insert", |inner| {
         inner.insert(position, args[2])
     })? {
+        vm.heap.write_barrier_elements(vector, position..length + 1);
         Ok(Value::unit())
     } else {
         Err(type_error(
@@ -207,8 +209,10 @@ fn vec_remove(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let index = int_arg(vm, args[1], "vec remove")?;
     let length = sequence_len(vm, vector, "vec remove")?;
     let position = checked_index(vm, index, length)?;
-    with_vec(vm, vector, "vec remove", |inner| inner.remove(position))?
-        .ok_or_else(|| out_of_bounds(vm, index, length))
+    let removed = with_vec(vm, vector, "vec remove", |inner| inner.remove(position))?
+        .ok_or_else(|| out_of_bounds(vm, index, length))?;
+    vm.heap.write_barrier_elements(vector, position..length);
+    Ok(removed)
 }
 
 fn vec_swap_remove(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -216,10 +220,13 @@ fn vec_swap_remove(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let index = int_arg(vm, args[1], "vec swap_remove")?;
     let length = sequence_len(vm, vector, "vec swap_remove")?;
     let position = checked_index(vm, index, length)?;
-    with_vec(vm, vector, "vec swap_remove", |inner| {
+    let removed = with_vec(vm, vector, "vec swap_remove", |inner| {
         inner.swap_remove(position)
     })?
-    .ok_or_else(|| out_of_bounds(vm, index, length))
+    .ok_or_else(|| out_of_bounds(vm, index, length))?;
+    vm.heap
+        .write_barrier_elements(vector, position..position + 1);
+    Ok(removed)
 }
 
 fn vec_clear(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -235,9 +242,12 @@ fn push_all(
     operation: &'static str,
 ) -> Result<(), RuntimeError> {
     vm.reserve_vec(vector, values.len())?;
+    let start = sequence_len(vm, vector, operation)?;
     let pushed = with_vec(vm, vector, operation, |inner| {
         values.iter().all(|value| inner.push(*value))
     })?;
+    vm.heap
+        .write_barrier_elements(vector, start..start + values.len());
     if pushed {
         Ok(())
     } else {
@@ -288,6 +298,9 @@ fn vec_resize(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         vm.reserve_vec(vector, target - current)?;
         for _ in current..target {
             let copy = vm.deep_clone_value(args[2])?;
+            let _pin = copy
+                .as_ptr()
+                .map(|raw| HostRoot::new(&vm.host_roots, GcRef::new(raw), vm.id));
             push_all(vm, vector, &[copy], "vec resize")?;
         }
     } else {
@@ -314,6 +327,8 @@ fn seq_swap(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         }
         _ => {}
     }
+    vm.heap.write_barrier_element(sequence, a, right);
+    vm.heap.write_barrier_element(sequence, b, left);
     Ok(Value::unit())
 }
 
@@ -593,6 +608,7 @@ fn seq_set(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         _ => false,
     };
     if written {
+        vm.heap.write_barrier_element(sequence, position, args[2]);
         Ok(Value::unit())
     } else {
         Err(type_error(vm, "set", "matching element type", args[2]))
@@ -645,6 +661,7 @@ fn write_sequence_slot(
         _ => false,
     };
     if written {
+        vm.heap.write_barrier_element(sequence, index, value);
         Ok(())
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
@@ -732,7 +749,10 @@ fn map_insert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         vm.maybe_collect_for(predicted);
         vm.ensure_heap_capacity(growth(vm))?;
     }
-    match write_map(vm, map, |inner| inner.insert(key, args[1], args[2])) {
+    let previous = write_map(vm, map, |inner| inner.insert(key, args[1], args[2]));
+    vm.heap.write_barrier_value(map, args[1]);
+    vm.heap.write_barrier_value(map, args[2]);
+    match previous {
         Some(previous) => some(vm, previous),
         None => Ok(Value::none()),
     }
@@ -851,10 +871,12 @@ fn string_vec(vm: &mut VM, parts: Vec<String>) -> Result<Value, RuntimeError> {
     let vector = vm.alloc_vec(AelysVec::with_capacity_objects(parts.len()))?;
     let _root = HostRoot::new(&vm.host_roots, vector, vm.id);
     for part in parts {
-        let text = vm.alloc_string(&part)?;
-        with_vec(vm, vector, "string split", |inner| {
-            inner.push(Value::ptr(text.index()))
+        let text = Value::ptr(vm.alloc_string(&part)?.index());
+        let index = with_vec(vm, vector, "string split", |inner| {
+            inner.push(text);
+            inner.len() - 1
         })?;
+        vm.heap.write_barrier_element(vector, index, text);
     }
     Ok(Value::ptr(vector.index()))
 }
