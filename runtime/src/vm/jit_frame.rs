@@ -3,7 +3,8 @@
 use super::{CallFrame, GcRef, MAX_FRAMES, ObjectKind, VM, Value};
 use crate::{
     FRAME_STATUS_CALL_IN_INTERPRETER, FRAME_STATUS_NATIVE_ERROR, FRAME_STATUS_OK, FrameCode,
-    FrameCollectionKind, FrameData, FrameEntry, FrameJitContext, JitFunctionKey,
+    FrameCollectionKind, FrameData, FrameEntry, FrameJitContext, FrameJobSink, FrameRequest,
+    FrameSubmission, FrameTarget, JitFunctionKey,
 };
 use aelys_common::error::RuntimeError;
 use smallvec::SmallVec;
@@ -21,8 +22,21 @@ pub(crate) struct FrameInstall {
 
 enum EntryState {
     Pending,
+    Compiling,
     Ready(FrameInstall),
     Refused,
+}
+
+enum Submitted {
+    Applied,
+    Queued,
+    Busy,
+}
+
+struct Waiting {
+    slot: usize,
+    function: GcRef,
+    optimized: bool,
 }
 
 #[derive(Default)]
@@ -30,6 +44,7 @@ struct ExitBudget {
     entries: u64,
     exits: u64,
     progress: u64,
+    paused: u64,
 }
 
 impl ExitBudget {
@@ -44,13 +59,58 @@ impl ExitBudget {
         self.exits = self.exits.saturating_add(1);
         self.exits > EXIT_BUDGET && self.exits.saturating_mul(EXITS_PER_PROGRESS) > self.progress
     }
+
+    // an exit forced by a callee still being compiled says nothing about this code, which waits in the interpreter for the next install
+    fn record_outcome(
+        &mut self,
+        exited: bool,
+        excused: bool,
+        progress: u64,
+        installs: u64,
+    ) -> bool {
+        if exited && excused {
+            self.progress = self.progress.saturating_add(progress);
+            self.paused = installs.wrapping_add(1);
+            return false;
+        }
+        self.record(exited, progress)
+    }
+
+    fn paused(&mut self, installs: u64) -> bool {
+        if self.paused == 0 {
+            return false;
+        }
+        if self.paused == installs.wrapping_add(1) {
+            return true;
+        }
+        self.paused = 0;
+        false
+    }
+}
+
+impl FrameSlot {
+    fn osr_position(&mut self, ip: u32) -> usize {
+        match self.osr.iter().position(|entry| entry.ip == ip) {
+            Some(position) => position,
+            None => {
+                self.osr.push(OsrEntry {
+                    ip,
+                    state: EntryState::Pending,
+                    optimized: false,
+                    opt_installed: false,
+                    budget: ExitBudget::default(),
+                });
+                self.osr.len() - 1
+            }
+        }
+    }
 }
 
 struct OsrEntry {
     ip: u32,
     state: EntryState,
     optimized: bool,
-    legacy_tried: bool,
+    opt_installed: bool,
     budget: ExitBudget,
 }
 
@@ -65,8 +125,6 @@ pub(crate) struct FrameSlot {
     codes: SmallVec<[Arc<dyn FrameCode>; 2]>,
     blocks: SmallVec<[Box<[u64]>; 2]>,
     live: bool,
-    legacy_refused: bool,
-    legacy_safe: Option<bool>,
 }
 
 struct PendingFrame {
@@ -97,6 +155,11 @@ pub(crate) struct FrameJitState {
     native_depth: u32,
     native_error: Option<RuntimeError>,
     pub(crate) prepared_generation: u64,
+    sink: Arc<FrameJobSink>,
+    waiting: std::collections::HashMap<u64, Waiting>,
+    next_token: u64,
+    excused_exit: bool,
+    installs: u64,
 }
 
 impl Default for FrameJitState {
@@ -129,6 +192,11 @@ impl Default for FrameJitState {
             native_depth: 0,
             native_error: None,
             prepared_generation: 1,
+            sink: Arc::new(FrameJobSink::default()),
+            waiting: std::collections::HashMap::new(),
+            next_token: 1,
+            excused_exit: false,
+            installs: 0,
         }
     }
 }
@@ -137,12 +205,12 @@ pub(crate) enum FrameOutcome {
     Returned(Value),
     Exited(u32),
     Interpret,
-    Legacy,
 }
 
 enum EntryKind {
     Call,
-    Osr,
+    // the loop header an osr entry starts at, read by code compiled for several headers
+    Osr(u32),
 }
 
 impl VM {
@@ -154,7 +222,7 @@ impl VM {
         self.frame_jit_usable()
     }
 
-    // true once neither the frame compiler nor the older pipeline will take a call to this function
+    // true once the frame compiler refused this function, so its calls stay on the interpreter hot path
     pub(crate) fn frame_jit_interprets(&self, function: GcRef) -> bool {
         let Some(ObjectKind::Function(object)) = self.heap.get(function).map(|object| &object.kind)
         else {
@@ -170,7 +238,6 @@ impl VM {
                     entry.live
                         && entry.function == function
                         && matches!(entry.call, EntryState::Refused)
-                        && entry.legacy_refused
                 })
     }
 
@@ -231,8 +298,6 @@ impl VM {
             codes: SmallVec::new(),
             blocks: SmallVec::new(),
             live: true,
-            legacy_refused: false,
-            legacy_safe: None,
         };
         let index = if let Some(free) = self.frame_jit.free.pop() {
             let index = usize::try_from(free).ok()?;
@@ -249,29 +314,26 @@ impl VM {
         Some(index)
     }
 
-    fn install_frame_code(
+    fn install_code(
         &mut self,
         index: usize,
-        osr_ip: Option<u32>,
-        optimized: bool,
+        code: Arc<dyn FrameCode>,
+        target: FrameTarget,
     ) -> Option<FrameInstall> {
-        let executor = self.jit_executor.as_ref()?.clone();
         let slot = self.frame_jit.slots.get(index)?;
-        let key = slot.key.clone()?;
         let function = slot.function;
         let object = self.heap.get(function)?;
         let ObjectKind::Function(bytecode_function) = &object.kind else {
             return None;
         };
-        let code = if optimized {
-            executor.compile_frame_optimized(&key, &bytecode_function.function, osr_ip)?
-        } else {
-            executor.compile_frame(&key, &bytecode_function.function, osr_ip)?
-        };
         let info = code.info();
+        let shape = match target {
+            FrameTarget::Call => info.osr_entries.is_empty(),
+            FrameTarget::Loop(_) => !info.osr_entries.is_empty(),
+        };
         if info.num_registers != bytecode_function.function.num_registers
             || info.arity != bytecode_function.function.arity
-            || info.osr_ip != osr_ip
+            || !shape
             || info.address == 0
         {
             return None;
@@ -308,23 +370,171 @@ impl VM {
         Some(install)
     }
 
+    fn request_frame_code(
+        &mut self,
+        index: usize,
+        target: FrameTarget,
+        optimized: bool,
+    ) -> Submitted {
+        let token = self.frame_jit.next_token;
+        self.frame_jit.next_token = token.wrapping_add(1);
+        let submission = match (self.jit_executor.as_ref(), self.frame_jit.slots.get(index)) {
+            (Some(executor), Some(slot)) => match (&slot.key, self.heap.get(slot.function)) {
+                (Some(key), Some(object)) => match &object.kind {
+                    ObjectKind::Function(function) => executor.submit_frame(FrameRequest {
+                        key,
+                        function: &function.function,
+                        target,
+                        optimized,
+                        token,
+                        sink: &self.frame_jit.sink,
+                    }),
+                    _ => FrameSubmission::Refused,
+                },
+                _ => FrameSubmission::Refused,
+            },
+            _ => FrameSubmission::Refused,
+        };
+        let code = match submission {
+            FrameSubmission::Ready(code) => Some(code),
+            FrameSubmission::Refused => None,
+            FrameSubmission::Busy => return Submitted::Busy,
+            FrameSubmission::Queued => {
+                let function = self.frame_jit.slots[index].function;
+                self.frame_jit.waiting.insert(
+                    token,
+                    Waiting {
+                        slot: index,
+                        function,
+                        optimized,
+                    },
+                );
+                return Submitted::Queued;
+            }
+        };
+        self.apply_frame_code(index, target, optimized, code);
+        Submitted::Applied
+    }
+
+    #[inline(always)]
+    pub(crate) fn poll_frame_jobs(&mut self) {
+        if self.frame_jit.sink.has_results() {
+            self.install_finished_frames();
+        }
+    }
+
+    // only at call entries, loop back-edges and helper calls: code already running keeps its own blocks alive
+    #[inline(never)]
+    fn install_finished_frames(&mut self) {
+        for done in self.frame_jit.sink.take() {
+            let Some(waiting) = self.frame_jit.waiting.remove(&done.token) else {
+                continue;
+            };
+            let current = self.frame_jit.slots.get(waiting.slot).is_some_and(|slot| {
+                slot.live
+                    && slot.function == waiting.function
+                    && self.heap.get(waiting.function).is_some()
+            });
+            if !current || self.frame_jit.disabled {
+                continue;
+            }
+            self.apply_frame_code(waiting.slot, done.target, waiting.optimized, done.code);
+        }
+    }
+
+    fn apply_frame_code(
+        &mut self,
+        index: usize,
+        target: FrameTarget,
+        optimized: bool,
+        code: Option<Arc<dyn FrameCode>>,
+    ) {
+        let entries = code
+            .as_ref()
+            .map(|code| code.info().osr_entries.clone())
+            .unwrap_or_default();
+        let install = code.and_then(|code| self.install_code(index, code, target));
+        if install.is_some() {
+            self.frame_jit.installs = self.frame_jit.installs.wrapping_add(1);
+        }
+        match target {
+            FrameTarget::Call => self.apply_call_code(index, optimized, install),
+            FrameTarget::Loop(ip) => {
+                let slot = &mut self.frame_jit.slots[index];
+                if let Some(install) = install {
+                    for entry_ip in entries {
+                        let position = slot.osr_position(entry_ip);
+                        let entry = &mut slot.osr[position];
+                        if optimized {
+                            if !matches!(entry.state, EntryState::Refused) {
+                                entry.state = EntryState::Ready(install);
+                                entry.optimized = true;
+                                entry.opt_installed = true;
+                            }
+                        } else if matches!(entry.state, EntryState::Pending | EntryState::Compiling)
+                        {
+                            entry.state = EntryState::Ready(install);
+                        }
+                    }
+                }
+                if !optimized {
+                    let position = slot.osr_position(ip);
+                    let entry = &mut slot.osr[position];
+                    if matches!(entry.state, EntryState::Pending | EntryState::Compiling) {
+                        entry.state = EntryState::Refused;
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_call_code(&mut self, index: usize, optimized: bool, install: Option<FrameInstall>) {
+        let slot = &mut self.frame_jit.slots[index];
+        if optimized {
+            let (Some(install), EntryState::Ready(old)) = (install, &slot.call) else {
+                return;
+            };
+            let old = old.entry as u64;
+            slot.call = EntryState::Ready(install);
+            for slot in &mut self.frame_jit.slots {
+                for block in &mut slot.blocks {
+                    let sites = (block[3] as usize).saturating_sub(FrameData::HEADER_WORDS)
+                        / FrameData::SITE_WORDS;
+                    for site in 0..sites {
+                        let entry = FrameData::HEADER_WORDS + site * FrameData::SITE_WORDS + 2;
+                        if block.get(entry) == Some(&old) {
+                            block[entry] = 0;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if !matches!(slot.call, EntryState::Pending | EntryState::Compiling) {
+            return;
+        }
+        match install {
+            Some(install) => slot.call = EntryState::Ready(install),
+            None => slot.call = EntryState::Refused,
+        }
+    }
+
     pub(crate) fn frame_jit_call(
         &mut self,
         function: GcRef,
         argument_start: usize,
     ) -> FrameOutcome {
         if !self.frame_jit_usable() {
-            return FrameOutcome::Legacy;
+            return FrameOutcome::Interpret;
         }
+        self.poll_frame_jobs();
         let Some(index) = self.frame_slot(function) else {
-            return FrameOutcome::Legacy;
+            return FrameOutcome::Interpret;
         };
         let install = match self.frame_jit.slots[index].call {
             EntryState::Ready(install) => install,
-            EntryState::Refused if self.frame_jit.slots[index].legacy_refused => {
-                return FrameOutcome::Interpret;
-            }
-            EntryState::Refused => return FrameOutcome::Legacy,
+            EntryState::Refused => return FrameOutcome::Interpret,
+            EntryState::Compiling => return FrameOutcome::Interpret,
             EntryState::Pending => {
                 let threshold = self
                     .jit_executor
@@ -335,24 +545,27 @@ impl VM {
                 if counters.calls < threshold {
                     return FrameOutcome::Interpret;
                 }
-                match self.install_frame_code(index, None, false) {
-                    Some(install) => {
-                        self.frame_jit.slots[index].call = EntryState::Ready(install);
-                        install
+                match self.request_frame_code(index, FrameTarget::Call, false) {
+                    Submitted::Queued => {
+                        self.frame_jit.slots[index].call = EntryState::Compiling;
+                        return FrameOutcome::Interpret;
                     }
-                    None => {
-                        self.frame_jit.slots[index].call = EntryState::Refused;
-                        let slot = &self.frame_jit.slots[index];
-                        if let Some(key) = slot.key.clone() {
-                            let calls = self.frame_jit.counters[slot.counters].calls;
-                            self.jit_call_counts.insert(key, calls.saturating_sub(1));
-                        }
-                        return FrameOutcome::Legacy;
+                    Submitted::Busy => return FrameOutcome::Interpret,
+                    Submitted::Applied => {}
+                }
+                match self.frame_jit.slots[index].call {
+                    EntryState::Ready(install) => install,
+                    EntryState::Refused => return FrameOutcome::Interpret,
+                    EntryState::Pending | EntryState::Compiling => {
+                        return FrameOutcome::Interpret;
                     }
                 }
             }
         };
-        if self.frames.len() >= MAX_FRAMES {
+        let installs = self.frame_jit.installs;
+        if self.frames.len() >= MAX_FRAMES
+            || self.frame_jit.slots[index].call_budget.paused(installs)
+        {
             return FrameOutcome::Interpret;
         }
         let (outcome, progress) = self.enter_frame_code(install, argument_start, EntryKind::Call);
@@ -360,11 +573,23 @@ impl VM {
         if exited && let Some(executor) = self.jit_executor.as_ref() {
             executor.record_frame_exit();
         }
+        let excused = std::mem::take(&mut self.frame_jit.excused_exit);
         let slot = &mut self.frame_jit.slots[index];
-        if slot.call_budget.record(exited, progress) {
+        if slot
+            .call_budget
+            .record_outcome(exited, excused, progress, installs)
+        {
             slot.call = EntryState::Refused;
         }
         outcome
+    }
+
+    // a host call starts at register 0 with no frame below it; a call back from a native inside machine code would overwrite the entry state of the code that called it
+    pub(crate) fn frame_jit_host_call(&mut self, function: GcRef) -> FrameOutcome {
+        if !self.frames.is_empty() || self.frame_jit.native_depth > 0 {
+            return FrameOutcome::Interpret;
+        }
+        self.frame_jit_call(function, 0)
     }
 
     fn enter_frame_code(
@@ -381,12 +606,13 @@ impl VM {
         }
         let depth = match kind {
             EntryKind::Call => MAX_FRAMES.saturating_sub(self.frames.len() + 1),
-            EntryKind::Osr => MAX_FRAMES.saturating_sub(self.frames.len()),
+            EntryKind::Osr(_) => MAX_FRAMES.saturating_sub(self.frames.len()),
         };
         self.register_current_view();
         let expected_globals = self.current_global_mapping_id;
         self.frame_jit.pending.clear();
         self.frame_jit.native_error = None;
+        self.frame_jit.excused_exit = false;
         self.frame_jit.entry_floor = window_start;
         let registers = self.registers.as_mut_ptr();
         let registers_end = registers as usize + self.registers.len() * 8;
@@ -400,7 +626,10 @@ impl VM {
         let context = &mut self.frame_jit.context;
         context.vm = vm;
         context.status = FRAME_STATUS_OK;
-        context.resume_ip = 0;
+        context.resume_ip = match kind {
+            EntryKind::Call => 0,
+            EntryKind::Osr(ip) => u64::from(ip),
+        };
         context.global_epoch = epoch;
         context.registers_end = registers_end as u64;
         context.depth = depth as u64;
@@ -498,6 +727,7 @@ impl VM {
         if !self.frame_jit_usable() {
             return None;
         }
+        self.poll_frame_jobs();
         let index = self.frame_slot(function)?;
         let ip = u32::try_from(bytecode_ip).ok()?;
         let threshold = crate::JIT_TIER1_BACKEDGE_THRESHOLD;
@@ -507,62 +737,54 @@ impl VM {
         let backedges = counters.backedges;
         let slot = &mut self.frame_jit.slots[index];
         let position = slot.osr.iter().position(|entry| entry.ip == ip);
-        let install = match position.map(|position| &slot.osr[position].state) {
-            Some(EntryState::Ready(install)) => *install,
-            Some(EntryState::Refused) => {
-                let entry = &mut slot.osr[position?];
-                if entry.legacy_tried {
-                    if let Some(frame) = self.frames.last_mut() {
-                        frame.jit_quiet_ip = bytecode_ip;
-                    }
-                    return Some(Ok(None));
-                }
-                entry.legacy_tried = true;
-                return None;
+        if matches!(
+            position.map(|position| &slot.osr[position].state),
+            Some(EntryState::Pending) | None
+        ) {
+            if backedges < threshold {
+                return Some(Ok(None));
             }
-            Some(EntryState::Pending) | None => {
-                if backedges < threshold {
+            let position = slot.osr_position(ip);
+            match self.request_frame_code(index, FrameTarget::Loop(ip), false) {
+                Submitted::Queued => {
+                    let entry = &mut self.frame_jit.slots[index].osr[position];
+                    if matches!(entry.state, EntryState::Pending) {
+                        entry.state = EntryState::Compiling;
+                    }
                     return Some(Ok(None));
                 }
-                let install = self.install_frame_code(index, Some(ip), false);
-                let slot = &mut self.frame_jit.slots[index];
-                let state = match install {
-                    Some(install) => EntryState::Ready(install),
-                    None => EntryState::Refused,
-                };
-                match position {
-                    Some(position) => {
-                        slot.osr[position].state = state;
-                        slot.osr[position].legacy_tried = install.is_none();
-                    }
-                    None => slot.osr.push(OsrEntry {
-                        ip,
-                        state,
-                        legacy_tried: install.is_none(),
-                        optimized: false,
-                        budget: ExitBudget::default(),
-                    }),
+                Submitted::Busy => return Some(Ok(None)),
+                Submitted::Applied => {}
+            }
+        }
+        let slot = &mut self.frame_jit.slots[index];
+        let position = slot.osr_position(ip);
+        let installs = self.frame_jit.installs;
+        let paused = slot.osr[position].budget.paused(installs);
+        let install = match slot.osr[position].state {
+            EntryState::Ready(_) if paused => return Some(Ok(None)),
+            EntryState::Ready(install) => install,
+            EntryState::Pending | EntryState::Compiling => return Some(Ok(None)),
+            EntryState::Refused => {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.jit_quiet_ip = bytecode_ip;
                 }
-                if install.is_none()
-                    && let Some(frame) = self.frames.last_mut()
-                {
-                    frame.jit_backedges_initialized = true;
-                    frame.jit_backedge_base = threshold.saturating_sub(1);
-                    frame.jit_backedges = 0;
-                }
-                install?
+                return Some(Ok(None));
             }
         };
         let frame = self.frames.last()?;
         let base = frame.base;
-        let (outcome, progress) = self.enter_frame_code(install, base, EntryKind::Osr);
+        let (outcome, progress) = self.enter_frame_code(install, base, EntryKind::Osr(ip));
+        let excused = std::mem::take(&mut self.frame_jit.excused_exit);
         let slot = &mut self.frame_jit.slots[index];
         let mut promote = false;
         if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip) {
-            if entry
-                .budget
-                .record(matches!(outcome, FrameOutcome::Exited(_)), progress)
-            {
+            if entry.budget.record_outcome(
+                matches!(outcome, FrameOutcome::Exited(_)),
+                excused,
+                progress,
+                installs,
+            ) {
                 entry.state = EntryState::Refused;
             } else if !entry.optimized
                 && entry.budget.progress >= FrameData::TIER_UP as u64
@@ -572,11 +794,8 @@ impl VM {
                 promote = true;
             }
         }
-        if promote && let Some(install) = self.install_frame_code(index, Some(ip), true) {
-            let slot = &mut self.frame_jit.slots[index];
-            if let Some(entry) = slot.osr.iter_mut().find(|entry| entry.ip == ip) {
-                entry.state = EntryState::Ready(install);
-            }
+        if promote {
+            self.request_frame_code(index, FrameTarget::Loop(ip), true);
         }
         match outcome {
             FrameOutcome::Returned(value) => {
@@ -598,75 +817,7 @@ impl VM {
                 self.frame_jit.osr_resume = true;
                 Some(Ok(Some(Value::null())))
             }
-            FrameOutcome::Interpret | FrameOutcome::Legacy => Some(Ok(None)),
-        }
-    }
-
-    // the older pipeline runs every qualified global through call_value, which restarts the interpreter at register 0
-    pub(crate) fn legacy_jit_is_safe(&mut self, function: GcRef) -> bool {
-        let Some(index) = self.frame_slot(function) else {
-            return false;
-        };
-        if let Some(safe) = self.frame_jit.slots[index].legacy_safe {
-            return safe;
-        }
-        let names = match self.heap.get(function).map(|object| &object.kind) {
-            Some(ObjectKind::Function(object)) => {
-                let layout = &object.function.global_layout;
-                let words = object.function.bytecode.as_slice();
-                let mut names = Vec::new();
-                let mut ip = 0usize;
-                while ip < words.len() {
-                    let word = words[ip];
-                    let Some(opcode) = u8::try_from(word >> 24)
-                        .ok()
-                        .and_then(aelys_bytecode::OpCode::from_u8)
-                    else {
-                        break;
-                    };
-                    let index = match opcode {
-                        aelys_bytecode::OpCode::CallGlobal => Some(((word >> 8) & 0xff) as usize),
-                        aelys_bytecode::OpCode::GetGlobalIdx => Some((word & 0xffff) as usize),
-                        aelys_bytecode::OpCode::GetGlobalIdxWide => {
-                            words.get(ip + 1).map(|index| *index as usize)
-                        }
-                        _ => None,
-                    };
-                    if let Some(name) = index.and_then(|index| layout.names().get(index))
-                        && name.contains("::")
-                    {
-                        names.push(name.clone());
-                    }
-                    ip += opcode.extension_words() + 1;
-                }
-                names
-            }
-            _ => return false,
-        };
-        let safe = names.iter().all(|name| {
-            let value = self.global_by_name(name);
-            value
-                .as_ptr()
-                .and_then(|pointer| self.heap.get(GcRef::new(pointer)))
-                .is_some_and(|object| matches!(object.kind, ObjectKind::Native(_)))
-        });
-        self.frame_jit.slots[index].legacy_safe = Some(safe);
-        safe
-    }
-
-    pub(crate) fn mark_frame_legacy_refused(&mut self, function: GcRef) {
-        let Some(ObjectKind::Function(object)) = self.heap.get(function).map(|object| &object.kind)
-        else {
-            return;
-        };
-        let slot = object.jit_slot();
-        if let Some(entry) = usize::try_from(slot)
-            .ok()
-            .and_then(|slot| slot.checked_sub(1))
-            .and_then(|index| self.frame_jit.slots.get_mut(index))
-            && entry.function == function
-        {
-            entry.legacy_refused = true;
+            FrameOutcome::Interpret => Some(Ok(None)),
         }
     }
 
@@ -717,46 +868,21 @@ impl VM {
         self.frame_jit.prepared_generation = prepared + 1;
     }
 
-    fn global_by_name(&mut self, name: &str) -> Value {
-        if name.is_empty() {
-            return Value::null();
-        }
-        self.sync_current_function_globals();
-        self.flush_stale_globals();
-        self.globals.get(name).copied().unwrap_or_else(Value::null)
-    }
-
     fn promote_loop(&mut self, function: GcRef, ip: u32) -> bool {
+        self.poll_frame_jobs();
         let Some(index) = self.frame_slot(function) else {
             return false;
         };
         let slot = &mut self.frame_jit.slots[index];
-        let position = match slot.osr.iter().position(|entry| entry.ip == ip) {
-            Some(position) => position,
-            None => {
-                slot.osr.push(OsrEntry {
-                    ip,
-                    state: EntryState::Pending,
-                    legacy_tried: false,
-                    optimized: false,
-                    budget: ExitBudget::default(),
-                });
-                slot.osr.len() - 1
-            }
-        };
+        let position = slot.osr_position(ip);
         let entry = &mut slot.osr[position];
-        if entry.optimized {
-            return matches!(entry.state, EntryState::Ready(_));
-        }
-        if matches!(entry.state, EntryState::Refused) {
-            return false;
+        if entry.optimized || matches!(entry.state, EntryState::Refused) {
+            return entry.opt_installed && matches!(entry.state, EntryState::Ready(_));
         }
         entry.optimized = true;
-        let Some(install) = self.install_frame_code(index, Some(ip), true) else {
-            return false;
-        };
-        self.frame_jit.slots[index].osr[position].state = EntryState::Ready(install);
-        true
+        self.request_frame_code(index, FrameTarget::Loop(ip), true);
+        let entry = &self.frame_jit.slots[index].osr[position];
+        entry.opt_installed && matches!(entry.state, EntryState::Ready(_))
     }
 
     fn promote_call(&mut self, function: GcRef) {
@@ -764,29 +890,11 @@ impl VM {
             return;
         };
         let slot = &mut self.frame_jit.slots[index];
-        let EntryState::Ready(old) = slot.call else {
-            return;
-        };
-        if slot.call_optimized {
+        if !matches!(slot.call, EntryState::Ready(_)) || slot.call_optimized {
             return;
         }
         slot.call_optimized = true;
-        let Some(install) = self.install_frame_code(index, None, true) else {
-            return;
-        };
-        self.frame_jit.slots[index].call = EntryState::Ready(install);
-        for slot in &mut self.frame_jit.slots {
-            for block in &mut slot.blocks {
-                let sites = (block[3] as usize).saturating_sub(FrameData::HEADER_WORDS)
-                    / FrameData::SITE_WORDS;
-                for site in 0..sites {
-                    let entry = FrameData::HEADER_WORDS + site * FrameData::SITE_WORDS + 2;
-                    if block.get(entry) == Some(&(old.entry as u64)) {
-                        block[entry] = 0;
-                    }
-                }
-            }
-        }
+        self.request_frame_code(index, FrameTarget::Call, true);
     }
 
     fn refresh_frame_context(&mut self) {
@@ -959,22 +1067,28 @@ pub unsafe extern "C" fn aelys_frame_call(
     if vm.ensure_function_verified(function).is_err() {
         return interpret(context_ref);
     }
+    vm.poll_frame_jobs();
     let Some(index) = vm.frame_slot(function) else {
         return interpret(context_ref);
     };
+    let excuse = |context: &mut FrameJitContext, vm: &mut VM| {
+        vm.frame_jit.excused_exit = true;
+        interpret(context)
+    };
+    if let EntryState::Pending = vm.frame_jit.slots[index].call {
+        match vm.request_frame_code(index, FrameTarget::Call, false) {
+            Submitted::Queued => {
+                vm.frame_jit.slots[index].call = EntryState::Compiling;
+                return excuse(context_ref, vm);
+            }
+            Submitted::Busy => return excuse(context_ref, vm),
+            Submitted::Applied => {}
+        }
+    }
     let install = match vm.frame_jit.slots[index].call {
         EntryState::Ready(install) => install,
         EntryState::Refused => return interpret(context_ref),
-        EntryState::Pending => match vm.install_frame_code(index, None, false) {
-            Some(install) => {
-                vm.frame_jit.slots[index].call = EntryState::Ready(install);
-                install
-            }
-            None => {
-                vm.frame_jit.slots[index].call = EntryState::Refused;
-                return interpret(context_ref);
-            }
-        },
+        EntryState::Pending | EntryState::Compiling => return excuse(context_ref, vm),
     };
     let window_end = window as u64 + u64::from(install.registers) * 8;
     if window_end > context_ref.registers_end || context_ref.depth == 0 {

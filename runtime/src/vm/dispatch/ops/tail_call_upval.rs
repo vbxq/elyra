@@ -196,7 +196,6 @@ pub(crate) fn execute(
         vm.registers.resize(required_registers, Value::null());
     }
 
-    vm.reset_frame_jit_metadata(state.frame_index);
     let frame = &mut vm.frames[state.frame_index];
     frame.function = function;
     frame.ip = 0;

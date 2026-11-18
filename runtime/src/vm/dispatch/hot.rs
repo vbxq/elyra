@@ -293,27 +293,12 @@ impl VM {
             .is_some_and(|frame| frame.jit_quiet_ip == target)
     }
 
-    fn jit_loops_settled(&self, function: GcRef) -> bool {
-        if self.frame_jit_active() {
-            return false;
-        }
-        self.jit_ignores(function)
-            || self.frames.last().is_some_and(|frame| {
-                frame.jit_backedge_compiled
-                    || (frame.jit_backedges_initialized
-                        && frame.jit_backedge_base >= crate::JIT_TIER1_BACKEDGE_THRESHOLD)
-            })
+    fn jit_loops_settled(&self) -> bool {
+        !self.frame_jit_active()
     }
 
     fn jit_ignores(&self, function: GcRef) -> bool {
-        if self.frame_jit_active() {
-            return self.frame_jit_interprets(function);
-        }
-        let unsupported = matches!(
-            self.heap.get(function).map(|object| &object.kind),
-            Some(ObjectKind::Function(target)) if target.function.jit_unsupported_struct
-        );
-        unsupported || self.jit_refused.get(&function).is_some()
+        !self.frame_jit_active() || self.frame_jit_interprets(function)
     }
 
     fn hot_schemas(&self, function: GcRef) -> Option<Arc<FunctionSchemas>> {
@@ -690,7 +675,7 @@ impl VM {
                 match loops_stay {
                     Some(settled) => settled,
                     None => {
-                        let settled = self.jit_loops_settled(function);
+                        let settled = self.jit_loops_settled();
                         loops_stay = Some(settled);
                         settled
                     }
@@ -1315,7 +1300,7 @@ impl VM {
                     if switch {
                         self.sync_current_function_globals();
                     }
-                    self.drop_top_frame();
+                    self.frames.pop();
                     changed = true;
                     let frame = &self.frames[depth - 2];
                     let mapping = frame.global_mapping_id;

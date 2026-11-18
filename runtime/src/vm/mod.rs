@@ -46,7 +46,7 @@ pub use aelys_bytecode::{
 pub use args::{VmArgsError, VmArgsParsed, parse_vm_args};
 pub use builtins::{builtin_type, register_builtins};
 pub use config::{VmConfig, VmConfigError};
-pub use control::{ExecutionControl, ExecutionStats, InterruptHandle, call_jit_global};
+pub use control::{ExecutionControl, ExecutionStats, InterruptHandle};
 pub use core::{MAX_FRAMES, MAX_REGISTERS, PreludeScope, StepResult, VM};
 pub use frame::CallFrame;
 pub use gc::GcPauseStats;

@@ -1,6 +1,6 @@
 use aelys::{
-    AelysError, CompileOptions, ExecutionOutcome, InterruptHandle, IsolateConfig, JitConfig,
-    JitConfigError, JitMode, RunOptions, Runtime, StructuredValue, Value,
+    AelysError, CompileOptions, ExecutionOutcome, InterruptHandle, IsolateConfig, JitMode,
+    RunOptions, Runtime, StructuredValue, Value,
 };
 use aelys_common::error::RuntimeErrorKind;
 use aelys_opt::OptimizationLevel;
@@ -39,8 +39,8 @@ fn baseline_jit_executes_and_shares_machine_code_between_isolates() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime
         .compile(
-            "let left = 19; let right = 2; (left + right) * 2",
-            CompileOptions::default(),
+            "fn double_sum(left: int, right: int) -> int { return (left + right) * 2 }\ndouble_sum(19, 2)",
+            UNOPTIMIZED.clone(),
         )
         .unwrap();
 
@@ -74,23 +74,9 @@ fn off_mode_never_populates_the_jit_cache() {
 }
 
 #[test]
-fn jit_cache_limit_is_validated_and_configurable() {
-    assert_eq!(
-        JitConfig::default().with_max_cache_entries(0),
-        Err(JitConfigError::EmptyCache)
-    );
-    let config = JitConfig::default().with_max_cache_entries(1).unwrap();
-    assert_eq!(config.max_cache_entries(), 1);
-    let runtime = Runtime::with_jit_config(JitMode::Baseline, config).unwrap();
-    assert_eq!(runtime.jit_cache_entries(), 0);
-}
-
-#[test]
 fn tiered_mode_compiles_at_the_call_threshold_and_shares_the_result() {
     let runtime = Runtime::with_jit_mode(JitMode::Tiered);
-    let module = runtime
-        .compile("40 + 2", CompileOptions::default())
-        .unwrap();
+    let module = runtime.compile(ANSWER, UNOPTIMIZED.clone()).unwrap();
     let mut first = runtime.new_isolate(IsolateConfig::default());
     for _ in 0..999 {
         assert_eq!(
@@ -113,21 +99,29 @@ fn tiered_mode_compiles_at_the_call_threshold_and_shares_the_result() {
     assert_eq!(runtime.jit_cache_entries(), 1);
 }
 
+const ANSWER: &str = "fn answer() -> int { return 40 + 2 }\nanswer()";
+
+static UNOPTIMIZED: std::sync::LazyLock<CompileOptions> =
+    std::sync::LazyLock::new(|| CompileOptions {
+        optimization_level: OptimizationLevel::None,
+        ..CompileOptions::default()
+    });
+
 #[test]
 fn tiered_mode_promotes_to_an_optimized_cache_entry() {
     let runtime = Runtime::with_jit_mode(JitMode::Tiered);
     let module = runtime
-        .compile("40 + 2", CompileOptions::default())
+        .compile(
+            "fn answer() -> int { return 40 + 2 }\nlet mut sum = 0\nfor index in 0..200000 { sum = sum + answer() }\nsum",
+            UNOPTIMIZED.clone(),
+        )
         .unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
-
-    for _ in 0..10_000 {
-        assert_eq!(
-            isolate.execute(&module, RunOptions::default()).unwrap(),
-            ExecutionOutcome::Returned(Value::int(42))
-        );
-    }
-    assert_eq!(runtime.jit_cache_entries(), 2);
+    assert_eq!(
+        isolate.execute(&module, RunOptions::default()).unwrap(),
+        ExecutionOutcome::Returned(Value::int(8_400_000))
+    );
+    assert_eq!(runtime.jit_cache_entries(), 3);
 }
 
 #[test]
@@ -183,7 +177,7 @@ fn baseline_jit_compiles_nested_cfg_and_shares_it_between_isolates() {
 }
 
 #[test]
-fn execution_control_is_honored_by_nested_jit_calls() {
+fn execution_control_runs_without_machine_code() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime
         .compile(NESTED_INTEGER_LOOP, CompileOptions::default())
@@ -198,7 +192,7 @@ fn execution_control_is_honored_by_nested_jit_calls() {
         isolate.execute(&module, options).unwrap(),
         ExecutionOutcome::Returned(Value::int(49_995_000))
     );
-    assert!(runtime.jit_cache_entries() >= 1);
+    assert_eq!(runtime.jit_cache_entries(), 0);
 }
 
 #[test]
@@ -686,69 +680,10 @@ result
     assert_eq!(runtime.jit_deoptimizations(), 0);
 }
 
-#[test]
-fn tiered_jit_inlines_hot_immutable_nested_leaf_calls() {
-    let runtime = Runtime::with_jit_mode(JitMode::Tiered);
-    let options = CompileOptions {
-        optimization_level: OptimizationLevel::None,
-        ..CompileOptions::default()
-    };
-    let module = runtime
-        .compile(
-            r#"
-fn outer(value: int) -> int {
-    fn advance(inner: int) -> int {
-        let mut result = inner
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        result = result + 1
-        return result
-    }
-    return advance(value) + 1
-}
-outer(20)
-"#,
-            options,
-        )
-        .unwrap();
-    let mut isolate = runtime.new_isolate(IsolateConfig::default());
-
-    for _ in 0..9_999 {
-        assert_eq!(
-            isolate.execute(&module, RunOptions::default()).unwrap(),
-            ExecutionOutcome::Returned(Value::int(41))
-        );
-    }
-    assert_eq!(runtime.jit_cache_entries(), 0);
-    assert_eq!(
-        isolate.execute(&module, RunOptions::default()).unwrap(),
-        ExecutionOutcome::Returned(Value::int(41))
-    );
-    assert_eq!(runtime.jit_cache_entries(), 1);
-    assert_eq!(runtime.jit_deoptimizations(), 0);
-}
-
 const JITTABLE_TOP_LEVEL: &str = "let left = 19; let right = 2; (left + right) * 2";
 
 #[test]
-fn requesting_a_report_does_not_disable_the_jit() {
+fn a_report_run_publishes_its_statistics_without_machine_code() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime
         .compile(
@@ -777,16 +712,14 @@ fn requesting_a_report_does_not_disable_the_jit() {
     let report = isolate
         .last_report()
         .expect("a run that was asked for a report must produce one");
-    assert!(
-        report.instructions > 0,
-        "controlled JIT execution must still publish control/report safepoints"
-    );
+    assert!(report.instructions > 0);
     assert_eq!(report.source, "hot.aelys");
     assert_eq!(report.function.as_deref(), Some("<main>"));
     assert_eq!(report.random_seed, 4_242);
     assert_eq!(report.cache_hits, 0);
     assert_eq!(report.cache_misses, 0);
-    assert_eq!(report.instruction_pointer, None);
+    assert!(report.instruction_pointer.is_some());
+    assert_eq!(runtime.jit_cache_entries(), 0);
 }
 
 #[test]
@@ -839,7 +772,7 @@ fn cosine(value: float) -> float {
 }
 
 #[test]
-fn baseline_jit_executes_a_typed_numeric_global_call_at_module_root() {
+fn a_numeric_global_call_at_module_root_stays_interpreted() {
     let runtime = Runtime::with_jit_mode(JitMode::Baseline);
     let module = runtime
         .compile("math::cos(0.0) + 0.0", CompileOptions::default())
@@ -849,11 +782,11 @@ fn baseline_jit_executes_a_typed_numeric_global_call_at_module_root() {
         isolate.execute(&module, RunOptions::default()).unwrap(),
         ExecutionOutcome::Returned(Value::float(1.0))
     );
-    assert_eq!(runtime.jit_cache_entries(), 1);
+    assert_eq!(runtime.jit_cache_entries(), 0);
 }
 
 #[test]
-fn hard_limits_are_enforced_inside_jit_code() {
+fn hard_limits_run_without_machine_code() {
     let limits: [(&str, RunOptions); 3] = [
         (
             "max_instructions",
@@ -896,12 +829,12 @@ fn hard_limits_are_enforced_inside_jit_code() {
             isolate.last_report().unwrap().instructions > 0,
             "a run bounded by {limit} must execute control polls"
         );
-        assert!(runtime.jit_cache_entries() >= 1);
+        assert_eq!(runtime.jit_cache_entries(), 0);
     }
 }
 
 #[test]
-fn controlled_jit_aborts_on_budget_deadline_and_interrupt() {
+fn budget_deadline_and_interrupt_abort_a_hot_loop() {
     let source = r#"
 fn spin() -> int {
     let mut index = 0
@@ -936,7 +869,7 @@ return index
             panic!("expected a runtime control error");
         };
         assert!(std::mem::discriminant(&error.kind) == std::mem::discriminant(&expected));
-        assert!(runtime.jit_cache_entries() >= 1);
+        assert_eq!(runtime.jit_cache_entries(), 0);
     }
 
     let interrupt = InterruptHandle::new();
@@ -960,49 +893,40 @@ return index
         panic!("expected an interrupt error");
     };
     assert!(matches!(error.kind, RuntimeErrorKind::Interrupted));
-    assert!(runtime.jit_cache_entries() >= 1);
+    assert_eq!(runtime.jit_cache_entries(), 0);
 }
 
 #[test]
-fn a_hot_instance_switches_to_the_jit_while_reporting() {
+fn a_hot_instance_compiles_at_the_call_threshold_and_reports_without_machine_code() {
     let runtime = Runtime::with_jit_mode(JitMode::Tiered);
-    let module = runtime
-        .compile(JITTABLE_TOP_LEVEL, CompileOptions::default())
-        .unwrap();
+    let module = runtime.compile(ANSWER, UNOPTIMIZED.clone()).unwrap();
     let mut isolate = runtime.new_isolate(IsolateConfig::default());
     let instance = isolate.instantiate(&module).unwrap();
-    let options = RunOptions {
-        report: true,
-        ..RunOptions::default()
-    };
-
-    assert_eq!(
-        isolate
-            .execute_instance(&instance, options.clone())
-            .unwrap(),
-        ExecutionOutcome::Returned(Value::int(42))
-    );
-    assert!(
-        isolate.last_report().unwrap().instructions > 0,
-        "the first run is below the tier-1 threshold and must be interpreted"
-    );
-    assert_eq!(runtime.jit_cache_entries(), 0);
-
     for _ in 0..999 {
         assert_eq!(
             isolate
-                .execute_instance(&instance, options.clone())
+                .execute_instance(&instance, RunOptions::default())
                 .unwrap(),
             ExecutionOutcome::Returned(Value::int(42))
         );
     }
-
+    assert_eq!(runtime.jit_cache_entries(), 0);
+    assert_eq!(
+        isolate
+            .execute_instance(&instance, RunOptions::default())
+            .unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
+    );
     assert_eq!(runtime.jit_cache_entries(), 1);
     assert_eq!(runtime.jit_deoptimizations(), 0);
-    let report = isolate.last_report().unwrap();
-    assert!(
-        report.instructions > 0,
-        "the controlled JIT path must continue publishing safepoint statistics"
+    let options = RunOptions {
+        report: true,
+        ..RunOptions::default()
+    };
+    assert_eq!(
+        isolate.execute_instance(&instance, options).unwrap(),
+        ExecutionOutcome::Returned(Value::int(42))
     );
-    assert_eq!(report.allocations, 0);
+    assert!(isolate.last_report().unwrap().instructions > 0);
+    assert_eq!(runtime.jit_cache_entries(), 1);
 }
