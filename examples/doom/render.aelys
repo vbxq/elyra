@@ -1552,8 +1552,7 @@ fn render_node(n: int) {
     }
 }
 
-// the span loop keeps its shifts and masks in parameters: literals there measured 2% more instructions per frame
-fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: int, s16: int, m63: int, m4032: int) {
+fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int) {
     let mut distance = 0
     let mut xstep = 0
     let mut ystep = 0
@@ -1581,7 +1580,7 @@ fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int, s10: i
     let mut yf = yfrac
     let row = y * 320
     for d in (row + x1)..=(row + x2) {
-        out[d] = cmrow[flat[((yf >> s10) & m4032) + ((xf >> s16) & m63)]]
+        out[d] = cmrow[flat[((yf >> 10) & 4032) + ((xf >> 16) & 63)]]
         xf += xstep
         yf += ystep
     }
@@ -1628,11 +1627,11 @@ fn draw_planes() {
             prev_b = b2
             if t1 == t2 and b1 == b2 { continue }
             while t1 < t2 and t1 <= b1 {
-                map_plane(fb, plane_flat, t1, spanstart[t1], x - 1, 10, 16, 63, 4032)
+                map_plane(fb, plane_flat, t1, spanstart[t1], x - 1)
                 t1++
             }
             while b1 > b2 and b1 >= t1 {
-                map_plane(fb, plane_flat, b1, spanstart[b1], x - 1, 10, 16, 63, 4032)
+                map_plane(fb, plane_flat, b1, spanstart[b1], x - 1)
                 b1--
             }
             while t2 < t1 and t2 <= b2 {
