@@ -5,7 +5,7 @@ pub fn module_scoped_global(module: &str, name: &str) -> String {
     format!("{MODULE_GLOBAL_PREFIX}{module}::{name}")
 }
 
-// the hint rides in the same string as the name, so it is split off before the name is quoted
+// the hint rides in the name string, so it is split off before the name is quoted
 pub fn undefined_variable_message(name: &str) -> String {
     match name.split_once("\n\nhint: ") {
         Some((name, hint)) => format!(

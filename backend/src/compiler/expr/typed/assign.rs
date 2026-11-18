@@ -103,7 +103,7 @@ impl Compiler {
             }
             // For assignments to user-defined globals, use raw index without translation
             let resolved = self.resolve_global_name(name);
-            // an imported variable is read from its module's own slot, so it is written there too
+            // an imported variable is read from its module's slot, so it is written there too
             let target = if aelys_sema::is_module_scoped_global(resolved) {
                 resolved.to_string()
             } else {

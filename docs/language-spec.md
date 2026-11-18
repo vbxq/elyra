@@ -710,7 +710,7 @@ A whole-module import without an alias also binds the module's exports by their
 bare names. Two such imports may export the same name: `needs std::fs` next to
 `needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
 both fine. Only an unqualified use of the shared name is refused, at the use, with
-E0410 `symbol 'size' is exported by multiple modules: bytes, fs`. A name imported
+E0445 `symbol 'size' is exported by multiple modules: bytes, fs`. A name imported
 by name with `needs size from std::bytes` wins over the whole-module imports, and
 two `needs size from ...` lines naming different modules are E0410 at the second
 line.
@@ -773,7 +773,7 @@ that each declare `v` hold two variables, and a file that imports one of them an
 also declares its own `v` holds a third, which shadows the import. An imported
 variable, read bare or as `module::v`, reads the declaring module's slot, so it
 always shows the module's current value. Assigning to a bare imported `pub let
-mut` writes the module's variable; assigning to an imported `pub let` is E0203
+mut` writes the module's variable; assigning to an imported `pub let` is E0446
 `cannot assign to 'v': it is an immutable variable of the module that declares
 it`, and `module::v = ...` is not an assignment target.
 
@@ -2386,7 +2386,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 |------|------|---------|
 | E0201 | UndefinedVariable | no such name in scope |
 | E0202 | VariableAlreadyDefined | a name is declared twice in one scope |
-| E0203 | AssignToImmutable | assignment to a binding without `mut`, an imported `pub let` included |
+| E0203 | AssignToImmutable | assignment to a binding without `mut` |
 | E0204 | TooManyConstants | the constant pool limit is exceeded |
 | E0205 | TooManyRegisters | the register limit is exceeded |
 | E0206 | TooManyArguments | the argument limit is exceeded |
@@ -2497,7 +2497,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0407 | TypeNotExportable | a nominal value or a generic `pub fn` cannot cross a module boundary |
 | E0408 | NativeChecksumMismatch | the native module checksum does not match |
 | E0409 | NativeVersionMismatch | the native module version does not match |
-| E0410 | SymbolConflict | two declarations of one name reach one file, or an unqualified use of a name two whole-module imports bind |
+| E0410 | SymbolConflict | two declarations of one name reach one file |
 | E0411 | ModulePathSeparator | a module path uses the wrong separator |
 | E0412 | PrivateFieldAccess | a private field is read or written outside its owner module |
 | E0413 | PrivateFieldConstruction | a private field is named in a literal or pattern outside its owner module |
@@ -2529,3 +2529,5 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0442 | UnorderedSpecialization | two impls of one trait for one type are equally specific |
 | E0443 | AmbiguousSpecialization | a call lies where two incomparable impls both apply |
 | E0444 | SpecializationLimit | more impls apply to one call than selection will weigh |
+| E0445 | AmbiguousImport | an unqualified use of a name two whole-module imports both bind |
+| E0446 | AssignToImmutableImport | an assignment to an imported `pub let` |

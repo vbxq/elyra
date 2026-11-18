@@ -171,8 +171,7 @@ impl ModuleLoader {
             .unwrap_or(false)
     }
 
-    // an alias or a bare import is a spelling local to one importer, so the global it reads
-    // is the defining module's own slot, never a name another importer may rebind
+    // an import spelling is local to one importer, so it reads the defining module's own slot
     pub(crate) fn import_renames(
         &self,
         needs: &aelys_syntax::NeedsStmt,

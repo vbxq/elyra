@@ -21,8 +21,7 @@ pub struct ImportedTypes {
     pub immutable_imports: BTreeSet<String>,
 }
 
-// the names a module's own code reads beyond its globals, so a body carried out of it is
-// checked and compiled against them and never against the importer's
+// a body carried out of its module is checked and compiled against these, never the importer's
 #[derive(Debug, Clone, Default)]
 pub struct ModuleScope {
     pub module_aliases: std::collections::HashSet<String>,

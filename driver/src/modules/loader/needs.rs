@@ -5,6 +5,13 @@ use aelys_modules::resolution::ModuleResolution;
 use aelys_syntax::{ImportKind, NeedsStmt};
 use std::path::PathBuf;
 
+type FallbackResolution = (
+    ModuleResolution,
+    Option<PathBuf>,
+    Vec<String>,
+    Option<String>,
+);
+
 impl ModuleLoader {
     pub(crate) fn get_load_result(&self, needs: &NeedsStmt) -> LoadResult {
         match &needs.kind {
@@ -38,12 +45,7 @@ impl ModuleLoader {
         &self,
         module_path: &[String],
         needs: &NeedsStmt,
-    ) -> Result<(
-        ModuleResolution,
-        Option<PathBuf>,
-        Vec<String>,
-        Option<String>,
-    )> {
+    ) -> Result<FallbackResolution> {
         if let Ok((resolution, root)) = self.resolve_rooted(module_path) {
             return Ok((resolution, root, module_path.to_vec(), None));
         }

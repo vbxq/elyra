@@ -1277,8 +1277,7 @@ impl TypeInference {
         let type_table = &self.type_table;
         let mut errors = Vec::new();
         for stmt in stmts.iter_mut() {
-            // a body carried from its defining module reads that module's nominals, which the
-            // importer may never have named
+            // a carried body reads its own module's nominals, which the importer may never name
             let carried = stmt
                 .definition_module
                 .as_ref()

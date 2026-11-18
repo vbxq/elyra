@@ -179,8 +179,7 @@ pub fn select_exported_nominals(
     let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
     let exported_names: HashSet<String> = exported.types.nominal_names().into_iter().collect();
 
-    // a type an imported signature returns is reachable though never named, and its own
-    // methods travel with it
+    // a type an imported signature reaches is usable though never named, methods included
     let mut signature_seed = HashSet::new();
     for name in &wanted {
         if let Some(ty) = exported.globals.get(*name) {

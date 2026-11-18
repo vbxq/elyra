@@ -222,7 +222,7 @@ impl VM {
     }
 
     pub fn alloc_function(&mut self, mut func: super::Function) -> Result<GcRef, RuntimeError> {
-        self.materialize_schema_ids(&mut func);
+        self.materialize_schema_ids(&mut func)?;
         let mut required = u64::try_from(Heap::estimate_function_size(&func)).unwrap_or(u64::MAX);
         for constant in &func.constants {
             if let aelys_bytecode::Constant::String(string) = constant {
@@ -247,7 +247,10 @@ impl VM {
         self.alloc_object_without_collection(obj)
     }
 
-    fn materialize_schema_ids(&mut self, function: &mut super::Function) {
+    fn materialize_schema_ids(
+        &mut self,
+        function: &mut super::Function,
+    ) -> Result<(), RuntimeError> {
         let mut ids = Vec::with_capacity(function.struct_schemas.len());
         for schema in &function.struct_schemas {
             let key = struct_identity(schema, function);
@@ -257,12 +260,18 @@ impl VM {
         let mut enum_ids = Vec::with_capacity(function.enum_schemas.len());
         for schema in &function.enum_schemas {
             let key = enum_identity(schema, function);
-            enum_ids.push(self.intern_enum_schema(key, schema));
+            let id = self.intern_enum_schema(key, schema).ok_or_else(|| {
+                self.runtime_error(RuntimeErrorKind::InvalidBytecode(
+                    "more distinct enum schemas than a u16 enum id can name".to_string(),
+                ))
+            })?;
+            enum_ids.push(id);
         }
         function.enum_ids = enum_ids;
         for nested in &mut function.nested_functions {
-            self.materialize_schema_ids(nested);
+            self.materialize_schema_ids(nested)?;
         }
+        Ok(())
     }
 
     fn intern_schema(&mut self, key: StructIdentity, schema: &StructSchema) -> SchemaId {
@@ -280,14 +289,11 @@ impl VM {
         id
     }
 
-    fn intern_enum_schema(&mut self, key: EnumIdentity, schema: &EnumSchema) -> u16 {
+    fn intern_enum_schema(&mut self, key: EnumIdentity, schema: &EnumSchema) -> Option<u16> {
         if let Some(id) = self.enum_index.get(&key) {
-            return *id;
+            return Some(*id);
         }
-        // an id past u16 would alias another enum, so the overflow slot never matches a test
-        let Ok(id) = u16::try_from(self.enum_registry.len()) else {
-            return u16::MAX;
-        };
+        let id = u16::try_from(self.enum_registry.len()).ok()?;
         self.enum_registry.push(
             schema
                 .variants
@@ -296,7 +302,7 @@ impl VM {
                 .collect(),
         );
         self.enum_index.insert(key, id);
-        id
+        Some(id)
     }
 
     pub fn alloc_native(
@@ -458,17 +464,18 @@ pub(crate) struct StructIdentity {
     fields: Box<[(String, CanonicalDescriptor)]>,
 }
 
+type VariantFields = Box<[(Option<String>, CanonicalDescriptor)]>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EnumIdentity {
     nominal: NominalIdentity,
     name: String,
-    variants: Box<[(String, Box<[(Option<String>, CanonicalDescriptor)]>)]>,
+    variants: Box<[(String, VariantFields)]>,
 }
 
 const CANONICAL_DEPTH: usize = 64;
 
-// a local schema index means nothing outside the function that carries it, so nested
-// struct and enum references are keyed by their definition identity instead
+// a local schema index means nothing outside its function, so nesting keys on definition identity
 fn canonical(
     descriptor: &TypeDescriptor,
     function: &super::Function,

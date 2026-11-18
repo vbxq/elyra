@@ -5,7 +5,7 @@ impl Compiler {
     /// Use for function calls to direct imports.
     pub fn get_or_create_global_index(&mut self, name: &str) -> u32 {
         let actual_name = self.resolve_global_name(name).to_string();
-        // callers record the spelling they were given, which the layout no longer holds
+        // callers record the spelling they were given, which the layout does not hold
         if actual_name != name {
             self.accessed_globals.insert(actual_name.clone());
         }

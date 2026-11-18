@@ -101,8 +101,7 @@ pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
     }
 }
 
-// a bare name two whole-module imports both bring in names neither, so only a use of it
-// is refused; a name imported by name always wins over the whole-module ones
+// a bare name two whole-module imports share is refused only at a use; a named import wins
 #[derive(Debug, Default)]
 pub struct BareImports {
     bare: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,

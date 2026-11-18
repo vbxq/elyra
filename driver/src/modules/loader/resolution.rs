@@ -57,8 +57,7 @@ impl ModuleLoader {
             .map(|(resolution, _)| resolution)
     }
 
-    // the root a module was found under names it, so one dotted path seen from two importers
-    // is two modules exactly when it is two files
+    // the search root is part of the module key: one dotted path is two modules iff two files
     pub(crate) fn resolve_rooted(
         &self,
         module_path: &[String],

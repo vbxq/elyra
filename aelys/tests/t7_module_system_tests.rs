@@ -406,7 +406,7 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
         "bare.aelys",
         "needs std::fs\nneeds std::bytes\nlet b = bytes::alloc(4)\nsize(b)\n",
     );
-    assert!(bare.contains("E0410"), "{bare}");
+    assert!(bare.contains("E0445"), "{bare}");
     assert!(bare.contains("'size'"), "{bare}");
     assert!(
         bare.contains("bare.aelys:4:1"),
@@ -449,10 +449,10 @@ fn user_modules_sharing_a_name_clash_only_on_a_bare_use() {
         120
     );
     let error = run_err(&dir, "bare.aelys", "needs wad\nneeds gfx\ninit()\n");
-    assert!(error.contains("E0410"), "{error}");
+    assert!(error.contains("E0445"), "{error}");
     let nested = run_err(&dir, "nested.aelys", "needs both\nboth::go()\n");
     assert!(
-        nested.contains("E0410") && nested.contains("both.aelys:4:"),
+        nested.contains("E0445") && nested.contains("both.aelys:4:"),
         "{nested}"
     );
 }
@@ -627,7 +627,7 @@ fn an_imported_variable_is_the_declaring_module_slot_for_reads_and_writes() {
         "both bumps land in alpha's own v"
     );
     let fixed = run_err(&dir, "fixed.aelys", "needs cst\nSCALE = 3\nSCALE\n");
-    assert!(fixed.contains("E0203"), "{fixed}");
+    assert!(fixed.contains("E0446"), "{fixed}");
     assert_eq!(
         run_int(
             &dir,
