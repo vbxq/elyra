@@ -107,10 +107,10 @@ impl NativeFunctionImpl {
                     .map_err(|_| vm.runtime_error(RuntimeErrorKind::NativePanic))?
             }
             NativeFunctionImpl::Foreign { function, result } => {
-                let mut native_args = Vec::with_capacity(args.len());
-                for arg in args {
-                    native_args.push(unsafe { std::mem::transmute::<Value, AelysValue>(*arg) });
-                }
+                // value and aelys value are both transparent over the same u64
+                let native_args = unsafe {
+                    std::slice::from_raw_parts(args.as_ptr().cast::<AelysValue>(), args.len())
+                };
                 let mut out = aelys_native::value_null();
                 let mut context = RuntimeNativeContext {
                     magic: NATIVE_CONTEXT_MAGIC,

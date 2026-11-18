@@ -53,4 +53,14 @@ impl VM {
             })?;
         func.call(self, args)
     }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn unregistered_native(&self, native: GcRef) -> RuntimeError {
+        let name = match self.heap.get(native).map(|object| &object.kind) {
+            Some(super::super::ObjectKind::Native(native)) => native.name.clone(),
+            _ => String::new(),
+        };
+        self.runtime_error(RuntimeErrorKind::UndefinedVariable(name))
+    }
 }
