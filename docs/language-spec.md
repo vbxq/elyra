@@ -195,7 +195,9 @@ let g: fn(int) -> int = f
 ```
 
 A function type is written `fn(T, ...) -> R`, with the parameter types and no
-parameter names. `function` is not a type: `let f: function`, `fn f(g: function)`
+parameter names. A parameter of aggregate type written `mut T` is a `mut`
+parameter, which is part of the type (see [Mutable Parameters](#mutable-parameters)).
+`function` is not a type: `let f: function`, `fn f(g: function)`
 and `fn f() -> function` are each E0372 `unknown type 'function'`.
 
 ### Type Inference
@@ -371,21 +373,38 @@ grow(fixed)                 // ✗ error[E0323]: cannot pass `fixed` to the `mut
 grow(fixed.clone())         // ✓ fixed is unchanged
 ```
 
-A function type does not record which parameters are `mut`, so the rule
-follows the function value as far as the compiler can see it. An immutable
-`let` bound directly to a named function or a lambda (`let h = grow`,
-`let g = fn(mut v: Vec<int>) { ... }`, `let h2 = h`) keeps the `mut`
-parameters of that function, including when captured. Any other call through a
-function value (a function-typed parameter or field, a `let mut` binding, the
-result of a call) treats every aggregate or generic argument as passed to a
-`mut` parameter, so the argument must have a mutable root or be a clone:
+A `mut` parameter of aggregate type is part of the function's type. `grow`
+has type `fn(mut Vec<int>) -> unit`, a lambda `fn(mut v: Vec<int>) { ... }` has
+the same type, and the annotation `fn(mut T, U) -> R` writes it. `fn(mut S) -> R`
+and `fn(S) -> R` are different types: neither is accepted where the other is
+expected (E0301, with a help line naming the `mut`). An unannotated function
+parameter, as `f` in `fn apply(f, s) { f(s) }`, takes the type of the function
+passed to it, `mut` included; like its other parameter types it is fixed by the
+call sites, so passing it both a `fn(S)` and a `fn(mut S)` is E0301.
+
+`mut` on a parameter whose type is a scalar (`int`, a sized integer, `float`,
+`bool`, `string`, `unit`) only rebinds a local copy, which no caller can see, so
+it is not part of the type: `fn(mut x: int) -> int` has type `fn(int) -> int`.
+
+A call through a function value checks the `mut` positions of its type exactly
+like a direct call: an argument at a `mut` position must have a mutable root or
+be a clone, and the other positions accept any argument. This holds for a
+function-typed parameter or field, a `let` or `let mut` binding, an element of a
+`Vec` or array, a captured value and the result of a call.
 
 ```rust
-fn apply(f: fn(Vec<int>), v: Vec<int>) { f(v) }      // ✗ error[E0323]: cannot pass `v` to a call through a function value
-fn apply(f: fn(Vec<int>), mut v: Vec<int>) { f(v) }  // ✓ callers pass a mutable root
+fn show(v: Vec<int>) { println(v.len()) }
+fn apply(f: fn(Vec<int>) -> unit, v: Vec<int>) { f(v) }                 // ✓ no mut position
+apply(show, fixed)                                                     // ✓
+apply(grow, shared)                                                    // ✗ error[E0301]: expected fn(Vec<int>) -> unit, found fn(mut Vec<int>) -> unit
+fn grow_all(f: fn(mut Vec<int>) -> unit, v: Vec<int>) { f(v) }         // ✗ error[E0323]: cannot pass `v` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
+fn grow_all(f: fn(mut Vec<int>) -> unit, mut v: Vec<int>) { f(v) }     // ✓ callers pass a mutable root
 let h = grow
-h(fixed)                                            // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter `v`
+h(fixed)                                                               // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
 ```
+
+The callbacks of the built-in collection, `Option` and `Result` methods (`map`,
+`filter`, `fold`, `and_then`, ...) accept either form.
 
 Works with lambdas too:
 
@@ -1454,6 +1473,9 @@ container or a field (`v.push(a)`, `S { inner: a }`) always shares it and is
 never an error. A function that receives an immutable parameter can still
 return it, and the caller may bind the result mutably: a returned value is a
 fresh binding, and this route is not tracked.
+A call through a function value applies the same rule at the `mut` positions
+of the function's type (`fn(mut P) -> R`), see
+[Mutable Parameters](#mutable-parameters).
 
 The iteration variable of `for p in ps` and the bindings of a `match` pattern
 are views of the iterated or matched place: `let mut q = p` inside the loop is
