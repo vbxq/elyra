@@ -107,8 +107,13 @@ impl VM {
             ObjectKind::Enum(value) => {
                 let fields = render_all(&value.slots);
                 let variant = schemas
-                    .and_then(|schemas| schemas.enums.get(usize::from(value.enum_id)))
-                    .filter(|schema| schema.schema_id == value.enum_id)
+                    .and_then(|schemas| {
+                        let index = schemas
+                            .enum_runtime_ids
+                            .iter()
+                            .position(|id| *id == value.enum_id)?;
+                        schemas.enums.get(index)
+                    })
                     .and_then(|schema| {
                         let variant = schema.variants.get(usize::from(value.variant_id))?;
                         let named = variant.fields.len() == fields.len()
