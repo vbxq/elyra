@@ -2,6 +2,7 @@ pub(super) mod array;
 mod assign;
 mod binary;
 mod call;
+pub(crate) use call::user_method_receiver;
 mod collections;
 mod if_expr;
 mod lambda;

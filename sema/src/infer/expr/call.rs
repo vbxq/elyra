@@ -1666,7 +1666,7 @@ fn substitute_generic_params(
     }
 }
 
-fn user_method_receiver(ty: &InferType) -> bool {
+pub(crate) fn user_method_receiver(ty: &InferType) -> bool {
     matches!(
         ty,
         InferType::Struct(_) | InferType::Applied { .. } | InferType::Param(_)

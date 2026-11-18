@@ -232,6 +232,9 @@ impl TypeInference {
         if matches!(typed_object.ty, InferType::Var(_)) {
             return Some(self.infer_inferred_sum_method_call(callee, typed_object, member, args));
         }
+        if super::expr::user_method_receiver(&typed_object.ty) {
+            return None;
+        }
         let (family, value_type, error_type) = match &typed_object.ty {
             InferType::Option(value) => ("Option", value.as_ref().clone(), None),
             InferType::Result(value, error) => (
