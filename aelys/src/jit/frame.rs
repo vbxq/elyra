@@ -740,10 +740,11 @@ fn dirty_registers(
             if !region.effects.contains_key(&successor) {
                 continue;
             }
+            let first_visit = !dirty.contains_key(&successor);
             let entry = dirty.entry(successor).or_default();
             let mut merged = *entry;
             merged.union(&out);
-            if merged != *entry {
+            if first_visit || merged != *entry {
                 *entry = merged;
                 work.push(successor);
             }
