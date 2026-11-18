@@ -1,6 +1,6 @@
 use aelys_sema::{
-    InferType, TypedExpr, TypedExprKind, TypedFmtStringPart, TypedMatchArmBody, TypedPatternKind,
-    TypedStmtKind,
+    InferType, TypedExpr, TypedExprKind, TypedFmtStringPart, TypedMatchArm, TypedMatchArmBody,
+    TypedPatternKind, TypedStmtKind,
 };
 use aelys_syntax::{BinaryOp, UnaryOp};
 
@@ -85,20 +85,31 @@ pub(crate) fn has_effects(expr: &TypedExpr) -> bool {
             expr: inner,
             target,
         } => has_effects(inner) || !cast_cannot_trap(&inner.ty, target),
-        TypedExprKind::Match { scrutinee, arms } => has_effects(scrutinee)
-            || !arms.last().is_some_and(|arm| {
-                arm.guard.is_none()
-                    && matches!(
-                        arm.pattern.kind,
-                        TypedPatternKind::Binding(_) | TypedPatternKind::Wildcard
-                    )
-            }) || arms.iter().any(|arm| {
-            arm.guard.as_ref().is_some_and(has_effects) || match &arm.body {
-                TypedMatchArmBody::Expr(e) => has_effects(e),
-                TypedMatchArmBody::Block(stmts) => stmts.iter().any(
-                    |stmt| !matches!(&stmt.kind, TypedStmtKind::Expression(e) if !has_effects(e)),
-                ),
-            }
+        TypedExprKind::Match { scrutinee, arms } => {
+            has_effects(scrutinee) || !ends_irrefutably(arms) || arms.iter().any(arm_has_effects)
+        }
+    }
+}
+
+fn ends_irrefutably(arms: &[TypedMatchArm]) -> bool {
+    arms.last().is_some_and(|arm| {
+        arm.guard.is_none()
+            && matches!(
+                arm.pattern.kind,
+                TypedPatternKind::Binding(_) | TypedPatternKind::Wildcard
+            )
+    })
+}
+
+fn arm_has_effects(arm: &TypedMatchArm) -> bool {
+    if arm.guard.as_ref().is_some_and(has_effects) {
+        return true;
+    }
+    match &arm.body {
+        TypedMatchArmBody::Expr(e) => has_effects(e),
+        TypedMatchArmBody::Block(stmts) => stmts.iter().any(|stmt| match &stmt.kind {
+            TypedStmtKind::Expression(e) => has_effects(e),
+            _ => true,
         }),
     }
 }

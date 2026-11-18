@@ -1,6 +1,6 @@
 use super::super::OptimizationStats;
 use crate::passes::effects::has_effects;
-use aelys_sema::{TypedFunction, TypedStmt, TypedStmtKind};
+use aelys_sema::{InferType, TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
 
 pub fn eliminate_unused_in_block(
@@ -12,21 +12,29 @@ pub fn eliminate_unused_in_block(
         eliminate_unused_in_stmt(stmt, used_vars, stats);
     }
 
-    stmts.retain(|stmt| {
-        if let TypedStmtKind::Let {
+    let removable = |stmt: &TypedStmt| match &stmt.kind {
+        TypedStmtKind::Let {
             name,
             initializer,
             is_pub,
             ..
-        } = &stmt.kind
-        {
-            if *is_pub {
-                return true;
-            } // keep pub exports
-            if !used_vars.contains(name) && !has_effects(initializer) {
-                stats.dead_code_eliminated += 1;
-                return false;
-            }
+        } => !*is_pub && !used_vars.contains(name) && !has_effects(initializer),
+        _ => false,
+    };
+
+    // the last statement is the value of a script or a block, so a dropped trailing let leaves unit
+    if let Some(last) = stmts.last_mut()
+        && removable(last)
+    {
+        stats.dead_code_eliminated += 1;
+        let unit = TypedExpr::new(TypedExprKind::Unit, InferType::Unit, last.span);
+        last.kind = TypedStmtKind::Expression(unit);
+    }
+
+    stmts.retain(|stmt| {
+        if removable(stmt) {
+            stats.dead_code_eliminated += 1;
+            return false;
         }
         true
     });

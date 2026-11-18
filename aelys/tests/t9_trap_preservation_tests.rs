@@ -129,3 +129,19 @@ println("ok {v[0]} {x}")
 "#;
     assert_every_level(source, &["ok 1 9"], Some(0));
 }
+
+#[test]
+fn removing_an_unused_trailing_let_keeps_the_script_value_unit() {
+    let source = "let mut g = 0\ng = 9\nlet last = 1\n";
+    for (level, outcome) in t9_support::LEVELS
+        .iter()
+        .zip(t9_support::at_every_level(source))
+    {
+        assert_eq!(
+            outcome.stdout, "()\n",
+            "{level}\nstderr: {}",
+            outcome.stderr
+        );
+        assert_eq!(outcome.code, Some(0), "{level}\nstderr: {}", outcome.stderr);
+    }
+}
