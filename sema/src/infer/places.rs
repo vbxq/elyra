@@ -152,7 +152,9 @@ impl TypeInference {
         let residuals = std::mem::take(&mut self.alias_residuals);
         for residual in residuals {
             let ty = subst.apply(&residual.ty);
-            if !self.is_mutable_aggregate(&ty) {
+            let generic =
+                residual.site == AliasSite::FunctionValue && matches!(ty, InferType::Param(_));
+            if !generic && !self.is_mutable_aggregate(&ty) {
                 continue;
             }
             self.errors.push(TypeError {

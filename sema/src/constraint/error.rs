@@ -119,6 +119,7 @@ pub enum AliasSite {
     Binding,
     Parameter(String),
     Assignment(String),
+    FunctionValue,
 }
 
 #[derive(Debug, Clone)]
@@ -957,6 +958,9 @@ impl TypeError {
                     AliasSite::Assignment(target) => {
                         format!("assign `{place}` to the mutable binding `{target}`")
                     }
+                    AliasSite::FunctionValue => format!(
+                        "pass `{place}` to a call through a function value, whose parameter may be `mut`"
+                    ),
                 };
                 write!(
                     f,

@@ -13,6 +13,8 @@ impl TypeEnv {
             explicit_dynamic_locals: vec![HashSet::new()],
             constant_values: vec![HashMap::new()],
             capture_constants: HashMap::new(),
+            function_value_params: vec![HashMap::new()],
+            capture_function_value_params: HashMap::new(),
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
@@ -71,6 +73,18 @@ impl TypeEnv {
             }
         }
 
+        let mut capture_function_value_params = self.capture_function_value_params.clone();
+        for (scope, params) in self.locals.iter().zip(&self.function_value_params) {
+            for name in scope.keys() {
+                match params.get(name) {
+                    Some(value) => {
+                        capture_function_value_params.insert(name.clone(), value.clone())
+                    }
+                    None => capture_function_value_params.remove(name),
+                };
+            }
+        }
+
         for lengths in &self.known_collection_lengths {
             known_collection_lengths
                 .extend(lengths.iter().map(|(name, length)| (name.clone(), *length)));
@@ -102,6 +116,8 @@ impl TypeEnv {
             explicit_dynamic_locals: vec![HashSet::new()],
             constant_values: vec![HashMap::new()],
             capture_constants,
+            function_value_params: vec![HashMap::new()],
+            capture_function_value_params,
             captures: all_visible,
             borrow_captures: all_borrowed,
             capture_mutability,

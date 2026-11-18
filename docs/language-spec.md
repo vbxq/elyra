@@ -362,6 +362,22 @@ grow(fixed)                 // ✗ error[E0323]: cannot pass `fixed` to the `mut
 grow(fixed.clone())         // ✓ fixed is unchanged
 ```
 
+A function type does not record which parameters are `mut`, so the rule
+follows the function value as far as the compiler can see it. An immutable
+`let` bound directly to a named function or a lambda (`let h = grow`,
+`let g = fn(mut v: Vec<int>) { ... }`, `let h2 = h`) keeps the `mut`
+parameters of that function, including when captured. Any other call through a
+function value (a function-typed parameter or field, a `let mut` binding, the
+result of a call) treats every aggregate or generic argument as passed to a
+`mut` parameter, so the argument must have a mutable root or be a clone:
+
+```rust
+fn apply(f: fn(Vec<int>), v: Vec<int>) { f(v) }      // ✗ error[E0323]: cannot pass `v` to a call through a function value
+fn apply(f: fn(Vec<int>), mut v: Vec<int>) { f(v) }  // ✓ callers pass a mutable root
+let h = grow
+h(fixed)                                            // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter `v`
+```
+
 Works with lambdas too:
 
 ```rust

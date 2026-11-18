@@ -15,6 +15,8 @@ impl TypeEnv {
         self.explicit_dynamic_locals
             .push(std::collections::HashSet::new());
         self.constant_values.push(std::collections::HashMap::new());
+        self.function_value_params
+            .push(std::collections::HashMap::new());
     }
 
     pub fn pop_scope(&mut self) {
@@ -27,6 +29,7 @@ impl TypeEnv {
             self.known_collection_lengths.pop();
             self.explicit_dynamic_locals.pop();
             self.constant_values.pop();
+            self.function_value_params.pop();
         }
     }
 
@@ -157,6 +160,29 @@ impl TypeEnv {
         None
     }
 
+    pub fn define_function_value(&mut self, name: &str, mutable_params: Vec<Option<String>>) {
+        if let Some(params) = self.function_value_params.last_mut() {
+            params.insert(name.to_string(), mutable_params);
+        }
+    }
+
+    pub fn lookup_function_value(&self, name: &str) -> Option<&Vec<Option<String>>> {
+        for (scope, params) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.function_value_params.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return params.get(name);
+            }
+        }
+        if self.captures.contains_key(name) {
+            return self.capture_function_value_params.get(name);
+        }
+        None
+    }
+
     pub fn mark_read_only(&mut self, name: &str) {
         if let Some(scope) = self.read_only_bindings.last_mut() {
             scope.insert(name.to_string());
@@ -190,6 +216,9 @@ impl TypeEnv {
             }
             if let Some(constants) = self.constant_values.last_mut() {
                 constants.remove(&name);
+            }
+            if let Some(params) = self.function_value_params.last_mut() {
+                params.remove(&name);
             }
             if let Some(origins) = self.explicit_dynamic_locals.last_mut() {
                 if explicit_dynamic {

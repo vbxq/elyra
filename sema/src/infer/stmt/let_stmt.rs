@@ -126,6 +126,9 @@ impl TypeInference {
                 self.env.define_local(name.to_string(), var_type.clone());
             }
             self.env.set_mutable(name, mutable);
+            if !mutable && let Some(params) = self.function_value_mutable_params(initializer) {
+                self.env.define_function_value(name, params);
+            }
             if read_only_alias {
                 self.env.mark_read_only(name);
             }

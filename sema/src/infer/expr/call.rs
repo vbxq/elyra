@@ -176,7 +176,12 @@ impl TypeInference {
                 self.infer_call_argument(arg, expected)
             })
             .collect();
-        let mutable_params = self.mutable_params_for_call(callee, &typed_callee);
+        let through_value = self.calls_through_function_value(callee, &typed_callee);
+        let (mutable_params, through_value) = match through_value {
+            None => (self.mutable_params_for_call(callee, &typed_callee), false),
+            Some(Some(known)) => (known, false),
+            Some(None) => (Vec::new(), true),
+        };
         let receiver_offset = usize::from(matches!(
             &typed_callee.kind,
             TypedExprKind::StructMethod {
@@ -190,6 +195,12 @@ impl TypeInference {
                     arg,
                     &typed_arg.ty,
                     crate::constraint::AliasSite::Parameter(parameter.to_string()),
+                );
+            } else if through_value {
+                self.record_mutable_alias(
+                    arg,
+                    &typed_arg.ty,
+                    crate::constraint::AliasSite::FunctionValue,
                 );
             }
         }
