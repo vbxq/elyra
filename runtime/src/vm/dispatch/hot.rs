@@ -700,6 +700,56 @@ impl VM {
             let b = ((instr >> 8) & 0xff) as usize;
             let c = (instr & 0xff) as usize;
             let next = ip + 1;
+            macro_rules! enter {
+                ($target:expr, $window:expr) => {{
+                    let target: HotCall = $target;
+                    let window = $window;
+                    if !ends_safely(target.code, target.code_len) {
+                        leave!();
+                    }
+                    let callee_base = base + window + 1;
+                    match callee_base.checked_add((target.registers as usize).max(REGISTER_WINDOW))
+                    {
+                        Some(end) if end <= self.registers.len() => {}
+                        _ => leave!(),
+                    }
+                    let depth = self.frames.len();
+                    if depth >= MAX_FRAMES {
+                        leave!();
+                    }
+                    let caller = &mut self.frames[depth - 1];
+                    caller.ip = next;
+                    if target.mapping != caller.global_mapping_id {
+                        self.sync_current_function_globals();
+                        self.switch_globals(target.mapping, target.function);
+                    }
+                    let mut frame = CallFrame::with_upvalues(
+                        target.function,
+                        callee_base,
+                        a as u16,
+                        target.code,
+                        target.code_len,
+                        target.constants,
+                        target.constants_len,
+                        target.upvalues,
+                        target.upvalues_len,
+                        target.registers,
+                    );
+                    frame.global_mapping_id = target.mapping;
+                    self.frames.push(frame);
+                    changed = true;
+                    base = callee_base;
+                    function = target.function;
+                    code = target.code;
+                    code_len = target.code_len;
+                    constants = target.constants;
+                    constants_len = target.constants_len;
+                    regs = unsafe { self.registers.as_mut_ptr().add(base) };
+                    schemas = None;
+                    loops_stay = (!JIT).then_some(true);
+                    0
+                }};
+            }
             ip = match (instr >> 24) as u8 {
                 MOVE => {
                     set!(a, get!(b));
@@ -1206,58 +1256,9 @@ impl VM {
                     *or_leave!(structure.slots.get_mut(field)) = value;
                     next + 2
                 }
-                op @ (CALL_GLOBAL | CALL_CACHED | CALL) => {
-                    let (target, window) = match op {
-                        CALL_GLOBAL => (self.hot_global_callee::<JIT>(b, c), a),
-                        CALL_CACHED => (self.hot_value_callee(get!(b), c), a),
-                        _ => (self.hot_call_callee::<JIT>(get!(b), c), b),
-                    };
-                    let target = or_leave!(target);
-                    if !ends_safely(target.code, target.code_len) {
-                        leave!();
-                    }
-                    let callee_base = base + window + 1;
-                    match callee_base.checked_add((target.registers as usize).max(REGISTER_WINDOW))
-                    {
-                        Some(end) if end <= self.registers.len() => {}
-                        _ => leave!(),
-                    }
-                    let depth = self.frames.len();
-                    if depth >= MAX_FRAMES {
-                        leave!();
-                    }
-                    let caller = &mut self.frames[depth - 1];
-                    caller.ip = next;
-                    if target.mapping != caller.global_mapping_id {
-                        self.sync_current_function_globals();
-                        self.switch_globals(target.mapping, target.function);
-                    }
-                    let mut frame = CallFrame::with_upvalues(
-                        target.function,
-                        callee_base,
-                        a as u16,
-                        target.code,
-                        target.code_len,
-                        target.constants,
-                        target.constants_len,
-                        target.upvalues,
-                        target.upvalues_len,
-                        target.registers,
-                    );
-                    frame.global_mapping_id = target.mapping;
-                    self.frames.push(frame);
-                    changed = true;
-                    base = callee_base;
-                    function = target.function;
-                    code = target.code;
-                    code_len = target.code_len;
-                    constants = target.constants;
-                    constants_len = target.constants_len;
-                    regs = unsafe { self.registers.as_mut_ptr().add(base) };
-                    schemas = None;
-                    loops_stay = (!JIT).then_some(true);
-                    0
-                }
+                CALL_GLOBAL => enter!(or_leave!(self.hot_global_callee::<JIT>(b, c)), a),
+                CALL_CACHED => enter!(or_leave!(self.hot_value_callee(get!(b), c)), a),
+                CALL => enter!(or_leave!(self.hot_call_callee::<JIT>(get!(b), c)), b),
                 NEG => {
                     let value = get!(b);
                     if value.is_int() {
