@@ -1,5 +1,5 @@
 use super::TypeInference;
-use crate::constraint::{Constraint, ConstraintReason};
+use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind, TypedMatchArmBody, TypedStmt, TypedStmtKind};
 use crate::types::InferType;
 use aelys_syntax::{BinaryOp, Span, UnaryOp};
@@ -12,6 +12,32 @@ impl TypeInference {
         right: &TypedExpr,
         span: Span,
     ) -> InferType {
+        if left.ty.is_integer() && right.ty.is_integer() && left.ty != right.ty {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MixedIntegerOperands {
+                    op: op.to_string(),
+                    left: left.ty.clone(),
+                    right: right.ty.clone(),
+                    operand: match &right.kind {
+                        TypedExprKind::Identifier(name) => name.clone(),
+                        _ => "(right operand)".to_string(),
+                    },
+                },
+                span,
+                reason: ConstraintReason::BinaryOp { op: op.to_string() },
+            });
+            return match op {
+                BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::Eq
+                | BinaryOp::Ne => InferType::Bool,
+                _ => left.ty.clone(),
+            };
+        }
+        let settled = (left.ty == right.ty && (left.ty.is_integer() || left.ty.is_float()))
+            .then(|| left.ty.clone());
         match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                 let left_invalid = self.reject_dynamic_arithmetic(left, span, op);
@@ -57,7 +83,7 @@ impl TypeInference {
                     ));
                 }
 
-                result_type
+                settled.unwrap_or(result_type)
             }
 
             BinaryOp::Mod => {
@@ -93,7 +119,7 @@ impl TypeInference {
                     ConstraintReason::BinaryOp { op: op.to_string() },
                 ));
 
-                result_type
+                settled.unwrap_or(result_type)
             }
 
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
@@ -223,7 +249,7 @@ impl TypeInference {
                     ConstraintReason::BitwiseOp { op: op.to_string() },
                 ));
 
-                result_type
+                settled.filter(InferType::is_integer).unwrap_or(result_type)
             }
         }
     }

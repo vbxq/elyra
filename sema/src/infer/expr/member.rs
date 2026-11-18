@@ -1306,7 +1306,7 @@ impl TypeInference {
         let typed_fields: Vec<(String, Box<TypedExpr>)> = fields
             .iter()
             .filter_map(|f| {
-                let typed_value = self.infer_expr(&f.value);
+                let mut typed_value = self.infer_expr(&f.value);
 
                 if !seen.insert(f.name.clone()) {
                     self.errors.push(TypeError {
@@ -1336,6 +1336,7 @@ impl TypeInference {
                         }
                         field_offsets.push(field_def.ordinal);
                         let field_ty = field_def.ty.substitute_params(&substitutions);
+                        self.fit_int_literal(&mut typed_value, &field_ty);
                         let reason = ConstraintReason::TypeAnnotation {
                             var_name: format!("{}.{}", name, f.name),
                         };
@@ -1433,7 +1434,7 @@ impl TypeInference {
         span: Span,
     ) -> (TypedExprKind, InferType) {
         let typed_object = self.infer_expr(object);
-        let typed_value = self.infer_expr(value);
+        let mut typed_value = self.infer_expr(value);
         let Some(root) = root_binding_name(object) else {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::ImmutableStructField {
@@ -1519,6 +1520,7 @@ impl TypeInference {
                 }
                 _ => (0, 0, InferType::Poison),
             };
+        self.fit_int_literal(&mut typed_value, &field_ty);
         if !self.reject_dynamic(
             &typed_value.ty,
             &field_ty,

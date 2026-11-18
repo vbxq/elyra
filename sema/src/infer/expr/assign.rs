@@ -12,9 +12,10 @@ impl TypeInference {
         span: Span,
     ) -> (TypedExprKind, InferType) {
         self.check_write_binding(name, span, "assignment");
-        let typed_value = self.infer_expr(value);
+        let mut typed_value = self.infer_expr(value);
 
         if let Some(var_type) = self.env.lookup(name).cloned() {
+            self.fit_int_literal(&mut typed_value, &var_type);
             self.env.invalidate_collection_length(name);
             let reason = ConstraintReason::Assignment {
                 var_name: name.to_string(),

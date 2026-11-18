@@ -1488,12 +1488,28 @@ impl TypeInference {
                 TypedPatternKind::Binding(name.clone())
             }
             PatternKind::Int(value) => {
-                self.constraints.push(Constraint::equal(
-                    ty.clone(),
-                    InferType::I64,
-                    pattern.span,
-                    ConstraintReason::Comparison,
-                ));
+                if ty.is_sized_integer() {
+                    if !InferType::int_fits(*value, ty) {
+                        self.errors.push(TypeError {
+                            kind: TypeErrorKind::Mismatch {
+                                expected: ty.clone(),
+                                found: InferType::I64,
+                            },
+                            span: pattern.span,
+                            reason: ConstraintReason::IntLiteralOverflow {
+                                value: *value,
+                                target: ty.clone(),
+                            },
+                        });
+                    }
+                } else {
+                    self.constraints.push(Constraint::equal(
+                        ty.clone(),
+                        InferType::I64,
+                        pattern.span,
+                        ConstraintReason::Comparison,
+                    ));
+                }
                 TypedPatternKind::Int(*value)
             }
             PatternKind::String(value) => {

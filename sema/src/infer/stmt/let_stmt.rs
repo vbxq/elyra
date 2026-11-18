@@ -23,25 +23,8 @@ impl TypeInference {
             .map(|ann| self.type_from_annotation(ann));
 
         let var_type = if let Some(decl) = &declared_type {
-            if let TypedExprKind::Int(value) = &typed_init.kind
-                && decl.is_integer()
-                && *decl != InferType::I64
-            {
-                if InferType::int_fits(*value, decl) {
-                    typed_init.ty = decl.clone();
-                } else {
-                    self.errors.push(TypeError {
-                        kind: TypeErrorKind::Mismatch {
-                            expected: decl.clone(),
-                            found: InferType::I64,
-                        },
-                        span: typed_init.span,
-                        reason: ConstraintReason::IntLiteralOverflow {
-                            value: *value,
-                            target: decl.clone(),
-                        },
-                    });
-                }
+            self.fit_int_literal(&mut typed_init, decl);
+            if typed_init.ty == *decl && matches!(typed_init.kind, TypedExprKind::Int(_)) {
             } else if let TypedExprKind::Float(value) = &typed_init.kind
                 && *decl == InferType::F32
             {

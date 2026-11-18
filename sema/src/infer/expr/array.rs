@@ -312,7 +312,8 @@ impl TypeInference {
             );
         }
 
-        if !self.reject_dynamic(
+        if typed_index.ty.is_integer() {
+        } else if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
             index.span,
@@ -428,9 +429,16 @@ impl TypeInference {
         }
         let typed_object = self.infer_expr(object);
         let typed_index = self.infer_expr(index);
-        let typed_value = self.infer_expr(value);
+        let mut typed_value = self.infer_expr(value);
+        if let InferType::Array(inner) | InferType::FixedArray(inner, _) | InferType::Vec(inner) =
+            &typed_object.ty
+        {
+            let inner = inner.as_ref().clone();
+            self.fit_int_literal(&mut typed_value, &inner);
+        }
 
-        if !self.reject_dynamic(
+        if typed_index.ty.is_integer() {
+        } else if !self.reject_dynamic(
             &typed_index.ty,
             &InferType::I64,
             index.span,

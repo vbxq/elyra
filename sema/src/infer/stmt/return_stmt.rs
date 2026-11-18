@@ -9,6 +9,9 @@ impl TypeInference {
         let mut typed_expr = expr.map(|e| self.infer_expr(e));
 
         if let Some(expected_ret) = self.current_return_type().cloned() {
+            if let Some(typed) = typed_expr.as_mut() {
+                self.fit_int_literal(typed, &expected_ret);
+            }
             if let Some(value) = typed_expr.as_ref().and_then(|typed| {
                 if let crate::typed_ast::TypedExprKind::Float(value) = &typed.kind {
                     Some(*value)

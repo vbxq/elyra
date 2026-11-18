@@ -517,6 +517,15 @@ pub enum TypeErrorKind {
     IntegerLiteralOutOfRange {
         value: i64,
     },
+    MixedIntegerOperands {
+        op: String,
+        left: InferType,
+        right: InferType,
+        operand: String,
+    },
+    WideIntegerUnavailable {
+        name: String,
+    },
     EnumLayoutTooLarge {
         enum_name: String,
         item: String,
@@ -1464,6 +1473,25 @@ impl TypeError {
             TypeErrorKind::MangledSymbolCollision { name } => {
                 write!(f, "two instances of '{}' mangle to one symbol", name)
             }
+            TypeErrorKind::MixedIntegerOperands {
+                op,
+                left,
+                right,
+                operand,
+            } => write!(
+                f,
+                "mismatched integer types in '{}': {} and {}\n   = help: convert with `as`, e.g. `{} as {}`",
+                op,
+                left.source_spelling(),
+                right.source_spelling(),
+                operand,
+                left.source_spelling()
+            ),
+            TypeErrorKind::WideIntegerUnavailable { name } => write!(
+                f,
+                "{} is not available: int is a 48-bit integer; use int, or i32/u32 for wrapping arithmetic",
+                name
+            ),
             TypeErrorKind::IntegerLiteralOutOfRange { value } => write!(
                 f,
                 "integer literal '{}' exceeds 48-bit signed range ({} to {})",
@@ -1738,6 +1766,8 @@ impl TypeErrorKind {
             Self::MonomorphizationLimit { .. } => 345,
             Self::MangledSymbolCollision { .. } => 355,
             Self::IntegerLiteralOutOfRange { .. } => 209,
+            Self::MixedIntegerOperands { .. } => 460,
+            Self::WideIntegerUnavailable { .. } => 461,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,
             Self::GenericArityMismatch { .. } => 357,
