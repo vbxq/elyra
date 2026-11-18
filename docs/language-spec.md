@@ -612,7 +612,10 @@ println(bonus)   // 11
 All branches must have the same type. In expression position an `if` needs an
 `else` (E0101 `expected else`); as the tail of a function whose return type is not
 `unit`, an `if` without `else` can fall through and is E0215 `function can fall
-through without returning int`, never a silent `unit`.
+through without returning int`, never a silent `unit`. A function or closure
+without a return type whose tail is not a value (an `if` without `else`, a `let`,
+a loop) returns `unit`, so `let x: int = f(1)` is E0301; if such a body also
+returns a value with `return`, it can fall through and is E0215.
 
 ### Block expressions
 

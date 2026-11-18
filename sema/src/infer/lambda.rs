@@ -32,7 +32,7 @@ impl TypeInference {
             Some(ann) => {
                 self.type_from_annotation_as(crate::infer::OccurrenceRole::ReturnType, ann)
             }
-            None if body.is_empty() => InferType::Unit,
+            None if !super::functions::body_yields_value(body) => InferType::Unit,
             None => self.type_gen.fresh(),
         };
 
@@ -70,6 +70,14 @@ impl TypeInference {
 
             stmts
         };
+
+        if return_type_ann.is_none()
+            && super::functions::body_yields_value(body)
+            && !super::functions::body_always_returns(body, true)
+        {
+            self.fall_through_residuals
+                .push((return_type.clone(), span, "<lambda>".to_string()));
+        }
 
         if return_type_ann.is_some()
             && !matches!(return_type, InferType::Unit)

@@ -59,3 +59,43 @@ fn u64_ranges_are_checked_against_the_full_int_range() {
         1,
     );
 }
+
+#[test]
+fn an_unannotated_closure_with_a_non_value_tail_returns_unit() {
+    for body in [
+        "if k == 0 { 5 }",
+        "let z = k",
+        "while k < 0 { }",
+    ] {
+        rejected_with(
+            &format!("let f = fn(k: int) {{ {body} }}\nlet x: int = f(1)\nx + 1"),
+            "E0301",
+        );
+        rejected_with(
+            &format!("fn apply(g: fn(int) -> int, v: int) -> int {{ g(v) }}\napply(fn(k: int) {{ {body} }}, 1)"),
+            "E0301",
+        );
+    }
+    int_at_every_level(
+        "let f = fn(k: int) { if k == 0 { 5 } else { 7 } }\nlet g = fn(k: int) { let z = k }\ng(1)\nf(1)",
+        7,
+    );
+}
+
+#[test]
+fn a_value_return_that_can_fall_through_is_e0215() {
+    for source in [
+        "let f = fn(k: int) { if k == 0 { return 5 } }\nlet x: int = f(1)\nx",
+        "fn g(k: int) { if k == 0 { return 5 } }\nlet x: int = g(1)\nx",
+        "fn g(k: int) { for i in 0..3 { if i == k { return i } } }\ng(7)",
+        "let f = fn(k: int) { if k == 0 { 5 } else if k == 1 { 6 } }\nlet x: int = f(1)\nx",
+        "fn g(k: int) { if k == 0 { 5 } else if k == 1 { 6 } }\nlet x: int = g(1)\nx",
+        "fn outer() -> int {\n let f = fn(k: int) { while k > 0 { return k } }\n f(1)\n}\nouter()",
+    ] {
+        rejected_with(source, "E0215");
+    }
+    int_at_every_level(
+        "fn g(k: int) { if k == 0 { return 5 }\n k * 2 }\nlet f = fn(k: int) { if k == 0 { return 1 } else { return 2 } }\ng(4) + f(0)",
+        9,
+    );
+}

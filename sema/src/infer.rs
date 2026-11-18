@@ -201,6 +201,7 @@ pub struct TypeInference {
     match_unit_residuals: Vec<(InferType, Vec<aelys_syntax::Span>)>,
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
+    fall_through_residuals: Vec<(InferType, aelys_syntax::Span, String)>,
     surface_dynamic_spans: HashSet<(usize, usize)>,
     sum_type_residuals: Vec<expr_sum::SumTypeResidual>,
     explicit_dynamic_functions: HashSet<String>,
@@ -405,6 +406,22 @@ impl TypeInference {
                 kind: TypeErrorKind::Mismatch { expected, found },
                 span: residual.span,
                 reason: residual.reason.clone(),
+            });
+        }
+    }
+
+    pub(super) fn validate_fall_through_residuals(&mut self, subst: &crate::unify::Substitution) {
+        for (ty, span, func_name) in std::mem::take(&mut self.fall_through_residuals) {
+            let expected = subst.apply(&ty);
+            if !expected.is_concrete()
+                || matches!(expected, InferType::Unit | InferType::Never | InferType::Dynamic)
+            {
+                continue;
+            }
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::MissingReturnValue { expected },
+                span,
+                reason: ConstraintReason::Return { func_name },
             });
         }
     }

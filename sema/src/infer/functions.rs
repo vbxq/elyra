@@ -157,6 +157,14 @@ impl TypeInference {
             stmts
         };
 
+        if func.return_type.is_none()
+            && body_yields_value(&func.body)
+            && !body_always_returns(&func.body, true)
+        {
+            self.fall_through_residuals
+                .push((return_type.clone(), func.span, func.name.clone()));
+        }
+
         if func.return_type.is_some()
             && !matches!(return_type, InferType::Unit)
             && !body_always_returns(&func.body, true)
@@ -335,7 +343,7 @@ pub(super) fn body_always_returns(stmts: &[Stmt], implicit_tail: bool) -> bool {
     stmt_always_returns(last, implicit_tail)
 }
 
-fn body_yields_value(stmts: &[Stmt]) -> bool {
+pub(super) fn body_yields_value(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_returns_value) || stmts.last().is_some_and(tail_yields_value)
 }
 
