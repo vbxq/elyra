@@ -249,7 +249,7 @@ fn a_selective_import_clash_never_suggests_an_alias() {
         ("nested.aelys", "needs nm\n1\n"),
         (
             "std.aelys",
-            "needs size from std::bytes\nneeds size from std::fs\n1\n",
+            "needs close from std::net\nneeds close from std::fs\n1\n",
         ),
     ] {
         let error = run_err(&dir, file, source);

@@ -19,27 +19,27 @@ fn compile_reports_e0445_for_a_bare_name_two_whole_modules_export() {
     for (case, main, name, owners) in [
         (
             "top",
-            "needs std::fs\nneeds std::bytes\nlet b = bytes::alloc(7)\nprintln(\"{size(b)}\")\n",
-            "size",
-            ["fs", "bytes"],
+            "needs std::fs\nneeds std::net\nlet h = 7\nprintln(\"{close(h)}\")\n",
+            "close",
+            ["fs", "net"],
         ),
         (
             "rev",
-            "needs std::bytes\nneeds std::fs\nlet b = bytes::alloc(7)\nlet n = size(b)\n",
-            "size",
-            ["bytes", "fs"],
+            "needs std::net\nneeds std::fs\nlet h = 7\nlet n = close(h)\n",
+            "close",
+            ["net", "fs"],
         ),
         (
             "fn",
-            "needs std::fs\nneeds std::bytes\nfn f(b: int) -> int {\n    copy(b, 0, b, 0, 1)\n    return 1\n}\nf(1)\n",
-            "copy",
-            ["fs", "bytes"],
+            "needs std::fs\nneeds std::string\nfn f(a: string) -> int {\n    let _ = join(a, a)\n    return 1\n}\nf(\"x\")\n",
+            "join",
+            ["fs", "string"],
         ),
         (
             "value",
-            "needs std::fs\nneeds std::bytes\nlet s = size\n",
-            "size",
-            ["fs", "bytes"],
+            "needs std::fs\nneeds std::net\nlet s = close\n",
+            "close",
+            ["fs", "net"],
         ),
     ] {
         let error = compile_error(case, &[], main);

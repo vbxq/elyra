@@ -93,19 +93,19 @@ fs::close(f).unwrap()
 }
 
 #[test]
-fn fs_read_bytes_negative() {
+fn fs_read_chunk_negative() {
     let code = r#"
 needs std::fs
-match fs::read_bytes(1, -10) { Ok(_) => 0, Err(_) => 1 }
+match fs::read_chunk(1, -10) { Ok(_) => 0, Err(_) => 1 }
 "#;
     assert_aelys_int(code, 1);
 }
 
 #[test]
-fn fs_read_bytes_exceeds_max() {
+fn fs_read_chunk_exceeds_max() {
     let code = r#"
 needs std::fs
-match fs::read_bytes(1, 20000000) { Ok(_) => 0, Err(_) => 1 }
+match fs::read_chunk(1, 20000000) { Ok(_) => 0, Err(_) => 1 }
 "#;
     assert_aelys_int(code, 1);
 }
