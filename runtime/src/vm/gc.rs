@@ -138,7 +138,6 @@ fn thread_cpu_nanos() -> u64 {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: clock_gettime only writes the timespec passed by pointer.
     let status = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
     if status != 0 {
         return 0;
