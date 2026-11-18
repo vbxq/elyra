@@ -176,35 +176,45 @@ impl TypeInference {
                 self.infer_call_argument(arg, expected)
             })
             .collect();
-        let through_value = self.calls_through_function_value(callee, &typed_callee);
-        let (mutable_params, through_value) = match through_value {
-            None => (self.mutable_params_for_call(callee, &typed_callee), false),
-            Some(Some(known)) => (known, false),
-            Some(None) => (Vec::new(), true),
+        let argument_indices = effective_argument_indices(&typed_args);
+        let declared = if self.calls_through_function_value(callee, &typed_callee) {
+            None
+        } else {
+            self.mutable_params_for_call(callee, &typed_callee)
         };
-        let receiver_offset = usize::from(matches!(
-            &typed_callee.kind,
-            TypedExprKind::StructMethod {
-                separator: aelys_syntax::MemberSeparator::Dot,
-                ..
+        match declared {
+            Some(mutable_params) => {
+                let receiver_offset = usize::from(matches!(
+                    &typed_callee.kind,
+                    TypedExprKind::StructMethod {
+                        separator: aelys_syntax::MemberSeparator::Dot,
+                        ..
+                    }
+                ));
+                for (index, (arg, typed_arg)) in args.iter().zip(&typed_args).enumerate() {
+                    if let Some(Some(parameter)) = mutable_params.get(index + receiver_offset) {
+                        self.record_mutable_alias(
+                            arg,
+                            &typed_arg.ty,
+                            crate::constraint::AliasSite::Parameter(parameter.to_string()),
+                        );
+                    }
+                }
             }
-        ));
-        for (index, (arg, typed_arg)) in args.iter().zip(&typed_args).enumerate() {
-            if let Some(Some(parameter)) = mutable_params.get(index + receiver_offset) {
-                self.record_mutable_alias(
-                    arg,
-                    &typed_arg.ty,
-                    crate::constraint::AliasSite::Parameter(parameter.to_string()),
-                );
-            } else if through_value {
-                self.record_mutable_alias(
-                    arg,
-                    &typed_arg.ty,
-                    crate::constraint::AliasSite::FunctionValue,
-                );
+            None => {
+                for (position, index) in argument_indices.iter().enumerate() {
+                    if let (Some(arg), Some(typed_arg)) = (args.get(*index), typed_args.get(*index))
+                    {
+                        self.record_function_value_alias(
+                            arg,
+                            &typed_arg.ty,
+                            &typed_callee.ty,
+                            position,
+                        );
+                    }
+                }
             }
         }
-        let argument_indices = effective_argument_indices(&typed_args);
         self.record_native_obligations(
             &native_obligations,
             &typed_callee.ty,
@@ -285,8 +295,10 @@ impl TypeInference {
                 .iter()
                 .map(|index| typed_args[*index].ty.clone())
                 .collect();
+            let modes = self.fresh_param_modes(arg_types.len());
             let expected_fn_type = InferType::Function {
                 params: arg_types,
+                modes,
                 ret: Box::new(ret.clone()),
             };
 
@@ -878,6 +890,7 @@ impl TypeInference {
         }
         let method_type = InferType::Function {
             params: method.params.clone(),
+            modes: crate::types::ParamModes::from_flags([method.mutable_self]),
             ret: Box::new(method.return_type.clone()),
         };
         let typed_callee = TypedExpr::new(
@@ -938,10 +951,7 @@ impl TypeInference {
         let ty = typed_object.ty.clone();
         let typed_callee = TypedExpr::new(
             TypedExprKind::Identifier(CLONE_BUILTIN.to_string()),
-            InferType::Function {
-                params: vec![ty.clone()],
-                ret: Box::new(ty.clone()),
-            },
+            InferType::function(vec![ty.clone()], ty.clone()),
             callee.span,
         );
         Some((
@@ -980,7 +990,7 @@ impl TypeInference {
             return None;
         }
         let signature = crate::native::function_signature(&format!("string::{member}"))?;
-        let InferType::Function { params, ret } = signature else {
+        let InferType::Function { params, ret, .. } = signature else {
             return None;
         };
         let receiver = params.first()?;
@@ -1031,10 +1041,7 @@ impl TypeInference {
                     member: member.clone(),
                     separator: aelys_syntax::MemberSeparator::Dot,
                 },
-                InferType::Function {
-                    params: vec![InferType::Poison; typed_args.len()],
-                    ret: Box::new(InferType::Poison),
-                },
+                InferType::function(vec![InferType::Poison; typed_args.len()], InferType::Poison),
                 callee.span,
             );
             return Some((
@@ -1077,10 +1084,7 @@ impl TypeInference {
                 member: member.clone(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: expected_args,
-                ret: Box::new(output.clone()),
-            },
+            InferType::function(expected_args, output.clone()),
             callee.span,
         );
         Some((
@@ -1093,7 +1097,7 @@ impl TypeInference {
     }
 
     fn specialize_numeric_signature(&mut self, callee: TypedExpr) -> TypedExpr {
-        let InferType::Function { params, ret } = &callee.ty else {
+        let InferType::Function { params, modes, ret } = &callee.ty else {
             return callee;
         };
         if !params.iter().any(contains_numeric) && !contains_numeric(ret) {
@@ -1112,6 +1116,7 @@ impl TypeInference {
                 .iter()
                 .map(|param| replace_numeric(param, &numeric))
                 .collect(),
+            modes: modes.clone(),
             ret: Box::new(replace_numeric(ret, &numeric)),
         };
         TypedExpr::new(callee.kind, specialized, callee.span)
@@ -1268,6 +1273,7 @@ impl TypeInference {
                     InferType::Vec(Box::new(mapped.clone())),
                     vec![InferType::Function {
                         params: vec![element.clone()],
+                        modes: self.fresh_param_modes(1),
                         ret: Box::new(mapped),
                     }],
                 )
@@ -1276,6 +1282,7 @@ impl TypeInference {
                 InferType::Vec(Box::new(element.clone())),
                 vec![InferType::Function {
                     params: vec![element.clone()],
+                    modes: self.fresh_param_modes(1),
                     ret: Box::new(InferType::Bool),
                 }],
             ),
@@ -1287,6 +1294,7 @@ impl TypeInference {
                         accumulator.clone(),
                         InferType::Function {
                             params: vec![accumulator, element.clone()],
+                            modes: self.fresh_param_modes(2),
                             ret: Box::new(typed_args[0].ty.clone()),
                         },
                     ],
@@ -1322,10 +1330,7 @@ impl TypeInference {
                 member: member.clone(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: expected_args,
-                ret: Box::new(output.clone()),
-            },
+            InferType::function(expected_args, output.clone()),
             callee.span,
         );
         Some((
@@ -1359,10 +1364,7 @@ impl TypeInference {
                 member: member.to_string(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: vec![InferType::Poison; typed_args.len()],
-                ret: Box::new(InferType::Poison),
-            },
+            InferType::function(vec![InferType::Poison; typed_args.len()], InferType::Poison),
             callee.span,
         );
         (
@@ -1394,7 +1396,7 @@ pub(super) fn collect_generic_params(
                 names.push(name.clone());
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_generic_params(param, names, seen);
             }
@@ -1431,7 +1433,8 @@ fn substitute_generic_params(
             .get(name)
             .cloned()
             .unwrap_or_else(|| ty.clone()),
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params
                 .iter()
                 .map(|param| substitute_generic_params(param, substitutions))
@@ -1514,7 +1517,7 @@ fn is_pipeline_source(expr: &Expr) -> bool {
 fn contains_numeric(ty: &InferType) -> bool {
     match ty {
         InferType::Numeric => true,
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_numeric) || contains_numeric(ret)
         }
         InferType::Array(inner)
@@ -1530,7 +1533,8 @@ fn contains_numeric(ty: &InferType) -> bool {
 fn replace_numeric(ty: &InferType, replacement: &InferType) -> InferType {
     match ty {
         InferType::Numeric => replacement.clone(),
-        InferType::Function { params, ret } => InferType::Function {
+        InferType::Function { params, modes, ret } => InferType::Function {
+            modes: modes.clone(),
             params: params
                 .iter()
                 .map(|param| replace_numeric(param, replacement))

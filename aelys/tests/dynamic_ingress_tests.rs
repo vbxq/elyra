@@ -24,6 +24,7 @@ fn module_imports() -> (HashSet<String>, HashSet<String>, HashMap<String, InferT
     signatures.insert(
         "util::helper".to_string(),
         InferType::Function {
+            modes: aelys_sema::types::ParamModes::plain(),
             params: vec![InferType::I64],
             ret: Box::new(InferType::I64),
         },

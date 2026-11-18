@@ -13,8 +13,6 @@ impl TypeEnv {
             explicit_dynamic_locals: vec![HashSet::new()],
             constant_values: vec![HashMap::new()],
             capture_constants: HashMap::new(),
-            function_value_params: vec![HashMap::new()],
-            capture_function_value_params: HashMap::new(),
             binding_origins: vec![HashMap::new()],
             declared_constants: vec![HashSet::new()],
             capture_binding_origins: HashMap::new(),
@@ -76,18 +74,6 @@ impl TypeEnv {
             }
         }
 
-        let mut capture_function_value_params = self.capture_function_value_params.clone();
-        for (scope, params) in self.locals.iter().zip(&self.function_value_params) {
-            for name in scope.keys() {
-                match params.get(name) {
-                    Some(value) => {
-                        capture_function_value_params.insert(name.clone(), value.clone())
-                    }
-                    None => capture_function_value_params.remove(name),
-                };
-            }
-        }
-
         let mut capture_binding_origins = self.capture_binding_origins.clone();
         for (scope, origins) in self.locals.iter().zip(&self.binding_origins) {
             for name in scope.keys() {
@@ -129,8 +115,6 @@ impl TypeEnv {
             explicit_dynamic_locals: vec![HashSet::new()],
             constant_values: vec![HashMap::new()],
             capture_constants,
-            function_value_params: vec![HashMap::new()],
-            capture_function_value_params,
             binding_origins: vec![HashMap::new()],
             declared_constants: vec![HashSet::new()],
             capture_binding_origins,

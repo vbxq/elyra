@@ -78,7 +78,7 @@ fn forbidden_surface_type(ty: &InferType, declared: &HashSet<String>) -> Option<
 fn binds_param(ty: &InferType, declared: &HashSet<String>) -> bool {
     match ty {
         InferType::Param(name) => declared.contains(name),
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(|param| binds_param(param, declared)) || binds_param(ret, declared)
         }
         InferType::Array(inner)

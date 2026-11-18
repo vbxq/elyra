@@ -223,7 +223,7 @@ fn every_standard_native_returns_the_type_sema_gives_it() {
         let exports = register_std_module(&mut vm, module).unwrap();
         for path in exports.native_functions {
             registered.insert(path.clone());
-            let Some(InferType::Function { params, ret }) = function_signature(&path) else {
+            let Some(InferType::Function { params, ret, .. }) = function_signature(&path) else {
                 failures.push(format!(
                     "{path}: registered at runtime but sema has no signature"
                 ));

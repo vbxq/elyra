@@ -529,14 +529,17 @@ impl TypeInference {
                 InferType::Poison,
                 object.span,
             );
+            let modes = self.declared_param_modes(&method.symbol, 0, &method.params);
+            let symbol = method.symbol;
             return (
                 TypedExprKind::StructMethod {
                     object: Box::new(typed_object),
-                    symbol: method.symbol,
+                    symbol,
                     method: member.to_string(),
                     separator,
                 },
                 InferType::Function {
+                    modes,
                     params: method.params,
                     ret: Box::new(method.return_type),
                 },
@@ -568,6 +571,7 @@ impl TypeInference {
                         },
                         InferType::Function {
                             params: method.params.clone(),
+                            modes: self.declared_param_modes(&method.symbol, 0, &method.params),
                             ret: Box::new(method.return_type.clone()),
                         },
                     );
@@ -616,10 +620,7 @@ impl TypeInference {
                     member: member.to_string(),
                     separator,
                 },
-                InferType::Function {
-                    params: Vec::new(),
-                    ret: Box::new(InferType::String),
-                },
+                InferType::function(Vec::new(), InferType::String),
             );
         }
 
@@ -1129,7 +1130,7 @@ impl TypeInference {
                 let reason = ConstraintReason::Return {
                     func_name: member.to_string(),
                 };
-                let params = method
+                let params: Vec<InferType> = method
                     .params
                     .into_iter()
                     .skip(1)
@@ -1137,15 +1138,18 @@ impl TypeInference {
                     .collect();
                 let return_type =
                     self.normalize_projection_types(&method.return_type, _span, &reason);
+                let modes = self.declared_param_modes(&method.symbol, 1, &params);
+                let symbol = method.symbol;
                 return (
                     TypedExprKind::StructMethod {
                         object: Box::new(typed_object),
-                        symbol: method.symbol,
+                        symbol,
                         method: member.to_string(),
                         separator,
                     },
                     InferType::Function {
                         params,
+                        modes,
                         ret: Box::new(return_type),
                     },
                 );
@@ -1990,10 +1994,7 @@ impl TypeInference {
                 method: member.to_string(),
                 separator,
             },
-            InferType::Function {
-                params,
-                ret: Box::new(return_type),
-            },
+            InferType::function(params, return_type),
         )
     }
 }
@@ -2147,10 +2148,10 @@ fn own_params_in_call_order(
     has_self: bool,
     own: &[String],
 ) -> Vec<String> {
-    let callee = InferType::Function {
-        params: params.iter().skip(usize::from(has_self)).cloned().collect(),
-        ret: Box::new(ret.clone()),
-    };
+    let callee = InferType::function(
+        params.iter().skip(usize::from(has_self)).cloned().collect(),
+        ret.clone(),
+    );
     let mut names = Vec::new();
     let mut seen = std::collections::HashSet::new();
     super::call::collect_generic_params(&callee, &mut names, &mut seen);

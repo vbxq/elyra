@@ -3,7 +3,7 @@ mod resolved_type;
 mod type_table;
 mod type_var;
 
-pub use infer_type::InferType;
+pub use infer_type::{InferType, ParamMode, ParamModes, function_annotation_modes};
 pub(crate) use infer_type::{SHADOWED_METHOD_SUFFIX, written_names};
 pub use resolved_type::ResolvedType;
 pub use type_table::{

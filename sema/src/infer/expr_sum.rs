@@ -245,6 +245,7 @@ impl TypeInference {
                     Vec::new()
                 };
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(params.len()),
                     params,
                     ret: Box::new(value_type.clone()),
                 });
@@ -267,6 +268,7 @@ impl TypeInference {
             "map" => {
                 let mapped = self.type_gen.fresh();
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(1),
                     params: vec![value_type.clone()],
                     ret: Box::new(mapped.clone()),
                 });
@@ -281,6 +283,7 @@ impl TypeInference {
             "map_err" if family == "Result" => {
                 let mapped = self.type_gen.fresh();
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(1),
                     params: vec![error_type.clone().unwrap_or(InferType::Dynamic)],
                     ret: Box::new(mapped.clone()),
                 });
@@ -289,6 +292,7 @@ impl TypeInference {
             "and_then" => {
                 let mapped = self.type_gen.fresh();
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(1),
                     params: vec![value_type.clone()],
                     ret: Box::new(match family {
                         "Option" => InferType::Option(Box::new(mapped.clone())),
@@ -310,12 +314,14 @@ impl TypeInference {
                 let mapped = self.type_gen.fresh();
                 if family == "Option" {
                     expected_args.push(InferType::Function {
+                        modes: self.fresh_param_modes(0),
                         params: Vec::new(),
                         ret: Box::new(InferType::Option(Box::new(value_type.clone()))),
                     });
                     InferType::Option(Box::new(value_type.clone()))
                 } else {
                     expected_args.push(InferType::Function {
+                        modes: self.fresh_param_modes(1),
                         params: vec![error_type.clone().unwrap_or(InferType::Dynamic)],
                         ret: Box::new(InferType::Result(
                             Box::new(value_type.clone()),
@@ -378,10 +384,7 @@ impl TypeInference {
                 member: member.clone(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: expected_args,
-                ret: Box::new(output.clone()),
-            },
+            InferType::function(expected_args, output.clone()),
             callee.span,
         );
         self.record_sum_type(format!("{family}::{member}"), output.clone(), callee.span);
@@ -469,6 +472,7 @@ impl TypeInference {
                     _ => Vec::new(),
                 };
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(params.len()),
                     params,
                     ret: Box::new(value.clone()),
                 });
@@ -499,6 +503,7 @@ impl TypeInference {
                 callback = typed_args.first().map(|arg| arg.ty.clone());
                 let mapped_type = self.type_gen.fresh();
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(1),
                     params: vec![value.clone()],
                     ret: Box::new(mapped_type.clone()),
                 });
@@ -512,6 +517,7 @@ impl TypeInference {
                 preferred_family = Some(SumFamily::Result);
                 let mapped_type = self.type_gen.fresh();
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(1),
                     params: vec![error.clone()],
                     ret: Box::new(mapped_type.clone()),
                 });
@@ -523,6 +529,7 @@ impl TypeInference {
             "and_then" => {
                 callback = typed_args.first().map(|arg| arg.ty.clone());
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(1),
                     params: vec![value.clone()],
                     ret: Box::new({
                         let result = self.type_gen.fresh();
@@ -547,6 +554,7 @@ impl TypeInference {
                 };
                 let result = self.type_gen.fresh();
                 expected_args.push(InferType::Function {
+                    modes: self.fresh_param_modes(params.len()),
                     params,
                     ret: Box::new(result.clone()),
                 });
@@ -599,10 +607,7 @@ impl TypeInference {
                 member: member.to_string(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: expected_args,
-                ret: Box::new(output.clone()),
-            },
+            InferType::function(expected_args, output.clone()),
             callee.span,
         );
         if valid_arity {
@@ -650,10 +655,10 @@ impl TypeInference {
                 member: member.to_string(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::Function {
-                params: vec![InferType::Dynamic; typed_args.len()],
-                ret: Box::new(InferType::Dynamic),
-            },
+            InferType::function(
+                vec![InferType::Dynamic; typed_args.len()],
+                InferType::Dynamic,
+            ),
             callee.span,
         );
         (
@@ -798,10 +803,12 @@ impl TypeInference {
                     } else {
                         Vec::new()
                     };
+                    let modes = self.fresh_param_modes(params.len());
                     unify_field(
                         self,
                         callback,
                         &InferType::Function {
+                            modes,
                             params,
                             ret: Box::new(residual.value.clone()),
                         },
@@ -852,10 +859,12 @@ impl TypeInference {
                 unify_field(self, &residual.value, &value_type);
                 let mapped = residual.mapped.clone().unwrap_or(InferType::Dynamic);
                 if let Some(callback) = &residual.callback {
+                    let modes = self.fresh_param_modes(1);
                     unify_field(
                         self,
                         callback,
                         &InferType::Function {
+                            modes,
                             params: vec![value_type.clone()],
                             ret: Box::new(mapped.clone()),
                         },
@@ -878,10 +887,12 @@ impl TypeInference {
                 unify_field(self, &residual.error, &error_type);
                 let mapped = residual.mapped.clone().unwrap_or(InferType::Dynamic);
                 if let Some(callback) = &residual.callback {
+                    let modes = self.fresh_param_modes(1);
                     unify_field(
                         self,
                         callback,
                         &InferType::Function {
+                            modes,
                             params: vec![error_type.clone()],
                             ret: Box::new(mapped.clone()),
                         },
@@ -903,10 +914,12 @@ impl TypeInference {
                     ),
                 };
                 if let Some(callback) = &residual.callback {
+                    let modes = self.fresh_param_modes(1);
                     unify_field(
                         self,
                         callback,
                         &InferType::Function {
+                            modes,
                             params: vec![value_type.clone()],
                             ret: Box::new(expected_callback.clone()),
                         },
@@ -928,10 +941,12 @@ impl TypeInference {
                     ),
                 };
                 if let Some(callback) = &residual.callback {
+                    let modes = self.fresh_param_modes(usize::from(family == SumFamily::Result));
                     unify_field(
                         self,
                         callback,
                         &InferType::Function {
+                            modes,
                             params: if family == SumFamily::Result {
                                 vec![error_type.clone().unwrap_or(InferType::Dynamic)]
                             } else {
@@ -1121,10 +1136,7 @@ impl TypeInference {
         };
         self.record_sum_type(family, output.clone(), callee.span);
 
-        let callee_type = InferType::Function {
-            params: arg_types,
-            ret: Box::new(output.clone()),
-        };
+        let callee_type = InferType::function(arg_types, output.clone());
         let typed_callee = match &callee.kind {
             ExprKind::Identifier(name) => TypedExpr::new(
                 TypedExprKind::Identifier(name.clone()),
@@ -2598,7 +2610,7 @@ fn contains_dynamic_type(ty: &InferType) -> bool {
         | InferType::Vec(inner) => contains_dynamic_type(inner),
         InferType::Result(ok, error) => contains_dynamic_type(ok) || contains_dynamic_type(error),
         InferType::Tuple(elements) => elements.iter().any(contains_dynamic_type),
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(contains_dynamic_type) || contains_dynamic_type(ret)
         }
         _ => false,
@@ -2658,10 +2670,12 @@ fn dynamic_type_mismatch(left: &InferType, right: &InferType) -> bool {
             InferType::Function {
                 params: left_params,
                 ret: left_ret,
+                ..
             },
             InferType::Function {
                 params: right_params,
                 ret: right_ret,
+                ..
             },
         ) => {
             left_params
@@ -2950,7 +2964,7 @@ fn sum_type_is_unresolved(ty: &InferType) -> bool {
 fn type_is_unresolved(ty: &InferType) -> bool {
     match ty {
         InferType::Var(_) | InferType::Dynamic | InferType::UntypedNative(_) => true,
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             params.iter().any(type_is_unresolved) || type_is_unresolved(ret)
         }
         InferType::Array(inner)

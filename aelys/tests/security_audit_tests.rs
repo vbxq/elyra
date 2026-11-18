@@ -610,6 +610,7 @@ fn type_inference_rc_shared() {
     use std::rc::Rc;
     let mut env = TypeEnv::new();
     let fn_type = Rc::new(InferType::Function {
+        modes: aelys_sema::types::ParamModes::plain(),
         params: vec![InferType::I64],
         ret: Box::new(InferType::I64),
     });

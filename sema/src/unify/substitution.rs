@@ -1,10 +1,12 @@
-use crate::types::{InferType, TypeVarId};
+use crate::types::{InferType, ParamMode, ParamModes, TypeVarId};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct Substitution {
     bindings: HashMap<TypeVarId, InferType>,
     param_bindings: HashMap<String, InferType>,
+    mode_bindings: HashMap<TypeVarId, ParamMode>,
+    closed_modes: bool,
 }
 
 impl Substitution {
@@ -12,7 +14,35 @@ impl Substitution {
         Self {
             bindings: HashMap::new(),
             param_bindings: HashMap::new(),
+            mode_bindings: HashMap::new(),
+            closed_modes: false,
         }
+    }
+
+    pub fn bind_mode(&mut self, var: TypeVarId, mode: ParamMode) {
+        if mode != ParamMode::Var(var) {
+            self.mode_bindings.insert(var, mode);
+        }
+    }
+
+    pub fn apply_mode(&self, mode: ParamMode) -> ParamMode {
+        match mode {
+            ParamMode::Var(var) => match self.mode_bindings.get(&var) {
+                Some(bound) => self.apply_mode(*bound),
+                None if self.closed_modes => ParamMode::Plain,
+                None => mode,
+            },
+            other => other,
+        }
+    }
+
+    pub fn apply_modes(&self, modes: &ParamModes) -> ParamModes {
+        modes.map(|mode| self.apply_mode(mode))
+    }
+
+    // once solving is over, a parameter no call or value constrained is a plain one
+    pub fn close_modes(&mut self) {
+        self.closed_modes = true;
     }
 
     pub fn bind(&mut self, var: TypeVarId, ty: InferType) {
@@ -46,8 +76,9 @@ impl Substitution {
                 .param_bindings
                 .get(name)
                 .map_or_else(|| ty.clone(), |bound| self.apply(bound)),
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
                 params: params.iter().map(|p| self.apply(p)).collect(),
+                modes: self.apply_modes(modes),
                 ret: Box::new(self.apply(ret)),
             },
             InferType::Array(inner) => InferType::Array(Box::new(self.apply(inner))),
@@ -122,6 +153,15 @@ impl Substitution {
                 result.param_bindings.insert(name.clone(), ty.clone());
             }
         }
+
+        for (var, mode) in &self.mode_bindings {
+            result.mode_bindings.insert(*var, other.apply_mode(*mode));
+        }
+
+        for (var, mode) in &other.mode_bindings {
+            result.mode_bindings.entry(*var).or_insert(*mode);
+        }
+        result.closed_modes = self.closed_modes || other.closed_modes;
 
         result
     }

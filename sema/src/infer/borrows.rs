@@ -148,67 +148,58 @@ impl TypeInference {
             .unwrap_or_default()
     }
 
+    pub(crate) fn declared_param_modes(
+        &self,
+        symbol: &str,
+        skip: usize,
+        params: &[InferType],
+    ) -> crate::types::ParamModes {
+        crate::types::ParamModes::declared(
+            params,
+            self.function_mutable_params
+                .get(symbol)
+                .into_iter()
+                .flatten()
+                .skip(skip)
+                .map(Option::is_some),
+        )
+    }
+
     pub(super) fn mutable_params_for_call(
         &self,
         callee: &Expr,
         typed_callee: &TypedExpr,
-    ) -> Vec<Option<String>> {
+    ) -> Option<Vec<Option<String>>> {
         if let TypedExprKind::StructMethod { symbol, .. } = &typed_callee.kind
             && let Some(params) = self.function_mutable_params.get(symbol)
         {
-            return params.clone();
+            return Some(params.clone());
         }
-        source_call_path(callee)
-            .and_then(|name| self.function_mutable_params.get(&name).cloned())
-            .unwrap_or_default()
+        source_call_path(callee).and_then(|name| self.function_mutable_params.get(&name).cloned())
     }
 
     pub(super) fn calls_through_function_value(
         &self,
         callee: &Expr,
         typed_callee: &TypedExpr,
-    ) -> Option<Option<Vec<Option<String>>>> {
+    ) -> bool {
         match (&callee.kind, &typed_callee.kind) {
-            (_, TypedExprKind::StructMethod { .. } | TypedExprKind::Member { .. }) => None,
+            (_, TypedExprKind::StructMethod { .. }) => false,
             (ExprKind::Grouping(inner), TypedExprKind::Grouping(typed_inner)) => {
                 self.calls_through_function_value(inner, typed_inner)
             }
-            (ExprKind::Identifier(name), _) => self
-                .env
-                .binds_value(name)
-                .then(|| self.env.lookup_function_value(name).cloned()),
-            (ExprKind::GenericApply { callee, .. }, _) => match source_call_path(callee) {
-                Some(path) => self.env.binds_value(&path).then_some(None),
-                None => Some(None),
-            },
+            (ExprKind::Identifier(name), _) => self.env.binds_value(name),
+            (ExprKind::GenericApply { callee, .. }, _) => {
+                source_call_path(callee).is_none_or(|path| self.env.binds_value(&path))
+            }
             (
                 ExprKind::Member {
                     separator: aelys_syntax::MemberSeparator::Path,
                     ..
                 },
                 _,
-            ) => None,
-            _ => Some(None),
-        }
-    }
-
-    pub(super) fn function_value_mutable_params(
-        &self,
-        initializer: &Expr,
-    ) -> Option<Vec<Option<String>>> {
-        match &initializer.kind {
-            ExprKind::Grouping(inner) => self.function_value_mutable_params(inner),
-            ExprKind::Lambda { params, .. } => Some(
-                params
-                    .iter()
-                    .map(|param| param.mutable.then(|| param.name.clone()))
-                    .collect(),
-            ),
-            ExprKind::Identifier(name) if self.env.binds_value(name) => {
-                self.env.lookup_function_value(name).cloned()
-            }
-            _ => source_call_path(initializer)
-                .and_then(|name| self.function_mutable_params.get(&name).cloned()),
+            ) => false,
+            _ => true,
         }
     }
 

@@ -28,6 +28,7 @@ pub enum InferType {
 
     Function {
         params: Vec<InferType>,
+        modes: ParamModes,
         ret: Box<InferType>,
     },
 
@@ -61,18 +62,92 @@ pub enum InferType {
     Poison,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ParamMode {
+    Plain,
+    Mut,
+    Var(TypeVarId),
+}
+
+// trailing plain modes are trimmed so equal function types compare equal
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ParamModes(Box<[ParamMode]>);
+
+impl ParamModes {
+    pub fn plain() -> Self {
+        Self(Box::default())
+    }
+
+    pub fn from_modes(mut modes: Vec<ParamMode>) -> Self {
+        while modes.last() == Some(&ParamMode::Plain) {
+            modes.pop();
+        }
+        Self(modes.into_boxed_slice())
+    }
+
+    pub fn from_flags(flags: impl IntoIterator<Item = bool>) -> Self {
+        Self::from_modes(
+            flags
+                .into_iter()
+                .map(|mutable| {
+                    if mutable {
+                        ParamMode::Mut
+                    } else {
+                        ParamMode::Plain
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    // `mut` on a scalar parameter only rebinds a local copy, which no caller can observe
+    pub fn declared(params: &[InferType], flags: impl IntoIterator<Item = bool>) -> Self {
+        Self::from_flags(
+            flags
+                .into_iter()
+                .zip(params)
+                .map(|(mutable, param)| mutable && !param.is_scalar_value()),
+        )
+    }
+
+    pub fn get(&self, index: usize) -> ParamMode {
+        self.0.get(index).copied().unwrap_or(ParamMode::Plain)
+    }
+
+    pub fn is_mut(&self, index: usize) -> bool {
+        self.get(index) == ParamMode::Mut
+    }
+
+    pub fn map(&self, f: impl Fn(ParamMode) -> ParamMode) -> Self {
+        Self::from_modes(self.0.iter().map(|mode| f(*mode)).collect())
+    }
+
+    pub fn mut_prefix(&self, index: usize) -> &'static str {
+        if self.is_mut(index) { "mut " } else { "" }
+    }
+}
+
 impl InferType {
+    pub fn function(params: Vec<InferType>, ret: InferType) -> Self {
+        InferType::Function {
+            params,
+            modes: ParamModes::plain(),
+            ret: Box::new(ret),
+        }
+    }
+
     pub fn substitute_params(&self, substitutions: &HashMap<String, InferType>) -> Self {
         match self {
             InferType::Param(name) => substitutions
                 .get(name)
                 .cloned()
                 .unwrap_or_else(|| self.clone()),
-            InferType::Function { params, ret } => InferType::Function {
+            InferType::Function { params, modes, ret } => InferType::Function {
                 params: params
                     .iter()
                     .map(|param| param.substitute_params(substitutions))
                     .collect(),
+                modes: modes.clone(),
                 ret: Box::new(ret.substitute_params(substitutions)),
             },
             InferType::Array(inner) => {
@@ -131,6 +206,10 @@ impl InferType {
             .join(", ")
     }
 
+    pub fn is_scalar_value(&self) -> bool {
+        self.is_numeric() || matches!(self, InferType::Bool | InferType::String | InferType::Unit)
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -156,7 +235,7 @@ impl InferType {
     pub fn has_vars(&self) -> bool {
         match self {
             InferType::Var(_) | InferType::Param(_) => true,
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 params.iter().any(|p| p.has_vars()) || ret.has_vars()
             }
             InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
@@ -173,7 +252,7 @@ impl InferType {
     pub fn contains_dynamic(&self) -> bool {
         match self {
             InferType::Dynamic => true,
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 params.iter().any(Self::contains_dynamic) || ret.contains_dynamic()
             }
             InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
@@ -190,7 +269,7 @@ impl InferType {
     pub fn contains_poison(&self) -> bool {
         match self {
             InferType::Poison => true,
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 params.iter().any(Self::contains_poison) || ret.contains_poison()
             }
             InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
@@ -220,7 +299,7 @@ impl InferType {
     fn any_param(&self, matches: &dyn Fn(&str) -> bool) -> bool {
         match self {
             InferType::Param(param) => matches(param),
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 params.iter().any(|param| param.any_param(matches)) || ret.any_param(matches)
             }
             InferType::Array(inner) | InferType::Vec(inner) | InferType::Option(inner) => {
@@ -257,7 +336,7 @@ impl InferType {
     pub fn is_rigid(&self) -> bool {
         match self {
             InferType::Param(_) => true,
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 params.iter().all(InferType::is_rigid) && ret.is_rigid()
             }
             InferType::Array(inner)
@@ -274,7 +353,7 @@ impl InferType {
 
     pub fn is_concrete(&self) -> bool {
         match self {
-            InferType::Function { params, ret } => {
+            InferType::Function { params, ret, .. } => {
                 params.iter().all(InferType::is_concrete) && ret.is_concrete()
             }
             InferType::Array(inner)
@@ -314,7 +393,7 @@ impl InferType {
 
     pub fn from_annotation(ann: &aelys_syntax::TypeAnnotation) -> Self {
         if ann.is_function_type() {
-            let params = ann
+            let params: Vec<InferType> = ann
                 .fn_params
                 .as_ref()
                 .map(|ps| ps.iter().map(Self::from_annotation).collect())
@@ -325,6 +404,7 @@ impl InferType {
                 .map(|r| Self::from_annotation(r))
                 .unwrap_or(InferType::Unit);
             return InferType::Function {
+                modes: function_annotation_modes(ann, &params),
                 params,
                 ret: Box::new(ret),
             };
@@ -504,13 +584,13 @@ impl fmt::Display for InferType {
             InferType::Never => write!(f, "never"),
             InferType::Numeric => write!(f, "number"),
             InferType::UntypedNative(name) => write!(f, "untyped native '{}'", name),
-            InferType::Function { params, ret } => {
+            InferType::Function { params, modes, ret } => {
                 write!(f, "(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", p)?;
+                    write!(f, "{}{}", modes.mut_prefix(i), p)?;
                 }
                 write!(f, ") -> {}", ret)
             }
@@ -572,11 +652,16 @@ impl InferType {
             InferType::FixedArray(inner, length) => {
                 format!("[{}; {length}]", inner.source_spelling())
             }
-            InferType::Function { params, ret } => format!(
+            InferType::Function { params, modes, ret } => format!(
                 "fn({}) -> {}",
                 params
                     .iter()
-                    .map(InferType::source_spelling)
+                    .enumerate()
+                    .map(|(index, param)| format!(
+                        "{}{}",
+                        modes.mut_prefix(index),
+                        param.source_spelling()
+                    ))
                     .collect::<Vec<_>>()
                     .join(", "),
                 ret.source_spelling()
@@ -649,4 +734,14 @@ pub(crate) fn written_names(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+pub fn function_annotation_modes(
+    ann: &aelys_syntax::TypeAnnotation,
+    params: &[InferType],
+) -> ParamModes {
+    ParamModes::declared(
+        params,
+        ann.fn_params.iter().flatten().map(|param| param.mutable),
+    )
 }

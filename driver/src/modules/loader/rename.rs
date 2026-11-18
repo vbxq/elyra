@@ -532,7 +532,7 @@ pub fn collect_infer_names(ty: &aelys_sema::InferType, out: &mut HashSet<String>
                 collect_infer_names(element, out);
             }
         }
-        InferType::Function { params, ret } => {
+        InferType::Function { params, ret, .. } => {
             for param in params {
                 collect_infer_names(param, out);
             }

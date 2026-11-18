@@ -406,7 +406,7 @@ fn type_descriptor_bounded(
             remaining,
         )?)),
         InferType::Tuple(_) | InferType::Never => return None,
-        InferType::Function { params, ret } => TypeDescriptor::Function {
+        InferType::Function { params, ret, .. } => TypeDescriptor::Function {
             params: params
                 .iter()
                 .map(|param| type_descriptor_bounded(param, type_table, projection_hops, remaining))

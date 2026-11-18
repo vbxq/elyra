@@ -12,10 +12,7 @@ pub enum NativeObligation {
 }
 
 fn function(arity: usize, ret: InferType) -> InferType {
-    InferType::Function {
-        params: (0..arity).map(open_param).collect(),
-        ret: Box::new(ret),
-    }
+    InferType::function((0..arity).map(open_param).collect(), ret)
 }
 
 fn open_param(index: usize) -> InferType {
@@ -30,10 +27,7 @@ fn scalar_conversion_sources() -> Vec<InferType> {
 }
 
 fn function_with(params: Vec<InferType>, ret: InferType) -> InferType {
-    InferType::Function {
-        params,
-        ret: Box::new(ret),
-    }
+    InferType::function(params, ret)
 }
 
 fn numeric_function(arity: usize, ret: InferType) -> InferType {

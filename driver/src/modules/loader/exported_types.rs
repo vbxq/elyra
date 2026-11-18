@@ -699,7 +699,7 @@ fn mentions_nominal(ty: &aelys_sema::InferType, type_table: &TypeTable) -> Optio
         InferType::Tuple(elements) => elements
             .iter()
             .find_map(|element| mentions_nominal(element, type_table)),
-        InferType::Function { params, ret } => params
+        InferType::Function { params, ret, .. } => params
             .iter()
             .find_map(|param| mentions_nominal(param, type_table))
             .or_else(|| mentions_nominal(ret, type_table)),
