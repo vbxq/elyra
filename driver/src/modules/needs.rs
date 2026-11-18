@@ -139,7 +139,8 @@ impl NominalImports {
             }
         }
         self.types.extend(selected);
-        if !impl_stmts.is_empty() {
+        let generic_fns = module_info.exported_types.generic_fns.clone();
+        if !impl_stmts.is_empty() || !generic_fns.is_empty() {
             let module = aelys_syntax::ModuleId::new(module_path);
             self.body_globals
                 .extend(module_info.exported_types.globals.keys().cloned());
@@ -218,6 +219,12 @@ impl NominalImports {
                     .into_iter()
                     .map(|stmt| stmt.with_definition_module(module.clone())),
             );
+            self.impl_stmts.extend(generic_fns.into_iter().map(
+                |stmt| match stmt.definition_module {
+                    Some(_) => stmt,
+                    None => stmt.with_definition_module(module.clone()),
+                },
+            ));
         }
     }
 
@@ -374,6 +381,7 @@ fn load_modules(
     let mut bare_imports = crate::modules::loader::BareImports::default();
     let mut immutable_imports = std::collections::BTreeSet::new();
     let mut mutable_imports = std::collections::BTreeSet::new();
+    let mut generic_imports = crate::modules::loader::GenericTargets::default();
 
     let needs_stmts: Vec<&aelys_syntax::NeedsStmt> = stmts
         .iter()
@@ -508,6 +516,24 @@ fn load_modules(
                     }
                 }
             }
+            if let Some((symbol, previous)) = generic_imports.note(
+                module_info,
+                &module_path,
+                &loader.get_module_alias(needs),
+                &effective_kind,
+                &mut bare_imports,
+            ) {
+                return Err(AelysError::Compile(CompileError::new(
+                    CompileErrorKind::SymbolConflict {
+                        symbol,
+                        modules: vec![surface_module(&previous), surface_module(&module_path)],
+                        carried_by: Vec::new(),
+                        repair: SymbolConflictRepair::NameOne,
+                    },
+                    needs.span,
+                    source.clone(),
+                )));
+            }
             let (immutable, mutable) =
                 loader.import_mutability(needs, &effective_kind, &module_path);
             immutable_imports.extend(immutable);
@@ -532,6 +558,7 @@ fn load_modules(
     }
 
     let ambiguous_imports = bare_imports.ambiguous();
+    let generic_targets = generic_imports.finish(&bare_imports, &ambiguous_imports);
     for name in ambiguous_imports.keys() {
         known_globals.remove(name);
         known_native_globals.remove(name);
@@ -579,6 +606,7 @@ fn load_modules(
             impl_body_globals: nominal_imports.body_globals,
             module_sources: nominal_imports.module_sources,
             global_renames,
+            generic_targets,
         },
         loader,
     ))

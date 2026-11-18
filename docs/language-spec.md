@@ -791,10 +791,24 @@ imported `pub let` mutably, bare or qualified (`let mut w = v`,
 mutably: it is an immutable variable of the module that declares it`. A
 qualified place (`cnt::ms.x = 3`) is not writable; write through the bare import.
 
-A `pub fn` with type parameters cannot be exported: monomorphization specializes
-it inside its own module, so no single body crosses the boundary. Importing a
-module that declares one is E0407, reported at the declaration. A private generic
-helper is unaffected.
+A module's functions, private and public, live in that module's own slots. A
+private helper `helper` in one module and a same-named function of another module
+or of the entry file are distinct functions: each module's code calls its own.
+
+A generic declaration crosses the boundary as a template that every importer
+specializes with its own types. A `pub fn` with type parameters is imported like
+any other function, bare, qualified (`container::largest(v, key)`, `c::largest`)
+or by name (`needs largest from container`), and each call instantiates it in the
+importing file. A `pub struct` or `pub enum` with type parameters is imported the
+same way, with its impls, and `Stack<int>` built in the module and `Stack<int>`
+built in the importer are one type. The carried body keeps its module's scope:
+it reads the module's private functions, variables and private generic
+declarations, calls the module's other generic functions, and a bound such as
+`T: Ranked` or `T: Display` is satisfied by the importer's impls. A bare generic
+name exported by two whole-module imports is E0445 at the use, two selective
+imports of it are E0410, and a file's own function or local of that name shadows
+the import. A private generic function stays private: importing it by name is
+E0405.
 
 A struct or enum value keeps its type across modules at run time: a value built
 in one module is read, matched and passed as the same type in every module that
@@ -904,10 +918,10 @@ importing file: each resolves in its own module's terms. E0410 still applies
 where the name participates in the import contract — an associated binding, a
 signature, a nominal the importing file names in its own declarations where the
 carried body can read it, or a trait together with its own declaration. A
-**generic** private declaration that reaches the import contract has nothing
-left to send, monomorphization having erased it inside its own module, so a body
-that names one there is E0407, the refusal its public twin already gets; a
-body-only generic travels as a template and monomorphizes in the importer.
+**generic** private declaration travels as a template and monomorphizes in the
+importer, whether the carried body names it or reaches it through the signature
+of a private helper (`fn wrap(n: int) -> Cell<int>`). One that reaches the import
+contract itself (an impl header, a trait) is E0407.
 
 A file binds each nominal name once. Two declarations of one name reaching one
 file is E0410 `symbol 'K' is exported by multiple modules: cored, corec`, reported
@@ -2509,7 +2523,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0404 | StdlibNotAvailable | the stdlib module is not available here |
 | E0405 | SymbolNotFound | no such symbol in that module |
 | E0406 | InvalidNativeModule | the native module is malformed |
-| E0407 | TypeNotExportable | a nominal value or a generic `pub fn` cannot cross a module boundary |
+| E0407 | TypeNotExportable | a private nominal reaches an exported signature or an impl header |
 | E0408 | NativeChecksumMismatch | the native module checksum does not match |
 | E0409 | NativeVersionMismatch | the native module version does not match |
 | E0410 | SymbolConflict | two declarations of one name reach one file |

@@ -15,7 +15,7 @@ impl ModuleLoader {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Function(func) => {
-                    if func.is_pub {
+                    if func.is_pub && func.type_params.is_empty() {
                         exports.insert(
                             func.name.clone(),
                             ExportInfo {
@@ -143,6 +143,9 @@ impl ModuleLoader {
             {
                 return Ok(());
             }
+            if exported_types.pub_generic_fns.contains_key(symbol) {
+                return Ok(());
+            }
             if exported_types.private_names.contains(symbol) {
                 return Err(AelysError::Compile(CompileError::new(
                     CompileErrorKind::SymbolNotPublic {
@@ -258,5 +261,71 @@ impl ModuleLoader {
 
     pub fn get_module(&self, module_path: &str) -> Option<&ModuleInfo> {
         self.loaded_modules.get(module_path)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct GenericTargets {
+    qualified: std::collections::HashMap<String, String>,
+    bare: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    explicit: std::collections::HashMap<String, String>,
+}
+
+impl GenericTargets {
+    // a generic function joins the same bare-name rules as every other import
+    pub(crate) fn note(
+        &mut self,
+        module_info: &ModuleInfo,
+        module_path: &str,
+        alias: &str,
+        kind: &ImportKind,
+        bare_imports: &mut super::types::BareImports,
+    ) -> Option<(String, String)> {
+        let generics = &module_info.exported_types.pub_generic_fns;
+        let whole = match kind {
+            ImportKind::Module { alias: explicit } => explicit.is_none(),
+            ImportKind::Wildcard => true,
+            ImportKind::Symbols(symbols) => {
+                for name in symbols {
+                    if let Some(symbol) = generics.get(name) {
+                        if let Some(previous) = bare_imports.note_explicit(name, module_path) {
+                            return Some((name.clone(), previous));
+                        }
+                        self.explicit.insert(name.clone(), symbol.clone());
+                    }
+                }
+                return None;
+            }
+        };
+        for (name, symbol) in generics {
+            self.qualified
+                .insert(format!("{alias}::{name}"), symbol.clone());
+            if whole {
+                bare_imports.note_bare(name, module_path, alias);
+                self.bare
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(module_path.to_string(), symbol.clone());
+            }
+        }
+        None
+    }
+
+    pub(crate) fn finish(
+        self,
+        bare_imports: &super::types::BareImports,
+        ambiguous: &std::collections::BTreeMap<String, Vec<String>>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut targets = self.qualified;
+        for (name, modules) in self.bare {
+            if bare_imports.is_explicit(&name) || ambiguous.contains_key(&name) {
+                continue;
+            }
+            if let Some(symbol) = modules.into_values().next() {
+                targets.insert(name, symbol);
+            }
+        }
+        targets.extend(self.explicit);
+        targets
     }
 }

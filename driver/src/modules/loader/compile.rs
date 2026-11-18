@@ -35,23 +35,6 @@ impl ModuleLoader {
         let stmts = Parser::new_rust_collections(tokens, module_source.clone()).parse()?;
 
         let exports = self.collect_exports(&stmts, module_path_str)?;
-        if let Some((name, span)) = stmts.iter().find_map(|stmt| match &stmt.kind {
-            StmtKind::Function(func) if func.is_pub && !func.type_params.is_empty() => {
-                Some((func.name.clone(), func.span))
-            }
-            _ => None,
-        }) {
-            return Err(AelysError::Compile(CompileError::new(
-                CompileErrorKind::TypeNotExportable {
-                    module: module_path_str.replace('.', "::"),
-                    name,
-                    reason: "a generic function is specialized inside its own module, so no single body crosses the boundary; drop `pub` or make it non-generic".to_string(),
-                },
-                span,
-                module_source.clone(),
-            )));
-        }
-
         let module_name = needs
             .path
             .last()
@@ -62,7 +45,7 @@ impl ModuleLoader {
             let StmtKind::Function(func) = &stmt.kind else {
                 continue;
             };
-            if !func.is_pub {
+            if !func.is_pub || !func.type_params.is_empty() {
                 continue;
             }
             let signature = InferType::Function {
@@ -131,6 +114,7 @@ impl ModuleLoader {
         let mut bare_imports = super::types::BareImports::default();
         let mut immutable_imports = std::collections::BTreeSet::new();
         let mut mutable_imports = std::collections::BTreeSet::new();
+        let mut generic_imports = super::GenericTargets::default();
 
         for stmt in &stmts {
             if let StmtKind::Needs(nested_needs) = &stmt.kind {
@@ -170,6 +154,27 @@ impl ModuleLoader {
                         wanted,
                         nested_needs.span,
                     );
+                    if let Some((symbol, previous)) = generic_imports.note(
+                        module_info,
+                        &nested_module_path,
+                        &self.get_module_alias(nested_needs),
+                        &effective_kind,
+                        &mut bare_imports,
+                    ) {
+                        return Err(AelysError::Compile(CompileError::new(
+                            CompileErrorKind::SymbolConflict {
+                                symbol,
+                                modules: vec![
+                                    previous.replace('.', "::"),
+                                    nested_module_path.replace('.', "::"),
+                                ],
+                                carried_by: Vec::new(),
+                                repair: aelys_common::error::SymbolConflictRepair::NameOne,
+                            },
+                            nested_needs.span,
+                            module_source.clone(),
+                        )));
+                    }
                     let (immutable, mutable) =
                         self.import_mutability(nested_needs, &effective_kind, &nested_module_path);
                     immutable_imports.extend(immutable);
@@ -282,6 +287,7 @@ impl ModuleLoader {
         }
 
         let ambiguous_imports = bare_imports.ambiguous();
+        let mut generic_targets = generic_imports.finish(&bare_imports, &ambiguous_imports);
         for name in ambiguous_imports.keys() {
             known_globals.remove(name);
             known_native_globals.remove(name);
@@ -370,7 +376,8 @@ impl ModuleLoader {
                     .module_scoped_globals
                     .insert(module_id, module_info.exported_types.scoped_globals.clone());
             }
-            if !selected_impls.is_empty() {
+            let generic_fns = module_info.exported_types.generic_fns.clone();
+            if !selected_impls.is_empty() || !generic_fns.is_empty() {
                 for name in module_info.exported_types.own_private_types.nominal_names() {
                     inherited_nominals.insert(name.clone());
                     nominal_origins.insert(name.clone(), entry.module_path.replace('.', "::"));
@@ -408,6 +415,13 @@ impl ModuleLoader {
                     stmt.with_definition_module(ModuleId::new(entry.module_path.clone()))
                 }),
             );
+            imported_impl_stmts.extend(generic_fns.into_iter().map(|stmt| {
+                if stmt.definition_module.is_some() {
+                    stmt
+                } else {
+                    stmt.with_definition_module(ModuleId::new(entry.module_path.clone()))
+                }
+            }));
         }
 
         self.base_dir = original_base_dir;
@@ -463,6 +477,39 @@ impl ModuleLoader {
             .filter(|s| !matches!(s.kind, StmtKind::Needs(_)))
             .collect();
         super::rename::rename_stmts(&mut own_stmts, &applied_renames);
+        let mut pub_generic_fns = std::collections::BTreeMap::new();
+        for stmt in &own_stmts {
+            if let StmtKind::Function(func) = &stmt.kind
+                && !func.type_params.is_empty()
+            {
+                let symbol = super::generic_function_symbol(&func.name, module_path_str);
+                if func.is_pub {
+                    pub_generic_fns.insert(func.name.clone(), symbol.clone());
+                }
+                generic_targets.insert(func.name.clone(), symbol);
+            }
+        }
+        for stmt in &mut own_stmts {
+            if let StmtKind::Function(func) = &mut stmt.kind
+                && !func.type_params.is_empty()
+            {
+                func.name = super::generic_function_symbol(&func.name, module_path_str);
+            }
+        }
+        super::rewrite_generic_references(&mut own_stmts, &generic_targets);
+        let mut generic_fns: Vec<aelys_syntax::Stmt> = imported_impl_stmts
+            .iter()
+            .filter(|stmt| matches!(stmt.kind, StmtKind::Function(_)))
+            .cloned()
+            .collect();
+        generic_fns.extend(
+            own_stmts
+                .iter()
+                .filter(|stmt| {
+                    matches!(&stmt.kind, StmtKind::Function(func) if !func.type_params.is_empty())
+                })
+                .cloned(),
+        );
 
         let main_stmts: Vec<_> = imported_impl_stmts.into_iter().chain(own_stmts).collect();
         let module_scopes = imported_types.module_scopes.clone();
@@ -543,15 +590,43 @@ impl ModuleLoader {
             module_path_str,
             &module_source,
         )?;
+        let mut global_types = std::collections::BTreeMap::new();
+        for stmt in &typed_program.stmts {
+            match &stmt.kind {
+                TypedStmtKind::Let { name, var_type, .. } => {
+                    global_types.insert(
+                        aelys_sema::unscoped_global_name(name).to_string(),
+                        inference_result.type_table.deinstantiate(var_type),
+                    );
+                }
+                TypedStmtKind::Function(function) => {
+                    global_types.insert(
+                        function.name.clone(),
+                        inference_result
+                            .type_table
+                            .deinstantiate(&InferType::Function {
+                                params: function.params.iter().map(|p| p.ty.clone()).collect(),
+                                ret: Box::new(function.return_type.clone()),
+                            }),
+                    );
+                }
+                _ => {}
+            }
+        }
         let mut exported_types = super::exported_types::collect_exported_types(
             &declaration_stmts,
             &inference_result.type_table,
-            &inference_result.generic_structs,
-            &inference_result.generic_enums,
+            super::exported_types::GenericSurface {
+                structs: &inference_result.generic_structs,
+                enums: &inference_result.generic_enums,
+                global_types: &global_types,
+                functions: generic_fns,
+            },
             module_path_str,
             module_source.clone(),
             &applied_renames,
         )?;
+        exported_types.pub_generic_fns = pub_generic_fns;
         exported_types.source = Some(module_source.clone());
         exported_types.scope = own_scope;
         exported_types.private_types = private_types;
@@ -596,6 +671,11 @@ impl ModuleLoader {
                 _ => {}
             }
         }
+        super::exported_types::deinstantiate_exports(
+            &mut exported_types,
+            &mut inferred_export_signatures,
+            &inference_result.type_table,
+        );
         let module_global_names: Vec<String> = exported_types.globals.keys().cloned().collect();
         if let Some(module_info) = self.loaded_modules.get_mut(module_path_str) {
             module_info.native_signatures = inferred_export_signatures;

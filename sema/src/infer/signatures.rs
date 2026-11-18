@@ -363,7 +363,14 @@ impl TypeInference {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Function(func) => {
+                    let saved = stmt
+                        .definition_module
+                        .clone()
+                        .map(|module| std::mem::replace(&mut self.current_module, module));
                     self.collect_function_signature(func, prefix);
+                    if let Some(saved) = saved {
+                        self.current_module = saved;
+                    }
                 }
                 StmtKind::ImplDecl { .. } => {}
                 StmtKind::TraitDecl { .. } => {}

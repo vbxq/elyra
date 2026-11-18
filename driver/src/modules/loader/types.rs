@@ -42,6 +42,23 @@ pub struct ModuleImports {
     pub impl_body_globals: HashSet<String>,
     pub module_sources: HashMap<String, Arc<Source>>,
     pub global_renames: HashMap<String, String>,
+    pub generic_targets: HashMap<String, String>,
+}
+
+impl ModuleImports {
+    // the entry file's spellings of an imported generic function name the carried copy
+    pub fn program_stmts(&self, stmts: Vec<aelys_syntax::Stmt>) -> Vec<aelys_syntax::Stmt> {
+        let mut own: Vec<_> = stmts
+            .into_iter()
+            .filter(|stmt| !matches!(stmt.kind, aelys_syntax::StmtKind::Needs(_)))
+            .collect();
+        super::rewrite_generic_references(&mut own, &self.generic_targets);
+        self.imported_impl_stmts
+            .iter()
+            .cloned()
+            .chain(own)
+            .collect()
+    }
 }
 
 pub enum LoadResult {

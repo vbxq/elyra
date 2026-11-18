@@ -462,6 +462,43 @@ impl TypeTable {
         }
     }
 
+    // an instance name is local to the unit that minted it, so a type leaving the unit is re-applied
+    pub fn deinstantiate(&self, ty: &InferType) -> InferType {
+        let each = |types: &[InferType]| types.iter().map(|t| self.deinstantiate(t)).collect();
+        match ty {
+            InferType::Struct(name) => match (
+                self.nominal_instance_origins.get(name),
+                self.nominal_instance_args.get(name),
+            ) {
+                (Some(origin), Some(args)) => InferType::Applied {
+                    name: origin.clone(),
+                    args: each(args),
+                },
+                _ => ty.clone(),
+            },
+            InferType::Applied { name, args } => InferType::Applied {
+                name: name.clone(),
+                args: each(args),
+            },
+            InferType::Function { params, ret } => InferType::Function {
+                params: each(params),
+                ret: Box::new(self.deinstantiate(ret)),
+            },
+            InferType::Option(inner) => InferType::Option(Box::new(self.deinstantiate(inner))),
+            InferType::Array(inner) => InferType::Array(Box::new(self.deinstantiate(inner))),
+            InferType::Vec(inner) => InferType::Vec(Box::new(self.deinstantiate(inner))),
+            InferType::FixedArray(inner, length) => {
+                InferType::FixedArray(Box::new(self.deinstantiate(inner)), *length)
+            }
+            InferType::Result(ok, err) => InferType::Result(
+                Box::new(self.deinstantiate(ok)),
+                Box::new(self.deinstantiate(err)),
+            ),
+            InferType::Tuple(elements) => InferType::Tuple(each(elements)),
+            _ => ty.clone(),
+        }
+    }
+
     pub fn nominal_instance_origin(&self, name: &str) -> Option<&str> {
         self.nominal_instance_origins.get(name).map(String::as_str)
     }

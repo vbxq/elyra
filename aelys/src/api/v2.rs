@@ -908,15 +908,7 @@ impl Isolate {
                 .or_insert_with(|| origin.clone());
         }
 
-        let main_statements: Vec<_> =
-            imports
-                .imported_impl_stmts
-                .iter()
-                .cloned()
-                .chain(statements.into_iter().filter(|statement| {
-                    !matches!(statement.kind, aelys_syntax::StmtKind::Needs(_))
-                }))
-                .collect();
+        let main_statements = imports.program_stmts(statements);
 
         let typed = TypeInference::infer_program_full_with_native_signatures(
             main_statements,

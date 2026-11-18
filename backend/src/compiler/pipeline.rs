@@ -39,7 +39,10 @@ impl Compiler {
                     .collect::<Option<Vec<_>>>()?;
                 Some(StructSchema::with_identity(
                     schema_id,
-                    DefId::from_display_name(&format!("{module_id}::{origin}"), def_ordinal),
+                    DefId::from_display_name(
+                        &format!("{module_id}::{}", unrenamed(origin)),
+                        def_ordinal,
+                    ),
                     type_args,
                     def.fields
                         .iter()
@@ -63,12 +66,21 @@ impl Compiler {
             .map(|def| {
                 let module_id = def.owner.to_string();
                 let schema_id = program.type_table.enum_schema_index(&def.name)?;
-                let name = format!("{module_id}::{}", def.name);
                 let origin = program
                     .type_table
                     .nominal_instance_origin(&def.name)
                     .unwrap_or(&def.name);
-                let def_id_name = format!("{module_id}::{origin}");
+                let def_id_name = format!("{module_id}::{}", unrenamed(origin));
+                let name = match program.type_table.nominal_instance_args(&def.name) {
+                    Some(args) => unrenamed_text(&format!(
+                        "{def_id_name}<{}>",
+                        args.iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                    None => def_id_name.clone(),
+                };
                 let def_ordinal = program
                     .type_table
                     .enum_definition_ordinal(origin)
@@ -421,6 +433,28 @@ fn struct_schema_id(name: &str, type_table: &aelys_sema::TypeTable) -> Option<u3
         .schema_index(name)
         .or_else(|| type_table.schema_index(short_name))
         .map(u32::from)
+}
+
+// a carried private generic is renamed for its importer only, so identity reads the declared name
+fn unrenamed(name: &str) -> &str {
+    name.split('@').next().unwrap_or(name)
+}
+
+fn unrenamed_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skipping = false;
+    for ch in text.chars() {
+        if ch == '@' {
+            skipping = true;
+            continue;
+        }
+        if skipping && (ch.is_alphanumeric() || ch == '_' || ch == '.') {
+            continue;
+        }
+        skipping = false;
+        out.push(ch);
+    }
+    out
 }
 
 impl Compiler {

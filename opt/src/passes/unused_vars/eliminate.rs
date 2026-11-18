@@ -22,6 +22,10 @@ pub fn eliminate_unused_in_block(
             if *is_pub {
                 return true;
             } // keep pub exports
+            // a body carried to an importer reads the module's slot after this unit is gone
+            if aelys_sema::is_module_scoped_global(name) {
+                return true;
+            }
             if !used_vars.contains(name) && !has_side_effects(initializer) {
                 stats.dead_code_eliminated += 1;
                 return false;

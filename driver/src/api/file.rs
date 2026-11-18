@@ -110,16 +110,7 @@ pub fn run_file_full_with_control_and_jit(
 
     let imports = load_modules_for_program(&stmts, file_path, src.clone(), &mut vm)?;
 
-    let main_stmts: Vec<_> = imports
-        .imported_impl_stmts
-        .iter()
-        .cloned()
-        .chain(
-            stmts
-                .into_iter()
-                .filter(|s| !matches!(s.kind, aelys_syntax::StmtKind::Needs(_))),
-        )
-        .collect();
+    let main_stmts = imports.program_stmts(stmts);
 
     let resolved = crate::modules::resolve_globals(Some(&imports), &vm);
     let all_native_signatures = imports.native_signatures.clone();

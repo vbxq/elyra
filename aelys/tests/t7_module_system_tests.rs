@@ -580,17 +580,18 @@ impl Area for Sq {
 }
 
 #[test]
-fn a_generic_pub_function_is_refused_at_its_declaration_with_a_named_reason() {
+fn a_generic_pub_function_is_specialized_by_its_importer() {
     let dir = tree(&[(
         "gen.aelys",
         "pub fn plain(x: int) -> int { x }\npub fn first<T>(v: Vec<T>) -> T { v[0] }\n",
     )]);
-    let error = run_err(&dir, "main.aelys", "needs gen\ngen::plain(1)\n");
-    assert!(error.contains("E0407"), "{error}");
-    assert!(error.contains("'first'"), "{error}");
-    assert!(
-        error.contains("gen.aelys:2:"),
-        "the declaration carries it: {error}"
+    assert_eq!(
+        run_int(
+            &dir,
+            "main.aelys",
+            "needs gen\nlet s = gen::first(vec![\"ab\", \"c\"])\ngen::plain(1) + first(vec![40, 2]) + s.len()\n"
+        ),
+        43
     );
     write(
         dir.path(),
@@ -605,6 +606,11 @@ fn a_generic_pub_function_is_refused_at_its_declaration_with_a_named_reason() {
         ),
         4,
         "a private generic helper stays usable inside its module"
+    );
+    let hidden = run_err(&dir, "hidden.aelys", "needs first from private\n1\n");
+    assert!(
+        hidden.contains("E0405"),
+        "a private generic is not importable: {hidden}"
     );
 }
 

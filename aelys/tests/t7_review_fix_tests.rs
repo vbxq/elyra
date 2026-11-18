@@ -467,3 +467,213 @@ fn a_carried_impl_body_resolves_its_module_names_in_a_transitive_importer() {
         12_105,
     );
 }
+
+const CONTAINER: &str = "pub trait Ranked {\n    fn rank(self) -> int\n}\npub struct Score { pub v: int }\nimpl Ranked for Score {\n    fn rank(self) -> int { self.v }\n}\nlet bonus = 1000\npub struct Stack<T> { pub items: Vec<T> }\nimpl<T> Stack<T> {\n    pub fn pushed(self, v: T) -> Stack<T> {\n        let mut out: Vec<T> = vec![]\n        for x in self.items { out.push(x) }\n        out.push(v)\n        Stack { items: out }\n    }\n    pub fn size(self) -> int { self.items.len() }\n    pub fn top(self) -> T { self.items[self.items.len() - 1] }\n}\npub fn new_stack<T>() -> Stack<T> { Stack { items: vec![] } }\nfn pick<T>(a: T, b: T, ka: int, kb: int) -> T { if ka >= kb { a } else { b } }\npub fn largest<T>(v: Vec<T>, key: fn(T) -> int) -> T {\n    let mut best = v[0]\n    for x in v { best = pick(x, best, key(x), key(best)) }\n    best\n}\npub fn best<T: Ranked>(v: Vec<T>) -> int {\n    let mut top = v[0].rank()\n    for x in v { if x.rank() > top { top = x.rank() } }\n    top + bonus\n}\npub fn describe<T: Display>(x: T) -> string { \"<{x}>\" }\n";
+const GENERIC_HELPERS: &str = "needs container\nstruct Cell<T> { v: T }\nfn wrap<T>(x: T) -> Cell<T> { Cell { v: x } }\npub fn twice<T>(x: T) -> Vec<T> { let c = wrap(x)\n vec![c.v, c.v] }\npub fn count<T>(n: int, x: T) -> int { if n == 0 { return 0 }\n 1 + count(n - 1, x) }\npub fn big<T>(v: Vec<T>, key: fn(T) -> int) -> T { container::largest(v, key) }\npub fn local_use() -> int { twice(3).len() + count(2, \"a\") }\n";
+const GENERIC_SUMS: &str = "let mut calls = 0\nfn note() { calls = calls + 1 }\npub fn calls_so_far() -> int { calls }\npub enum Maybe<T> { Nope, Has(T) }\npub fn has<T>(x: T) -> Maybe<T> { note()\n Maybe::Has(x) }\npub fn unwrap_or<T>(m: Maybe<T>, d: T) -> T { match m { Maybe::Nope => d, Maybe::Has(v) => v } }\npub fn is_even<T>(n: int, x: T) -> bool { if n == 0 { return true }\n is_odd(n - 1, x) }\npub fn is_odd<T>(n: int, x: T) -> bool { if n == 0 { return false }\n is_even(n - 1, x) }\npub struct Bag<T> { pub items: Vec<T> }\nimpl<T> Bag<T> {\n    pub fn first_or(self, d: T) -> T { note()\n if self.items.len() == 0 { d } else { self.items[0] } }\n}\n";
+
+fn assert_string(dir: &TempDir, main: &str, source: &str, expected: &str) {
+    let body = source.trim_end_matches('\n');
+    let (head, last) = body.rsplit_once('\n').unwrap_or(("", body));
+    let escaped = expected.replace('\\', "\\\\").replace('"', "\\\"");
+    let checked = format!(
+        "{head}\nlet out = {last}\nprintln(out)\nif out == \"{escaped}\" {{ 1 }} else {{ 0 }}\n"
+    );
+    assert_eq!(
+        run_int(dir, main, &checked),
+        1,
+        "{main} must end on {expected:?}"
+    );
+}
+
+#[test]
+fn a_generic_function_and_type_exported_by_a_module_take_the_importer_types() {
+    let dir = tree(&[("container.aelys", CONTAINER)]);
+    let main = "needs container
+struct Card { power: int }
+impl Ranked for Card {
+    fn rank(self) -> int { self.power }
+}
+impl Display for Card {
+    fn to_display(self) -> string { \"card{self.power}\" }
+}
+let a = largest(vec![3, 9, 2], fn(x: int) -> int { return x })
+let b = container::largest(vec![\"ab\", \"abcd\", \"c\"], fn(s: string) -> int { return s.len() })
+let c = largest(vec![Card { power: 4 }, Card { power: 7 }], fn(k: Card) -> int { return k.power })
+let e: Stack<int> = new_stack()
+let s = e.pushed(5).pushed(6)
+let t = Stack { items: vec![\"x\"] }.pushed(\"yz\")
+let r = best(vec![Card { power: 4 }, Card { power: 8 }]) + best(vec![Score { v: 3 }])
+\"{a} {b} {c.power} {s.size()} {s.top()} {t.top()} {r} {describe(5)} {describe(\"q\")} {describe(Card { power: 2 })}\"
+";
+    assert_string(
+        &dir,
+        "main.aelys",
+        main,
+        "9 abcd 7 2 6 yz 2011 <5> <q> <card2>",
+    );
+    let spellings = [
+        (
+            "selective.aelys",
+            "needs largest from container\nlargest(vec![1, 5, 2], fn(x: int) -> int { return x })\n",
+            5,
+        ),
+        (
+            "alias.aelys",
+            "needs container as c\nc::largest(vec![1, 5, 2], fn(x: int) -> int { return x })\n",
+            5,
+        ),
+        (
+            "shadow_let.aelys",
+            "needs container\nlet largest = 4\nlargest + 1\n",
+            5,
+        ),
+        (
+            "shadow_param.aelys",
+            "needs container\nfn f(largest: int) -> int { largest * 2 }\nf(3)\n",
+            6,
+        ),
+        (
+            "own_fn.aelys",
+            "needs container\nfn largest(x: int) -> int { 9 }\nlargest(1)\n",
+            9,
+        ),
+        (
+            "in_fn.aelys",
+            "needs container\nfn f() -> int { let g = fn(v: Vec<int>) -> int { return largest(v, fn(x: int) -> int { return 0 - x }) }\n g(vec![4, 1, 3]) }\nf()\n",
+            1,
+        ),
+    ];
+    for (file, source, expected) in spellings {
+        assert_eq!(run_int(&dir, file, source), expected, "{file}");
+    }
+    let hidden = run_err(
+        &dir,
+        "alias_bare.aelys",
+        "needs container as c\nlargest(vec![1], fn(x: int) -> int { return x })\n",
+    );
+    assert!(
+        hidden.contains("E0301"),
+        "an aliased import binds no bare name: {hidden}"
+    );
+}
+
+#[test]
+fn an_exported_generic_reaches_its_module_privates_and_other_generics() {
+    let dir = tree(&[
+        ("container.aelys", CONTAINER),
+        ("g2.aelys", GENERIC_HELPERS),
+        ("p3.aelys", GENERIC_SUMS),
+    ]);
+    assert_eq!(
+        run_int(
+            &dir,
+            "helpers.aelys",
+            "needs g2\ntwice(\"s\").len() * 100 + count(5, 1.5) * 10 + local_use()\n"
+        ),
+        254
+    );
+    assert_eq!(
+        run_int(
+            &dir,
+            "transitive.aelys",
+            "needs g2\nbig(vec![2, 8, 1], fn(x: int) -> int { return x })\n"
+        ),
+        8,
+        "g2's generic calls container's generic, which this file never imported"
+    );
+    assert_string(
+        &dir,
+        "sums.aelys",
+        "needs p3\nlet a = unwrap_or(has(4), 0)\nlet b = unwrap_or(Maybe::Nope, \"d\")\nlet e = if is_even(10, 1.0) { 1 } else { 0 }\nlet g = Bag { items: vec![5] }.first_or(0)\nlet h = Bag { items: vec![] }.first_or(\"x\")\n\"{a} {b} {e} {g} {h} {calls_so_far()}\"\n",
+        "4 d 1 5 x 3",
+    );
+    let private = run_err(&dir, "private.aelys", "needs g2\nwrap(1)\n");
+    assert!(
+        private.contains("E0301"),
+        "a private generic stays private: {private}"
+    );
+}
+
+#[test]
+fn bare_generic_imports_follow_the_ambiguity_rules() {
+    let dir = tree(&[
+        ("p1.aelys", "pub fn same<T>(x: T) -> T { x }\n"),
+        ("p2.aelys", "pub fn same<T>(x: T) -> int { 7 }\n"),
+        ("p5.aelys", "pub fn same() -> int { 5 }\n"),
+    ]);
+    for (file, source) in [
+        ("two_generic.aelys", "needs p1\nneeds p2\nsame(1)\n"),
+        ("generic_and_plain.aelys", "needs p1\nneeds p5\nsame()\n"),
+    ] {
+        let error = run_err(&dir, file, source);
+        assert!(error.contains("E0445"), "{file}: {error}");
+    }
+    let clash = run_err(
+        &dir,
+        "selective.aelys",
+        "needs same from p1\nneeds same from p2\n1\n",
+    );
+    assert!(
+        clash.contains("E0410") && clash.contains("'same'"),
+        "{clash}"
+    );
+    assert_eq!(
+        run_int(
+            &dir,
+            "qualified.aelys",
+            "needs p1\nneeds p2\np1::same(3) * 10 + p2::same(3)\n"
+        ),
+        37
+    );
+    assert_eq!(
+        run_int(
+            &dir,
+            "named.aelys",
+            "needs same from p2\nneeds p1\nsame(1)\n"
+        ),
+        7
+    );
+    assert_eq!(
+        run_int(
+            &dir,
+            "plain_named.aelys",
+            "needs p1\nneeds same from p5\nsame()\n"
+        ),
+        5
+    );
+}
+
+#[test]
+fn a_private_or_public_generic_type_built_in_a_module_matches_the_importer_instance() {
+    let dir = tree(&[
+        (
+            "g.aelys",
+            "pub struct Box<T> { pub v: T }\npub enum Opt<T> { No, Yes(T) }\npub fn boxed(n: int) -> Box<int> { Box { v: n } }\npub fn unbox(b: Box<int>) -> int { b.v }\npub fn yes(n: int) -> Opt<int> { Opt::Yes(n) }\npub fn unyes(o: Opt<int>) -> int { match o { Opt::No => -1, Opt::Yes(n) => n } }\n",
+        ),
+        (
+            "h.aelys",
+            "needs g\npub fn hboxed(n: int) -> Box<int> { Box { v: n * 10 } }\npub fn hunbox(b: Box<int>) -> int { b.v + 1 }\npub fn hyes(n: int) -> Opt<int> { Opt::Yes(n * 10) }\npub fn hunyes(o: Opt<int>) -> int { match o { Opt::No => -1, Opt::Yes(n) => n + 1 } }\npub fn hstr(s: string) -> Box<string> { Box { v: s } }\n",
+        ),
+        (
+            "m.aelys",
+            "struct Cell<T> { v: T }\nenum Wr<T> { Nil, One(T) }\nfn wrap(n: int) -> Cell<int> { Cell { v: n } }\nfn wrapo(n: int) -> Wr<int> { Wr::One(n) }\nfn unwrap(c: Cell<int>) -> int { c.v }\npub struct S { pub n: int }\nimpl S {\n    fn f(self) -> int { let c = wrap(self.n); c.v + 1 }\n    fn g(self) -> int { let c = Cell { v: self.n }; unwrap(c) + 2 }\n    fn h(self) -> int { match wrapo(self.n) { Wr::Nil => -1, Wr::One(k) => k + 3 } }\n    fn k(self) -> int { let c: Cell<string> = Cell { v: \"abc\" }; c.v.len() }\n}\npub fn viaf(s: S) -> int { s.f() + s.g() + s.h() }\n",
+        ),
+    ]);
+    assert_eq!(
+        run_int(
+            &dir,
+            "public.aelys",
+            "needs g\nneeds h\nlet a = Box { v: 5 }\nlet o = Opt::Yes(8)\nlet w = match hyes(9) { Opt::No => 0, Opt::Yes(n) => n }\nlet bs: Box<string> = Box { v: \"yo\" }\nlet mut v: Vec<Box<int>> = vec![]\nv.push(hboxed(1))\nv.push(boxed(2))\nv.push(Box { v: 3 })\nlet mut t = 0\nfor b in v { t = t + unbox(b) + hunbox(b) }\nunbox(a) + hunbox(boxed(3)) * 10 + hunyes(o) * 100 + unyes(o) * 1000 + w * 10000 + t * 1000000 + bs.v.len() * 100000000\n"
+        ),
+        5 + 40 + 900 + 8000 + 900000 + 33_000_000 + 200_000_000
+    );
+    assert_eq!(
+        run_int(
+            &dir,
+            "private.aelys",
+            "needs m\nlet s = S { n: 10 }\ns.f() * 1000000 + s.g() * 10000 + s.h() * 100 + viaf(s)\n"
+        ),
+        11_121_336
+    );
+}
