@@ -29,6 +29,33 @@ impl Parser {
                 type_annotation,
                 initializer,
                 is_pub,
+                is_const: false,
+            },
+            start_span.merge(end_span),
+        ))
+    }
+
+    pub(super) fn const_declaration(&mut self, is_pub: bool) -> Result<Stmt> {
+        let start_span = self.peek().span;
+        self.advance();
+        let name = self.consume_identifier("constant name")?;
+        let type_annotation = if self.match_token(&TokenKind::Colon) {
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+        self.consume(&TokenKind::Eq, "=")?;
+        let initializer = self.expression()?;
+        self.consume_semicolon()?;
+        let end_span = self.previous().span;
+        Ok(Stmt::new(
+            StmtKind::Let {
+                name,
+                mutable: false,
+                type_annotation,
+                initializer,
+                is_pub,
+                is_const: true,
             },
             start_span.merge(end_span),
         ))

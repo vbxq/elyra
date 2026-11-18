@@ -16,6 +16,7 @@ pub struct ImportedTypes {
     pub unexported_nominals: BTreeSet<String>,
     pub struct_def_ordinals: std::collections::HashMap<String, u32>,
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
+    pub module_constants: BTreeMap<String, crate::infer::constants::ConstValue>,
 }
 
 impl ImportedTypes {
@@ -35,6 +36,7 @@ impl ImportedTypes {
         self.unexported_nominals.extend(other.unexported_nominals);
         self.struct_def_ordinals.extend(other.struct_def_ordinals);
         self.enum_def_ordinals.extend(other.enum_def_ordinals);
+        self.module_constants.extend(other.module_constants);
     }
 
     pub fn nominal_names(&self) -> Vec<String> {
@@ -49,6 +51,8 @@ impl ImportedTypes {
 
 impl TypeInference {
     pub(super) fn install_imported_types(&mut self, imported: ImportedTypes) {
+        self.imported_constants
+            .extend(imported.module_constants.clone());
         for def in imported.enums {
             let ordinal = imported.enum_def_ordinals.get(&def.name).copied();
             self.type_table.register_enum(def.clone());

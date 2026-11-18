@@ -417,6 +417,11 @@ fn load_modules(
             }
 
             let module_alias = loader.get_module_alias(needs);
+            module_info.import_constants(
+                &module_alias,
+                &effective_kind,
+                &mut nominal_imports.types.module_constants,
+            );
             match &effective_kind {
                 ImportKind::Module { alias: None } => {
                     for name in module_info.exports.keys() {

@@ -20,6 +20,7 @@ impl Compiler {
                 type_annotation,
                 initializer,
                 is_pub,
+                ..
             } => self.compile_let(
                 name,
                 *mutable,

@@ -22,6 +22,9 @@ impl TypeInference {
             .or_else(|| self.env.lookup_function_ref(name))
         {
             let ty = ty.clone();
+            if let Some(value) = self.env.lookup_constant(name) {
+                return (value.literal(), ty);
+            }
             let resolved = self.env.lookup_alias(name).unwrap_or(name).to_string();
             return (TypedExprKind::Identifier(resolved), ty);
         }

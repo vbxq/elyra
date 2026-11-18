@@ -4,6 +4,7 @@ mod free_vars;
 mod functions;
 mod scope;
 
+use crate::infer::constants::ConstValue;
 use crate::types::InferType;
 use aelys_syntax::ReferenceKind;
 use std::collections::{HashMap, HashSet};
@@ -24,6 +25,10 @@ pub struct TypeEnv {
     known_collection_lengths: Vec<HashMap<String, usize>>,
 
     explicit_dynamic_locals: Vec<HashSet<String>>,
+
+    constant_values: Vec<HashMap<String, ConstValue>>,
+
+    capture_constants: HashMap<String, ConstValue>,
 
     captures: HashMap<String, InferType>,
 
@@ -53,6 +58,8 @@ impl TypeEnv {
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
+            constant_values: vec![HashMap::new()],
+            capture_constants: HashMap::new(),
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),

@@ -41,14 +41,24 @@ impl TypeInference {
                 type_annotation,
                 initializer,
                 is_pub,
-            } => self.infer_let_stmt(
-                stmt.span,
-                name,
-                *mutable,
-                type_annotation,
-                initializer,
-                *is_pub,
-            ),
+                is_const,
+            } => {
+                let mut kind = self.infer_let_stmt(
+                    stmt.span,
+                    name,
+                    *mutable,
+                    type_annotation,
+                    initializer,
+                    *is_pub,
+                );
+                if *is_const
+                    && let Some(value) = self.declare_constant(name, initializer)
+                    && let TypedStmtKind::Let { initializer, .. } = &mut kind
+                {
+                    initializer.kind = value.literal();
+                }
+                kind
+            }
             StmtKind::Block(stmts) => self.infer_block_stmt(stmts),
             StmtKind::If {
                 condition,

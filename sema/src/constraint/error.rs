@@ -273,6 +273,9 @@ pub enum TypeErrorKind {
     },
     UnconsumedCollectionIterator,
     CollectionCollectRequiresPipeline,
+    NonConstantInitializer {
+        name: String,
+    },
     MutableCollectionAlias {
         place: String,
         root: String,
@@ -933,6 +936,10 @@ impl TypeError {
             TypeErrorKind::CollectionCollectRequiresPipeline => write!(
                 f,
                 "collect is a pipeline terminal; call iter, map, or filter first"
+            ),
+            TypeErrorKind::NonConstantInitializer { name } => write!(
+                f,
+                "the initializer of constant `{name}` is not a compile-time constant\n   = help: use literals, arithmetic, comparisons, `as` casts and other constants, or declare `{name}` with `let`"
             ),
             TypeErrorKind::MutableCollectionAlias {
                 place,
@@ -1703,6 +1710,7 @@ impl TypeErrorKind {
             Self::ConstantIndexOutOfBounds { .. } => 321,
             Self::CollectionCollectRequiresPipeline => 322,
             Self::MutableCollectionAlias { .. } => 323,
+            Self::NonConstantInitializer { .. } => 395,
             Self::NonExhaustiveStruct { .. } => 324,
             Self::GenericStructDeferred { .. } => 325,
             Self::DuplicateNominal { .. } => 326,

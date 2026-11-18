@@ -11,6 +11,8 @@ impl TypeEnv {
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![HashMap::new()],
             explicit_dynamic_locals: vec![HashSet::new()],
+            constant_values: vec![HashMap::new()],
+            capture_constants: HashMap::new(),
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
@@ -29,6 +31,7 @@ impl TypeEnv {
         let mut capture_mutability = HashMap::new();
         let mut known_collection_lengths = HashMap::new();
         let mut capture_aliases = HashMap::new();
+        let mut capture_constants = self.capture_constants.clone();
 
         for (scope, origins) in self.locals.iter().zip(&self.explicit_dynamic_locals) {
             for (name, ty) in scope {
@@ -55,6 +58,15 @@ impl TypeEnv {
                 match aliases.get(name) {
                     Some(alias) => capture_aliases.insert(name.clone(), alias.clone()),
                     None => capture_aliases.remove(name),
+                };
+            }
+        }
+
+        for (scope, constants) in self.locals.iter().zip(&self.constant_values) {
+            for name in scope.keys() {
+                match constants.get(name) {
+                    Some(value) => capture_constants.insert(name.clone(), value.clone()),
+                    None => capture_constants.remove(name),
                 };
             }
         }
@@ -88,6 +100,8 @@ impl TypeEnv {
             read_only_bindings: vec![HashSet::new()],
             known_collection_lengths: vec![known_collection_lengths],
             explicit_dynamic_locals: vec![HashSet::new()],
+            constant_values: vec![HashMap::new()],
+            capture_constants,
             captures: all_visible,
             borrow_captures: all_borrowed,
             capture_mutability,

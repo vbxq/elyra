@@ -14,6 +14,7 @@ impl TypeEnv {
             .push(std::collections::HashMap::new());
         self.explicit_dynamic_locals
             .push(std::collections::HashSet::new());
+        self.constant_values.push(std::collections::HashMap::new());
     }
 
     pub fn pop_scope(&mut self) {
@@ -25,6 +26,7 @@ impl TypeEnv {
             self.read_only_bindings.pop();
             self.known_collection_lengths.pop();
             self.explicit_dynamic_locals.pop();
+            self.constant_values.pop();
         }
     }
 
@@ -132,6 +134,29 @@ impl TypeEnv {
         }
     }
 
+    pub fn define_constant(&mut self, name: &str, value: crate::infer::constants::ConstValue) {
+        if let Some(constants) = self.constant_values.last_mut() {
+            constants.insert(name.to_string(), value);
+        }
+    }
+
+    pub fn lookup_constant(&self, name: &str) -> Option<crate::infer::constants::ConstValue> {
+        for (scope, constants) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.constant_values.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return constants.get(name).cloned();
+            }
+        }
+        if self.captures.contains_key(name) {
+            return self.capture_constants.get(name).cloned();
+        }
+        None
+    }
+
     pub fn mark_read_only(&mut self, name: &str) {
         if let Some(scope) = self.read_only_bindings.last_mut() {
             scope.insert(name.to_string());
@@ -162,6 +187,9 @@ impl TypeEnv {
             }
             if let Some(lengths) = self.known_collection_lengths.last_mut() {
                 lengths.remove(&name);
+            }
+            if let Some(constants) = self.constant_values.last_mut() {
+                constants.remove(&name);
             }
             if let Some(origins) = self.explicit_dynamic_locals.last_mut() {
                 if explicit_dynamic {
@@ -203,6 +231,10 @@ impl TypeEnv {
         }
 
         None
+    }
+
+    pub fn binds_value(&self, name: &str) -> bool {
+        self.locals.iter().any(|scope| scope.contains_key(name)) || self.captures.contains_key(name)
     }
 
     pub fn contains(&self, name: &str) -> bool {

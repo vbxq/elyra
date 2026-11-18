@@ -1,5 +1,6 @@
 mod borrows;
 mod captures;
+pub(crate) mod constants;
 mod constraints;
 pub mod entry;
 mod expr;
@@ -200,6 +201,9 @@ pub struct TypeInference {
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
     alias_residuals: Vec<places::AliasResidual>,
+    imported_constants: HashMap<String, constants::ConstValue>,
+    global_constants: HashMap<String, constants::ConstValue>,
+    exported_constants: std::collections::BTreeMap<String, constants::ConstValue>,
     function_mutable_params: HashMap<String, Vec<Option<String>>>,
     surface_dynamic_spans: HashSet<(usize, usize)>,
     sum_type_residuals: Vec<expr_sum::SumTypeResidual>,

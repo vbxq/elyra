@@ -235,11 +235,11 @@ impl TypeInference {
     }
 
     pub(super) fn constant_length_value(&self, expr: &Expr) -> Option<i64> {
-        constant_int_value_with(expr, &|leaf| self.constant_path_int(leaf))
+        constant_int_value_with(expr, &|leaf| self.constant_int_leaf(leaf))
     }
 
     pub(crate) fn constant_collection_length(&self, expr: &Expr) -> Option<usize> {
-        constant_collection_length_with(expr, &|leaf| self.constant_path_int(leaf))
+        constant_collection_length_with(expr, &|leaf| self.constant_int_leaf(leaf))
     }
 
     fn infer_repeat_count(&mut self, count: &Expr) -> TypedExpr {

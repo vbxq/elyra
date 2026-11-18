@@ -17,6 +17,7 @@ pub struct ModuleInfo {
     pub native_functions: Vec<String>,
     pub native_signatures: HashMap<String, InferType>,
     pub exported_types: super::exported_types::ExportedTypes,
+    pub constants: HashMap<String, aelys_sema::ConstValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +88,30 @@ pub fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
         }
         AelysNativeType::ResultUnitString => {
             InferType::Result(Box::new(InferType::Unit), Box::new(InferType::String))
+        }
+    }
+}
+
+impl ModuleInfo {
+    pub(crate) fn import_constants(
+        &self,
+        module_alias: &str,
+        kind: &aelys_syntax::ImportKind,
+        into: &mut std::collections::BTreeMap<String, aelys_sema::ConstValue>,
+    ) {
+        for (name, value) in &self.constants {
+            let (bare, qualified) = match kind {
+                aelys_syntax::ImportKind::Module { alias: None }
+                | aelys_syntax::ImportKind::Wildcard => (true, true),
+                aelys_syntax::ImportKind::Module { alias: Some(_) } => (false, true),
+                aelys_syntax::ImportKind::Symbols(symbols) => (symbols.contains(name), false),
+            };
+            if bare {
+                into.insert(name.clone(), value.clone());
+            }
+            if qualified {
+                into.insert(format!("{module_alias}::{name}"), value.clone());
+            }
         }
     }
 }
