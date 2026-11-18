@@ -26,6 +26,8 @@ let mut f_minor: Vec<int> = vec![]
 let mut f_major: Vec<int> = vec![]
 let mut f_slices: Vec<int> = vec![]
 let mut f_wait: Vec<int> = vec![]
+let mut f_oncpu: Vec<int> = vec![]
+let mut oncpu_us = 0
 let mut f_bsp: Vec<int> = vec![]
 let mut f_walls: Vec<int> = vec![]
 let mut f_planes: Vec<int> = vec![]
@@ -58,6 +60,10 @@ fn sched_wait_us() -> int {
         Ok(text) => {
             let fields = text.split(" ")
             if fields.len() < 2 { -1 } else {
+                match convert::parse_int(fields[0]) {
+                    Some(ns) => oncpu_us = ns / 1000,
+                    None => oncpu_us = -1,
+                }
                 match convert::parse_int(fields[1]) {
                     Some(ns) => ns / 1000,
                     None => -1,
@@ -135,9 +141,9 @@ fn frame_line(i: int) -> string {
 }
 
 fn write_csv(path: string) {
-    let mut out = "frame,tic,total_us,logic_us,render_us,tics,wait_us,gc_pause_us,minor,major_slices,major_done,drawsegs,sprites,planes,bsp_us,walls_us,planes_us,sprites_us,masked_us\n"
+    let mut out = "frame,tic,total_us,logic_us,render_us,tics,wait_us,gc_pause_us,minor,major_slices,major_done,drawsegs,sprites,planes,bsp_us,walls_us,planes_us,sprites_us,masked_us,oncpu_us\n"
     for i in 0..f_total.len() {
-        out += "{i},{f_tic[i]},{f_total[i]},{f_logic[i]},{f_render[i]},{f_ntics[i]},{f_wait[i]},{f_pause[i]},{f_minor[i]},{f_slices[i]},{f_major[i]},{f_ds[i]},{f_vs[i]},{f_pl[i]},{f_bsp[i]},{f_walls[i]},{f_planes[i]},{f_spr[i]},{f_msk[i]}\n"
+        out += "{i},{f_tic[i]},{f_total[i]},{f_logic[i]},{f_render[i]},{f_ntics[i]},{f_wait[i]},{f_pause[i]},{f_minor[i]},{f_slices[i]},{f_major[i]},{f_ds[i]},{f_vs[i]},{f_pl[i]},{f_bsp[i]},{f_walls[i]},{f_planes[i]},{f_spr[i]},{f_msk[i]},{f_oncpu[i]}\n"
     }
     match fs::write_text(path, out) {
         Ok(_) => println("gate csv {path}"),
@@ -166,6 +172,8 @@ fn report(variant: string, realtime: bool, wall_us: int) {
     for i in 0..n { cpu.push(f_total[i] - f_wait[i]) }
     let cs = sorted(cpu)
     println("gate cpu_frame_ms p50 {ms(pct(cs, 50))} p99 {ms(pct(cs, 99))} max {ms(cs[n - 1])}")
+    let oc = sorted(f_oncpu)
+    println("gate oncpu_frame_ms p50 {ms(pct(oc, 50))} p99 {ms(pct(oc, 99))} max {ms(oc[n - 1])}")
     println("gate render_ms p50 {ms(pct(sorted(f_render), 50))} p99 {ms(pct(sorted(f_render), 99))}")
     println("gate logic_ms p50 {ms(pct(sorted(f_logic), 50))} max {ms(pct(sorted(f_logic), 100))}")
     let bsp_name = if engine::has_flag("--phases") { "bsp" } else { "bsp_and_walls" }
@@ -231,6 +239,7 @@ pub fn run(present: fn() -> bool, variant: string) {
     f_major.reserve(cap * 4)
     f_slices.reserve(cap * 4)
     f_wait.reserve(cap * 4)
+    f_oncpu.reserve(cap * 4)
     f_bsp.reserve(cap * 4)
     f_walls.reserve(cap * 4)
     f_planes.reserve(cap * 4)
@@ -258,6 +267,7 @@ pub fn run(present: fn() -> bool, variant: string) {
         let major0 = sys::gc_major_collections()
         let pauses0 = sys::gc_pause_count()
         let wait0 = sched_wait_us()
+        let oncpu0 = oncpu_us
         let start = now_us()
         let tic0 = engine::tic_count()
         if realtime {
@@ -272,6 +282,7 @@ pub fn run(present: fn() -> bool, variant: string) {
         ok = present()
         let end = now_us()
         f_wait.push(sched_wait_us() - wait0)
+        f_oncpu.push(oncpu_us - oncpu0)
         f_total.push(end - start)
         f_logic.push(t_logic - start)
         f_render.push(t_render - t_logic)

@@ -150,8 +150,8 @@ def main():
             os.unlink(sdl_target)
 
     print()
-    print("| config | p50 ms | p99 ms | max ms | p99 ms minus preemption | fps | gc max pause in run us | gc max pause vm us | rss first/last/max MB | alloc obj/s | crashes | loadavg |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| config | p50 ms | p99 ms | max ms | p50 ms minus preemption | p99 ms minus preemption | p99 on-cpu ms | fps | gc max pause in run us | gc max pause vm us | rss first/last/max MB | alloc obj/s | crashes | loadavg |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for name, runs in results.items():
         ok = [r for r in runs if not r["crashed"]]
         rss = []
@@ -161,7 +161,9 @@ def main():
         print(f"| {name} | {summary([num(r, 'frame_ms', 'p50') for r in ok])} "
               f"| {summary([num(r, 'frame_ms', 'p99') for r in ok])} "
               f"| {summary([num(r, 'frame_ms', 'max') for r in ok])} "
+              f"| {summary([num(r, 'cpu_frame_ms', 'p50') for r in ok])} "
               f"| {summary([num(r, 'cpu_frame_ms', 'p99') for r in ok])} "
+              f"| {summary([num(r, 'oncpu_frame_ms', 'p99') for r in ok])} "
               f"| {summary([num(r, 'run', 'fps') for r in ok])} "
               f"| {summary([num(r, 'gc_run', 'max_pause_us') for r in ok])} "
               f"| {summary([num(r, 'gc_vm', 'max_pause_us') for r in ok])} "
