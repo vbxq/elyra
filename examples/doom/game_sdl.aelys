@@ -1,12 +1,17 @@
 // needs modules/sdl built per docs/native-modules.md and copied next to this file as sdl.so
 needs std::sys
+needs std::convert as convert
 needs println from std::io
 needs screen
 needs engine
 
 let wad_path = engine::flag_value("--wad", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
 let g = engine::load(wad_path)
-match screen::open("Elyra E1M1", g.playpal) {
+let scale = match convert::parse_int(engine::flag_value("--scale", "3")) {
+    Some(n) => n,
+    None => 3,
+}
+match screen::open("Elyra E1M1", g.playpal, scale) {
     Ok(_) => (),
     Err(e) => {
         println("sdl: {e}")

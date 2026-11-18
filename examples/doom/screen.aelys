@@ -5,11 +5,11 @@ needs render
 let pixels = bytes::alloc(64000)
 let palette = bytes::alloc(768)
 
-pub fn open(title: string, playpal: Vec<int>) -> Result<(), string> {
+pub fn open(title: string, playpal: Vec<int>, scale: int) -> Result<(), string> {
     let mut first_palette = playpal.clone()
     first_palette.truncate(768)
     bytes::copy_from_vec(palette, 0, first_palette)?
-    sdl::open(title, 320, 200, 3)
+    sdl::open(title, 320, 200, scale)
 }
 
 pub fn present() -> bool {
