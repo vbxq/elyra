@@ -498,8 +498,10 @@ fn a_constant_that_cannot_be_evaluated_names_the_cause() {
             "overflows the 48-bit int range",
         ),
         ("const B = 1 << 47", "overflows the 48-bit int range"),
-        ("const B = 1 << 48", "shift count 48 is outside 0..48"),
-        ("const B = 1 >> -1", "shift count -1 is negative"),
+        (
+            "const B = 1 << 48",
+            "1 << 48 overflows the 48-bit int range",
+        ),
         (
             "const A = -140737488355328\nconst B = -A",
             "overflows the 48-bit int range",

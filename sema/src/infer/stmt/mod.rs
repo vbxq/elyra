@@ -67,8 +67,14 @@ impl TypeInference {
                     initializer,
                     *is_pub,
                 );
+                let context = if *is_const {
+                    self.constant_context(name, type_annotation.as_ref())
+                } else {
+                    crate::types::InferType::I64
+                };
                 if *is_const
-                    && let Some(value) = self.declare_constant(name, initializer, stmt.span)
+                    && let Some(value) =
+                        self.declare_constant(name, initializer, &context, stmt.span)
                     && let TypedStmtKind::Let { initializer, .. } = &mut kind
                 {
                     initializer.kind = value.literal();
