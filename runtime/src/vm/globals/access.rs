@@ -1,4 +1,5 @@
 use super::super::{GcRef, HostRoot, VM, Value};
+use super::layout::UNNAMED_GLOBAL;
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 impl VM {
@@ -47,8 +48,47 @@ impl VM {
         }
         self.globals_by_index[idx] = value;
         self.global_generations[idx] = self.global_generations[idx].wrapping_add(1);
-        self.globals_by_index_cache.clear();
-        self.globals_by_index_dirty = true;
+        let mapping = self.current_global_mapping_id;
+        let name_id = self
+            .globals_by_index_cache
+            .get(mapping)
+            .and_then(Option::as_ref)
+            .and_then(|view| view.name_ids.get(idx).copied());
+        match name_id {
+            Some(UNNAMED_GLOBAL) => {
+                if let Some(Some(view)) = self.globals_by_index_cache.get_mut(mapping) {
+                    view.values[idx] = value;
+                }
+            }
+            Some(name_id) => self.write_named_global(name_id, value),
+            None => {
+                self.clear_prepared_globals();
+                self.globals_by_index_dirty = true;
+            }
+        }
+    }
+
+    fn write_named_global(&mut self, name_id: u32, value: Value) {
+        let current = self.current_global_mapping_id;
+        let name_id = name_id as usize;
+        for &(mapping, slot) in &self.global_users[name_id] {
+            let slot = slot as usize;
+            if let Some(Some(view)) = self.globals_by_index_cache.get_mut(mapping) {
+                view.values[slot] = value;
+            }
+            if mapping == current
+                && let Some(current_slot) = self.globals_by_index.get_mut(slot)
+            {
+                *current_slot = value;
+            }
+        }
+        let name = &self.global_names_by_id[name_id];
+        match self.globals.get_mut(name) {
+            Some(existing) => *existing = value,
+            None => {
+                self.globals.insert(name.clone(), value);
+            }
+        }
     }
 
     pub(crate) fn set_global_by_index_checked(
@@ -89,7 +129,7 @@ impl VM {
 
     pub fn invalidate_global_mapping(&mut self) {
         self.globals_by_index.clear();
-        self.globals_by_index_cache.clear();
+        self.clear_prepared_globals();
         self.current_global_mapping_id = usize::MAX;
     }
 

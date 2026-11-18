@@ -61,7 +61,7 @@ impl VM {
         self.heap.mark_young(self.root_refs());
         self.heap.sweep_young();
         self.sweep_jit_metadata();
-        self.globals_by_index_cache.clear();
+        self.clear_prepared_globals();
         self.record_gc_slice(started);
         self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
         self.execution_stats.minor_collections =
@@ -74,7 +74,7 @@ impl VM {
         self.record_gc_slice(started);
         if matches!(result, MajorSliceResult::Complete { .. }) {
             self.sweep_jit_metadata();
-            self.globals_by_index_cache.clear();
+            self.clear_prepared_globals();
             self.execution_stats.collections = self.execution_stats.collections.saturating_add(1);
             self.execution_stats.major_collections =
                 self.execution_stats.major_collections.saturating_add(1);

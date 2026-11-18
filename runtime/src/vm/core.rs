@@ -26,6 +26,11 @@ pub(crate) struct InlineCallCacheEntry {
     pub target: GcRef,
 }
 
+pub(crate) struct PreparedGlobals {
+    pub(crate) values: Vec<Value>,
+    pub(crate) name_ids: Box<[u32]>,
+}
+
 pub struct VM {
     pub(crate) heap: Heap,
     pub(crate) config: VmConfig,
@@ -34,7 +39,11 @@ pub struct VM {
     pub(crate) globals: HashMap<String, Value>,
     pub(crate) global_mutability: HashMap<String, bool>,
     /// prepared views by mapping id. reaching them by index rather than by hash matters
-    pub(crate) globals_by_index_cache: Vec<Option<Arc<Vec<Value>>>>,
+    pub(crate) globals_by_index_cache: Vec<Option<PreparedGlobals>>,
+    pub(crate) global_name_ids: HashMap<String, u32>,
+    pub(crate) global_names_by_id: Vec<String>,
+    /// every prepared view slot holding each named global, so a write reaches them all instead of discarding the views
+    pub(crate) global_users: Vec<Vec<(usize, u32)>>,
     pub(crate) globals_by_index: Vec<Value>,
     /// set when an indexed write has not reached the name keyed table yet, so a call between two readers costs nothing
     pub(crate) globals_by_index_dirty: bool,
