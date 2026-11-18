@@ -15,6 +15,8 @@ impl TypeEnv {
             capture_constants: HashMap::new(),
             function_value_params: vec![HashMap::new()],
             capture_function_value_params: HashMap::new(),
+            binding_origins: vec![HashMap::new()],
+            capture_binding_origins: HashMap::new(),
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),
@@ -85,6 +87,16 @@ impl TypeEnv {
             }
         }
 
+        let mut capture_binding_origins = self.capture_binding_origins.clone();
+        for (scope, origins) in self.locals.iter().zip(&self.binding_origins) {
+            for name in scope.keys() {
+                match origins.get(name) {
+                    Some(origin) => capture_binding_origins.insert(name.clone(), origin.clone()),
+                    None => capture_binding_origins.remove(name),
+                };
+            }
+        }
+
         for lengths in &self.known_collection_lengths {
             known_collection_lengths
                 .extend(lengths.iter().map(|(name, length)| (name.clone(), *length)));
@@ -118,6 +130,8 @@ impl TypeEnv {
             capture_constants,
             function_value_params: vec![HashMap::new()],
             capture_function_value_params,
+            binding_origins: vec![HashMap::new()],
+            capture_binding_origins,
             captures: all_visible,
             borrow_captures: all_borrowed,
             capture_mutability,

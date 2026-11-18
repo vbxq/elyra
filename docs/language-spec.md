@@ -1445,9 +1445,12 @@ never an error. A function that receives an immutable parameter can still
 return it, and the caller may bind the result mutably: a returned value is a
 fresh binding, and this route is not tracked.
 
-The iteration variable of `for p in ps` is an immutable binding, so
-`let mut q = p` inside the loop is E0323; write `ps[i].x = ...` with an index
-loop, or clone.
+The iteration variable of `for p in ps` and the bindings of a `match` pattern
+are views of the iterated or matched place: `let mut q = p` inside the loop is
+allowed when the root of `ps` is mutable, and shares the element; when the root
+is immutable it is E0323 and the message names that root. Writing through `p`
+itself (`p.x = ...`) is E0330 because `p` is an immutable binding; write
+`ps[i].x = ...` with an index loop, or clone.
 
 Methods and associated functions live in an `impl` block:
 

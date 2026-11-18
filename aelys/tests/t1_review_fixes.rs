@@ -471,3 +471,51 @@ a.x * 100 + v[1].x * 10 + __tostring(7).len()
         100 + 10 + 1,
     );
 }
+
+#[test]
+fn match_and_for_bindings_from_a_mutable_root_may_be_bound_mutably() {
+    assert_int_everywhere(
+        r#"
+struct S { x: int, items: Vec<int> }
+fn mk() -> S { S { x: 1, items: vec![] } }
+let mut a = S { x: 1, items: vec![5] }
+match a { S { items, .. } => { let mut x = items; x.push(1) } }
+let mut v = vec![mk(), mk()]
+for s in v { let mut m = s; m.x = 7 }
+let mut w = vec![mk()]
+match w[0] { S { items, .. } => { let mut deep = items; deep.push(3) } }
+fn in_fn(mut p: S) -> int {
+    match p { S { items, .. } => { let mut k = items; k.push(2) } }
+    p.items.len()
+}
+a.items.len() * 1000 + (v[0].x + v[1].x) * 10 + w[0].items.len() + in_fn(mk()) * 100
+"#,
+        2 * 1000 + 14 * 10 + 1 + 100,
+    );
+}
+
+#[test]
+fn match_and_for_bindings_from_an_immutable_root_name_that_root() {
+    let cases = [
+        (
+            "struct S { x: int, items: Vec<int> }\nlet a = S { x: 1, items: vec![5] }\nmatch a { S { items, .. } => { let mut x = items; x.push(1) } }",
+            "immutable binding `a`",
+        ),
+        (
+            "struct S { x: int }\nlet v = vec![S { x: 1 }]\nfor s in v { let mut m = s; m.x = 7 }",
+            "immutable binding `v`",
+        ),
+        (
+            "struct S { x: int, items: Vec<int> }\nfn f(a: S) { match a { S { items, .. } => { let mut a = S { x: 0, items: vec![] }; let mut x = items; x.push(1) } } }",
+            "immutable binding `a`",
+        ),
+        (
+            "struct S { x: int }\nlet v = vec![S { x: 1 }]\nfor s in v { let f = fn() { let mut m = s; m.x = 7 } }",
+            "immutable binding `v`",
+        ),
+    ];
+    for (body, root) in cases {
+        let message = assert_rejected(body, "E0323");
+        assert!(message.contains(root), "expected {root}:\n{message}");
+    }
+}

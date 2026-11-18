@@ -1346,6 +1346,10 @@ impl TypeInference {
         for arm in arms {
             self.env.push_scope();
             let typed_pattern = self.infer_pattern(&arm.pattern, &typed_scrutinee.ty);
+            let mut bindings = Vec::new();
+            collect_pattern_bindings(&typed_pattern, &mut bindings);
+            let names: Vec<String> = bindings.into_iter().map(|(name, _)| name).collect();
+            self.record_binding_origins(scrutinee, &names);
             let typed_guard = arm.guard.as_ref().map(|guard| {
                 let typed_guard = self.infer_expr(guard);
                 if !self.reject_dynamic(

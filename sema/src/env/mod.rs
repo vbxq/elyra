@@ -34,6 +34,10 @@ pub struct TypeEnv {
 
     capture_function_value_params: HashMap<String, Vec<Option<String>>>,
 
+    binding_origins: Vec<HashMap<String, (String, bool)>>,
+
+    capture_binding_origins: HashMap<String, (String, bool)>,
+
     captures: HashMap<String, InferType>,
 
     borrow_captures: HashMap<String, ReferenceKind>,
@@ -66,6 +70,8 @@ impl TypeEnv {
             capture_constants: HashMap::new(),
             function_value_params: vec![HashMap::new()],
             capture_function_value_params: HashMap::new(),
+            binding_origins: vec![HashMap::new()],
+            capture_binding_origins: HashMap::new(),
             captures: HashMap::new(),
             borrow_captures: HashMap::new(),
             capture_mutability: HashMap::new(),

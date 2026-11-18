@@ -129,12 +129,14 @@ impl TypeInference {
         let mut places = Vec::new();
         source_places(source, &mut places);
         for place in places {
-            let Some(root) = place_root(place) else {
+            let Some(written) = place_root(place) else {
                 continue;
             };
-            if self.place_root_is_mutable(root) || self.env.is_read_only(root) {
+            let (root, root_mutable) = self.alias_root(written);
+            if root_mutable || (root == written && self.env.is_read_only(written)) {
                 continue;
             }
+            let root = root.as_str();
             if !self.env.contains(root) && self.env.lookup(root).is_none() {
                 continue;
             }
@@ -145,6 +147,24 @@ impl TypeInference {
                 root: root.to_string(),
                 site: site.clone(),
             });
+        }
+    }
+
+    pub(crate) fn alias_root(&self, root: &str) -> (String, bool) {
+        match self.env.binding_origin(root) {
+            Some(origin) => origin.clone(),
+            None => (root.to_string(), self.place_root_is_mutable(root)),
+        }
+    }
+
+    pub(crate) fn record_binding_origins(&mut self, source: &Expr, names: &[String]) {
+        let Some(root) = place_root(source) else {
+            return;
+        };
+        let (root, root_mutable) = self.alias_root(root);
+        for name in names {
+            self.env
+                .define_binding_origin(name, root.clone(), root_mutable);
         }
     }
 

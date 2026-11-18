@@ -17,6 +17,7 @@ impl TypeEnv {
         self.constant_values.push(std::collections::HashMap::new());
         self.function_value_params
             .push(std::collections::HashMap::new());
+        self.binding_origins.push(std::collections::HashMap::new());
     }
 
     pub fn pop_scope(&mut self) {
@@ -30,6 +31,7 @@ impl TypeEnv {
             self.explicit_dynamic_locals.pop();
             self.constant_values.pop();
             self.function_value_params.pop();
+            self.binding_origins.pop();
         }
     }
 
@@ -183,6 +185,29 @@ impl TypeEnv {
         None
     }
 
+    pub fn define_binding_origin(&mut self, name: &str, root: String, root_mutable: bool) {
+        if let Some(origins) = self.binding_origins.last_mut() {
+            origins.insert(name.to_string(), (root, root_mutable));
+        }
+    }
+
+    pub fn binding_origin(&self, name: &str) -> Option<&(String, bool)> {
+        for (scope, origins) in self
+            .locals
+            .iter()
+            .rev()
+            .zip(self.binding_origins.iter().rev())
+        {
+            if scope.contains_key(name) {
+                return origins.get(name);
+            }
+        }
+        if self.captures.contains_key(name) {
+            return self.capture_binding_origins.get(name);
+        }
+        None
+    }
+
     pub fn mark_read_only(&mut self, name: &str) {
         if let Some(scope) = self.read_only_bindings.last_mut() {
             scope.insert(name.to_string());
@@ -219,6 +244,9 @@ impl TypeEnv {
             }
             if let Some(params) = self.function_value_params.last_mut() {
                 params.remove(&name);
+            }
+            if let Some(origins) = self.binding_origins.last_mut() {
+                origins.remove(&name);
             }
             if let Some(origins) = self.explicit_dynamic_locals.last_mut() {
                 if explicit_dynamic {
