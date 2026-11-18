@@ -1291,7 +1291,13 @@ impl TypeInference {
         let mut seen = HashSet::new();
         collect_generic_params(&callee.ty, &mut names, &mut seen);
         // a method reached through a bound already had the trait's parameters
-        if is_method_callee(&callee) {
+        // a function value, unlike a declaration, holds the enclosing function's parameters as they are
+        let holds_value = match &callee.kind {
+            TypedExprKind::Identifier(name) => self.env.binds_value(name),
+            TypedExprKind::StructMethod { .. } | TypedExprKind::Member { .. } => false,
+            _ => true,
+        };
+        if is_method_callee(&callee) || holds_value {
             // the member pass already gave this signature the receiver's types and
             names.retain(|name| !self.type_params_in_scope.contains(name));
         }
@@ -1330,7 +1336,7 @@ impl TypeInference {
     // a bound like `C: Collection<T>` fixes `T` once `C` is known, through the one impl covering it
     pub(crate) fn deduce_bound_arguments(&mut self, subst: &mut crate::unify::Substitution) {
         let deductions = std::mem::take(&mut self.bound_deductions);
-        loop {
+        for _ in 0..=deductions.len() {
             let mut progress = false;
             for deduction in &deductions {
                 let subject = subst.apply(&deduction.subject);
