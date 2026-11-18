@@ -1,5 +1,6 @@
 use super::super::OptimizationStats;
-use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
+use crate::passes::effects::has_effects;
+use aelys_sema::{TypedFunction, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
 
 pub fn eliminate_unused_in_block(
@@ -22,7 +23,7 @@ pub fn eliminate_unused_in_block(
             if *is_pub {
                 return true;
             } // keep pub exports
-            if !used_vars.contains(name) && !has_side_effects(initializer) {
+            if !used_vars.contains(name) && !has_effects(initializer) {
                 stats.dead_code_eliminated += 1;
                 return false;
             }
@@ -71,96 +72,4 @@ fn eliminate_unused_in_function(
         local_used.insert(param.name.clone());
     }
     eliminate_unused_in_block(&mut func.body, &local_used, stats);
-}
-
-fn has_side_effects(expr: &TypedExpr) -> bool {
-    match &expr.kind {
-        TypedExprKind::Call { .. } | TypedExprKind::Assign { .. } => true,
-        TypedExprKind::Binary { left, right, .. } => {
-            has_side_effects(left) || has_side_effects(right)
-        }
-        TypedExprKind::Unary { operand, .. } => has_side_effects(operand),
-        TypedExprKind::And { left, right } | TypedExprKind::Or { left, right } => {
-            has_side_effects(left) || has_side_effects(right)
-        }
-        TypedExprKind::Grouping(inner) => has_side_effects(inner),
-        TypedExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            has_side_effects(condition)
-                || has_side_effects(then_branch)
-                || has_side_effects(else_branch)
-        }
-        TypedExprKind::Lambda(_) | TypedExprKind::LambdaInner { .. } => false,
-        TypedExprKind::Member { object, .. } => has_side_effects(object),
-        TypedExprKind::StructField { object, .. } | TypedExprKind::StructMethod { object, .. } => {
-            has_side_effects(object)
-        }
-        TypedExprKind::MemberAssign { object, value, .. } => {
-            has_side_effects(object) || has_side_effects(value)
-        }
-        TypedExprKind::ArrayLiteral {
-            elements, repeat, ..
-        }
-        | TypedExprKind::VecLiteral {
-            elements, repeat, ..
-        } => {
-            elements.iter().any(has_side_effects)
-                || repeat
-                    .as_ref()
-                    .is_some_and(|repeat| has_side_effects(repeat))
-        }
-        TypedExprKind::ArraySized { size, .. } => has_side_effects(size),
-        TypedExprKind::Index { object, index } => {
-            has_side_effects(object) || has_side_effects(index)
-        }
-        TypedExprKind::IndexAssign { .. } => true, // assignment has side effects
-        TypedExprKind::Range { start, end, .. } => {
-            start.as_ref().is_some_and(|s| has_side_effects(s))
-                || end.as_ref().is_some_and(|e| has_side_effects(e))
-        }
-        TypedExprKind::Slice { object, range } => {
-            has_side_effects(object) || has_side_effects(range)
-        }
-        TypedExprKind::FmtString(parts) => parts.iter().any(|p| {
-            if let aelys_sema::TypedFmtStringPart::Expr(e) = p {
-                has_side_effects(e)
-            } else {
-                false
-            }
-        }),
-        TypedExprKind::StructLiteral { fields, .. } => {
-            fields.iter().any(|(_, v)| has_side_effects(v))
-        }
-        TypedExprKind::EnumConstruct { fields, .. } => {
-            fields.iter().any(|(_, v)| has_side_effects(v))
-        }
-        TypedExprKind::Cast { expr, .. } => has_side_effects(expr),
-        TypedExprKind::Try { .. } => true,
-        TypedExprKind::Match { scrutinee, arms } => {
-            if has_side_effects(scrutinee) {
-                true
-            } else {
-                arms.iter().any(|arm| {
-                    arm.guard.as_ref().is_some_and(has_side_effects)
-                        || match &arm.body {
-                            aelys_sema::TypedMatchArmBody::Expr(expr) => has_side_effects(expr),
-                            aelys_sema::TypedMatchArmBody::Block(stmts) => stmts.iter().any(|stmt| {
-                                !matches!(stmt.kind, TypedStmtKind::Expression(ref expr) if !has_side_effects(expr))
-                            }),
-                        }
-                })
-            }
-        }
-        TypedExprKind::Identifier(_)
-        | TypedExprKind::Int(_)
-        | TypedExprKind::Float(_)
-        | TypedExprKind::Bool(_)
-        | TypedExprKind::String(_)
-        | TypedExprKind::Unit
-        | TypedExprKind::AssociatedConst { .. }
-        | TypedExprKind::Null => false,
-    }
 }

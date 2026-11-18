@@ -1010,6 +1010,10 @@ Even without any attribute, the optimizer already inlines:
 
 So you don't need to annotate everything. `@inline` and `@inline_always` are for when you want explicit control !
 
+**Optimization never changes what a program does:**
+
+Every optimization level (`-O0` to `-O3`) produces the same output, exit code and runtime errors as `-O0`. An inlined call evaluates each argument exactly once, left to right, before the body, as a real call does: an argument whose parameter is unused still runs, and one that traps (division by zero, an out-of-bounds index, an integer overflow) traps at the same point. An unused `let` is only removed when its initializer can neither write anything nor trap; `let _x = v[i]`, `let _x = a / b` or `let _x = a * b` still raise their error when they would at `-O0`.
+
 ## Semicolons
 
 Optional. The parser automatically inserts them after certain tokens (like Go does):
@@ -2385,7 +2389,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0102 | ExpectedExpression | an expression was required |
 | E0103 | ExpectedIdentifier | an identifier was required |
 | E0104 | InvalidAssignmentTarget | the left side of `=` is not a place |
-| E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit |
+| E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit: 256 levels of parentheses, calls, prefix operators, assignments and blocks |
 | E0106 | NullIsNotInSurface | `null` is not part of Aelys |
 | E0107 | ExpectedPattern | a pattern was required |
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
@@ -2484,7 +2488,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0365 | NotIterable | the value cannot be iterated |
 | E0366 | InvalidIndex | the value cannot be indexed that way |
 | E0367 | UntypedNativeTypeMismatch | a native signature does not match its use |
-| E0368 | RecursionLimit | the type checker exceeded its recursion limit |
+| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree deeper than 1024 nodes |
 | E0369 | NamespaceIsNotAValue | a module path used where a value is required |
 | E0370 | NotANamespace | a path segment that names no module |
 | E0371 | NoSuchMember | no such member on that module |
