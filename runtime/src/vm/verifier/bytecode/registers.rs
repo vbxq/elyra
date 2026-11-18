@@ -39,7 +39,7 @@ pub(super) fn verify(
             if a > 2 {
                 return Err(format!("invalid match failure family {a}"));
             }
-            if c > 3 {
+            if c > 3 || (c & 2 == 2 && a != 2) {
                 return Err(format!("invalid match failure flag {c}"));
             }
             if c & 1 == 1 {
