@@ -21,6 +21,13 @@ fn configs() -> Vec<(&'static str, VmConfig)> {
     vec![
         ("stress", config(true, VmConfig::MIN_GC_NURSERY_BYTES)),
         ("small nursery", config(false, 4 * 1024)),
+        (
+            "verify",
+            VmConfig {
+                gc_verify: true,
+                ..config(false, 4 * 1024)
+            },
+        ),
         ("default", VmConfig::default()),
     ]
 }
@@ -505,8 +512,12 @@ fn gc_vm_flags_parse_and_reject_bad_values() {
         "-ae.gc-stats=on",
         "--ae-gc-nursery=64K",
         "-ae.gc-stress=off",
+        "-ae.gc-verify=on",
     ]))
     .expect("valid flags");
+    assert!(parsed.config.gc_verify);
+    assert!(!VmConfig::default().gc_verify);
+    assert!(parse_vm_args(&args(&["-ae.gc-verify=sometimes"])).is_err());
     assert!(parsed.config.gc_stats);
     assert_eq!(parsed.config.gc_nursery_bytes, 64 * 1024);
     assert!(!parsed.config.gc_stress);
