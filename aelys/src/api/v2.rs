@@ -1283,26 +1283,37 @@ impl Isolate {
                 .map(|reference| Value::ptr(reference.index()))
                 .map_err(StructuredCloneError::Runtime),
             StructuredValue::Array(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| self.import_value(value, depth + 1))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let (values, _pins) = self.import_children(values, depth)?;
                 self.vm
                     .alloc_array(AelysArray::from_objects(values))
                     .map(|reference| Value::ptr(reference.index()))
                     .map_err(StructuredCloneError::Runtime)
             }
             StructuredValue::Vec(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| self.import_value(value, depth + 1))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let (values, _pins) = self.import_children(values, depth)?;
                 self.vm
                     .alloc_vec(AelysVec::from_objects(values))
                     .map(|reference| Value::ptr(reference.index()))
                     .map_err(StructuredCloneError::Runtime)
             }
         }
+    }
+
+    fn import_children(
+        &mut self,
+        values: &[StructuredValue],
+        depth: usize,
+    ) -> Result<(Vec<Value>, Vec<HostRoot>), StructuredCloneError> {
+        let mut imported = Vec::with_capacity(values.len());
+        let mut pins = Vec::new();
+        for value in values {
+            let value = self.import_value(value, depth + 1)?;
+            if let Some(raw) = value.as_ptr() {
+                pins.push(self.vm.pin_host_ref(GcRef::new(raw)));
+            }
+            imported.push(value);
+        }
+        Ok((imported, pins))
     }
 
     fn reject_foreign_module(&self, module: &CompiledModule) -> Result<(), AelysError> {
