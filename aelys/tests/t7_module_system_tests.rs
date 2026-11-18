@@ -499,21 +499,21 @@ fn one_file_reached_by_two_dotted_paths_is_one_module_instance() {
     let dir = tree(&[
         (
             "game/lib/counter.aelys",
-            "pub let mut hits = 0\npub fn bump() -> int {\n    hits = hits + 1\n    hits\n}\n",
+            "let mut hits = 0\npub fn bump() -> int {\n    hits = hits + 1\n    hits\n}\n",
         ),
         (
             "game/mobj.aelys",
-            "needs lib::counter\npub fn hit() -> int { counter::bump() }\n",
+            "needs lib::counter\nlet first = counter::bump()\npub fn first_hit() -> int { first }\npub fn hit() -> int { counter::bump() }\n",
         ),
     ]);
     assert_eq!(
         run_int(
             &dir,
             "main.aelys",
-            "needs game::lib::counter\nneeds game::mobj\nlet a = counter::bump()\nlet b = mobj::hit()\nlet c = counter::bump()\na * 100 + b * 10 + c\n"
+            "needs game::mobj\nneeds game::lib::counter\nlet a = counter::bump()\nlet b = mobj::hit()\nlet c = counter::bump()\nmobj::first_hit() * 1000 + a * 100 + b * 10 + c\n"
         ),
-        123,
-        "one instance counts 1, 2, 3"
+        1234,
+        "one instance counts 1 at mobj's load, then 2, 3, 4"
     );
 }
 
