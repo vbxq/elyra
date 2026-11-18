@@ -25,7 +25,7 @@ fn write_ppm(path: string, pal: Vec<int>, mut rgb: Vec<int>) {
     let _ = fs::close(f)
 }
 
-fn view(n: int, x: int, y: int, angle_deg: int, pal: Vec<int>, rgb: Vec<int>, outdir: string) {
+fn view(n: int, x: int, y: int, angle_deg: int, pal: Vec<int>, mut rgb: Vec<int>, outdir: string) {
     let fx = x << 16
     let fy = y << 16
     let z = render::floor_height_at(fx, fy) + (41 << 16)
@@ -47,7 +47,7 @@ let outdir = match sys::arg(1) {
 }
 
 let w = Wad::open(path)
-let level = map::load_level(w, "E1M1")
+let mut level = map::load_level(w, "E1M1")
 let g = gfx::load_graphics(w)
 render::setup(w, g, level)
 let pal = render::palette_rgb(g)

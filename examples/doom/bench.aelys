@@ -14,7 +14,7 @@ let frames = match sys::arg(0) {
     None => 30,
 }
 let w = Wad::open("/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
-let level = map::load_level(w, "E1M1")
+let mut level = map::load_level(w, "E1M1")
 let g = gfx::load_graphics(w)
 render::setup(w, g, level)
 let pal = render::palette_rgb(g)

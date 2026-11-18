@@ -390,7 +390,7 @@ fn setup_things(lv: Level) {
     num_solid = th_x.len()
 }
 
-pub fn init_level(lv: Level, skill_bit: int, no_monsters: bool) {
+pub fn init_level(mut lv: Level, skill_bit: int, no_monsters: bool) {
     p_skill_bit = skill_bit
     p_no_monsters = no_monsters
     setup_lines(lv)
@@ -400,7 +400,7 @@ pub fn init_level(lv: Level, skill_bit: int, no_monsters: bool) {
     bm_oy = bm.origin_y << 16
     bm_w = bm.columns
     bm_h = bm.rows
-    bm_lists = bm.lists
+    bm_lists = lv.blockmap.lists
     p_nodes = lv.nodes
     p_num_nodes = p_nodes.len()
     ss_sector = vec![]

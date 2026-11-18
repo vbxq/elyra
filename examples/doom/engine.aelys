@@ -63,7 +63,7 @@ pub fn ms_since(t: int) -> float { time::elapsed(t) * 1000.0 }
 pub fn load(path: string) -> Graphics {
     let t = clock()
     let w = wad::open_wad(path)
-    let level = map::load_level(w, "E1M1")
+    let mut level = map::load_level(w, "E1M1")
     let g = gfx::load_graphics(w)
     let skill = skill_from_args()
     let nomonsters = not has_flag("--monsters")

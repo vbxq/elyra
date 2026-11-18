@@ -453,7 +453,7 @@ fn sprite_picture(w: Wad, lump: int, mut lump_pic: Vec<int>) -> int {
     lump_pic[lump]
 }
 
-fn find_sprite_def(w: Wad, first: int, last: int, sprite: string, frame: int, lump_pic: Vec<int>) -> int {
+fn find_sprite_def(w: Wad, first: int, last: int, sprite: string, frame: int, mut lump_pic: Vec<int>) -> int {
     let mut pics = [-1, -1, -1, -1, -1, -1, -1, -1]
     let mut flips = [0, 0, 0, 0, 0, 0, 0, 0]
     let mut rotate = true
@@ -559,7 +559,7 @@ fn init_lights() {
     }
 }
 
-pub fn setup(w: Wad, g: Graphics, lv: Level) {
+pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
     let t0 = time::timer()
     cmap_rows = vec![]
     for m in 0..(g.colormap.len() / 256) {
