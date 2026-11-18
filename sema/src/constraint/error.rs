@@ -264,7 +264,8 @@ pub enum TypeErrorKind {
     },
     MutableCollectionRequired {
         method: String,
-        receiver: InferType,
+        place: String,
+        root: Option<String>,
     },
     ReadOnlyCollectionRequired {
         method: String,
@@ -272,7 +273,11 @@ pub enum TypeErrorKind {
     },
     UnconsumedCollectionIterator,
     CollectionCollectRequiresPipeline,
-    MutableCollectionAlias,
+    MutableCollectionAlias {
+        place: String,
+        root: String,
+        parameter: Option<String>,
+    },
     GenericStructDeferred {
         name: String,
     },
@@ -899,14 +904,20 @@ impl TypeError {
                 },
                 length
             ),
-            TypeErrorKind::MutableCollectionRequired { method, receiver } => {
-                write!(
+            TypeErrorKind::MutableCollectionRequired {
+                method,
+                place,
+                root,
+            } => match root {
+                Some(root) => write!(
                     f,
-                    "collection operation '{}' requires a mutable collection receiver, found {}",
-                    method,
-                    receiver.source_spelling()
-                )
-            }
+                    "collection operation '{method}' requires a mutable collection receiver: `{place}` is reached from the immutable binding `{root}`\n   = help: declare `{root}` with `let mut`, or receive it as `mut self` or a `mut` parameter"
+                ),
+                None => write!(
+                    f,
+                    "collection operation '{method}' requires a mutable collection receiver: `{place}` is a temporary value\n   = help: bind it with `let mut` before mutating it"
+                ),
+            },
             TypeErrorKind::ReadOnlyCollectionRequired { method, receiver } => {
                 write!(
                     f,
@@ -923,10 +934,22 @@ impl TypeError {
                 f,
                 "collect is a pipeline terminal; call iter, map, or filter first"
             ),
-            TypeErrorKind::MutableCollectionAlias => write!(
-                f,
-                "mutable aliases of collections are not supported; mutate the original binding"
-            ),
+            TypeErrorKind::MutableCollectionAlias {
+                place,
+                root,
+                parameter,
+            } => {
+                let site = match parameter {
+                    Some(parameter) => {
+                        format!("pass `{place}` to the `mut` parameter `{parameter}`")
+                    }
+                    None => format!("bind `{place}` mutably"),
+                };
+                write!(
+                    f,
+                    "cannot {site}: it is reachable from the immutable binding `{root}`, and aggregates are shared by reference\n   = help: write `{place}.clone()` to copy it, or declare `{root}` with `let mut` to share it"
+                )
+            }
             TypeErrorKind::GenericStructDeferred { .. } => {
                 write!(f, "generic struct support is reserved for Stage 2")
             }
@@ -1679,7 +1702,7 @@ impl TypeErrorKind {
             Self::UnconsumedCollectionIterator => 320,
             Self::ConstantIndexOutOfBounds { .. } => 321,
             Self::CollectionCollectRequiresPipeline => 322,
-            Self::MutableCollectionAlias => 323,
+            Self::MutableCollectionAlias { .. } => 323,
             Self::NonExhaustiveStruct { .. } => 324,
             Self::GenericStructDeferred { .. } => 325,
             Self::DuplicateNominal { .. } => 326,

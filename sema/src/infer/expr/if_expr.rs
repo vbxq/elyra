@@ -39,7 +39,11 @@ impl TypeInference {
             ));
         }
 
-        let result_type = self.type_gen.fresh();
+        let result_type = [&typed_then.ty, &typed_else.ty]
+            .into_iter()
+            .find(|ty| known_aggregate(ty))
+            .cloned()
+            .unwrap_or_else(|| self.type_gen.fresh());
         if !self.reject_dynamic(
             &typed_then.ty,
             &result_type,
@@ -82,4 +86,15 @@ impl TypeInference {
             },
         )
     }
+}
+
+fn known_aggregate(ty: &InferType) -> bool {
+    matches!(
+        ty,
+        InferType::Struct(_)
+            | InferType::Applied { .. }
+            | InferType::Array(_)
+            | InferType::FixedArray(_, _)
+            | InferType::Vec(_)
+    ) && ty.is_concrete()
 }

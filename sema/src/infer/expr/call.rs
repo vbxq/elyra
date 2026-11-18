@@ -6,6 +6,8 @@ use crate::types::InferType;
 use aelys_syntax::{Expr, ExprKind, Span};
 use std::collections::{HashMap, HashSet};
 
+pub(crate) const CLONE_BUILTIN: &str = "__clone";
+
 fn call_path_name(expr: &Expr) -> Option<String> {
     match &expr.kind {
         ExprKind::Identifier(name) => Some(name.clone()),
@@ -134,6 +136,10 @@ impl TypeInference {
                 return result;
             }
 
+            if let Some(result) = self.infer_clone_method_call(callee, args) {
+                return result;
+            }
+
             if let Some(result) = self.infer_string_method_call(callee, args) {
                 return result;
             }
@@ -170,6 +176,19 @@ impl TypeInference {
                 self.infer_call_argument(arg, expected)
             })
             .collect();
+        let mutable_params = self.mutable_params_for_call(callee, &typed_callee);
+        let receiver_offset = usize::from(matches!(
+            &typed_callee.kind,
+            TypedExprKind::StructMethod {
+                separator: aelys_syntax::MemberSeparator::Dot,
+                ..
+            }
+        ));
+        for (index, (arg, typed_arg)) in args.iter().zip(&typed_args).enumerate() {
+            if let Some(Some(parameter)) = mutable_params.get(index + receiver_offset) {
+                self.record_mutable_alias(arg, &typed_arg.ty, Some(parameter));
+            }
+        }
         let argument_indices = effective_argument_indices(&typed_args);
         self.record_native_obligations(
             &native_obligations,
@@ -869,6 +888,56 @@ impl TypeInference {
         ))
     }
 
+    fn infer_clone_method_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+    ) -> Option<(TypedExprKind, InferType)> {
+        let ExprKind::Member {
+            object,
+            member,
+            separator: aelys_syntax::MemberSeparator::Dot,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        if member != "clone" || !args.is_empty() {
+            return None;
+        }
+        let typed_object = self.infer_expr(object);
+        let clonable = match &typed_object.ty {
+            InferType::Struct(name) | InferType::Applied { name, .. } => {
+                self.type_table.method(name, "clone").is_none()
+                    && self.type_table.trait_methods(name, "clone").is_empty()
+            }
+            InferType::Array(_)
+            | InferType::FixedArray(_, _)
+            | InferType::Vec(_)
+            | InferType::Option(_)
+            | InferType::Result(_, _) => true,
+            _ => false,
+        };
+        if !clonable {
+            return None;
+        }
+        let ty = typed_object.ty.clone();
+        let typed_callee = TypedExpr::new(
+            TypedExprKind::Identifier(CLONE_BUILTIN.to_string()),
+            InferType::Function {
+                params: vec![ty.clone()],
+                ret: Box::new(ty.clone()),
+            },
+            callee.span,
+        );
+        Some((
+            TypedExprKind::Call {
+                callee: Box::new(typed_callee),
+                args: vec![typed_object],
+            },
+            ty,
+        ))
+    }
+
     fn infer_string_method_call(
         &mut self,
         callee: &Expr,
@@ -892,6 +961,9 @@ impl TypeInference {
         }
         let typed_object = self.infer_expr(object);
         self.collection_iter_allowed = previous_iterator_context;
+        if user_method_receiver(&typed_object.ty) {
+            return None;
+        }
         let signature = crate::native::function_signature(&format!("string::{member}"))?;
         let InferType::Function { params, ret } = signature else {
             return None;
@@ -1091,6 +1163,9 @@ impl TypeInference {
                 reason: ConstraintReason::Other("collection pipeline terminal".to_string()),
             });
         }
+        if user_method_receiver(&typed_object.ty) {
+            return None;
+        }
         if is_collection_method(member, args.len())
             && matches!(&typed_object.ty, InferType::Dynamic)
         {
@@ -1141,26 +1216,8 @@ impl TypeInference {
             _ => return None,
         };
         if matches!(member.as_str(), "push" | "pop" | "reserve") {
-            let binding = mutable_collection_binding(object);
-            if binding.is_some_and(|name| self.env.is_read_only(name)) {
-                self.errors.push(TypeError {
-                    kind: TypeErrorKind::ReadOnlyCollectionRequired {
-                        method: member.clone(),
-                        receiver: typed_object.ty.clone(),
-                    },
-                    span: object.span,
-                    reason: ConstraintReason::Other("read-only collection receiver".to_string()),
-                });
-            } else if binding.is_none_or(|name| !self.env.is_mutable(name)) {
-                self.errors.push(TypeError {
-                    kind: TypeErrorKind::MutableCollectionRequired {
-                        method: member.clone(),
-                        receiver: typed_object.ty.clone(),
-                    },
-                    span: object.span,
-                    reason: ConstraintReason::Other("mutable collection receiver".to_string()),
-                });
-            }
+            self.require_mutable_place(object, &typed_object.ty, member, false);
+            let binding = crate::infer::places::place_root(object);
             if let Some(name) = binding
                 && matches!(&object.kind, ExprKind::Identifier(_))
             {
@@ -1409,6 +1466,13 @@ fn substitute_generic_params(
     }
 }
 
+fn user_method_receiver(ty: &InferType) -> bool {
+    matches!(
+        ty,
+        InferType::Struct(_) | InferType::Applied { .. } | InferType::Param(_)
+    )
+}
+
 fn is_collection_method(member: &str, argument_count: usize) -> bool {
     matches!(
         (member, argument_count),
@@ -1417,18 +1481,6 @@ fn is_collection_method(member: &str, argument_count: usize) -> bool {
             | ("push" | "get" | "reserve" | "map" | "filter", 1)
             | ("fold", 2)
     )
-}
-
-fn mutable_collection_binding(expr: &Expr) -> Option<&str> {
-    match &expr.kind {
-        ExprKind::Identifier(name) => Some(name.as_str()),
-        ExprKind::Grouping(inner) => mutable_collection_binding(inner),
-        ExprKind::Index { object, .. } => match &object.kind {
-            ExprKind::Identifier(name) => Some(name.as_str()),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 fn is_pipeline_source(expr: &Expr) -> bool {

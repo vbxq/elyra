@@ -93,16 +93,8 @@ impl TypeInference {
             typed_init.ty.clone()
         };
 
-        if mutable
-            && is_collection_type(&var_type)
-            && collection_binding_name(initializer).is_some()
-            && !read_only_alias
-        {
-            self.errors.push(TypeError {
-                kind: TypeErrorKind::MutableCollectionAlias,
-                span: initializer.span,
-                reason: ConstraintReason::Other("mutable collection alias".to_string()),
-            });
+        if mutable {
+            self.record_mutable_alias(initializer, &var_type, None);
         }
 
         if name != "_" {
@@ -154,11 +146,4 @@ fn collection_binding_name(expr: &Expr) -> Option<&str> {
         aelys_syntax::ExprKind::Index { object, .. } => collection_binding_name(object),
         _ => None,
     }
-}
-
-fn is_collection_type(ty: &InferType) -> bool {
-    matches!(
-        ty,
-        InferType::Array(_) | InferType::FixedArray(_, _) | InferType::Vec(_)
-    )
 }

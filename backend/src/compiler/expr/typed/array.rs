@@ -57,7 +57,13 @@ impl Compiler {
             OpCode::ArrayStoreB,
             OpCode::ArrayStoreP,
         );
-        self.emit_a(store_opcode, dest, loop_reg, value_reg, span);
+        if Self::is_shared_aggregate(inner) {
+            let copy = self.emit_deep_clone(value_reg, span)?;
+            self.emit_a(store_opcode, dest, loop_reg, copy, span);
+            self.free_deep_clone(copy);
+        } else {
+            self.emit_a(store_opcode, dest, loop_reg, value_reg, span);
+        }
         self.patch_jump(jump_to_loop);
         self.emit_loop_back(
             OpCode::ForLoopI,
@@ -123,7 +129,13 @@ impl Compiler {
             OpCode::VecPushB,
             OpCode::VecPushP,
         );
-        self.emit_a(push_opcode, dest, value_reg, 0, span);
+        if Self::is_shared_aggregate(inner) {
+            let copy = self.emit_deep_clone(value_reg, span)?;
+            self.emit_a(push_opcode, dest, copy, 0, span);
+            self.free_deep_clone(copy);
+        } else {
+            self.emit_a(push_opcode, dest, value_reg, 0, span);
+        }
         self.patch_jump(jump_to_loop);
         self.emit_loop_back(
             OpCode::ForLoopI,
@@ -138,6 +150,35 @@ impl Compiler {
         self.free_register(value_reg);
         self.free_register(count_reg);
         Ok(())
+    }
+
+    fn is_shared_aggregate(ty: &InferType) -> bool {
+        matches!(
+            ty,
+            InferType::Struct(_)
+                | InferType::Applied { .. }
+                | InferType::Array(_)
+                | InferType::FixedArray(_, _)
+                | InferType::Vec(_)
+                | InferType::Option(_)
+                | InferType::Result(_, _)
+        )
+    }
+
+    fn emit_deep_clone(&mut self, source: u16, span: Span) -> Result<u16> {
+        let callee = self.alloc_consecutive_registers_for_call(2, span)?;
+        self.alloc_consecutive_from(callee, 2)?;
+        let global = self.get_or_create_global_index("__clone");
+        self.accessed_globals.insert("__clone".to_string());
+        self.emit_get_global_index(callee, global, span);
+        self.emit_a(OpCode::Move, callee + 1, source, 0, span);
+        self.emit_a(OpCode::Call, callee, callee, 1, span);
+        Ok(callee)
+    }
+
+    fn free_deep_clone(&mut self, callee: u16) {
+        self.free_register(callee + 1);
+        self.free_register(callee);
     }
 
     pub(super) fn compile_typed_array_sized(

@@ -148,6 +148,21 @@ impl TypeInference {
             .unwrap_or_default()
     }
 
+    pub(super) fn mutable_params_for_call(
+        &self,
+        callee: &Expr,
+        typed_callee: &TypedExpr,
+    ) -> Vec<Option<String>> {
+        if let TypedExprKind::StructMethod { symbol, .. } = &typed_callee.kind
+            && let Some(params) = self.function_mutable_params.get(symbol)
+        {
+            return params.clone();
+        }
+        source_call_path(callee)
+            .and_then(|name| self.function_mutable_params.get(&name).cloned())
+            .unwrap_or_default()
+    }
+
     pub(super) fn validate_reference_annotation(
         &mut self,
         annotation: &TypeAnnotation,
