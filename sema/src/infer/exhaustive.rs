@@ -80,8 +80,7 @@ impl<'a> Checker<'a> {
             InferType::U8 => Shape::Int(0, u8::MAX.into()),
             InferType::U16 => Shape::Int(0, u16::MAX.into()),
             InferType::U32 => Shape::Int(0, u32::MAX.into()),
-            InferType::I64 => Shape::Int(INT_MIN, INT_MAX),
-            InferType::U64 => Shape::Int(0, INT_MAX),
+            InferType::I64 | InferType::U64 => Shape::Int(INT_MIN, INT_MAX),
             InferType::String => Shape::Str,
             InferType::Option(inner) => Shape::Sum(vec![
                 VariantShape {

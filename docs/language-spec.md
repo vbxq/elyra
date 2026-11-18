@@ -1447,7 +1447,9 @@ println(classify(Kind::A(-5)))   // 2
 An integer pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
 excluded), `..=hi` and `lo..` (open). Bounds are integer literals, possibly
 negative. A range applies to `int` and to the sized integers, whose bounds must
-fit the type; on any other type it is E0301. A range that matches nothing
+fit the type; on any other type it is E0301. Exhaustiveness covers a sized
+integer by its own bounds (`u8` is covered by `0..=255`); `u64` has no
+narrower bound than `int`, so `0` and `1..` do not cover it. A range that matches nothing
 (`9..=1`) or an inclusive range with no end is E0108. Ranges combine with `|`
 and nest inside variants and tuples.
 
