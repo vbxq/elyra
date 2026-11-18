@@ -44,11 +44,11 @@ impl Compiler {
 
         let body_result = compile_untyped_body(&mut func_compiler, func)?;
 
-        func_compiler.end_scope();
-
         if !body_result.returned {
+            func_compiler.close_upvalues_before_return(func.span);
             func_compiler.emit_return0(func.span);
         }
+        func_compiler.end_function_scope();
 
         func_compiler.finish_registers()?;
         func_compiler.current.arity = u16::try_from(func.params.len()).map_err(|_| {

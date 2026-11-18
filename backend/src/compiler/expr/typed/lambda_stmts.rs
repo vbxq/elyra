@@ -100,18 +100,20 @@ impl Compiler {
             if !unit_return && Compiler::typed_stmt_yields_value(last_stmt) {
                 let result_reg = nested_compiler.alloc_register()?;
                 nested_compiler.compile_typed_stmt_value(last_stmt, result_reg)?;
+                nested_compiler.close_upvalues_before_return(last_stmt.span);
                 nested_compiler.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
             } else if let aelys_sema::TypedStmtKind::Return(_) = &last_stmt.kind {
                 nested_compiler.compile_typed_stmt(last_stmt)?;
             } else {
                 nested_compiler.compile_typed_stmt(last_stmt)?;
+                nested_compiler.close_upvalues_before_return(last_stmt.span);
                 nested_compiler.emit_return0(last_stmt.span);
             }
         } else {
             nested_compiler.emit_return0(span);
         }
 
-        nested_compiler.end_scope();
+        nested_compiler.end_function_scope();
         nested_compiler.finish_registers()?;
         nested_compiler.current.global_layout = nested_compiler.build_global_layout()?;
         nested_compiler.current.compute_global_layout_hash();
