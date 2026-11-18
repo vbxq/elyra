@@ -752,8 +752,10 @@ fn point_to_dist(px: int, py: int) -> int {
         dy = t
     }
     if dx == 0 { return 0 }
-    let angle = (fixed::tantoangle[fdiv(dy, dx) >> 5] + 0x40000000) >> 19
-    fdiv(dx, fixed::finesine[angle])
+    let slope = (dy / dx) * 65536 + ((dy % dx) * 65536) / dx
+    let sine = fixed::finesine[(fixed::tantoangle[slope >> 5] + 0x40000000) >> 19]
+    if (dx >> 14) >= sine { return 2147483647 }
+    (dx / sine) * 65536 + ((dx % sine) * 65536) / sine
 }
 
 fn scale_from_angle(visangle: int, normalangle: int, distance: int) -> int {
@@ -761,10 +763,18 @@ fn scale_from_angle(visangle: int, normalangle: int, distance: int) -> int {
     let angleb = (0x40000000 + visangle - normalangle) & 0xFFFFFFFF
     let sinea = fixed::finesine[anglea >> 19]
     let sineb = fixed::finesine[angleb >> 19]
-    let num = fmul(10485760, sineb)
-    let den = fmul(distance, sinea)
+    let num = 160 * sineb
+    let dl = distance & 0xFFFF
+    let den = (distance >> 16) * sinea + dl * (sinea >> 16) + ((dl * (sinea & 0xFFFF)) >> 16)
     if den > (num >> 16) {
-        let mut scale = fdiv(num, den)
+        let an = if num < 0 { -num } else { num }
+        let ad = if den < 0 { -den } else { den }
+        let mut scale = 2147483647
+        if (an >> 14) >= ad {
+            if (num ^ den) < 0 { scale = -2147483648 }
+        } else {
+            scale = (num / den) * 65536 + ((num % den) * 65536) / den
+        }
         if scale > 4194304 { scale = 4194304 }
         if scale < 256 { scale = 256 }
         return scale
