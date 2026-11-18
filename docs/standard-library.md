@@ -397,8 +397,8 @@ For measuring elapsed time accurately:
 |----------|-------------|
 | `timer()` | Create timer, returns handle |
 | `elapsed(h)` | Seconds since timer created |
-| `elapsed_ms(h)` | Milliseconds elapsed |
-| `elapsed_us(h)` | Microseconds elapsed |
+| `elapsed_ms(h)` | Milliseconds elapsed (int) |
+| `elapsed_us(h)` | Microseconds elapsed (int) |
 | `reset(h)` | Reset timer to now |
 
 ```rust
@@ -474,10 +474,13 @@ needs std::fs
 | `open(path, mode)` | Open file as `Result<int, string>` |
 | `read(handle)` | Read as `Result<string, string>` |
 | `read_line(handle)` | Read as `Result<Option<string>, string>` |
-| `read_bytes(handle, n)` | Read as `Result<int, string>` |
+| `read_bytes(handle, n)` | Read up to `n` bytes (at most 16 MiB) into a new byte buffer, `Result<int, string>`; fewer than `n` only at end of file |
+| `read_file_bytes(path)` | Read a whole file into one new byte buffer, no size cap, `Result<int, string>` |
 | `close(handle)` | Close as `Result<unit, string>` |
 
 Modes: `"r"` (read), `"w"` (write), `"a"` (append), `"rw"` (read+write).
+
+`read`, `read_line` and `read_bytes` share one buffered reader per handle, so they can be mixed: each continues where the previous one stopped.
 
 ```rust
 let content = match fs::read_text("config.txt") {
@@ -521,7 +524,7 @@ let _ = fs::append_text("log.txt", "New entry\n")
 | `exists(path)` | Check if path exists |
 | `is_file(path)` | Check if regular file |
 | `is_dir(path)` | Check if directory |
-| `size(path)` | File size in bytes |
+| `size(path)` | File size in bytes as `Result<int, string>` |
 
 ### Directory Operations
 

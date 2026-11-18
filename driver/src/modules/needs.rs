@@ -370,6 +370,8 @@ fn load_modules(
     let mut known_native_globals = std::collections::HashSet::new();
     let mut native_signatures: HashMap<String, InferType> = HashMap::new();
     let mut symbol_origins: HashMap<String, String> = HashMap::new();
+    let mut whole_module_names: HashMap<String, String> = HashMap::new();
+    let mut ambiguous_globals: HashMap<String, Vec<String>> = HashMap::new();
     let mut nominal_imports = NominalImports::default();
     let mut nominal_scopes: Vec<NominalScopeEntry> = Vec::new();
 
@@ -421,6 +423,26 @@ fn load_modules(
                 ImportKind::Module { alias: None } => {
                     for name in module_info.exports.keys() {
                         let qualified = format!("{}::{}", module_alias, name);
+                        if let Some(owners) = ambiguous_globals.get_mut(name) {
+                            owners.push(qualified.clone());
+                            known_globals.insert(qualified.clone());
+                            continue;
+                        }
+                        if let Some(existing) = whole_module_names.get(name).cloned() {
+                            ambiguous_globals
+                                .insert(name.clone(), vec![existing, qualified.clone()]);
+                            symbol_origins.remove(name);
+                            known_globals.remove(name);
+                            known_native_globals.remove(name);
+                            native_signatures
+                                .insert(name.clone(), InferType::UntypedNative(name.clone()));
+                            known_globals.insert(qualified.clone());
+                            if let Some(signature) = module_info.native_signatures.get(&qualified) {
+                                native_signatures.insert(qualified.clone(), signature.clone());
+                            }
+                            continue;
+                        }
+                        whole_module_names.insert(name.clone(), qualified.clone());
                         if let Some(existing) = symbol_origins.get(name) {
                             return Err(AelysError::Compile(CompileError::new(
                                 CompileErrorKind::SymbolConflict {
@@ -569,6 +591,7 @@ fn load_modules(
             known_native_globals,
             native_signatures,
             symbol_origins,
+            ambiguous_globals,
             imported_types: nominal_imports.types,
             imported_impl_stmts: nominal_imports.impl_stmts,
             impl_body_globals: nominal_imports.body_globals,
