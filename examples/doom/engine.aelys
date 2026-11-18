@@ -74,7 +74,7 @@ pub fn load(path: string) -> Graphics {
     pal = render::palette_rgb(g)
     snaps = has_flag("--snaps")
     snap_dir = flag_value("--snapdir", "/home/vbxq/.local/share/elyra-runs/engine")
-    demo::init_demo(has_flag("--trace"))
+    demo::init_demo(has_flag("--trace"), not nomonsters)
     print_sectors = has_flag("--sectors")
     frame_ms = vec![]
     frame_ms.reserve(40000)

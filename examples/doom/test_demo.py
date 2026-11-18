@@ -8,8 +8,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 AELYS = os.environ.get("AELYS", "/home/vbxq/.local/share/elyra-runs/bin/aelys-cli")
 WAD = os.environ.get("DOOM_WAD", "/home/vbxq/.local/share/elyra-runs/assets/fd/freedoom-0.13.0/freedoom1.wad")
 
-EXPECTED_TICS = 2398
-EXPECTED_FINAL = "final fixed -4908963 102274657 -8388608 2281897984"
+MONSTERS = "--monsters" in sys.argv
+EXPECTED_TICS = 3001 if MONSTERS else 2398
+EXPECTED_FINAL = "final fixed 41674689 16355707 -8388608 48627712" if MONSTERS else "final fixed -4908963 102274657 -8388608 2281897984"
+BLOCKED_BY_MONSTER = {"north door", "long hall", "outdoor", "west room", "l room"}
 ROOMS = {
     "start room": {140},
     "big room": {90, 147, 149, 150},
@@ -104,7 +106,8 @@ def check_trace(out):
 
 
 def main():
-    out = run(["--logic", "--trace", "--sectors"])
+    mode = ["--monsters"] if MONSTERS else []
+    out = run(["--logic", "--trace", "--sectors"] + mode)
     pts, problems = check_trace(out)
     final = [l for l in out.splitlines() if l.startswith("final fixed")]
     if final != [EXPECTED_FINAL]:
@@ -113,15 +116,16 @@ def main():
     if not tics or not tics[0].startswith(f"tics {EXPECTED_TICS} "):
         problems.append(f"tic count line {tics}")
     visited = {int(l.split()[1]) for l in out.splitlines() if l.startswith("sector ")}
-    for room, sectors in ROOMS.items():
+    rooms = {r: v for r, v in ROOMS.items() if not (MONSTERS and r in BLOCKED_BY_MONSTER)}
+    for room, sectors in rooms.items():
         if not visited & sectors:
             problems.append(f"room {room} (sectors {sorted(sectors)}) never visited")
     for line in out.splitlines():
         if line.startswith(("final", "tics", "tic logic", "demo use")):
             print(line)
-    print(f"visited {len(visited)} sectors, rooms: {', '.join(ROOMS)}")
+    print(f"visited {len(visited)} sectors, rooms: {', '.join(rooms)}")
     if "--snaps" in sys.argv:
-        snap_out = run(["--timedemo", "--snaps"])
+        snap_out = run(["--timedemo", "--snaps"] + mode)
         ppms = [l.split()[1] for l in snap_out.splitlines() if l.startswith("snap ")]
         subprocess.run([sys.executable, "-I", os.path.join(HERE, "tools", "ppm2png.py")] + ppms, check=True)
         for line in snap_out.splitlines():

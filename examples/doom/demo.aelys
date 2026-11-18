@@ -25,7 +25,7 @@ fn add(x: int, y: int, flag: int, arg: int) {
     wp_arg.push(arg)
 }
 
-fn build_path() {
+fn build_path(monsters: bool) {
     wp_x = vec![]
     wp_y = vec![]
     wp_flag = vec![]
@@ -48,10 +48,14 @@ fn build_path() {
     add(1960, -430, 0, 0)
     add(2100, -420, 0, 0)
     add(2350, -430, 0, 0)
-    add(2440, -380, 0, 0)
-    add(2440, -130, 0, 0)
-    add(2330, -100, 4, 0)
-    add(2300, -300, 0, 0)
+    if monsters {
+        add(2420, -330, 4, 0)
+    } else {
+        add(2440, -380, 0, 0)
+        add(2440, -130, 0, 0)
+        add(2330, -100, 4, 0)
+        add(2300, -300, 0, 0)
+    }
     add(2100, -420, 0, 0)
     add(1960, -430, 0, 0)
     add(1800, -444, 0, 0)
@@ -70,6 +74,16 @@ fn build_path() {
     add(200, 240, 0, 0)
     add(400, 240, 0, 0)
     add(640, 250, 0, 0)
+    if monsters {
+        for k in 0..6 {
+            add(690, 262, 4, 0)
+            add(260, 240, 0, 0)
+            add(230, 240, 4, 0)
+            add(640, 250, 0, 0)
+        }
+        num_wp = wp_x.len()
+        return ()
+    }
     add(720, 290, 0, 0)
     add(780, 340, 0, 0)
     add(840, 400, 0, 0)
@@ -101,8 +115,8 @@ fn build_path() {
     num_wp = wp_x.len()
 }
 
-pub fn init_demo(with_trace: bool) {
-    build_path()
+pub fn init_demo(with_trace: bool, monsters: bool) {
+    build_path(monsters)
     cur = 0
     mode = 0
     mode_tics = 0
