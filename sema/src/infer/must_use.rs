@@ -21,11 +21,19 @@ struct Scope {
     bindings: Vec<usize>,
 }
 
+struct LoopFrame {
+    reads: HashSet<usize>,
+    // assigned and still unread where the loop is left unconditionally, so no next iteration reads it
+    left_unread: HashSet<usize>,
+    function_depth: usize,
+}
+
 struct Analyzer {
     scopes: Vec<Scope>,
     bindings: Vec<Binding>,
     errors: Vec<TypeError>,
-    loop_reads: Vec<HashSet<usize>>,
+    loops: Vec<LoopFrame>,
+    function_depth: usize,
 }
 
 fn direct_assignment_name(expr: &TypedExpr) -> Option<String> {
@@ -42,7 +50,8 @@ impl Analyzer {
             scopes: Vec::new(),
             bindings: Vec::new(),
             errors: Vec::new(),
-            loop_reads: Vec::new(),
+            loops: Vec::new(),
+            function_depth: 0,
         }
     }
 
@@ -111,8 +120,8 @@ impl Analyzer {
         for scope in self.scopes.iter().rev() {
             if let Some(binding_id) = scope.names.get(name) {
                 self.bindings[*binding_id].used = true;
-                for reads in &mut self.loop_reads {
-                    reads.insert(*binding_id);
+                for frame in &mut self.loops {
+                    frame.reads.insert(*binding_id);
                 }
                 return;
             }
@@ -128,6 +137,10 @@ impl Analyzer {
                 }
                 binding.used = false;
                 binding.span = span;
+                let binding_id = *binding_id;
+                for frame in &mut self.loops {
+                    frame.left_unread.remove(&binding_id);
+                }
                 return;
             }
         }
@@ -135,16 +148,65 @@ impl Analyzer {
 
     // a value assigned late in a loop body is read by the next iteration's earlier reads
     fn in_loop(&mut self, visit: impl FnOnce(&mut Self)) {
-        self.loop_reads.push(HashSet::new());
+        self.loops.push(LoopFrame {
+            reads: HashSet::new(),
+            left_unread: HashSet::new(),
+            function_depth: self.function_depth,
+        });
         visit(self);
-        for binding_id in self.loop_reads.pop().unwrap_or_default() {
-            self.bindings[binding_id].used = true;
+        if let Some(frame) = self.loops.pop() {
+            for binding_id in frame.reads.difference(&frame.left_unread) {
+                self.bindings[*binding_id].used = true;
+            }
         }
     }
 
+    fn in_function(&mut self, visit: impl FnOnce(&mut Self)) {
+        self.function_depth += 1;
+        visit(self);
+        self.function_depth -= 1;
+    }
+
     fn visit_stmts(&mut self, stmts: &[TypedStmt]) {
+        let mut assigned = Vec::new();
         for stmt in stmts {
             self.visit_stmt(stmt);
+            match &stmt.kind {
+                TypedStmtKind::Expression(expr) => {
+                    if let Some(name) = direct_assignment_name(expr)
+                        && let Some(binding_id) = self.lookup(&name)
+                    {
+                        assigned.push(binding_id);
+                    }
+                }
+                TypedStmtKind::Break { .. } => self.leave_loops(&assigned, false),
+                TypedStmtKind::Return(_) => self.leave_loops(&assigned, true),
+                _ => {}
+            }
+        }
+    }
+
+    fn lookup(&self, name: &str) -> Option<usize> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.names.get(name).copied())
+    }
+
+    fn leave_loops(&mut self, assigned: &[usize], every_loop: bool) {
+        let depth = self.function_depth;
+        let frames = self
+            .loops
+            .iter_mut()
+            .rev()
+            .take_while(|frame| frame.function_depth == depth)
+            .take(if every_loop { usize::MAX } else { 1 });
+        for frame in frames {
+            for binding_id in assigned {
+                if !self.bindings[*binding_id].used {
+                    frame.left_unread.insert(*binding_id);
+                }
+            }
         }
     }
 
@@ -249,12 +311,14 @@ impl Analyzer {
     }
 
     fn visit_function(&mut self, function: &TypedFunction) {
-        self.push_scope();
-        for param in &function.params {
-            self.define(&param.name, param.ty.clone(), param.span, false);
-        }
-        self.visit_stmts(&function.body);
-        self.pop_scope();
+        self.in_function(|this| {
+            this.push_scope();
+            for param in &function.params {
+                this.define(&param.name, param.ty.clone(), param.span, false);
+            }
+            this.visit_stmts(&function.body);
+            this.pop_scope();
+        });
     }
 
     fn visit_expr(&mut self, expr: &TypedExpr) {
@@ -361,14 +425,14 @@ impl Analyzer {
                     self.visit_consuming_expr(value);
                 }
             }
-            TypedExprKind::LambdaInner { params, body, .. } => {
-                self.push_scope();
+            TypedExprKind::LambdaInner { params, body, .. } => self.in_function(|this| {
+                this.push_scope();
                 for param in params {
-                    self.define(&param.name, param.ty.clone(), param.span, false);
+                    this.define(&param.name, param.ty.clone(), param.span, false);
                 }
-                self.visit_stmts(body);
-                self.pop_scope();
-            }
+                this.visit_stmts(body);
+                this.pop_scope();
+            }),
             TypedExprKind::FmtString(parts) => {
                 for part in parts {
                     if let TypedFmtStringPart::Expr(expr) = part {
