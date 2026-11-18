@@ -689,7 +689,7 @@ impl VM {
     }
 }
 
-fn integer_fits(width: IntWidth, value: i64) -> bool {
+pub(in crate::vm::dispatch) fn integer_fits(width: IntWidth, value: i64) -> bool {
     match width {
         IntWidth::I8 => i8::try_from(value).is_ok(),
         IntWidth::I16 => i16::try_from(value).is_ok(),

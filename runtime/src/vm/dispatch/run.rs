@@ -89,6 +89,7 @@ impl VM {
                 ip = self.run_hot::<JIT>(
                     ip,
                     base,
+                    func_ref,
                     bytecode_ptr,
                     bytecode_len,
                     constants_ptr,

@@ -1,5 +1,7 @@
+use super::ops::structs::integer_fits;
 use crate::vm::{GcRef, ObjectKind, VM, Value};
-use aelys_bytecode::OpCode;
+use aelys_bytecode::{FunctionSchemas, OpCode, TypeDescriptor};
+use std::sync::Arc;
 
 // any 8-bit operand plus the two companions of ForLoopI stays inside this window, even on words a jump reaches unverified
 const REGISTER_WINDOW: usize = 258;
@@ -85,6 +87,8 @@ const VEC_LOAD_B: u8 = OpCode::VecLoadB as u8;
 const VEC_LOAD_P: u8 = OpCode::VecLoadP as u8;
 const VEC_STORE_I: u8 = OpCode::VecStoreI as u8;
 const VEC_STORE_F: u8 = OpCode::VecStoreF as u8;
+const STRUCT_LOAD: u8 = OpCode::StructLoad as u8;
+const STRUCT_STORE: u8 = OpCode::StructStore as u8;
 
 #[inline(always)]
 fn int48(value: i64) -> Option<Value> {
@@ -110,13 +114,33 @@ fn exact_shl(value: i64, count: u32) -> Option<Value> {
     int48(shifted)
 }
 
+fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
+    match descriptor {
+        TypeDescriptor::Int(width) => value
+            .as_int()
+            .is_some_and(|value| integer_fits(*width, value)),
+        TypeDescriptor::Float(_) => value.as_float().is_some(),
+        TypeDescriptor::Bool => value.as_bool().is_some(),
+        _ => false,
+    }
+}
+
 impl VM {
+    fn hot_schemas(&self, function: GcRef) -> Option<Arc<FunctionSchemas>> {
+        let ObjectKind::Function(function) = &self.heap.get(function)?.kind else {
+            return None;
+        };
+        let schemas = function.schemas();
+        (schemas.runtime_ids.len() == schemas.structs.len()).then_some(schemas)
+    }
+
     // returns the ip of the first instruction it does not finish, before any of its effects, for the general loop to run
     #[inline(never)]
     pub(super) fn run_hot<const JIT: bool>(
         &mut self,
         mut ip: usize,
         base: usize,
+        function: GcRef,
         code: *const u32,
         code_len: usize,
         constants: *const Value,
@@ -127,6 +151,7 @@ impl VM {
             _ => return ip,
         }
         let regs = unsafe { self.registers.as_mut_ptr().add(base) };
+        let mut schemas: Option<Arc<FunctionSchemas>> = None;
 
         macro_rules! get {
             ($index:expr) => {
@@ -189,6 +214,38 @@ impl VM {
                     _ => return ip,
                 }
             };
+        }
+        macro_rules! struct_operands {
+            ($instr:ident, $next:ident) => {{
+                let (instr, next) = ($instr, $next);
+                if next + 1 >= code_len || instr & 0x00ff_0000 != 0 {
+                    return ip;
+                }
+                let first = unsafe { *code.add(next) };
+                let second = unsafe { *code.add(next + 1) };
+                let target = (first >> 16) as usize;
+                let source = (first & 0xffff) as usize;
+                if second & 0xffff != 0 || target >= REGISTER_WINDOW || source >= REGISTER_WINDOW {
+                    return ip;
+                }
+                if schemas.is_none() {
+                    schemas = self.hot_schemas(function);
+                }
+                let tables = or_leave!(schemas.as_deref());
+                let schema_index = (instr & 0xffff) as usize;
+                let schema = or_leave!(tables.structs.get(schema_index));
+                if schema.schema_id as usize != schema_index {
+                    return ip;
+                }
+                let field = (second >> 16) as usize;
+                (
+                    target,
+                    source,
+                    field,
+                    schema,
+                    tables.runtime_ids[schema_index],
+                )
+            }};
         }
         macro_rules! branch {
             ($target:expr) => {{
@@ -638,6 +695,32 @@ impl VM {
                     };
                     *slot = value;
                     next
+                }
+                STRUCT_LOAD => {
+                    let (target, source, field, _, schema_id) = struct_operands!(instr, next);
+                    let ObjectKind::Struct(structure) = object!(get!(source)) else {
+                        return ip;
+                    };
+                    if structure.schema_id != schema_id {
+                        return ip;
+                    }
+                    set!(target, *or_leave!(structure.slots.get(field)));
+                    next + 2
+                }
+                STRUCT_STORE => {
+                    let (target, source, field, schema, schema_id) = struct_operands!(instr, next);
+                    let value = get!(source);
+                    if !scalar_fits(value, &or_leave!(schema.fields.get(field)).ty) {
+                        return ip;
+                    }
+                    let ObjectKind::Struct(structure) = object_mut!(get!(target)) else {
+                        return ip;
+                    };
+                    if structure.schema_id != schema_id {
+                        return ip;
+                    }
+                    *or_leave!(structure.slots.get_mut(field)) = value;
+                    next + 2
                 }
                 VEC_LEN | ARRAY_LEN => {
                     let length = match object!(get!(b)) {
