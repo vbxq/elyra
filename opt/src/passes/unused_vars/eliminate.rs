@@ -138,7 +138,7 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
             fields.iter().any(|(_, v)| has_side_effects(v))
         }
         TypedExprKind::Cast { expr, .. } => has_side_effects(expr),
-        TypedExprKind::Try { operand, .. } => has_side_effects(operand),
+        TypedExprKind::Try { .. } => true,
         TypedExprKind::Match { scrutinee, arms } => {
             if has_side_effects(scrutinee) {
                 true
@@ -148,7 +148,7 @@ fn has_side_effects(expr: &TypedExpr) -> bool {
                         || match &arm.body {
                             aelys_sema::TypedMatchArmBody::Expr(expr) => has_side_effects(expr),
                             aelys_sema::TypedMatchArmBody::Block(stmts) => stmts.iter().any(|stmt| {
-                                matches!(stmt.kind, TypedStmtKind::Expression(ref expr) if has_side_effects(expr))
+                                !matches!(stmt.kind, TypedStmtKind::Expression(ref expr) if !has_side_effects(expr))
                             }),
                         }
                 })

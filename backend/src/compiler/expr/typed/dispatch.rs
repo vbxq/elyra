@@ -258,7 +258,7 @@ impl Compiler {
                 .any(|(_, v)| Self::typed_expr_may_have_side_effects(v)),
             TypedExprKind::Cast { expr, .. } => Self::typed_expr_may_have_side_effects(expr),
             TypedExprKind::Unit => false,
-            TypedExprKind::Try { operand, .. } => Self::typed_expr_may_have_side_effects(operand),
+            TypedExprKind::Try { .. } => true,
             TypedExprKind::Match { .. } => true,
             TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
