@@ -1861,6 +1861,10 @@ pub fn time_bsp_ms() -> float { time_bsp }
 pub fn time_planes_ms() -> float { time_planes }
 pub fn time_masked_ms() -> float { time_masked }
 
+pub fn drawseg_count() -> int { num_ds }
+pub fn sprite_count() -> int { num_vs }
+pub fn plane_count() -> int { num_planes }
+
 pub fn frame_stats() -> string {
     "planes {num_planes} drawsegs {num_ds} sprites {num_vs} openings {lastopening}"
 }

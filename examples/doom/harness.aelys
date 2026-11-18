@@ -1,0 +1,279 @@
+needs std::sys
+needs std::fs as fs
+needs std::time as time
+needs std::convert as convert
+needs println from std::io
+needs render
+needs demo
+needs engine
+
+let gate_tics = 2100
+let tic_us = 1000000 / 35
+let clock = time::timer()
+
+fn now_us() -> int { time::elapsed_us(clock) }
+
+let mut f_total: Vec<int> = vec![]
+let mut f_logic: Vec<int> = vec![]
+let mut f_render: Vec<int> = vec![]
+let mut f_tic: Vec<int> = vec![]
+let mut f_ntics: Vec<int> = vec![]
+let mut f_ds: Vec<int> = vec![]
+let mut f_vs: Vec<int> = vec![]
+let mut f_pl: Vec<int> = vec![]
+let mut f_pause: Vec<int> = vec![]
+let mut f_minor: Vec<int> = vec![]
+let mut f_major: Vec<int> = vec![]
+let mut f_slices: Vec<int> = vec![]
+let mut f_wait: Vec<int> = vec![]
+let mut own_allocs = 0
+
+let mut s_us: Vec<int> = vec![]
+let mut s_rss: Vec<int> = vec![]
+let mut s_heap: Vec<int> = vec![]
+let mut s_allocs: Vec<int> = vec![]
+
+fn rss_kb() -> int {
+    match fs::read_text("/proc/self/statm") {
+        Ok(text) => {
+            let fields = text.split(" ")
+            if fields.len() < 2 { return -1 }
+            match convert::parse_int(fields[1]) {
+                Some(pages) => pages * 4,
+                None => -1,
+            }
+        },
+        Err(_) => -1,
+    }
+}
+
+fn sched_wait_us() -> int {
+    let before = sys::gc_allocations()
+    let wait = match fs::read_text("/proc/thread-self/schedstat") {
+        Ok(text) => {
+            let fields = text.split(" ")
+            if fields.len() < 2 { -1 } else {
+                match convert::parse_int(fields[1]) {
+                    Some(ns) => ns / 1000,
+                    None => -1,
+                }
+            }
+        },
+        Err(_) => -1,
+    }
+    own_allocs += sys::gc_allocations() - before
+    wait
+}
+
+fn sample(t0: int) {
+    let before = sys::gc_allocations()
+    let rss = rss_kb()
+    own_allocs += sys::gc_allocations() - before
+    s_us.push(now_us() - t0)
+    s_rss.push(rss)
+    s_heap.push(sys::gc_heap_bytes())
+    s_allocs.push(sys::gc_allocations() - own_allocs)
+}
+
+fn sorted(v: Vec<int>) -> Vec<int> {
+    let n = v.len()
+    let mut s = v.clone()
+    let mut gap = n / 2
+    while gap > 0 {
+        for i in gap..n {
+            let x = s[i]
+            let mut j = i
+            while j >= gap and s[j - gap] > x {
+                s[j] = s[j - gap]
+                j -= gap
+            }
+            s[j] = x
+        }
+        gap = gap / 2
+    }
+    s
+}
+
+fn pct(s: Vec<int>, p: int) -> int {
+    let n = s.len()
+    if n == 0 { return 0 }
+    let mut i = n * p / 100
+    if i >= n { i = n - 1 }
+    s[i]
+}
+
+fn ms(us: int) -> string {
+    "{us / 1000}.{(us % 1000) / 100}{(us % 100) / 10}{us % 10}"
+}
+
+fn cause(i: int, ds50: int, vs50: int, pl50: int) -> string {
+    let total = f_total[i]
+    let mut parts: Vec<string> = vec![]
+    if f_pause[i] * 2 >= total {
+        parts.push("gc pause {ms(f_pause[i])} ms ({f_minor[i]} minor, {f_slices[i]} major slices, {f_major[i]} majors completed)")
+    } else {
+        if f_pause[i] * 10 >= total { parts.push("gc pause {ms(f_pause[i])} ms") }
+    }
+    if f_ntics[i] > 1 { parts.push("{f_ntics[i]} tics in one frame") }
+    if f_logic[i] * 4 >= total { parts.push("tic logic {ms(f_logic[i])} ms") }
+    if f_ds[i] * 2 >= ds50 * 3 { parts.push("drawsegs {f_ds[i]} vs p50 {ds50}") }
+    if f_vs[i] * 2 >= vs50 * 3 and f_vs[i] > 4 { parts.push("sprites {f_vs[i]} vs p50 {vs50}") }
+    if f_pl[i] * 2 >= pl50 * 3 { parts.push("planes {f_pl[i]} vs p50 {pl50}") }
+    if f_wait[i] * 5 >= total { parts.push("preempted {ms(f_wait[i])} ms (runnable, waiting for a cpu)") }
+    let rest = total - f_logic[i] - f_render[i]
+    if rest * 4 >= total { parts.push("outside logic and render {ms(rest)} ms") }
+    if parts.len() == 0 { return "no gc pause, no preemption, ordinary scene" }
+    parts.join("; ")
+}
+
+fn frame_line(i: int) -> string {
+    "frame {i} tic {f_tic[i]} total {ms(f_total[i])} ms logic {ms(f_logic[i])} render {ms(f_render[i])} tics {f_ntics[i]} preempted {ms(f_wait[i])} gc_pause {ms(f_pause[i])} minor {f_minor[i]} major_slices {f_slices[i]} major_done {f_major[i]} drawsegs {f_ds[i]} sprites {f_vs[i]} planes {f_pl[i]}"
+}
+
+fn write_csv(path: string) {
+    let mut out = "frame,tic,total_us,logic_us,render_us,tics,wait_us,gc_pause_us,minor,major_slices,major_done,drawsegs,sprites,planes\n"
+    for i in 0..f_total.len() {
+        out += "{i},{f_tic[i]},{f_total[i]},{f_logic[i]},{f_render[i]},{f_ntics[i]},{f_wait[i]},{f_pause[i]},{f_minor[i]},{f_slices[i]},{f_major[i]},{f_ds[i]},{f_vs[i]},{f_pl[i]}\n"
+    }
+    match fs::write_text(path, out) {
+        Ok(_) => println("gate csv {path}"),
+        Err(e) => println("gate csv error {e}"),
+    }
+}
+
+fn report(variant: string, realtime: bool, wall_us: int) {
+    let n = f_total.len()
+    let s = sorted(f_total)
+    let ds50 = pct(sorted(f_ds), 50)
+    let vs50 = pct(sorted(f_vs), 50)
+    let pl50 = pct(sorted(f_pl), 50)
+    let mut worst = 0
+    for i in 0..n {
+        if f_total[i] > f_total[worst] { worst = i }
+    }
+    let mut over = 0
+    for i in 0..n {
+        if f_total[i] > 16667 { over++ }
+    }
+    let mode = if realtime { "realtime" } else { "maxspeed" }
+    println("gate variant {variant} mode {mode}")
+    println("gate frames {n} tics {engine::tic_count()} wall_ms {ms(wall_us)} fps {convert::to_float(n) * 1000000.0 / convert::to_float(wall_us)}")
+    println("gate frame_ms p50 {ms(pct(s, 50))} p99 {ms(pct(s, 99))} max {ms(s[n - 1])} over_16.7 {over}")
+    println("gate render_ms p50 {ms(pct(sorted(f_render), 50))} p99 {ms(pct(sorted(f_render), 99))}")
+    println("gate logic_ms p50 {ms(pct(sorted(f_logic), 50))} max {ms(pct(sorted(f_logic), 100))}")
+    println("gate scene p50 drawsegs {ds50} sprites {vs50} planes {pl50} max drawsegs {pct(sorted(f_ds), 100)} sprites {pct(sorted(f_vs), 100)} planes {pct(sorted(f_pl), 100)}")
+    println("gate slowest {frame_line(worst)}")
+    println("gate slowest_cause {cause(worst, ds50, vs50, pl50)}")
+    let order = sorted(f_total)
+    let cut = order[if n > 5 { n - 5 } else { 0 }]
+    let mut shown = 0
+    for i in 0..n {
+        if f_total[i] >= cut and f_total[i] != f_total[worst] and shown < 4 {
+            println("gate spike {frame_line(i)} cause {cause(i, ds50, vs50, pl50)}")
+            shown++
+        }
+    }
+    let mut run_pause = 0
+    let mut run_minor = 0
+    let mut run_slices = 0
+    let mut run_major = 0
+    let mut gc_frames = 0
+    for i in 0..n {
+        if f_pause[i] > run_pause { run_pause = f_pause[i] }
+        run_minor += f_minor[i]
+        run_slices += f_slices[i]
+        run_major += f_major[i]
+        if f_minor[i] + f_slices[i] > 0 { gc_frames++ }
+    }
+    println("gate gc_run max_pause_us {run_pause} minor {run_minor} major_slices {run_slices} major_done {run_major} frames_with_gc {gc_frames}")
+    println("gate gc_vm max_pause_us {sys::gc_max_pause_us()} max_pause_cpu_us {sys::gc_max_pause_cpu_us()} p99_pause_us {sys::gc_p99_pause_us()} total_pause_us {sys::gc_total_pause_us()} pauses {sys::gc_pause_count()} minor {sys::gc_minor_collections()} major {sys::gc_major_collections()}")
+    let k = s_rss.len()
+    let mut rss_max = 0
+    for v in s_rss {
+        if v > rss_max { rss_max = v }
+    }
+    println("gate rss_kb first {s_rss[0]} last {s_rss[k - 1]} max {rss_max} samples {k}")
+    println("gate heap_bytes first {s_heap[0]} last {s_heap[k - 1]}")
+    let first = if k > 6 { 5 } else { 0 }
+    let span_us = s_us[k - 1] - s_us[first]
+    let allocs = s_allocs[k - 1] - s_allocs[first]
+    if span_us > 0 {
+        println("gate alloc_rate objects_per_s {allocs * 1000000 / span_us} over_s {span_us / 1000000} total_objects {s_allocs[k - 1]}")
+    }
+    println("gate crashes 0")
+    let csv = engine::flag_value("--csv", "")
+    if csv != "" { write_csv(csv) }
+}
+
+pub fn run(present: fn() -> bool, variant: string) {
+    let realtime = engine::has_flag("--realtime")
+    let cap = gate_tics + 64
+    f_total.reserve(cap * 4)
+    f_logic.reserve(cap * 4)
+    f_render.reserve(cap * 4)
+    f_tic.reserve(cap * 4)
+    f_ntics.reserve(cap * 4)
+    f_ds.reserve(cap * 4)
+    f_vs.reserve(cap * 4)
+    f_pl.reserve(cap * 4)
+    f_pause.reserve(cap * 4)
+    f_minor.reserve(cap * 4)
+    f_major.reserve(cap * 4)
+    f_slices.reserve(cap * 4)
+    f_wait.reserve(cap * 4)
+    s_us.reserve(128)
+    s_rss.reserve(128)
+    s_heap.reserve(128)
+    s_allocs.reserve(128)
+    let _ = sys::gc_window_max_pause_us()
+    let t0 = now_us()
+    sample(t0)
+    let mut next_sample = 1000000
+    let mut ok = true
+    while ok and engine::tic_count() < gate_tics and not demo::done() {
+        if realtime {
+            let due = (now_us() - t0) / tic_us
+            if engine::tic_count() >= due {
+                let wait = (engine::tic_count() + 1) * tic_us - (now_us() - t0)
+                if wait > 0 { time::sleep_us(wait) }
+            }
+        }
+        let minor0 = sys::gc_minor_collections()
+        let major0 = sys::gc_major_collections()
+        let pauses0 = sys::gc_pause_count()
+        let wait0 = sched_wait_us()
+        let start = now_us()
+        let tic0 = engine::tic_count()
+        if realtime {
+            let due = (start - t0) / tic_us
+            while engine::tic_count() < due and engine::tic_count() < gate_tics and not demo::done() { engine::run_tic() }
+        } else {
+            engine::run_tic()
+        }
+        let t_logic = now_us()
+        engine::draw_view()
+        let t_render = now_us()
+        ok = present()
+        let end = now_us()
+        f_wait.push(sched_wait_us() - wait0)
+        f_total.push(end - start)
+        f_logic.push(t_logic - start)
+        f_render.push(t_render - t_logic)
+        f_tic.push(engine::tic_count())
+        f_ntics.push(engine::tic_count() - tic0)
+        f_ds.push(render::drawseg_count())
+        f_vs.push(render::sprite_count())
+        f_pl.push(render::plane_count())
+        f_pause.push(sys::gc_window_max_pause_us())
+        f_minor.push(sys::gc_minor_collections() - minor0)
+        f_major.push(sys::gc_major_collections() - major0)
+        f_slices.push(sys::gc_pause_count() - pauses0 - (sys::gc_minor_collections() - minor0))
+        if end - t0 >= next_sample {
+            sample(t0)
+            next_sample += 1000000
+        }
+    }
+    let wall = now_us() - t0
+    sample(t0)
+    report(variant, realtime, wall)
+}

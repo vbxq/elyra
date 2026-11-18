@@ -1,0 +1,29 @@
+needs std::bytes as bytes
+needs sdl
+needs render
+
+let pixels = bytes::alloc(64000)
+let palette = bytes::alloc(768)
+
+pub fn open(title: string, playpal: Vec<int>) -> Result<(), string> {
+    let mut first_palette: Vec<int> = vec![0; 768]
+    for i in 0..768 { first_palette[i] = playpal[i] }
+    bytes::copy_from_vec(palette, 0, first_palette)?
+    sdl::open(title, 320, 200, 3)
+}
+
+pub fn present() -> bool {
+    let uploaded = match bytes::copy_from_vec(pixels, 0, render::framebuffer()) {
+        Ok(_) => sdl::present_indexed(pixels, palette),
+        Err(e) => Err(e),
+    }
+    let mut quit = false
+    let mut ev = sdl::poll()
+    while ev != 0 {
+        if ev == 1 { quit = true }
+        ev = sdl::poll()
+    }
+    uploaded.is_ok() and not quit
+}
+
+pub fn close() { sdl::close() }

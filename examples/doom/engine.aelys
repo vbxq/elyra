@@ -54,6 +54,8 @@ fn skill_from_args() -> int {
     4
 }
 
+pub fn tic_count() -> int { tics }
+
 pub fn clock() -> int { time::timer() }
 
 pub fn ms_since(t: int) -> float { time::elapsed(t) * 1000.0 }
@@ -88,7 +90,7 @@ pub fn load(path: string) -> Graphics {
     g
 }
 
-fn draw_view() {
+pub fn draw_view() {
     render::render_frame(play::player_x(), play::player_y(), play::player_viewz(), play::player_angle())
 }
 
@@ -104,7 +106,7 @@ fn snapshot() {
     snap_ms += ms_since(t)
 }
 
-fn run_tic() {
+pub fn run_tic() {
     let t = clock()
     demo::advance()
     let ms = ms_since(t)
