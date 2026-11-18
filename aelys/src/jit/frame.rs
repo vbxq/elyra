@@ -961,7 +961,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.set(inst.a, boxed);
     }
 
-    /// the interpreter's integer shift semantics: count masked to 63, result wrapped to 48 bits
+    // the only copy of the interpreter's shift rule: count masked to 63, result wrapped to 48 bits
     fn shift(&mut self, left: ClifValue, count: ClifValue, op: OpCode) -> ClifValue {
         let count = self.builder.ins().band_imm_s(count, 63);
         let left = self.unbox_int(left);

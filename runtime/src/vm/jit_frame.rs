@@ -231,7 +231,6 @@ impl VM {
         Some(install)
     }
 
-    /// the interpreter call boundary: o(1) through the slot index stored on the function object
     pub(crate) fn frame_jit_call(
         &mut self,
         function: GcRef,
@@ -342,7 +341,6 @@ impl VM {
         }
     }
 
-    /// pushes the frames of machine-code callees that exited, innermost last, and installs the globals of the innermost
     pub(crate) fn push_pending_jit_frames(&mut self) -> Result<(), RuntimeError> {
         if self.frame_jit.pending.is_empty() {
             return Ok(());
@@ -389,7 +387,6 @@ impl VM {
         Ok(())
     }
 
-    /// on-stack replacement at a loop back-edge of an interpreted frame
     #[inline(never)]
     pub(crate) fn frame_jit_backedge(
         &mut self,
@@ -868,13 +865,21 @@ pub unsafe extern "C" fn aelys_frame_vec_push(
         return 0;
     };
     let reference = GcRef::new(pointer);
-    if !matches!(
-        vm.heap.get(reference).map(|object| &object.kind),
-        Some(ObjectKind::Vec(_))
-    ) {
+    let value = Value::from_raw(value);
+    let Some(ObjectKind::Vec(vector)) = vm.heap.get(reference).map(|object| &object.kind) else {
         return 0;
+    };
+    let within_reservation = vector.len() < vector.capacity()
+        && aelys_bytecode::object::AelysVec::size_bytes_for(vector.type_tag(), vector.len() + 1)
+            .zip(vector.try_size_bytes())
+            .is_some_and(|(needed, reserved)| needed <= reserved);
+    if within_reservation && vector.accepts(value) {
+        return match vm.heap.get_mut(reference).map(|object| &mut object.kind) {
+            Some(ObjectKind::Vec(vector)) => u64::from(vector.push(value)),
+            _ => 0,
+        };
     }
-    u64::from(vm.push_vec_value(reference, Value::from_raw(value)).is_ok())
+    u64::from(vm.push_vec_value(reference, value).is_ok())
 }
 
 pub extern "C" fn aelys_frame_fmod(left: f64, right: f64) -> f64 {

@@ -259,7 +259,6 @@ pub enum JitArgument<'a> {
 pub trait JitExecutor: Send + Sync {
     fn should_execute(&self, key: &JitFunctionKey, calls: u64) -> bool;
 
-    /// machine code that runs on the register window and exits to the interpreter at any bytecode ip
     fn compile_frame(
         &self,
         key: &JitFunctionKey,
