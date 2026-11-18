@@ -40,6 +40,14 @@ impl Heap {
             .flatten()
     }
 
+    // only for writing values that hold no reference: such a write creates no edge for either collector to see
+    pub fn get_mut_for_scalar_write(&mut self, gc_ref: GcRef) -> Option<&mut GcObject> {
+        let slot = self.objects.get_mut(gc_ref.slot_index())?;
+        (slot.generation == gc_ref.generation())
+            .then_some(slot.object.as_mut())
+            .flatten()
+    }
+
     pub fn heap_generation(&self, gc_ref: GcRef) -> Option<HeapGeneration> {
         let slot = self.objects.get(gc_ref.slot_index())?;
         (slot.generation == gc_ref.generation() && slot.object.is_some())

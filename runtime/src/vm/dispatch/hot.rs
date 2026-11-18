@@ -1,4 +1,4 @@
-use crate::vm::{VM, Value};
+use crate::vm::{GcRef, ObjectKind, VM, Value};
 use aelys_bytecode::OpCode;
 
 // any 8-bit operand plus the two companions of ForLoopI stays inside this window, even on words a jump reaches unverified
@@ -70,6 +70,21 @@ const JUMP_IF_NOT_LONG: u8 = OpCode::JumpIfNotLong as u8;
 const FOR_LOOP_I: u8 = OpCode::ForLoopI as u8;
 const FOR_LOOP_I_INC: u8 = OpCode::ForLoopIInc as u8;
 const WHILE_LOOP_LT: u8 = OpCode::WhileLoopLt as u8;
+const GET_GLOBAL_IDX: u8 = OpCode::GetGlobalIdx as u8;
+const ARRAY_LOAD_I: u8 = OpCode::ArrayLoadI as u8;
+const ARRAY_LOAD_F: u8 = OpCode::ArrayLoadF as u8;
+const ARRAY_LOAD_B: u8 = OpCode::ArrayLoadB as u8;
+const ARRAY_LOAD_P: u8 = OpCode::ArrayLoadP as u8;
+const ARRAY_STORE_I: u8 = OpCode::ArrayStoreI as u8;
+const ARRAY_STORE_F: u8 = OpCode::ArrayStoreF as u8;
+const ARRAY_LEN: u8 = OpCode::ArrayLen as u8;
+const VEC_LEN: u8 = OpCode::VecLen as u8;
+const VEC_LOAD_I: u8 = OpCode::VecLoadI as u8;
+const VEC_LOAD_F: u8 = OpCode::VecLoadF as u8;
+const VEC_LOAD_B: u8 = OpCode::VecLoadB as u8;
+const VEC_LOAD_P: u8 = OpCode::VecLoadP as u8;
+const VEC_STORE_I: u8 = OpCode::VecStoreI as u8;
+const VEC_STORE_F: u8 = OpCode::VecStoreF as u8;
 
 #[inline(always)]
 fn int48(value: i64) -> Option<Value> {
@@ -141,6 +156,36 @@ impl VM {
             ($b:expr, $c:expr) => {
                 match (get!($b).as_int(), get!($c).as_int()) {
                     (Some(left), Some(right)) => (left, right),
+                    _ => return ip,
+                }
+            };
+        }
+        macro_rules! object {
+            ($value:expr) => {
+                match $value.as_ptr() {
+                    Some(raw) => match self.heap.get(GcRef::new(raw)) {
+                        Some(object) => &object.kind,
+                        None => return ip,
+                    },
+                    None => return ip,
+                }
+            };
+        }
+        macro_rules! object_mut {
+            ($value:expr) => {
+                match $value.as_ptr() {
+                    Some(raw) => match self.heap.get_mut_for_scalar_write(GcRef::new(raw)) {
+                        Some(object) => &mut object.kind,
+                        None => return ip,
+                    },
+                    None => return ip,
+                }
+            };
+        }
+        macro_rules! index {
+            ($index:expr) => {
+                match get!($index).as_int() {
+                    Some(index) if index >= 0 => index as usize,
                     _ => return ip,
                 }
             };
@@ -484,6 +529,124 @@ impl VM {
                     } else {
                         next
                     }
+                }
+                GET_GLOBAL_IDX => {
+                    let index = (instr & 0xffff) as usize;
+                    set!(a, or_leave!(self.globals_by_index.get(index).copied()));
+                    next
+                }
+                VEC_LOAD_I => {
+                    let index = index!(c);
+                    let ObjectKind::Vec(vector) = object!(get!(b)) else {
+                        return ip;
+                    };
+                    let Some(&value) = vector.data.as_ints().and_then(|items| items.get(index))
+                    else {
+                        return ip;
+                    };
+                    set!(a, or_leave!(int48(value)));
+                    next
+                }
+                VEC_LOAD_F | VEC_LOAD_B | VEC_LOAD_P => {
+                    let index = index!(c);
+                    let ObjectKind::Vec(vector) = object!(get!(b)) else {
+                        return ip;
+                    };
+                    set!(a, or_leave!(vector.get(index)));
+                    next
+                }
+                ARRAY_LOAD_I => {
+                    let index = index!(c);
+                    let ObjectKind::Array(array) = object!(get!(b)) else {
+                        return ip;
+                    };
+                    let Some(&value) = array.data.as_ints().and_then(|items| items.get(index))
+                    else {
+                        return ip;
+                    };
+                    set!(a, or_leave!(int48(value)));
+                    next
+                }
+                ARRAY_LOAD_F | ARRAY_LOAD_B | ARRAY_LOAD_P => {
+                    let index = index!(c);
+                    let ObjectKind::Array(array) = object!(get!(b)) else {
+                        return ip;
+                    };
+                    set!(a, or_leave!(array.get(index)));
+                    next
+                }
+                VEC_STORE_I => {
+                    let index = index!(b);
+                    let value = or_leave!(get!(c).as_int());
+                    let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
+                        return ip;
+                    };
+                    let Some(slot) = vector
+                        .data
+                        .as_ints_mut()
+                        .and_then(|items| items.get_mut(index))
+                    else {
+                        return ip;
+                    };
+                    *slot = value;
+                    next
+                }
+                VEC_STORE_F => {
+                    let index = index!(b);
+                    let value = or_leave!(get!(c).as_float());
+                    let ObjectKind::Vec(vector) = object_mut!(get!(a)) else {
+                        return ip;
+                    };
+                    let Some(slot) = vector
+                        .data
+                        .as_floats_mut()
+                        .and_then(|items| items.get_mut(index))
+                    else {
+                        return ip;
+                    };
+                    *slot = value;
+                    next
+                }
+                ARRAY_STORE_I => {
+                    let index = index!(b);
+                    let value = or_leave!(get!(c).as_int());
+                    let ObjectKind::Array(array) = object_mut!(get!(a)) else {
+                        return ip;
+                    };
+                    let Some(slot) = array
+                        .data
+                        .as_ints_mut()
+                        .and_then(|items| items.get_mut(index))
+                    else {
+                        return ip;
+                    };
+                    *slot = value;
+                    next
+                }
+                ARRAY_STORE_F => {
+                    let index = index!(b);
+                    let value = or_leave!(get!(c).as_float());
+                    let ObjectKind::Array(array) = object_mut!(get!(a)) else {
+                        return ip;
+                    };
+                    let Some(slot) = array
+                        .data
+                        .as_floats_mut()
+                        .and_then(|items| items.get_mut(index))
+                    else {
+                        return ip;
+                    };
+                    *slot = value;
+                    next
+                }
+                VEC_LEN | ARRAY_LEN => {
+                    let length = match object!(get!(b)) {
+                        ObjectKind::Vec(vector) => vector.len(),
+                        ObjectKind::Array(array) => array.len(),
+                        _ => return ip,
+                    };
+                    set!(a, or_leave!(i64::try_from(length).ok().and_then(int48)));
+                    next
                 }
                 _ => return ip,
             };
