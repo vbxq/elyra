@@ -72,12 +72,18 @@ fn one_bulk_copy_costs_far_less_than_a_frame_of_single_writes() {
         r#"
 let frame: Vec<int> = vec![200; 64000]
 let buf = bytes::alloc(64000)
-let t0 = time::now_ms()
-for _ in 0..10 { bytes::copy_from_vec(buf, 0, frame).unwrap() }
-let t1 = time::now_ms()
-for i in 0..64000 { bytes::write_u8(buf, i, frame[i]) }
-let t2 = time::now_ms()
-"{t1 - t0} {t2 - t1}"
+let mut bulk = 1000000
+let mut single = 1000000
+for _ in 0..5 {
+    let t0 = time::now_ms()
+    for _ in 0..10 { bytes::copy_from_vec(buf, 0, frame).unwrap() }
+    let t1 = time::now_ms()
+    for i in 0..64000 { bytes::write_u8(buf, i, frame[i]) }
+    let t2 = time::now_ms()
+    if t1 - t0 < bulk { bulk = t1 - t0 }
+    if t2 - t1 < single { single = t2 - t1 }
+}
+"{bulk} {single}"
 "#,
     );
     let mut vm = aelys::new_vm().expect("a vm starts");
@@ -99,8 +105,9 @@ let t2 = time::now_ms()
     };
     let mut parts = text.as_str().split(' ').map(|p| p.parse::<i64>().unwrap());
     let (bulk, single) = (parts.next().unwrap(), parts.next().unwrap());
+    // the fastest of five trials drops load spikes; a per-element bulk copy would cost ten frames
     assert!(
-        bulk < single.max(20),
+        bulk < (3 * single).max(20),
         "ten bulk copies took {bulk} ms against {single} ms for one frame of write_u8"
     );
 }

@@ -1,5 +1,6 @@
 use super::analyze::{BlockReason, InlineDecision, ProgramAnalysis};
 use super::expand::InlineExpander;
+use crate::passes::effects::Effects;
 use crate::passes::{OptimizationLevel, OptimizationPass, OptimizationStats};
 use aelys_common::{Warning, WarningKind};
 use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedProgram, TypedStmt, TypedStmtKind};
@@ -15,6 +16,9 @@ pub struct FunctionInliner {
     warned_functions: HashSet<String>,
     functions: HashMap<String, TypedFunction>,
     expander: InlineExpander,
+    effects: Effects,
+    // names a local binding may own in the code being walked, so a call through them is not the top-level fn
+    locals: Vec<HashSet<String>>,
 }
 
 impl FunctionInliner {
@@ -26,6 +30,8 @@ impl FunctionInliner {
             warned_functions: HashSet::new(),
             functions: HashMap::new(),
             expander: InlineExpander::new(),
+            effects: Effects::default(),
+            locals: Vec::new(),
         }
     }
 
@@ -46,6 +52,25 @@ impl FunctionInliner {
         }
     }
 
+    fn is_locally_bound(&self, name: &str) -> bool {
+        self.locals.iter().any(|scope| scope.contains(name))
+    }
+
+    fn inline_in_scope<'a>(
+        &mut self,
+        names: impl IntoIterator<Item = &'a String>,
+        stmts: &mut [TypedStmt],
+        analysis: &ProgramAnalysis,
+    ) {
+        let mut scope: HashSet<String> = names.into_iter().cloned().collect();
+        scope.extend(bound_in_block(stmts));
+        self.locals.push(scope);
+        for s in stmts.iter_mut() {
+            self.inline_in_stmt(s, analysis);
+        }
+        self.locals.pop();
+    }
+
     fn inline_in_stmt(&mut self, stmt: &mut TypedStmt, analysis: &ProgramAnalysis) {
         match &mut stmt.kind {
             TypedStmtKind::Expression(e) => self.inline_in_expr(e, analysis),
@@ -54,11 +79,7 @@ impl FunctionInliner {
                 self.inline_in_expr(initializer, analysis);
             }
 
-            TypedStmtKind::Block(stmts) => {
-                for s in stmts.iter_mut() {
-                    self.inline_in_stmt(s, analysis);
-                }
-            }
+            TypedStmtKind::Block(stmts) => self.inline_in_scope([], stmts, analysis),
 
             TypedStmtKind::If {
                 condition,
@@ -80,6 +101,7 @@ impl FunctionInliner {
             }
 
             TypedStmtKind::For {
+                iterator,
                 start,
                 end,
                 step,
@@ -91,12 +113,21 @@ impl FunctionInliner {
                 if let Some(s) = &mut **step {
                     self.inline_in_expr(s, analysis);
                 }
+                self.locals.push(HashSet::from([iterator.clone()]));
                 self.inline_in_stmt(body, analysis);
+                self.locals.pop();
             }
 
-            TypedStmtKind::ForEach { iterable, body, .. } => {
+            TypedStmtKind::ForEach {
+                iterator,
+                iterable,
+                body,
+                ..
+            } => {
                 self.inline_in_expr(iterable, analysis);
+                self.locals.push(HashSet::from([iterator.clone()]));
                 self.inline_in_stmt(body, analysis);
+                self.locals.pop();
             }
 
             TypedStmtKind::Return(Some(e)) | TypedStmtKind::Break { value: Some(e), .. } => {
@@ -104,9 +135,8 @@ impl FunctionInliner {
             }
 
             TypedStmtKind::Function(f) => {
-                for s in f.body.iter_mut() {
-                    self.inline_in_stmt(s, analysis);
-                }
+                let params: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
+                self.inline_in_scope(&params, &mut f.body, analysis);
             }
 
             _ => {}
@@ -184,12 +214,12 @@ impl FunctionInliner {
                 self.inline_in_expr(object, analysis);
                 self.inline_in_expr(range, analysis);
             }
-            TypedExprKind::LambdaInner { body, .. }
-            | TypedExprKind::Block(body)
-            | TypedExprKind::Loop { body, .. } => {
-                for s in body.iter_mut() {
-                    self.inline_in_stmt(s, analysis);
-                }
+            TypedExprKind::LambdaInner { params, body, .. } => {
+                let params: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                self.inline_in_scope(&params, body, analysis);
+            }
+            TypedExprKind::Block(body) | TypedExprKind::Loop { body, .. } => {
+                self.inline_in_scope([], body, analysis)
             }
             _ => {}
         }
@@ -197,6 +227,7 @@ impl FunctionInliner {
         // now check if this is a call we should inline
         if let TypedExprKind::Call { callee, args } = &expr.kind
             && let TypedExprKind::Identifier(name) = &callee.kind
+            && !self.is_locally_bound(name)
             && let Some(func) = self.functions.get(name).cloned()
         {
             let aggressive = self.level == OptimizationLevel::Aggressive;
@@ -204,7 +235,10 @@ impl FunctionInliner {
 
             match decision {
                 InlineDecision::Inline => {
-                    if let Some(inlined) = self.expander.expand_call(&func, args, expr.span) {
+                    if let Some(inlined) =
+                        self.expander
+                            .expand_call(&func, args, expr.span, &self.effects)
+                    {
                         *expr = inlined;
                         self.stats.functions_inlined += 1;
                     }
@@ -267,10 +301,18 @@ impl OptimizationPass for FunctionInliner {
 
         self.collect_functions(program);
         let analysis = ProgramAnalysis::analyze(program);
+        self.effects = Effects::of_program(&program.stmts);
 
+        self.locals.clear();
+        let top_level_lets = program.stmts.iter().filter_map(|stmt| match &stmt.kind {
+            TypedStmtKind::Let { name, .. } => Some(name.clone()),
+            _ => None,
+        });
+        self.locals.push(top_level_lets.collect());
         for stmt in program.stmts.iter_mut() {
             self.inline_in_stmt(stmt, &analysis);
         }
+        self.locals.clear();
 
         self.stats.clone()
     }
@@ -280,4 +322,12 @@ impl Default for FunctionInliner {
     fn default() -> Self {
         Self::new(OptimizationLevel::Standard)
     }
+}
+
+fn bound_in_block(stmts: &[TypedStmt]) -> impl Iterator<Item = String> + '_ {
+    stmts.iter().filter_map(|stmt| match &stmt.kind {
+        TypedStmtKind::Let { name, .. } => Some(name.clone()),
+        TypedStmtKind::Function(f) => Some(f.name.clone()),
+        _ => None,
+    })
 }

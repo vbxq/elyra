@@ -26,7 +26,7 @@ use aelys_common::Warning;
 use aelys_syntax::{ModuleId, ReferenceKind};
 use std::collections::{HashMap, HashSet};
 
-const MAX_INFERENCE_DEPTH: usize = 200;
+const MAX_INFERENCE_DEPTH: usize = 1024;
 
 pub const GENERATED_SYMBOL_PREFIX: &str = "__aelys_";
 
@@ -213,6 +213,7 @@ pub struct TypeInference {
     match_unit_residuals: Vec<(InferType, Vec<aelys_syntax::Span>)>,
     dynamic_residuals: Vec<DynamicResidual>,
     bound_residuals: Vec<BoundResidual>,
+    bound_deductions: Vec<BoundDeduction>,
     alias_residuals: Vec<places::AliasResidual>,
     imported_constants: HashMap<String, constants::ConstValue>,
     global_constants: HashMap<String, constants::ConstValue>,
@@ -234,6 +235,7 @@ pub struct TypeInference {
     known_native_signatures: HashMap<String, InferType>,
     pub(crate) current_module: ModuleId,
     collection_iter_allowed: bool,
+    receiver_memo: Option<ReceiverMemo>,
     withheld_nominals: std::collections::BTreeMap<String, String>,
     private_nominals: std::collections::BTreeMap<String, String>,
     unexported_nominals: std::collections::BTreeSet<String>,
@@ -312,6 +314,12 @@ struct DynamicResidual {
     reason: ConstraintReason,
 }
 
+pub(crate) struct BoundDeduction {
+    pub(crate) subject: InferType,
+    pub(crate) trait_name: String,
+    pub(crate) trait_args: Vec<InferType>,
+}
+
 pub(crate) struct BoundResidual {
     pub(crate) ty: InferType,
     pub(crate) trait_name: String,
@@ -319,6 +327,8 @@ pub(crate) struct BoundResidual {
     pub(crate) span: aelys_syntax::Span,
     pub(crate) reason: ConstraintReason,
     pub(crate) nominal_only: bool,
+    // a receiver declaring a method of this name runs that method, so the bound does not apply to it
+    pub(crate) unless_method: Option<&'static str>,
 }
 
 impl TypeInference {
@@ -474,8 +484,17 @@ impl TypeInference {
             if !ty.is_concrete() {
                 continue;
             }
-            if residual.nominal_only
-                && !matches!(ty, InferType::Struct(_) | InferType::Applied { .. })
+            let checked = if residual.trait_name == crate::prelude::DISPLAY_TRAIT {
+                crate::prelude::contains_nominal(&ty)
+            } else {
+                matches!(ty, InferType::Struct(_) | InferType::Applied { .. })
+            };
+            if residual.nominal_only && !checked {
+                continue;
+            }
+            if residual
+                .unless_method
+                .is_some_and(|method| self.declares_self_method(&ty, method))
             {
                 continue;
             }
@@ -559,4 +578,10 @@ pub(crate) use crate::types::SHADOWED_METHOD_SUFFIX;
 
 pub(crate) fn shadowed_method_param(name: &str) -> String {
     format!("{name}{SHADOWED_METHOD_SUFFIX}")
+}
+
+struct ReceiverMemo {
+    object: *const aelys_syntax::Expr,
+    iter_allowed: bool,
+    typed: Option<crate::typed_ast::TypedExpr>,
 }

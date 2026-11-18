@@ -816,7 +816,8 @@ fn rewrite_nominal_pattern(
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }
 
@@ -1137,7 +1138,8 @@ fn collect_pattern_types(pattern: &TypedPattern, types: &mut Vec<(InferType, Spa
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }
 
@@ -4422,7 +4424,8 @@ fn rewrite_pattern(pattern: &mut TypedPattern) {
         | TypedPatternKind::String(_)
         | TypedPatternKind::Char(_)
         | TypedPatternKind::Bool(_)
-        | TypedPatternKind::Range { .. } => {}
+        | TypedPatternKind::Range { .. }
+        | TypedPatternKind::CharRange { .. } => {}
     }
 }
 
@@ -4451,26 +4454,24 @@ fn rewrite_generic_call(
     let Some(template) = generic_defs.get(name) else {
         return;
     };
-    let Some(args_for_instance) = instance_arguments(template, callee, args, call_ty) else {
+    let Some(args_for_instance) =
+        instance_arguments(inference, name, template, callee, args, call_ty)
+    else {
         errors.push(TypeError {
             kind: TypeErrorKind::UnresolvedGenericType {
-                name: template
-                    .type_params
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| name.clone()),
+                name: unresolved_param(inference, name, template, callee, args, call_ty),
             },
             span: call_span,
             reason: ConstraintReason::Other("generic call has no concrete instance".to_string()),
         });
         return;
     };
-    if args_for_instance.iter().any(|ty| !ty.is_concrete()) {
+    if let Some(open) = args_for_instance.iter().position(|ty| !ty.is_concrete()) {
         errors.push(TypeError {
             kind: TypeErrorKind::UnresolvedGenericType {
                 name: template
                     .type_params
-                    .first()
+                    .get(open)
                     .cloned()
                     .unwrap_or_else(|| name.clone()),
             },
@@ -4857,12 +4858,52 @@ fn check_method_call_obligations(
     check_instance_trait_bounds(inference, symbol, &resolved, span, errors);
 }
 
+fn unresolved_param(
+    inference: &TypeInference,
+    name: &str,
+    template: &TypedFunction,
+    callee: &TypedExpr,
+    args: &[TypedExpr],
+    call_ty: &InferType,
+) -> String {
+    let deduced = instance_arguments_mapping(inference, name, template, callee, args, call_ty);
+    template
+        .type_params
+        .iter()
+        .find(|param| {
+            deduced
+                .as_ref()
+                .is_none_or(|mapping| !mapping.contains_key(*param))
+        })
+        .or(template.type_params.first())
+        .cloned()
+        .unwrap_or_else(|| name.to_string())
+}
+
 fn instance_arguments(
+    inference: &TypeInference,
+    name: &str,
     template: &TypedFunction,
     callee: &TypedExpr,
     args: &[TypedExpr],
     call_ty: &InferType,
 ) -> Option<Vec<InferType>> {
+    let mapping = instance_arguments_mapping(inference, name, template, callee, args, call_ty)?;
+    template
+        .type_params
+        .iter()
+        .map(|name| mapping.get(name).cloned())
+        .collect()
+}
+
+fn instance_arguments_mapping(
+    inference: &TypeInference,
+    name: &str,
+    template: &TypedFunction,
+    callee: &TypedExpr,
+    args: &[TypedExpr],
+    call_ty: &InferType,
+) -> Option<HashMap<String, InferType>> {
     let mut mapping = HashMap::new();
     for (formal, actual) in template.params.iter().zip(args) {
         match_types(&formal.ty, &actual.ty, &mut mapping)?;
@@ -4874,11 +4915,34 @@ fn instance_arguments(
         match_types(&template.return_type, ret, &mut mapping)?;
     }
     match_types(&template.return_type, call_ty, &mut mapping)?;
-    template
-        .type_params
-        .iter()
-        .map(|name| mapping.get(name).cloned())
-        .collect()
+    if let Some(bounds) = inference.generic_function_bounds.get(name) {
+        loop {
+            let known = mapping.len();
+            for (subject, trait_name, trait_args) in bounds {
+                let Some(actual) = mapping.get(subject).filter(|ty| ty.is_concrete()) else {
+                    continue;
+                };
+                let Some(impl_args) = inference
+                    .type_table
+                    .unique_impl_trait_args(trait_name, actual)
+                else {
+                    continue;
+                };
+                let mut deduced = mapping.clone();
+                if trait_args
+                    .iter()
+                    .zip(&impl_args)
+                    .all(|(formal, actual)| match_types(formal, actual, &mut deduced).is_some())
+                {
+                    mapping = deduced;
+                }
+            }
+            if mapping.len() == known {
+                break;
+            }
+        }
+    }
+    Some(mapping)
 }
 
 pub(crate) fn match_types(

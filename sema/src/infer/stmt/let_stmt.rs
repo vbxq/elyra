@@ -14,6 +14,22 @@ impl TypeInference {
         initializer: &Expr,
         is_pub: bool,
     ) -> TypedStmtKind {
+        if destructured_from_let(initializer)
+            && self
+                .constant_leaf(&Expr::new(
+                    aelys_syntax::ExprKind::Identifier(name.to_string()),
+                    span,
+                ))
+                .is_some()
+        {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::RefutableLetPattern {
+                    name: name.to_string(),
+                },
+                span,
+                reason: ConstraintReason::Other("destructuring let".to_string()),
+            });
+        }
         let declared_type = type_annotation
             .as_ref()
             .map(|ann| self.type_from_annotation(ann));
@@ -131,5 +147,13 @@ fn collection_binding_name(expr: &Expr) -> Option<&str> {
         aelys_syntax::ExprKind::Grouping(inner) => collection_binding_name(inner),
         aelys_syntax::ExprKind::Index { object, .. } => collection_binding_name(object),
         _ => None,
+    }
+}
+
+fn destructured_from_let(initializer: &Expr) -> bool {
+    match &initializer.kind {
+        aelys_syntax::ExprKind::Member { object, .. } => destructured_from_let(object),
+        aelys_syntax::ExprKind::Identifier(name) => name.starts_with("__aelys_let_"),
+        _ => false,
     }
 }

@@ -591,17 +591,17 @@ sum
 fn compiler_rc_shared_state() {
     use aelys_backend::Compiler;
     use aelys_syntax::Source;
-    use std::rc::Rc;
+    use std::sync::Arc;
     let source = Source::new("<test>", "let x = 1");
     let compiler = Compiler::new(None, source);
-    let count1 = Rc::strong_count(&compiler.module_aliases);
-    let count2 = Rc::strong_count(&compiler.known_globals);
-    let count3 = Rc::strong_count(&compiler.known_native_globals);
+    let count1 = Arc::strong_count(&compiler.module_aliases);
+    let count2 = Arc::strong_count(&compiler.known_globals);
+    let count3 = Arc::strong_count(&compiler.known_native_globals);
     assert!(count1 >= 1);
     assert!(count2 >= 1);
     assert!(count3 >= 1);
-    let _alias_clone = Rc::clone(&compiler.module_aliases);
-    assert!(Rc::strong_count(&compiler.module_aliases) >= 2);
+    let _alias_clone = Arc::clone(&compiler.module_aliases);
+    assert!(Arc::strong_count(&compiler.module_aliases) >= 2);
 }
 
 #[test]

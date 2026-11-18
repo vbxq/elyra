@@ -234,6 +234,8 @@ impl Parser {
 
             let body = if self.match_token(&TokenKind::LBrace) {
                 MatchArmBody::Block(self.block_statements()?)
+            } else if let Some(jump) = self.arm_jump()? {
+                MatchArmBody::Block(vec![jump])
             } else {
                 MatchArmBody::Expr(Box::new(self.expression()?))
             };
@@ -262,6 +264,10 @@ impl Parser {
     }
 
     pub(crate) fn parse_pattern(&mut self) -> Result<Pattern> {
+        self.nested(Self::parse_pattern_alternatives)
+    }
+
+    fn parse_pattern_alternatives(&mut self) -> Result<Pattern> {
         let first = self.parse_pattern_atom()?;
         if !self.check(&TokenKind::Pipe) {
             return Ok(first);
@@ -329,6 +335,7 @@ impl Parser {
                 if self.match_token(&TokenKind::LBrace) {
                     let mut struct_fields = Vec::new();
                     let mut has_rest = false;
+                    self.skip_line_ends();
                     while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
                         if self.match_token(&TokenKind::DotDot) {
                             has_rest = true;
@@ -364,9 +371,11 @@ impl Parser {
                             pattern: field_pattern.clone(),
                             span: field_span.merge(field_pattern.span),
                         });
+                        self.skip_line_ends();
                         if !self.match_token(&TokenKind::Comma) {
                             break;
                         }
+                        self.skip_line_ends();
                     }
                     self.consume(&TokenKind::RBrace, "}")?;
                     PatternKind::Struct {
@@ -438,12 +447,25 @@ impl Parser {
             }
             TokenKind::DotDotEq | TokenKind::DotDot => {
                 let inclusive = token.kind == TokenKind::DotDotEq;
-                let end = self.range_pattern_bound()?;
-                range_pattern(None, Some(end), inclusive)
-                    .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))?
+                if let TokenKind::Char(end) = self.peek().kind {
+                    self.advance();
+                    char_range_pattern(None, Some(end), inclusive)
+                        .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))?
+                } else {
+                    let end = self.range_pattern_bound()?;
+                    range_pattern(None, Some(end), inclusive)
+                        .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))?
+                }
+            }
+            TokenKind::String(_) | TokenKind::Float(_)
+                if matches!(self.peek().kind, TokenKind::DotDot | TokenKind::DotDotEq) =>
+            {
+                return Err(self.error(CompileErrorKind::InvalidPattern {
+                    reason: "a range pattern bound must be an integer or char literal".to_string(),
+                }));
             }
             TokenKind::String(value) => PatternKind::String(value),
-            TokenKind::Char(value) => PatternKind::Char(value),
+            TokenKind::Char(value) => self.char_range_pattern_tail(value)?,
             TokenKind::True => PatternKind::Bool(true),
             TokenKind::False => PatternKind::Bool(false),
             TokenKind::Null => return Err(self.error(CompileErrorKind::NullIsNotInSurface)),
@@ -464,7 +486,10 @@ impl Parser {
         } else {
             return Ok(PatternKind::Int(start));
         };
-        let end = if matches!(self.peek().kind, TokenKind::Int(_) | TokenKind::Minus) {
+        let end = if matches!(
+            self.peek().kind,
+            TokenKind::Int(_) | TokenKind::Minus | TokenKind::Char(_)
+        ) {
             Some(self.range_pattern_bound()?)
         } else if inclusive {
             return Err(self.error(CompileErrorKind::InvalidPattern {
@@ -475,6 +500,37 @@ impl Parser {
             None
         };
         range_pattern(Some(start), end, inclusive)
+            .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))
+    }
+
+    fn char_range_pattern_tail(&mut self, start: char) -> Result<PatternKind> {
+        let inclusive = if self.match_token(&TokenKind::DotDotEq) {
+            true
+        } else if self.match_token(&TokenKind::DotDot) {
+            false
+        } else {
+            return Ok(PatternKind::Char(start));
+        };
+        let end = match self.peek().kind {
+            TokenKind::Char(end) => {
+                self.advance();
+                Some(end)
+            }
+            TokenKind::Int(_) | TokenKind::Minus | TokenKind::String(_) | TokenKind::Float(_) => {
+                return Err(self.error(CompileErrorKind::InvalidPattern {
+                    reason: "both bounds of a char range pattern must be char literals".to_string(),
+                }));
+            }
+            _ if inclusive => {
+                return Err(self.error(CompileErrorKind::InvalidPattern {
+                    reason:
+                        "an inclusive range pattern needs an end; write `lo..` for an open range"
+                            .to_string(),
+                }));
+            }
+            _ => None,
+        };
+        char_range_pattern(Some(start), end, inclusive)
             .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))
     }
 
@@ -545,7 +601,11 @@ impl Parser {
                     && self.check(&TokenKind::LBrace)
                     && self.brace_construction_allowed()
                     && matches!(self.peek_at(1).kind, TokenKind::Identifier(_))
-                    && matches!(self.peek_at(2).kind, TokenKind::Colon) =>
+                    && (matches!(
+                        self.peek_at(2).kind,
+                        TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
+                    ) || (self.peek_at(2).kind == TokenKind::Semicolon
+                        && self.peek_at(3).kind == TokenKind::RBrace)) =>
             {
                 let name = name.clone();
                 return self.struct_literal(name, Vec::new(), span);
@@ -871,21 +931,36 @@ impl Parser {
     pub(super) fn parse_struct_literal_fields(&mut self) -> Result<Vec<StructFieldInit>> {
         self.consume(&TokenKind::LBrace, "{")?;
 
+        let fields = self.field_init_list("field name", "struct literal field")?;
+        self.consume(&TokenKind::RBrace, "}")?;
+        Ok(fields)
+    }
+
+    pub(super) fn field_init_list(
+        &mut self,
+        what: &str,
+        duplicate: &str,
+    ) -> Result<Vec<StructFieldInit>> {
         self.with_brace_construction(true, |parser| {
             let mut fields = Vec::new();
+            parser.skip_line_ends();
             while !parser.check(&TokenKind::RBrace) && !parser.is_at_end() {
                 let field_span = parser.peek().span;
-                let field_name = parser.consume_identifier("field name")?;
+                let field_name = parser.consume_identifier(what)?;
                 if fields
                     .iter()
                     .any(|field: &StructFieldInit| field.name == field_name)
                 {
                     return Err(parser.error(CompileErrorKind::InvalidPattern {
-                        reason: format!("duplicate struct literal field '{field_name}'"),
+                        reason: format!("duplicate {duplicate} '{field_name}'"),
                     }));
                 }
-                parser.consume(&TokenKind::Colon, ":")?;
-                let value = parser.expression()?;
+                let value = if parser.match_token(&TokenKind::Colon) {
+                    parser.expression()?
+                } else {
+                    parser.reject_reserved_name(&field_name, field_span)?;
+                    Expr::new(ExprKind::Identifier(field_name.clone()), field_span)
+                };
                 let end_span = parser.previous().span;
 
                 fields.push(StructFieldInit {
@@ -894,12 +969,12 @@ impl Parser {
                     span: field_span.merge(end_span),
                 });
 
+                parser.skip_line_ends();
                 if !parser.match_token(&TokenKind::Comma) {
                     break;
                 }
+                parser.skip_line_ends();
             }
-
-            parser.consume(&TokenKind::RBrace, "}")?;
             Ok(fields)
         })
     }
@@ -973,6 +1048,30 @@ fn range_pattern(
     })
 }
 
+fn char_range_pattern(
+    start: Option<char>,
+    end: Option<char>,
+    inclusive: bool,
+) -> std::result::Result<PatternKind, String> {
+    if let (Some(start), Some(end)) = (start, end) {
+        let empty = if inclusive { start > end } else { start >= end };
+        if empty {
+            return Err(format!(
+                "range pattern {start:?}{}{end:?} matches no value",
+                if inclusive { "..=" } else { ".." }
+            ));
+        }
+    }
+    if !inclusive && end == Some('\0') {
+        return Err("range pattern ..'\\0' matches no value".to_string());
+    }
+    Ok(PatternKind::CharRange {
+        start,
+        end,
+        inclusive,
+    })
+}
+
 fn remap_expr_spans(expr: &mut Expr, span: aelys_syntax::Span) {
     expr.span = span;
     if let Some(repeat) = &mut expr.repeat {
@@ -1006,8 +1105,29 @@ fn remap_expr_spans(expr: &mut Expr, span: aelys_syntax::Span) {
             remap_expr_spans(object, span);
             remap_expr_spans(value, span);
         }
-        ExprKind::Grouping(inner) => {
+        ExprKind::Grouping(inner) | ExprKind::Try(inner) => {
             remap_expr_spans(inner, span);
+        }
+        ExprKind::Borrow { operand, .. } => {
+            remap_expr_spans(operand, span);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            remap_expr_spans(scrutinee, span);
+            for arm in arms {
+                arm.span = span;
+                arm.pattern.span = span;
+                if let Some(guard) = &mut arm.guard {
+                    remap_expr_spans(guard, span);
+                }
+                match &mut arm.body {
+                    MatchArmBody::Expr(body) => remap_expr_spans(body, span),
+                    MatchArmBody::Block(stmts) => {
+                        for stmt in stmts {
+                            remap_stmt_spans(stmt, span);
+                        }
+                    }
+                }
+            }
         }
         ExprKind::If {
             condition,

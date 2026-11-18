@@ -121,7 +121,7 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let (object_reg, object_owned) = self.operand_register(object)?;
+        let (object_reg, object_owned) = self.operand_register(object, &[])?;
         self.emit_struct(
             OpCode::StructLoad,
             schema_index,
@@ -150,7 +150,7 @@ impl Compiler {
             self.compile_typed_expr(object, register)?;
             (register, true)
         } else {
-            self.operand_register(object)?
+            self.operand_register(object, &[])?
         };
         self.compile_typed_expr(value, dest)?;
         self.emit_struct(

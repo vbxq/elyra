@@ -87,7 +87,7 @@ pub fn run_with_options(
 
     match execution {
         FileExecution::Returned(value) => {
-            if !value.is_null() {
+            if !value.is_null() && !value.is_unit() {
                 println!("{}", value);
             }
             Ok(0)

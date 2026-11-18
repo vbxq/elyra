@@ -196,7 +196,7 @@ impl TypeInference {
         if collection_pipeline {
             self.collection_iter_allowed = true;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         self.collection_iter_allowed = previous_iterator_context;
         if collection_pipeline
             && matches!(
@@ -231,6 +231,9 @@ impl TypeInference {
         }
         if matches!(typed_object.ty, InferType::Var(_)) {
             return Some(self.infer_inferred_sum_method_call(callee, typed_object, member, args));
+        }
+        if super::expr::user_method_receiver(&typed_object.ty) {
+            return None;
         }
         let (family, value_type, error_type) = match &typed_object.ty {
             InferType::Option(value) => ("Option", value.as_ref().clone(), None),
@@ -1218,7 +1221,10 @@ impl TypeInference {
             );
         };
 
-        let output = self.type_gen.fresh();
+        let output = match &source {
+            InferType::Option(value) | InferType::Result(value, _) => value.as_ref().clone(),
+            _ => self.type_gen.fresh(),
+        };
         let target = match (&source, &current_return) {
             (InferType::Option(source_value), InferType::Var(_)) => {
                 let target = InferType::Option(Box::new(self.type_gen.fresh()));
@@ -1785,6 +1791,28 @@ impl TypeInference {
                     ConstraintReason::Comparison,
                 ));
                 TypedPatternKind::Char(*value)
+            }
+            PatternKind::CharRange {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.constraints.push(Constraint::equal(
+                    ty.clone(),
+                    InferType::Char,
+                    pattern.span,
+                    ConstraintReason::Comparison,
+                ));
+                TypedPatternKind::CharRange {
+                    start: *start,
+                    end: end.and_then(|end| {
+                        if *inclusive {
+                            Some(end)
+                        } else {
+                            char_before(end)
+                        }
+                    }),
+                }
             }
             PatternKind::Bool(value) => {
                 self.constraints.push(Constraint::equal(
@@ -2622,6 +2650,13 @@ fn collect_pattern_bindings(pattern: &TypedPattern, bindings: &mut Vec<(String, 
     }
 }
 
+pub(crate) fn char_before(value: char) -> Option<char> {
+    match value {
+        '\u{E000}' => Some('\u{D7FF}'),
+        _ => char::from_u32(u32::from(value).checked_sub(1)?),
+    }
+}
+
 fn describe_pattern(pattern: &Pattern) -> String {
     match &pattern.kind {
         PatternKind::Wildcard => "_".to_string(),
@@ -2647,6 +2682,16 @@ fn describe_pattern(pattern: &Pattern) -> String {
             start.map(|value| value.to_string()).unwrap_or_default(),
             if *inclusive { "..=" } else { ".." },
             end.map(|value| value.to_string()).unwrap_or_default()
+        ),
+        PatternKind::CharRange {
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}{}{}",
+            start.map(|value| format!("{value:?}")).unwrap_or_default(),
+            if *inclusive { "..=" } else { ".." },
+            end.map(|value| format!("{value:?}")).unwrap_or_default()
         ),
         PatternKind::Or(alternatives) => alternatives
             .iter()

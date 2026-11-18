@@ -24,6 +24,7 @@ impl CompileErrorKind {
             Self::TypeNestingTooDeep { .. } => 380,
             Self::BorrowingReceiverDeferred { .. } => 111,
             Self::TraitObjectDeferred { .. } => 113,
+            Self::PrimitiveImplUnsupported { .. } => 112,
             Self::InvalidDefaultMethod => 441,
             Self::ReservedIdentifier { .. } => 114,
             Self::ReservedName { .. } => 394,

@@ -1,0 +1,11 @@
+words: 0 total, 0 distinct
+longest: none
+top 10 words:
+letters: 0 total, 0 distinct, accented vowels: none
+vowels (accents folded):
+  a    0
+  e    0
+  i    0
+  o    0
+  u    0
+  y    0

@@ -66,7 +66,11 @@ impl Optimizer {
         self.level
     }
 
-    pub fn optimize(&mut self, mut program: TypedProgram) -> TypedProgram {
+    pub fn optimize(&mut self, program: TypedProgram) -> TypedProgram {
+        aelys_common::stack::with_deep_stack(move || self.optimize_program(program))
+    }
+
+    fn optimize_program(&mut self, mut program: TypedProgram) -> TypedProgram {
         self.collected_warnings.clear();
 
         if let Some(inliner) = &mut self.inliner {

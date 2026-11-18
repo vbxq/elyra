@@ -43,6 +43,10 @@ pub enum CompileErrorKind {
     TraitObjectDeferred {
         trait_name: String,
     },
+    PrimitiveImplUnsupported {
+        trait_name: String,
+        ty: String,
+    },
     InvalidDefaultMethod,
     ReservedIdentifier {
         name: String,

@@ -120,35 +120,7 @@ impl Parser {
                     break;
                 }
                 self.advance();
-                let fields = self.with_brace_construction(true, |parser| {
-                    let mut fields = Vec::new();
-                    while !parser.check(&TokenKind::RBrace) && !parser.is_at_end() {
-                        let field_span = parser.peek().span;
-                        let field_name = parser.consume_identifier("enum field name")?;
-                        if fields
-                            .iter()
-                            .any(|field: &aelys_syntax::StructFieldInit| field.name == field_name)
-                        {
-                            return Err(parser.error(
-                                aelys_common::error::CompileErrorKind::InvalidPattern {
-                                    reason: format!("duplicate enum field '{field_name}'"),
-                                },
-                            ));
-                        }
-                        parser.consume(&TokenKind::Colon, ":")?;
-                        let value = parser.expression()?;
-                        let end_span = parser.previous().span;
-                        fields.push(aelys_syntax::StructFieldInit {
-                            name: field_name,
-                            value: Box::new(value),
-                            span: field_span.merge(end_span),
-                        });
-                        if !parser.match_token(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    Ok(fields)
-                })?;
+                let fields = self.field_init_list("enum field name", "enum field")?;
                 self.consume(&TokenKind::RBrace, "}")?;
                 let span = expr.span.merge(self.previous().span);
                 expr = if type_args.is_empty() {

@@ -9,6 +9,6 @@ pub use file::{
     RunResult, run_file, run_file_full, run_file_full_with_control,
     run_file_full_with_control_and_jit, run_file_with_config, run_file_with_config_and_opt,
 };
-pub use repl::{run_with_vm, run_with_vm_and_opt};
+pub use repl::{ReplSession, run_with_vm, run_with_vm_and_opt};
 pub use run::{run, run_source, run_with_config, run_with_config_and_opt};
 pub use vm::{new_vm, new_vm_with_config};

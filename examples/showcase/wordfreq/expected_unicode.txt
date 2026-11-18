@@ -1,0 +1,21 @@
+words: 57 total, 44 distinct
+longest: smörgåsbord (11 letters)
+top 10 words:
+  1. été       3
+  2. москва    3
+  3. привет    3
+  4. and       2
+  5. noël      2
+  6. word      2
+  7. ñandú     2
+  8. ölçü      2
+  9. αρχη      2
+ 10. 東京        2
+letters: 243 total, 64 distinct, accented vowels: àåèéëïöúûüý
+vowels (accents folded):
+  a   18 ##########################
+  e   27 ########################################
+  i    3 ####
+  o   17 #########################
+  u    8 ###########
+  y    2 ##

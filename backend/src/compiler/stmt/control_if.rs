@@ -91,7 +91,7 @@ impl Compiler {
         else_branch: Option<&aelys_sema::TypedStmt>,
         span: Span,
     ) -> Result<()> {
-        let (cond_reg, cond_owned) = self.operand_register(condition)?;
+        let (cond_reg, cond_owned) = self.operand_register(condition, &[])?;
 
         let else_jump = self.emit_jump_if(OpCode::JumpIfNot, cond_reg, span);
         if cond_owned {

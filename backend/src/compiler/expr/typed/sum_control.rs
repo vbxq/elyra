@@ -128,8 +128,9 @@ impl Compiler {
         let scrutinee_reg = self.alloc_register()?;
         self.compile_typed_expr(scrutinee, scrutinee_reg)?;
         let mut end_jumps = Vec::new();
+        let mut exhaustive = false;
 
-        for arm in arms {
+        for (position, arm) in arms.iter().enumerate() {
             self.begin_scope();
             let mut binding_registers = HashMap::new();
             self.reserve_pattern_bindings(&arm.pattern, &mut binding_registers)?;
@@ -148,17 +149,25 @@ impl Compiler {
                 self.free_register(guard_reg);
             }
 
+            let falls_through = position + 1 == arms.len() && failure_jumps.is_empty();
             self.compile_typed_match_body(&arm.body, dest, arm.span)?;
-            end_jumps.push(self.emit_jump(OpCode::Jump, arm.span));
+            if falls_through {
+                exhaustive = true;
+            } else {
+                self.close_scope_upvalues();
+                end_jumps.push(self.emit_jump(OpCode::Jump, arm.span));
+            }
+            let next_arm = self.current_offset();
             self.end_scope();
 
-            let next_arm = self.current_offset();
             for jump in failure_jumps {
                 self.patch_jump_to(jump, next_arm);
             }
         }
 
-        self.emit_a(OpCode::MatchFail, 0, 0, 0, span);
+        if !exhaustive {
+            self.emit_a(OpCode::MatchFail, 0, 0, 0, span);
+        }
         let end = self.current_offset();
         for jump in end_jumps {
             self.patch_jump_to(jump, end);
@@ -237,6 +246,19 @@ impl Compiler {
                     let literal = self.alloc_register()?;
                     let condition = self.alloc_register()?;
                     self.compile_literal_int(*bound, literal, pattern.span)?;
+                    self.emit_a(opcode, condition, source, literal, pattern.span);
+                    failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
+                    self.free_register(condition);
+                    self.free_register(literal);
+                }
+                Ok(())
+            }
+            TypedPatternKind::CharRange { start, end } => {
+                for (bound, opcode) in [(start, OpCode::Ge), (end, OpCode::Le)] {
+                    let Some(bound) = bound else { continue };
+                    let literal = self.alloc_register()?;
+                    let condition = self.alloc_register()?;
+                    self.compile_literal_char(*bound, literal, pattern.span)?;
                     self.emit_a(opcode, condition, source, literal, pattern.span);
                     failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
                     self.free_register(condition);
@@ -396,7 +418,8 @@ impl Compiler {
             | TypedPatternKind::String(_)
             | TypedPatternKind::Char(_)
             | TypedPatternKind::Bool(_)
-            | TypedPatternKind::Range { .. } => {}
+            | TypedPatternKind::Range { .. }
+            | TypedPatternKind::CharRange { .. } => {}
         }
         Ok(())
     }

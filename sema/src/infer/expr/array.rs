@@ -2,6 +2,7 @@ use super::TypeInference;
 use crate::constraint::{Constraint, ConstraintReason, TypeError, TypeErrorKind};
 use crate::typed_ast::{TypedExpr, TypedExprKind};
 use crate::types::{InferType, ResolvedType};
+use aelys_bytecode::Value;
 use aelys_syntax::{BinaryOp, Expr, ExprKind, Span, TypeAnnotation, UnaryOp};
 
 impl TypeInference {
@@ -768,7 +769,9 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
         ExprKind::Unary {
             op: UnaryOp::Neg,
             operand,
-        } => constant_int_value(operand)?.checked_neg(),
+        } => constant_int_value(operand)?
+            .checked_neg()
+            .filter(|value| (Value::INT_MIN..=Value::INT_MAX).contains(value)),
         ExprKind::Unary {
             op: UnaryOp::BitNot,
             operand,
@@ -776,7 +779,7 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
         ExprKind::Binary { left, op, right } => {
             let left = constant_int_value(left)?;
             let right = constant_int_value(right)?;
-            match op {
+            let folded = match op {
                 BinaryOp::Add => left.checked_add(right),
                 BinaryOp::Sub => left.checked_sub(right),
                 BinaryOp::Mul => left.checked_mul(right),
@@ -793,7 +796,8 @@ fn constant_int_value_with(expr: &Expr, resolve: &dyn Fn(&Expr) -> Option<i64>) 
                 | BinaryOp::Le
                 | BinaryOp::Gt
                 | BinaryOp::Ge => None,
-            }
+            };
+            folded.filter(|value| (Value::INT_MIN..=Value::INT_MAX).contains(value))
         }
         _ => resolve(expr),
     }

@@ -368,6 +368,10 @@ pub enum TypedPatternKind {
         start: Option<i64>,
         end: Option<i64>,
     },
+    CharRange {
+        start: Option<char>,
+        end: Option<char>,
+    },
 }
 
 impl TypedExpr {

@@ -2,7 +2,6 @@ use super::state::{Compiler, Local, Upvalue};
 use aelys_bytecode::Function;
 use aelys_syntax::Source;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::sync::Arc;
 
 impl Compiler {
@@ -27,18 +26,18 @@ impl Compiler {
             globals: HashMap::new(),
             global_indices: HashMap::new(),
             next_global_index: 0,
-            module_aliases: Rc::new(HashSet::new()),
-            known_globals: Rc::new(HashSet::new()),
-            known_native_globals: Rc::new(HashSet::new()),
-            symbol_origins: Rc::new(HashMap::new()),
+            module_aliases: Arc::new(HashSet::new()),
+            known_globals: Arc::new(HashSet::new()),
+            known_native_globals: Arc::new(HashSet::new()),
+            symbol_origins: Arc::new(HashMap::new()),
             accessed_globals: HashSet::new(),
             function_depth: 0,
             current_return_type: None,
-            struct_schemas: Rc::new(Vec::new()),
-            enum_schemas: Rc::new(Vec::new()),
-            module_sources: Rc::new(HashMap::new()),
-            module_scopes: Rc::default(),
-            own_slots: Rc::default(),
+            struct_schemas: Arc::new(Vec::new()),
+            enum_schemas: Arc::new(Vec::new()),
+            module_sources: Arc::new(HashMap::new()),
+            module_scopes: Arc::default(),
+            own_slots: Arc::default(),
         }
     }
 
@@ -52,10 +51,10 @@ impl Compiler {
         enclosing_locals: Vec<Local>,
         enclosing_upvalues: Vec<Upvalue>,
         parent_all_enclosing_locals: Vec<Vec<Local>>,
-        module_aliases: Rc<HashSet<String>>,
-        known_globals: Rc<HashSet<String>>,
-        known_native_globals: Rc<HashSet<String>>,
-        symbol_origins: Rc<HashMap<String, String>>,
+        module_aliases: Arc<HashSet<String>>,
+        known_globals: Arc<HashSet<String>>,
+        known_native_globals: Arc<HashSet<String>>,
+        symbol_origins: Arc<HashMap<String, String>>,
     ) -> Self {
         let mut all_enclosing_locals = vec![enclosing_locals.clone()];
         all_enclosing_locals.extend(parent_all_enclosing_locals);
@@ -87,11 +86,11 @@ impl Compiler {
             accessed_globals: HashSet::new(),
             function_depth: 1,
             current_return_type: None,
-            struct_schemas: Rc::new(Vec::new()),
-            enum_schemas: Rc::new(Vec::new()),
-            module_sources: Rc::new(HashMap::new()),
-            module_scopes: Rc::default(),
-            own_slots: Rc::default(),
+            struct_schemas: Arc::new(Vec::new()),
+            enum_schemas: Arc::new(Vec::new()),
+            module_sources: Arc::new(HashMap::new()),
+            module_scopes: Arc::default(),
+            own_slots: Arc::default(),
         }
     }
 
@@ -123,18 +122,18 @@ impl Compiler {
             globals: HashMap::new(),
             global_indices: HashMap::new(),
             next_global_index: 0,
-            module_aliases: Rc::new(module_aliases),
-            known_globals: Rc::new(known_globals),
-            known_native_globals: Rc::new(known_native_globals),
-            symbol_origins: Rc::new(symbol_origins),
+            module_aliases: Arc::new(module_aliases),
+            known_globals: Arc::new(known_globals),
+            known_native_globals: Arc::new(known_native_globals),
+            symbol_origins: Arc::new(symbol_origins),
             accessed_globals: HashSet::new(),
             function_depth: 0,
             current_return_type: None,
-            struct_schemas: Rc::new(Vec::new()),
-            enum_schemas: Rc::new(Vec::new()),
-            module_sources: Rc::new(HashMap::new()),
-            module_scopes: Rc::default(),
-            own_slots: Rc::default(),
+            struct_schemas: Arc::new(Vec::new()),
+            enum_schemas: Arc::new(Vec::new()),
+            module_sources: Arc::new(HashMap::new()),
+            module_scopes: Arc::default(),
+            own_slots: Arc::default(),
         }
     }
 
@@ -167,28 +166,28 @@ impl Compiler {
             globals,
             global_indices: HashMap::new(),
             next_global_index: 0,
-            module_aliases: Rc::new(module_aliases),
-            known_globals: Rc::new(known_globals),
-            known_native_globals: Rc::new(known_native_globals),
-            symbol_origins: Rc::new(symbol_origins),
+            module_aliases: Arc::new(module_aliases),
+            known_globals: Arc::new(known_globals),
+            known_native_globals: Arc::new(known_native_globals),
+            symbol_origins: Arc::new(symbol_origins),
             accessed_globals: HashSet::new(),
             function_depth: 0,
             current_return_type: None,
-            struct_schemas: Rc::new(Vec::new()),
-            enum_schemas: Rc::new(Vec::new()),
-            module_sources: Rc::new(HashMap::new()),
-            module_scopes: Rc::default(),
-            own_slots: Rc::default(),
+            struct_schemas: Arc::new(Vec::new()),
+            enum_schemas: Arc::new(Vec::new()),
+            module_sources: Arc::new(HashMap::new()),
+            module_scopes: Arc::default(),
+            own_slots: Arc::default(),
         }
     }
 
     pub fn with_own_slots(mut self, slots: HashMap<String, String>) -> Self {
-        self.own_slots = Rc::new(slots);
+        self.own_slots = Arc::new(slots);
         self
     }
 
     pub fn with_module_sources(mut self, sources: HashMap<String, Arc<Source>>) -> Self {
-        self.module_sources = Rc::new(sources);
+        self.module_sources = Arc::new(sources);
         self
     }
 
@@ -196,7 +195,7 @@ impl Compiler {
         mut self,
         scopes: std::collections::BTreeMap<String, aelys_sema::infer::imports::ModuleScope>,
     ) -> Self {
-        self.module_scopes = Rc::new(scopes);
+        self.module_scopes = Arc::new(scopes);
         self
     }
 }

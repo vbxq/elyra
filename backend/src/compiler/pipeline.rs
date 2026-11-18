@@ -8,11 +8,17 @@ use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{TypedProgram, TypedStmtKind};
 use aelys_syntax::Source;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 impl Compiler {
     pub fn compile_typed(
+        self,
+        program: &TypedProgram,
+    ) -> Result<(Function, HashMap<String, bool>)> {
+        aelys_common::stack::with_deep_stack(move || self.compile_typed_program(program))
+    }
+
+    fn compile_typed_program(
         mut self,
         program: &TypedProgram,
     ) -> Result<(Function, HashMap<String, bool>)> {
@@ -58,7 +64,7 @@ impl Compiler {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| poisoned_schema_error(&self.source))?;
-        self.struct_schemas = std::rc::Rc::new(struct_schemas);
+        self.struct_schemas = Arc::new(struct_schemas);
         self.current.struct_schemas = self.struct_schemas.as_ref().clone();
         let enum_schemas = program
             .type_table
@@ -137,7 +143,7 @@ impl Compiler {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| poisoned_schema_error(&self.source))?;
-        self.enum_schemas = std::rc::Rc::new(enum_schemas);
+        self.enum_schemas = Arc::new(enum_schemas);
         self.current.enum_schemas = self.enum_schemas.as_ref().clone();
         for stmt in &program.stmts {
             match &stmt.kind {
@@ -198,7 +204,7 @@ impl Compiler {
 
             let last_stmt = ordered[last_idx];
             let restore_last = self.enter_definition_module(last_stmt);
-            if Compiler::typed_stmt_yields_value(last_stmt) {
+            if Compiler::typed_stmt_yields_value(last_stmt) && !stmt_ends_in_assignment(last_stmt) {
                 let result_reg = self.alloc_register()?;
                 self.compile_typed_stmt_value(last_stmt, result_reg)?;
                 self.emit_a(OpCode::Return, result_reg, 0, 0, last_stmt.span);
@@ -476,9 +482,9 @@ impl Compiler {
                 let mut native_globals = self.known_native_globals.as_ref().clone();
                 native_globals.extend(scope.known_native_globals);
                 (
-                    std::mem::replace(&mut self.module_aliases, Rc::new(scope.module_aliases)),
-                    std::mem::replace(&mut self.symbol_origins, Rc::new(scope.symbol_origins)),
-                    std::mem::replace(&mut self.known_native_globals, Rc::new(native_globals)),
+                    std::mem::replace(&mut self.module_aliases, Arc::new(scope.module_aliases)),
+                    std::mem::replace(&mut self.symbol_origins, Arc::new(scope.symbol_origins)),
+                    std::mem::replace(&mut self.known_native_globals, Arc::new(native_globals)),
                 )
             });
         DefinitionRestore { source, scope }
@@ -497,15 +503,76 @@ impl Compiler {
 }
 
 type ScopeRestore = (
-    Rc<std::collections::HashSet<String>>,
-    Rc<HashMap<String, String>>,
-    Rc<std::collections::HashSet<String>>,
+    Arc<std::collections::HashSet<String>>,
+    Arc<HashMap<String, String>>,
+    Arc<std::collections::HashSet<String>>,
 );
 
 #[derive(Default)]
 struct DefinitionRestore {
     source: Option<Arc<Source>>,
     scope: Option<ScopeRestore>,
+}
+
+fn stmt_ends_in_assignment(stmt: &aelys_sema::TypedStmt) -> bool {
+    stmt_tail(stmt) == Tail::Assignment
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tail {
+    Assignment,
+    Diverges,
+    Value,
+}
+
+// a branching tail is an assignment only when every branch that completes ends in one
+fn branch_tails(tails: impl IntoIterator<Item = Tail>) -> Tail {
+    let mut joined = Tail::Diverges;
+    for tail in tails {
+        match tail {
+            Tail::Value => return Tail::Value,
+            Tail::Assignment => joined = Tail::Assignment,
+            Tail::Diverges => {}
+        }
+    }
+    joined
+}
+
+fn stmts_tail(stmts: &[aelys_sema::TypedStmt]) -> Tail {
+    stmts.last().map_or(Tail::Value, stmt_tail)
+}
+
+fn stmt_tail(stmt: &aelys_sema::TypedStmt) -> Tail {
+    match &stmt.kind {
+        TypedStmtKind::Expression(expr) => expr_tail(expr),
+        TypedStmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => branch_tails([stmt_tail(then_branch), stmt_tail(else_branch)]),
+        TypedStmtKind::Block(stmts) => stmts_tail(stmts),
+        TypedStmtKind::Return(_) | TypedStmtKind::Break { .. } | TypedStmtKind::Continue { .. } => {
+            Tail::Diverges
+        }
+        _ => Tail::Value,
+    }
+}
+
+fn expr_tail(expr: &aelys_sema::TypedExpr) -> Tail {
+    use aelys_sema::{InferType, TypedExprKind, TypedMatchArmBody};
+    match &expr.kind {
+        TypedExprKind::Assign { .. }
+        | TypedExprKind::MemberAssign { .. }
+        | TypedExprKind::IndexAssign { .. } => Tail::Assignment,
+        TypedExprKind::Grouping(inner) => expr_tail(inner),
+        TypedExprKind::Block(stmts) => stmts_tail(stmts),
+        TypedExprKind::Match { arms, .. } => branch_tails(arms.iter().map(|arm| match &arm.body {
+            TypedMatchArmBody::Expr(body) => expr_tail(body),
+            TypedMatchArmBody::Block(stmts) => stmts_tail(stmts),
+        })),
+        _ if matches!(expr.ty, InferType::Never) => Tail::Diverges,
+        _ => Tail::Value,
+    }
 }
 
 #[cfg(test)]

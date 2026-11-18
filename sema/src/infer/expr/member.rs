@@ -610,10 +610,22 @@ impl TypeInference {
             .flatten();
         let typed_object = match &path_root {
             Some(path) => namespace_root(path, object.span),
-            None => self.infer_expr(object),
+            None => self.infer_receiver(object),
         };
 
-        if separator == MemberSeparator::Dot && member == "to_string" {
+        if separator == MemberSeparator::Dot
+            && member == "to_string"
+            && !self.declares_self_method(&typed_object.ty, member)
+        {
+            self.bound_residuals.push(crate::infer::BoundResidual {
+                ty: typed_object.ty.clone(),
+                trait_name: crate::prelude::DISPLAY_TRAIT.to_string(),
+                trait_args: Vec::new(),
+                span: typed_object.span,
+                reason: crate::constraint::ConstraintReason::Other("to_string method".to_string()),
+                nominal_only: true,
+                unless_method: Some("to_string"),
+            });
             return (
                 TypedExprKind::Member {
                     object: Box::new(typed_object),
@@ -868,6 +880,7 @@ impl TypeInference {
                             "trait method call".to_string(),
                         ),
                         nominal_only: true,
+                        unless_method: None,
                     });
                 }
                 let symbols: Vec<String> = candidates
@@ -1914,6 +1927,32 @@ impl TypeInference {
             .filter(|(subject, _, _)| subject == param)
             .map(|(_, trait_name, args)| (trait_name.clone(), args.clone()))
             .collect()
+    }
+
+    pub(crate) fn declares_self_method(&self, ty: &InferType, member: &str) -> bool {
+        if let InferType::Param(param) = ty {
+            return self
+                .bounds_in_scope_for_param(param)
+                .iter()
+                .filter_map(|(trait_name, _)| self.type_table.get_trait(trait_name))
+                .any(|definition| {
+                    definition
+                        .methods
+                        .iter()
+                        .any(|method| method.name == member && method.has_self)
+                });
+        }
+        let Some((name, _)) = nominal_parts(ty, &self.type_table) else {
+            return false;
+        };
+        self.type_table
+            .method(&name, member)
+            .is_some_and(|method| method.has_self)
+            || self
+                .type_table
+                .trait_methods(&name, member)
+                .iter()
+                .any(|method| method.has_self)
     }
 
     fn param_bounds_in_scope(&self, param: &str) -> Vec<(String, Vec<InferType>)> {
