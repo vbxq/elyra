@@ -120,6 +120,10 @@ impl TypeInference {
             }
         }
         for def in imported.traits {
+            for body in &def.default_bodies {
+                self.trait_defaults
+                    .insert((def.name.clone(), body.name.clone()), body.clone());
+            }
             self.type_table.register_trait(def);
         }
         self.withheld_nominals = imported.withheld;

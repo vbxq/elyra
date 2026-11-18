@@ -1,0 +1,283 @@
+enum Item {
+    Key(int),
+    Lamp { lit: bool },
+    Coin(int),
+    Note(string),
+}
+
+enum Room { Hall, Garden, Cellar, Vault(int) }
+
+enum Dir { N, S, E, W, Up, Down }
+
+enum Cmd {
+    Go(Dir),
+    Take(string),
+    Drop(string),
+    Use(string),
+    Stash(string),
+    Light,
+    Read,
+    Look,
+    Wait(int),
+}
+
+fn kind(it: Item) -> string {
+    match it {
+        Item::Key(_) => "key",
+        Item::Lamp { .. } => "lamp",
+        Item::Coin(_) => "coin",
+        Item::Note(_) => "note",
+    }
+}
+
+fn describe(it: Item) -> string {
+    match it {
+        Item::Key(n) => "key#{n}",
+        Item::Lamp { lit: true } => "lamp(lit)",
+        Item::Lamp { lit: false } => "lamp",
+        Item::Coin(v) => "coin({v})",
+        Item::Note(_) => "note",
+    }
+}
+
+fn room_name(r: Room) -> string {
+    match r {
+        Room::Hall => "hall",
+        Room::Garden => "garden",
+        Room::Cellar => "cellar",
+        Room::Vault(_) => "vault",
+    }
+}
+
+fn parse_dir(s: string) -> Result<Dir, string> {
+    match s {
+        "n" | "north" => Ok(Dir::N),
+        "s" | "south" => Ok(Dir::S),
+        "e" | "east" => Ok(Dir::E),
+        "w" | "west" => Ok(Dir::W),
+        "up" => Ok(Dir::Up),
+        "down" => Ok(Dir::Down),
+        _ => Err("unknown direction '{s}'"),
+    }
+}
+
+fn parse(line: string) -> Result<Cmd, string> {
+    let w = line.trim().split(" ")
+    let verb = w[0]
+    let arg = if w.len() > 1 { w[1] } else { "" }
+    match verb {
+        "go" => Ok(Cmd::Go(parse_dir(arg)?)),
+        "take" | "get" => if arg == "" { Err("take what?") } else { Ok(Cmd::Take(arg)) },
+        "drop" => Ok(Cmd::Drop(arg)),
+        "use" => Ok(Cmd::Use(arg)),
+        "stash" => Ok(Cmd::Stash(arg)),
+        "light" => Ok(Cmd::Light),
+        "read" => Ok(Cmd::Read),
+        "look" | "l" => Ok(Cmd::Look),
+        "wait" => match convert::parse_int(arg) {
+            Some(n) if n > 0 => Ok(Cmd::Wait(n)),
+            Some(_) => Err("wait must be positive"),
+            None => Ok(Cmd::Wait(1)),
+        },
+        _ => Err("unknown verb '{verb}'"),
+    }
+}
+
+struct Game {
+    room: Room,
+    vault_open: bool,
+    turns: int,
+    score: int,
+    inv: Vec<Item>,
+    belt: Vec<Option<Item>>,
+    floor: Map<string, Vec<Item>>,
+}
+
+impl Game {
+    fn new() -> Game {
+        let mut floor: Map<string, Vec<Item>> = Map::new()
+        floor["hall"] = vec![Item::Lamp { lit: false }, Item::Note("the key is in the garden")]
+        floor["garden"] = vec![Item::Key(7), Item::Coin(5)]
+        floor["cellar"] = vec![Item::Coin(10), Item::Key(3)]
+        floor["vault"] = vec![Item::Coin(100), Item::Coin(1)]
+        Game { room: Room::Hall, vault_open: false, turns: 0, score: 0, inv: vec![], belt: vec![None; 2], floor }
+    }
+
+    fn inv_index(self, name: string) -> Option<int> {
+        for i in 0..self.inv.len() {
+            if kind(self.inv[i]) == name { return Some(i) }
+        }
+        None
+    }
+
+    fn lamp_lit(self) -> bool {
+        for it in self.inv {
+            if let Item::Lamp { lit: true } = it { return true }
+        }
+        false
+    }
+
+    fn go(mut self, d: Dir) -> string {
+        let next = match (self.room, d) {
+            (Room::Hall, Dir::N) => Some(Room::Garden),
+            (Room::Hall, Dir::Down) => if self.lamp_lit() { Some(Room::Cellar) } else { return "it is too dark to go down" },
+            (Room::Garden, Dir::S) => Some(Room::Hall),
+            (Room::Cellar, Dir::Up) => Some(Room::Hall),
+            (Room::Cellar, Dir::E) if self.vault_open => Some(Room::Vault(7)),
+            (Room::Cellar, Dir::E) => return "a locked door (lock 7)",
+            (Room::Vault(_), Dir::W) => Some(Room::Cellar),
+            _ => None,
+        }
+        match next {
+            Some(r) => {
+                self.room = r
+                "you enter the {room_name(r)}"
+            }
+            None => "no exit that way",
+        }
+    }
+
+    fn take(mut self, name: string) -> string {
+        let here = room_name(self.room)
+        let mut found = -1
+        let pile = self.floor[here]
+        for i in 0..pile.len() {
+            if found < 0 and kind(pile[i]) == name { found = i }
+        }
+        if found < 0 { return "no {name} here" }
+        let it = self.floor[here].remove(found)
+        match it {
+            Item::Coin(v) => {
+                self.score += v
+                "you pocket {v} gold"
+            }
+            other => {
+                self.inv.push(other)
+                "taken: {describe(other)}"
+            }
+        }
+    }
+
+    fn drop(mut self, name: string) -> string {
+        match self.inv_index(name) {
+            Some(i) => {
+                let it = self.inv.remove(i)
+                let here = room_name(self.room)
+                self.floor[here].push(it)
+                "dropped {describe(it)}"
+            }
+            None => "you have no {name}",
+        }
+    }
+
+    fn use_item(mut self, name: string) -> string {
+        if name != "key" { return "nothing happens" }
+        let key = match self.inv_index("key") {
+            Some(i) => Some(self.inv[i]),
+            None => None,
+        }
+        match (self.room, key) {
+            (Room::Cellar, Some(Item::Key(7))) => {
+                self.vault_open = true
+                "the door creaks open"
+            }
+            (Room::Cellar, Some(Item::Key(n))) => "key {n} does not fit",
+            (Room::Cellar, Some(_)) => "that is not a key",
+            (_, None) => "you have no key",
+            (r, Some(_)) => "there is no lock in the {room_name(r)}",
+        }
+    }
+
+    fn stash(mut self, name: string) -> string {
+        let idx = match self.inv_index(name) { Some(i) => i, None => return "you have no {name}" }
+        for slot in 0..self.belt.len() {
+            if let None = self.belt[slot] {
+                let it = self.inv.remove(idx)
+                self.belt[slot] = Some(it)
+                return "stashed {describe(it)} in slot {slot}"
+            }
+        }
+        "belt full"
+    }
+
+    fn light(mut self) -> string {
+        match self.inv_index("lamp") {
+            Some(i) => match self.inv[i] {
+                Item::Lamp { lit: true } => "already lit",
+                _ => {
+                    self.inv[i] = Item::Lamp { lit: true }
+                    "the lamp glows"
+                }
+            },
+            None => "you have no lamp",
+        }
+    }
+
+    fn step(mut self, c: Cmd) -> string {
+        self.turns += 1
+        match c {
+            Cmd::Go(d) => self.go(d),
+            Cmd::Take(n) => self.take(n),
+            Cmd::Drop(n) => self.drop(n),
+            Cmd::Use(n) => self.use_item(n),
+            Cmd::Stash(n) => self.stash(n),
+            Cmd::Light => self.light(),
+            Cmd::Read => match self.inv_index("note") {
+                Some(i) => match self.inv[i] { Item::Note(t) => "it reads: {t}", _ => "???" },
+                None => "nothing to read",
+            },
+            Cmd::Look => {
+                let here = room_name(self.room)
+                let mut names: Vec<string> = vec![]
+                for it in self.floor[here] { names.push(describe(it)) }
+                if names.is_empty() { "the {here} is empty" } else { "in the {here}: " + names.join(", ") }
+            }
+            Cmd::Wait(n) => {
+                self.turns += n - 1
+                "time passes ({n})"
+            }
+        }
+    }
+}
+
+let script = vec![
+    "look", "take lamp", "go down", "light", "light", "take note", "read",
+    "go down", "look", "take coin", "take key", "go east", "use key",
+    "drop key", "go up", "go north", "take key", "take coin", "take coin",
+    "go s", "go down", "use key", "go east", "look", "take coin", "take coin",
+    "stash note", "stash lamp", "stash key", "dance", "go sideways", "wait 3",
+    "wait -2", "wait", "go west", "go west", "use key", "take", "look",
+]
+
+let mut g = Game::new()
+let mut lineno = 0
+for line in script {
+    lineno++
+    let reply = match parse(line) {
+        Ok(cmd) => g.step(cmd),
+        Err(e) => "?? {e}",
+    }
+    println("{lineno} > {line}: {reply}")
+}
+
+let mut inv_names: Vec<string> = vec![]
+for it in g.inv { inv_names.push(describe(it)) }
+println("inventory: [" + inv_names.join(", ") + "]")
+let mut slot = 0
+for b in g.belt {
+    let text = match b {
+        Some(Item::Lamp { lit }) => "lamp lit={lit}",
+        Some(other) => describe(other),
+        None => "empty",
+    }
+    println("belt {slot}: {text}")
+    slot++
+}
+println("room: {room_name(g.room)} vault_open={g.vault_open} turns={g.turns} score={g.score}")
+let mut keys = g.floor.keys()
+keys.sort()
+for k in keys {
+    let mut n: Vec<string> = vec![]
+    for it in g.floor[k] { n.push(describe(it)) }
+    println("floor {k}: {n.len()} [" + n.join(" ") + "]")
+}

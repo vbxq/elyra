@@ -963,7 +963,12 @@ let bonus = if grade(85) == 3 {
 println(bonus)   // 11
 ```
 
-All branches must have the same type. In expression position an `if` needs an
+All branches must have the same type. When one branch has a known type and the
+others differ from it only by what is still unknown (`if c { Some(v[i]) } else { None }`),
+the `if` takes that type at once, and a `match` does the same over its arms, so the
+binding can be matched against a nested variant such as `Some(Item::Key(n))` without an
+annotation. A pattern naming a user enum variant (`Item::Key(n)`) on a value whose type
+is still unknown fixes that type to the enum. In expression position an `if` needs an
 `else` (E0101 `expected else`); as the tail of a function whose return type is not
 `unit`, an `if` without `else` can fall through and is E0215 `function can fall
 through without returning int`, never a silent `unit`. A function or closure
@@ -2457,6 +2462,11 @@ impl Greet for Shrine { fn name(self) -> string { self.n } }
 println(Shrine { n: "Reimu" }.greet())
 ```
 
+A default travels with its trait: an impl in an importing module adopts it, and a
+type of another module implementing an imported trait answers its defaults through a
+whole-module or a selective `needs`. A default body runs in the module of the impl
+adopting it. Calling a method no impl or default supplies is E0363 `unknown method`.
+
 An associated function is selected with `Trait::name` or `Type::name`; a value
 method uses `value.name(...)`. Selection is resolved to one direct symbol at
 compile time. Missing required methods, ambiguous methods, orphan impls, and
@@ -2508,8 +2518,10 @@ A type parameter that appears only in the arguments of a bound is deduced from t
 bound subject. In `fn drain<C: Collection<T>, T>(c: C) -> Vec<T>`, a call
 `drain(stack)` with `stack: Stack<int>` fixes `C` to `Stack<int>`, and the one impl
 of `Collection` covering `Stack<int>` (`impl<T> Collection<T> for Stack<T>`) fixes
-`T` to `int`. When no argument, return type or bound fixes a parameter, E0343 names
-that parameter.
+`T` to `int`. The subject may itself be generic: inside `fn outer<T>(w: W<T>) -> T`,
+the call `drain(w)` fixes the deduced parameter to the caller's own `T`, at any depth of
+generic callers. When no argument, return type or bound fixes a parameter, E0343 names
+that parameter, never the function.
 
 ```rust
 trait Source<T> { fn first(self) -> T; }
@@ -3433,6 +3445,11 @@ first and then the non-identity impls; the failure path calls the selected `from
 symbol directly and returns `Err`. It never stringifies the error and never calls a
 runtime converter.
 
+`E` and `F` may be the same type parameter: in `fn twice<T>(f: fn(int) -> Result<int, T>,
+x: int) -> Result<int, T>`, `f(x)?` is the identity conversion. A function value (a
+parameter, a local, a field read into a local) keeps the enclosing function's type
+parameters as they are; only a call naming a generic function instantiates its own.
+
 Converting through `From` is a deliberate deviation from a "no hidden conversion"
 rule: the impl is always written out by the user, is selected at compile time, and
 is never replaced by a runtime converter.
@@ -3614,7 +3631,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0360 | NotCallable | the callee is not a function |
 | E0361 | InfiniteType | a type would contain itself |
 | E0362 | UndefinedFunction | no such function |
-| E0363 | UnknownField | no such field on that type |
+| E0363 | UnknownField | no such field on that type; called as a method, the message names a method |
 | E0364 | MissingField | a construction omits a field |
 | E0365 | NotIterable | the value cannot be iterated |
 | E0366 | InvalidIndex | the value cannot be indexed that way |

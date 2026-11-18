@@ -1,0 +1,185 @@
+trait Prio {
+    fn key(self) -> int;
+    fn tie(self) -> string;
+    fn before(self, other: Self) -> bool {
+        if self.key() != other.key() { self.key() < other.key() } else { self.tie() < other.tie() }
+    }
+}
+
+trait Queue<T> {
+    fn put(mut self, x: T);
+    fn take(mut self) -> Option<T>;
+    fn size(self) -> int;
+    fn peek(self) -> Option<T>;
+    fn empty(self) -> bool { self.size() == 0 }
+}
+
+struct BinHeap<T> { data: Vec<T>, pushes: int, swaps: int }
+
+impl<T: Prio> BinHeap<T> {
+    fn new() -> BinHeap<T> { BinHeap { data: vec![], pushes: 0, swaps: 0 } }
+
+    fn up(mut self, start: int) {
+        let mut i = start
+        while i > 0 {
+            let p = (i - 1) / 2
+            if self.data[i].before(self.data[p]) {
+                self.data.swap(i, p)
+                self.swaps++
+                i = p
+            } else {
+                break
+            }
+        }
+    }
+
+    fn down(mut self) {
+        let n = self.data.len()
+        let mut i = 0
+        loop {
+            let l = 2 * i + 1
+            let r = l + 1
+            let mut best = i
+            if l < n and self.data[l].before(self.data[best]) { best = l }
+            if r < n and self.data[r].before(self.data[best]) { best = r }
+            if best == i { break }
+            self.data.swap(i, best)
+            self.swaps++
+            i = best
+        }
+    }
+}
+
+impl<T: Prio> Queue<T> for BinHeap<T> {
+    fn put(mut self, x: T) {
+        self.data.push(x)
+        self.pushes++
+        self.up(self.data.len() - 1)
+    }
+
+    fn take(mut self) -> Option<T> {
+        let n = self.data.len()
+        if n == 0 { return None }
+        self.data.swap(0, n - 1)
+        let top = self.data.pop()
+        if self.data.len() > 1 { self.down() }
+        top
+    }
+
+    fn size(self) -> int { self.data.len() }
+    fn peek(self) -> Option<T> { self.data.first() }
+}
+
+struct Job { name: string, pri: int }
+
+impl Prio for Job {
+    fn key(self) -> int { -self.pri }
+    fn tie(self) -> string { self.name }
+}
+
+impl Display for Job {
+    fn to_display(self) -> string { "{self.name}:{self.pri}" }
+}
+
+enum Event { Tick(int), Alarm { at: int, msg: string }, Quit }
+
+impl Prio for Event {
+    fn key(self) -> int {
+        match self {
+            Event::Tick(t) => t,
+            Event::Alarm { at, .. } => at,
+            Event::Quit => 1000,
+        }
+    }
+    fn tie(self) -> string {
+        match self {
+            Event::Tick(t) => "tick{t}",
+            Event::Alarm { msg, .. } => "alarm:{msg}",
+            Event::Quit => "quit",
+        }
+    }
+}
+
+impl Display for Event {
+    fn to_display(self) -> string { "{self.tie()}@{self.key()}" }
+}
+
+struct Boosted<T> { inner: T, boost: int }
+
+impl<T: Prio> Prio for Boosted<T> {
+    fn key(self) -> int { self.inner.key() - self.boost }
+    fn tie(self) -> string { "b" + self.inner.tie() }
+}
+
+fn drain<Q: Queue<T>, T>(mut q: Q) -> Vec<T> {
+    let mut out: Vec<T> = vec![]
+    while let Some(x) = q.take() { out.push(x) }
+    out
+}
+
+fn heap_sort<T: Prio>(items: Vec<T>) -> Vec<T> {
+    let mut h: BinHeap<T> = BinHeap::new()
+    for x in items { h.put(x) }
+    drain(h)
+}
+
+fn is_sorted<T: Prio>(v: Vec<T>) -> bool {
+    for i in 1..v.len() {
+        if v[i].before(v[i - 1]) { return false }
+    }
+    true
+}
+
+let names = vec!["ada", "bob", "cy", "dee", "eve", "fay", "gus", "hal", "ivy", "jo", "kai", "lu"]
+let mut jobs: Vec<Job> = vec![]
+let mut s = 11
+for nm in names {
+    s = (s * 37 + 5) % 101
+    jobs.push(Job { name: nm, pri: s % 7 })
+}
+let sorted = heap_sort(jobs)
+let mut line = ""
+for j in sorted { line += "{j} " }
+println(line.trim())
+println("sorted ok: {is_sorted(sorted)}")
+
+let mut q: BinHeap<Event> = BinHeap::new()
+q.put(Event::Tick(0))
+q.put(Event::Alarm { at: 15, msg: "tea" })
+q.put(Event::Alarm { at: 15, msg: "door" })
+q.put(Event::Quit)
+q.put(Event::Alarm { at: 33, msg: "bed" })
+let mut processed = 0
+let mut ticks = 0
+let mut trace: Vec<string> = vec![]
+'run: while not q.empty() {
+    let ev = match q.take() { Some(e) => e, None => break }
+    processed++
+    match ev {
+        Event::Tick(t) => {
+            ticks++
+            if t < 40 { q.put(Event::Tick(t + 7)) }
+            if t == 21 { q.put(Event::Alarm { at: t + 1, msg: "snack" }) }
+        }
+        Event::Alarm { at, msg } => trace.push("{msg}@{at}"),
+        Event::Quit => break 'run,
+    }
+}
+println("processed {processed}, ticks {ticks}, left {q.size()}")
+println("alarms: {trace}")
+match q.peek() {
+    Some(e) => println("next would be {e}"),
+    None => println("queue empty"),
+}
+println("event heap pushes {q.pushes}")
+
+let mut bq: BinHeap<Boosted<Job>> = BinHeap::new()
+bq.put(Boosted { inner: Job { name: "x", pri: 1 }, boost: 5 })
+bq.put(Boosted { inner: Job { name: "y", pri: 4 }, boost: 0 })
+bq.put(Boosted { inner: Job { name: "z", pri: 3 }, boost: 3 })
+bq.put(Boosted { inner: Job { name: "w", pri: 6 }, boost: -1 })
+let order = drain(bq)
+let mut ns: Vec<string> = vec![]
+for b in order { ns.push("{b.inner}/{b.key()}") }
+println(ns.join(" "))
+println("boosted sorted ok: {is_sorted(order)}")

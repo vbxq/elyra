@@ -1,0 +1,42 @@
+pub enum Category { Tool, Food, Gem }
+
+pub struct Item { pub name: string, pub cat: Category, pub qty: int, pub price: int }
+
+pub trait Valued {
+    fn value(self) -> int;
+    fn label(self) -> string { "worth {self.value()}" }
+}
+
+impl Valued for Item {
+    fn value(self) -> int { self.qty * self.price }
+}
+
+pub let mut created = 0
+
+pub fn cat_name(c: Category) -> string {
+    match c {
+        Category::Tool => "tool",
+        Category::Food => "food",
+        Category::Gem => "gem",
+    }
+}
+
+pub fn make(name: string, cat: Category, qty: int, price: int) -> Item {
+    created += 1
+    Item { name, cat, qty, price }
+}
+
+pub fn largest<T: Valued>(v: Vec<T>) -> Option<T> {
+    if v.is_empty() { return None }
+    let mut best = v[0]
+    for x in v {
+        if x.value() > best.value() { best = x }
+    }
+    Some(best)
+}
+
+pub fn sum_values<T: Valued>(v: Vec<T>) -> int {
+    let mut t = 0
+    for x in v { t += x.value() }
+    t
+}

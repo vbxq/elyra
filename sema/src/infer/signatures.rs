@@ -204,6 +204,7 @@ impl TypeInference {
                     .iter()
                     .map(|item| (item.name.clone(), InferType::Poison))
                     .collect(),
+                default_bodies: Vec::new(),
             });
             accepted.insert(name.clone());
         }
@@ -507,6 +508,11 @@ impl TypeInference {
                 .map(|item| item.name.clone())
                 .collect(),
             associated_consts: typed_associated_consts,
+            default_bodies: methods
+                .iter()
+                .filter(|method| method.has_body)
+                .map(|method| method.function.clone())
+                .collect(),
         });
     }
 

@@ -48,6 +48,7 @@ pub fn register(table: &mut TypeTable) {
         }],
         associated_types: Vec::new(),
         associated_consts: Vec::new(),
+        default_bodies: Vec::new(),
     });
     table.register_trait(TraitDef {
         owner: aelys_syntax::ModuleId::new("<prelude>"),
@@ -67,6 +68,7 @@ pub fn register(table: &mut TypeTable) {
         }],
         associated_types: Vec::new(),
         associated_consts: Vec::new(),
+        default_bodies: Vec::new(),
     });
     table.register_trait_impl_with_args(
         FROM_TRAIT.to_string(),
