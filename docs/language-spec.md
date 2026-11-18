@@ -85,7 +85,20 @@ Standard IEEE 754 double precision (64-bit).
 "backslash: \\"
 ```
 
-UTF-8 encoded. Escape sequences: `\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash), `\"` (quote).
+UTF-8 encoded. Escape sequences: `\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash), `\"` (quote), `\'` (single quote), `\0` (NUL), and `\u{...}` with one to six hex digits naming a Unicode scalar value (`"caf\u{e9}"` is `"café"`).
+
+**Characters**
+```rust
+'a'
+'\n'
+'\''
+'\u{e9}'
+```
+
+A `char` literal holds exactly one Unicode scalar value between single quotes and
+takes the same escapes as a string. An empty literal, a literal with two or more
+characters, a missing closing quote, and a `\u{...}` escape that names no scalar
+value (above `10FFFF`, or a surrogate in `D800`-`DFFF`) are each E0008.
 
 **String Interpolation**
 
@@ -144,6 +157,7 @@ with a diagnostic that names these replacements.
 | `int` | Signed integer | 48-bit |
 | `float` | Floating point | 64-bit |
 | `string` | UTF-8 text | heap allocated |
+| `char` | One Unicode scalar value | immediate |
 | `bool` | Boolean | 1 bit (packed) |
 | `unit` | No meaningful value | immediate |
 | `Option<T>` | A value or absence | heap allocated when needed |
@@ -153,6 +167,7 @@ with a diagnostic that names these replacements.
 | `Name { field: T, ... }` | Fixed-layout struct | heap allocated |
 | `[T; N]` | Fixed-size array | heap allocated |
 | `Vec<T>` | Growable vector | heap allocated |
+| `Map<K, V>` | Insertion-ordered hash map | heap allocated |
 
 ### Type Annotations
 
@@ -452,6 +467,11 @@ These are postfix operators and work on identifiers only.
 | `>` | Greater than |
 | `>=` | Greater than or equal |
 
+The ordering operators accept two operands of one numeric type, two `char`
+values (ordered by scalar value), or two strings (ordered lexicographically by
+scalar value, so `"Z" < "a"`, `"ab" < "abc"` and `"é" > "z"`). A `char` and a
+`string` never compare with each other.
+
 ### Equality on aggregates
 
 `==` and `!=` are structural on every aggregate the language builds, and the
@@ -652,7 +672,7 @@ for item in v {
 }
 ```
 
-String iteration is Unicode-aware, so each `c` is a single-character string, not a byte; so it means that multi-byte characters like `é` or `😀` are handled well !
+String iteration is Unicode-aware: each `c` is a `char`, one Unicode scalar value, not a byte, so multi-byte characters like `é` or `😀` come out whole.
 
 ```rust
 let mut count = 0
@@ -666,7 +686,7 @@ You can use `break` and `continue` inside for-each loops:
 
 ```rust
 for c in "abcdefgh" {
-    if c == "d" { break }
+    if c == 'd' { break }
     println(c)    // prints a, b, c
 }
 ```
@@ -1121,24 +1141,124 @@ Ranges are values as well as slice syntax. Open and closed forms are available:
 a slice, for example `let span = 1..3; source[span]`. A range without a valid
 collection context is still a type error.
 
+### Vec and array methods
+
+Beyond `len`, `is_empty`, `get`, `push`, `pop`, `capacity` and `reserve`, a Vec
+has these methods. Every method that changes the collection needs a mutable
+receiver (E0318); every index is checked at run time and an invalid one traps
+with `index out of bounds: index I is out of bounds for length N`.
+
+| Method | Result | Meaning |
+|--------|--------|---------|
+| `v.insert(i, x)` | `unit` | insert before index `i`; `i == len` appends |
+| `v.remove(i)` | `T` | remove and return the element at `i`, shifting the rest left |
+| `v.swap_remove(i)` | `T` | remove the element at `i` and move the last element into its slot |
+| `v.clear()` | `unit` | remove every element |
+| `v.extend(w)` | `unit` | append a copy of every element of the Vec or array `w` (`&w` is accepted) |
+| `v.append(w)` | `unit` | append every element of the Vec `w`, then empty `w` (which must be mutable) |
+| `v.truncate(n)` | `unit` | keep the first `n` elements; a larger `n` does nothing |
+| `v.resize(n, x)` | `unit` | truncate to `n`, or grow to `n` with copies of `x` |
+| `v.swap(i, j)` | `unit` | exchange two elements |
+| `v.reverse()` | `unit` | reverse in place |
+| `v.contains(x)` | `bool` | whether some element is `==` to `x` (structural) |
+| `v.index_of(x)` | `Option<int>` | index of the first element `==` to `x` |
+| `v.sort()` | `unit` | stable ascending sort |
+| `v.sort_by(f)` | `unit` | stable sort with `f: fn(T, T) -> int`, negative when the first argument goes first |
+| `v.first()`, `v.last()` | `Option<T>` | the first or last element |
+| `v.set(i, x)` | `unit` | `v[i] = x` as a method |
+| `v.fill(x)` | `unit` | overwrite every element with `x` |
+| `v.join(sep)` | `string` | concatenate a `Vec<string>` with `sep` between elements |
+
+A fixed array `[T; N]` has the methods that keep its length: `swap`, `reverse`,
+`contains`, `index_of`, `sort`, `sort_by`, `first`, `last`, `set` and `fill`.
+`insert`, `remove`, `swap_remove`, `clear`, `extend`, `append`, `truncate` and
+`resize` on an array are E0311.
+
+`sort` orders integers and floats numerically (NaN after every number), strings
+lexicographically by scalar value, chars by scalar value, and `false` before
+`true`; any other element type is E0392, which names `sort_by` as the way out.
+`sort_by` is a merge sort: it calls the comparator O(n log n) times, and a
+comparator that changes the length of the Vec it is sorting traps with
+`vector changed length while sort_by was running its comparator`.
+
+`resize` and `fill` store one value in many slots. Because structs, arrays, Vecs
+and Maps are reference types, doing that with an aggregate element would make
+every slot share one object, so it is E0393; push a fresh value per slot instead.
+Scalars, strings, chars and closures are fine.
+
+### Maps
+
+`Map<K, V>` is a built-in hash map with reference semantics, like `Vec`. The key
+type is `int`, a sized integer, `string`, `char` or `bool`; any other key type,
+written or inferred, is E0391.
+
+```rust
+let mut ages: Map<string, int> = Map::new()
+ages["reimu"] = 17
+ages["marisa"] = 16
+ages["reimu"] += 1
+let seen = ages.contains_key("sakuya")      // false
+let marisa = ages.get("marisa")             // Some(16)
+let _ = ages.insert("youmu", 15)            // None: the key was new
+for name in ages.keys() { println(name) }   // reimu, marisa, youmu
+```
+
+| Operation | Result | Meaning |
+|-----------|--------|---------|
+| `Map::new()` | `Map<K, V>` | an empty map; `K` and `V` are inferred |
+| `m.insert(k, v)` | `Option<V>` | store `v` under `k`, returning the previous value |
+| `m.get(k)` | `Option<V>` | the value under `k` |
+| `m.contains_key(k)` | `bool` | whether `k` is present |
+| `m.remove(k)` | `Option<V>` | remove `k`, returning its value |
+| `m.len()`, `m.is_empty()` | `int`, `bool` | entry count |
+| `m.clear()` | `unit` | remove every entry |
+| `m.keys()`, `m.values()` | `Vec<K>`, `Vec<V>` | fresh Vecs of the keys or values |
+| `m[k]` | `V` | the value under `k`; a missing key traps with `map key not found: k` |
+| `m[k] = v` | `unit` | insert or overwrite; `m[k] += x` reads then writes |
+
+`insert` and `remove` return an `Option`, which must be used like any other
+(`let _ = m.remove(k)`); `m[k] = v` is the statement form of an insert. Mutation
+needs a mutable receiver (E0318). Iteration order is insertion order: a new key
+goes last, overwriting a key keeps its place, and removing a key does not
+reorder the others. A map is not iterable directly (E0365 points at `keys()` and
+`values()`). `==` on two maps is structural and ignores order: same key set and
+`==` values. A map whose key and value types are both scalars, `char` or
+`string` implements `Display`, rendering `{k: v, k: v}` in insertion order.
+Lookups, inserts and removals are O(1) on average.
+
+### Characters
+
+`char` is one Unicode scalar value, stored unboxed. `c as int` gives its scalar
+value; `n as char` converts any integer and traps with `invalid char: N is not a
+Unicode scalar value` outside `0..=0x10FFFF` or inside the surrogate range.
+`char` values compare with `==`, `!=` and the ordering operators, appear in
+`match` patterns (`'a' | 'e' => ...`), and serve as Map keys. Methods:
+`is_digit()` (ASCII `0`-`9`), `is_alpha()`, `is_alphanumeric()`,
+`is_whitespace()` (Unicode properties), and `to_upper()`, `to_lower()`, which
+return the character unchanged when its case mapping is not a single character
+(`'ß'.to_upper()` is `'ß'`). `string::from_char(c)` makes a one-character
+string, and `s.push(c)` on a mutable string variable appends one.
+
 ### String Indexing
 
 Strings support character-based indexing with `[]`:
 
 ```rust
 let s = "hello"
-s[0]    // "h"
-s[1]    // "e"
-s[4]    // "o"
+s[0]    // 'h'
+s[1]    // 'e'
+s[4]    // 'o'
 ```
 
-Each index returns a single-character string. Indexing is Unicode-aware: it accesses the Nth character, not the Nth byte.
+Each index returns a `char`, the same type a for-each over the string yields.
+Indexing is Unicode-aware: it accesses the Nth character, not the Nth byte, so it
+walks the string from the start.
 
 You can combine string indexing with a range-based for loop:
 
 ```rust
 let s = "hello"
-for i in 0..s.len() {
+for i in 0..s.char_len() {
     println(s[i])
 }
 ```
@@ -2311,6 +2431,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0005 | InvalidEscape | an unknown escape sequence in a string |
 | E0006 | UnterminatedFmtExpr | an interpolation `{` with no closing `}` |
 | E0007 | UnmatchedCloseBrace | a `}` with no interpolation to close |
+| E0008 | InvalidCharLiteral | a char literal that is empty, holds more than one character, is unterminated, or a `\u{...}` escape naming no scalar value |
 
 ### E01xx, syntax
 
@@ -2432,6 +2553,9 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0378 | TypeNotImported | a public type of an imported module the selective `needs` did not name |
 | E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
+| E0391 | InvalidMapKey | a `Map` key type other than an integer, `string`, `char` or `bool` |
+| E0392 | UnorderedSortElement | `sort` on elements with no built-in order |
+| E0393 | SharedAggregateFill | `resize` or `fill` with an aggregate value every slot would share |
 
 ### E04xx, modules, visibility, borrows, and associated items
 

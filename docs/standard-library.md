@@ -207,12 +207,21 @@ This distinction matters for non-ASCII text.
 | `s.char_at(i)` | Character at index (empty if out of bounds) |
 | `s.byte_at(i)` | Byte at index (-1 if out of bounds) |
 | `s.substr(start, len)` | Extract substring by character position |
+| `s.chars()` | `Vec<char>` of the characters |
+| `s.bytes()` | `Vec<int>` of the UTF-8 bytes |
+| `string::from_char(c)` | One-character string from a `char` |
+| `s.push(c)` | Append a `char` to a mutable string variable |
 
 ```rust
 "hello".char_at(0)    // "h"
 "hello".char_at(10)   // "" (out of bounds)
 "hello".substr(1, 3)  // "ell"
+"héllo".chars()       // vec!['h', 'é', 'l', 'l', 'o']
+"Aé".bytes()          // vec![65, 195, 169]
 ```
+
+`s[i]` and a for-each over a string yield `char` values; `char_at` keeps
+returning a one-character string.
 
 ### Case Conversion
 
@@ -264,19 +273,25 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 
 | Method | Description |
 |--------|-------------|
-| `s.split(sep)` | Split by separator |
-| `string::join(parts, sep)` | Join parts with separator |
-| `s.lines()` | Split into lines |
+| `s.split(sep)` | `Vec<string>` of the pieces between separators; an empty `sep` splits into characters |
+| `s.lines()` | `Vec<string>` of the lines, without `\n` or `\r\n` terminators |
+| `v.join(sep)` | Join a `Vec<string>` with `sep` (a Vec method) |
+| `string::join(text, sep)` | Join the lines of a newline-separated string with `sep` |
 | `s.line_count()` | Count lines |
 
-`split` and `join` use newline-separated strings for compatibility with this API. Arrays
-and `Vec` are first-class collections; use their collection methods when you need typed
-elements or collection pipelines.
-
 ```rust
-let parts = "a,b,c".split(",")       // "a\nb\nc"
-string::join(parts, "-")              // "a-b-c"
+let parts = "a,b,,c".split(",")      // vec!["a", "b", "", "c"]
+parts.join("-")                      // "a-b--c"
+"".split(",").len()                  // 1
 ```
+
+### Comparison and building
+
+Strings compare with `<`, `<=`, `>` and `>=` lexicographically by Unicode scalar
+value. `s += x` (and `s + x` where `s` is the most recent string built on its
+buffer) appends in place in amortised O(1): the result shares the left operand's
+buffer when nothing else has extended it, so a loop that appends n times costs
+O(n) overall, and every earlier string value keeps its own contents.
 
 ### Predicates
 

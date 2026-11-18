@@ -208,7 +208,7 @@ println(s[0])  // h
 println(s[4])  // o
 ```
 
-Each index returns a single-character string. Indexing is Unicode-aware (it counts characters, not bytes).
+Each index returns a `char`, the same type a for-each over a string yields. Indexing is Unicode-aware (it counts characters, not bytes).
 
 Concatenation uses `+`:
 
