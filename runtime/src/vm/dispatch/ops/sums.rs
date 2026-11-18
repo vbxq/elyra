@@ -4,7 +4,7 @@ use crate::vm::{ObjectKind, VM, Value};
 use aelys_bytecode::object::SumTag;
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-const NONE_TAG: u8 = 4;
+pub(in crate::vm::dispatch) const NONE_TAG: u8 = 4;
 
 impl VM {
     pub(in crate::vm::dispatch) fn sum_unwrap_error(
