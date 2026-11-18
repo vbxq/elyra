@@ -62,6 +62,7 @@ pub struct VM {
     pub(crate) random_seed: u64,
     pub(crate) execution_control: ExecutionControl,
     pub(crate) execution_stats: ExecutionStats,
+    pub(crate) gc_pauses: super::gc::GcPauseStats,
     pub(crate) jit_control_error: Option<aelys_common::error::RuntimeError>,
     pub(crate) host_roots: Arc<HostRootSet>,
     pub(crate) native_call_roots: Vec<GcRef>,

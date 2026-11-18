@@ -1,113 +1,93 @@
-use super::{Heap, MajorCollection};
-use crate::object::{AelysClosure, AelysString, AelysUpvalue, GcRef, ObjectKind};
+use super::{Heap, HeapGeneration, MajorPhase, REMEMBERED, WHOLE_OBJECT, YOUNG_MARK};
+use crate::object::{AelysClosure, AelysString, AelysUpvalue, GcObject, GcRef, ObjectKind};
 use crate::value::Value;
 
 impl Heap {
     pub fn mark(&mut self, root: GcRef) {
-        let mut worklist = vec![root];
-
-        while let Some(r) = worklist.pop() {
-            worklist.extend(self.mark_one(r));
+        self.shade(root);
+        while let Some(entry) = self.gray.pop() {
+            self.scan_gray(entry);
         }
     }
 
-    pub(super) fn mark_one(&mut self, root: GcRef) -> Vec<GcRef> {
-        let should_trace = self
-            .objects
-            .get_mut(root.slot_index())
-            .filter(|slot| slot.generation == root.generation())
-            .and_then(|slot| slot.object.as_mut())
-            .map(|object| {
-                if object.marked {
-                    false
-                } else {
-                    object.marked = true;
-                    true
-                }
-            })
-            .unwrap_or(false);
-
-        if !should_trace {
-            return Vec::new();
-        }
-
-        self.children_of(root)
-    }
-
-    pub fn mark_young(&mut self, roots: impl IntoIterator<Item = GcRef>) {
-        let mut young_worklist = Vec::new();
-        let mut old_roots = std::collections::HashSet::new();
-
-        for root in roots {
-            match self.heap_generation(root) {
-                Some(super::HeapGeneration::Young) => young_worklist.push(root),
-                Some(super::HeapGeneration::Old) => {
-                    old_roots.insert(root);
-                }
-                None => {}
-            }
-        }
-        for index in self.remembered_set.iter().copied() {
-            let Some(slot) = self.objects.get(index as usize) else {
-                continue;
-            };
-            if slot.heap_generation == super::HeapGeneration::Old && slot.object.is_some() {
-                old_roots.insert(GcRef::from_parts(index, slot.generation));
-            }
-        }
-
-        for root in old_roots {
-            let young_children: Vec<_> = self
-                .children_of(root)
-                .into_iter()
-                .filter(|child| self.heap_generation(*child) == Some(super::HeapGeneration::Young))
-                .collect();
-            if !young_children.is_empty() {
-                self.remembered_set
-                    .insert(u32::try_from(root.slot_index()).expect("heap slot index exceeds u32"));
-            }
-            young_worklist.extend(young_children);
-        }
-
-        while let Some(root) = young_worklist.pop() {
-            if self.heap_generation(root) != Some(super::HeapGeneration::Young) {
-                continue;
-            }
-            let should_trace = self
-                .objects
-                .get_mut(root.slot_index())
-                .and_then(|slot| slot.object.as_mut())
-                .map(|object| {
-                    if object.marked {
-                        false
-                    } else {
-                        object.marked = true;
-                        true
-                    }
-                })
-                .unwrap_or(false);
-            if !should_trace {
-                continue;
-            }
-            young_worklist.extend(self.children_of(root).into_iter().filter(|child| {
-                self.heap_generation(*child) == Some(super::HeapGeneration::Young)
-            }));
-        }
-    }
-
-    fn children_of(&self, root: GcRef) -> Vec<GcRef> {
-        let Some(object) = self.get(root) else {
-            return Vec::new();
+    pub(super) fn shade(&mut self, reference: GcRef) {
+        let Some(slot) = self.objects.get_mut(reference.slot_index()) else {
+            return;
         };
-        let mut children = Vec::new();
-        match &object.kind {
-            ObjectKind::Function(function) => {
-                for value in &function.constants {
-                    if let Some(pointer) = value.as_ptr() {
-                        children.push(GcRef::new(pointer));
+        if slot.generation != reference.generation() {
+            return;
+        }
+        let Some(object) = slot.object.as_mut() else {
+            return;
+        };
+        if object.marked {
+            return;
+        }
+        object.marked = true;
+        if Self::may_have_children(&object.kind) {
+            self.gray.push((reference, 0));
+        }
+    }
+
+    pub(super) fn scan_gray(&mut self, (reference, start): (GcRef, u32)) -> usize {
+        let mut scratch = std::mem::take(&mut self.scratch);
+        scratch.clear();
+        let mut continuation = None;
+        if let Some(object) = self.get(reference) {
+            let start = start as usize;
+            match Self::element_values(object) {
+                Some(values) => {
+                    let end = values.len().min(start.saturating_add(Self::MARK_CHUNK));
+                    if start < end {
+                        scratch.extend(
+                            values[start..end]
+                                .iter()
+                                .filter_map(|value| value.as_ptr().map(GcRef::new)),
+                        );
+                    }
+                    if end < values.len() {
+                        continuation = u32::try_from(end).ok();
                     }
                 }
+                None => Self::collect_children(object, &mut scratch),
             }
+        }
+        if let Some(end) = continuation {
+            self.gray.push((reference, end));
+        }
+        let work = scratch.len() + 1;
+        for child in scratch.iter().copied() {
+            self.shade(child);
+        }
+        self.scratch = scratch;
+        work
+    }
+
+    pub(super) fn may_have_children(kind: &ObjectKind) -> bool {
+        !matches!(
+            kind,
+            ObjectKind::String(_) | ObjectKind::Native(_) | ObjectKind::Range(_)
+        )
+    }
+
+    fn element_values(object: &GcObject) -> Option<&[Value]> {
+        match &object.kind {
+            ObjectKind::Vec(vector) => Some(vector.objects().unwrap_or(&[])),
+            ObjectKind::Array(array) => Some(array.data.as_objects().unwrap_or(&[])),
+            _ => None,
+        }
+    }
+
+    fn collect_children(object: &GcObject, children: &mut Vec<GcRef>) {
+        let pointers = |values: &[Value], children: &mut Vec<GcRef>| {
+            children.extend(
+                values
+                    .iter()
+                    .filter_map(|value| value.as_ptr().map(GcRef::new)),
+            );
+        };
+        match &object.kind {
+            ObjectKind::Function(function) => pointers(&function.constants, children),
             ObjectKind::Closure(closure) => {
                 children.push(closure.function);
                 children.extend(closure.upvalues.iter().copied());
@@ -122,20 +102,12 @@ impl Heap {
             ObjectKind::String(_) | ObjectKind::Native(_) | ObjectKind::Range(_) => {}
             ObjectKind::Array(array) => {
                 if let Some(objects) = array.data.as_objects() {
-                    children.extend(
-                        objects
-                            .iter()
-                            .filter_map(|value| value.as_ptr().map(GcRef::new)),
-                    );
+                    pointers(objects, children);
                 }
             }
             ObjectKind::Vec(vector) => {
                 if let Some(objects) = vector.objects() {
-                    children.extend(
-                        objects
-                            .iter()
-                            .filter_map(|value| value.as_ptr().map(GcRef::new)),
-                    );
+                    pointers(objects, children);
                 }
             }
             ObjectKind::Map(map) => {
@@ -149,61 +121,235 @@ impl Heap {
                     children.push(GcRef::new(pointer));
                 }
             }
-            ObjectKind::Enum(value) => {
-                children.extend(
-                    value
-                        .slots
-                        .iter()
-                        .filter_map(|slot| slot.as_ptr().map(GcRef::new)),
-                );
+            ObjectKind::Enum(value) => pointers(&value.slots, children),
+            ObjectKind::Struct(structure) => pointers(&structure.slots, children),
+        }
+    }
+
+    fn young_shade(&mut self, reference: GcRef) {
+        let Some(slot) = self.objects.get_mut(reference.slot_index()) else {
+            return;
+        };
+        if slot.generation != reference.generation()
+            || slot.heap_generation != HeapGeneration::Young
+            || slot.flags & YOUNG_MARK != 0
+        {
+            return;
+        }
+        let Some(object) = slot.object.as_ref() else {
+            return;
+        };
+        slot.flags |= YOUNG_MARK;
+        if Self::may_have_children(&object.kind) {
+            self.young_stack.push(reference);
+        }
+    }
+
+    fn live_old_owner(&self, owner: GcRef) -> Option<&GcObject> {
+        let slot = self.objects.get(owner.slot_index())?;
+        if slot.generation != owner.generation() || slot.heap_generation != HeapGeneration::Old {
+            return None;
+        }
+        slot.object.as_ref()
+    }
+
+    pub fn verify_remembered(&self) -> Result<(), String> {
+        let mut children = Vec::new();
+        for (index, slot) in self.objects.iter().enumerate() {
+            let Some(object) = slot.object.as_ref() else {
+                continue;
+            };
+            if slot.heap_generation != HeapGeneration::Old || slot.flags & REMEMBERED != 0 {
+                continue;
             }
-            ObjectKind::Struct(structure) => {
-                children.extend(
-                    structure
-                        .slots
-                        .iter()
-                        .filter_map(|value| value.as_ptr().map(GcRef::new)),
-                );
+            children.clear();
+            match Self::element_values(object) {
+                Some(values) => {
+                    children.extend(values.iter().enumerate().filter_map(|(element, value)| {
+                        value.as_ptr().map(|raw| (Some(element), GcRef::new(raw)))
+                    }))
+                }
+                None => {
+                    let mut refs = Vec::new();
+                    Self::collect_children(object, &mut refs);
+                    children.extend(refs.into_iter().map(|child| (None, child)));
+                }
+            }
+            for (element, child) in children.iter().copied() {
+                if self.heap_generation(child) != Some(HeapGeneration::Young) {
+                    continue;
+                }
+                let remembered = element.is_some_and(|element| {
+                    slot.card_table != 0
+                        && self.card_tables[slot.card_table as usize]
+                            .get(element / 64)
+                            .is_some_and(|word| word & (1u64 << (element % 64)) != 0)
+                });
+                if !remembered {
+                    let place =
+                        element.map_or_else(String::new, |element| format!(" slot {element}"));
+                    return Err(format!(
+                        "gc-verify: old {} #{index}{place} holds young {} #{} without a remembered entry (missing write barrier)",
+                        self.get_type_name(GcRef::from_parts(
+                            u32::try_from(index).unwrap_or(u32::MAX),
+                            slot.generation
+                        )),
+                        self.get_type_name(child),
+                        child.slot_index()
+                    ));
+                }
             }
         }
-        children
+        Ok(())
+    }
+
+    pub fn mark_young(&mut self, roots: impl IntoIterator<Item = GcRef>) {
+        if self.verify
+            && let Err(message) = self.verify_remembered()
+        {
+            panic!("{message}");
+        }
+        for root in roots {
+            self.young_shade(root);
+        }
+        let mut scratch = std::mem::take(&mut self.scratch);
+        for position in 0..self.remembered.len() {
+            let entry = self.remembered[position];
+            scratch.clear();
+            if let Some(object) = self.live_old_owner(entry.owner) {
+                if entry.element == WHOLE_OBJECT {
+                    Self::collect_children(object, &mut scratch);
+                } else if let Some(value) = Self::element_values(object)
+                    .and_then(|values| values.get(entry.element as usize))
+                    && let Some(pointer) = value.as_ptr()
+                {
+                    scratch.push(GcRef::new(pointer));
+                }
+            }
+            for child in scratch.iter().copied() {
+                self.young_shade(child);
+            }
+        }
+        while let Some(reference) = self.young_stack.pop() {
+            scratch.clear();
+            if let Some(object) = self.get(reference) {
+                Self::collect_children(object, &mut scratch);
+            }
+            for child in scratch.iter().copied() {
+                self.young_shade(child);
+            }
+        }
+        self.scratch = scratch;
+    }
+
+    pub fn sweep_young(&mut self) -> usize {
+        let mut freed = 0;
+        let mut young = std::mem::take(&mut self.young);
+        for index in young.iter().copied() {
+            let position = index as usize;
+            let slot = self.objects[position].as_mut();
+            if slot.object.is_none() || slot.heap_generation != HeapGeneration::Young {
+                continue;
+            }
+            if slot.flags & YOUNG_MARK != 0 {
+                slot.flags &= !YOUNG_MARK;
+                slot.heap_generation = HeapGeneration::Old;
+            } else {
+                self.free_slot(position);
+                freed += 1;
+            }
+        }
+        young.clear();
+        self.young = young;
+        self.clear_remembered();
+        self.minor_collections = self.minor_collections.saturating_add(1);
+        self.minor_at = self.alloc_clock.saturating_add(self.nursery_bytes);
+        self.update_next_event();
+        freed
+    }
+
+    fn clear_remembered(&mut self) {
+        let remembered = std::mem::take(&mut self.remembered);
+        for entry in remembered.iter() {
+            let Some(slot) = self.objects.get_mut(entry.owner.slot_index()) else {
+                continue;
+            };
+            if slot.generation != entry.owner.generation() {
+                continue;
+            }
+            if entry.element == WHOLE_OBJECT {
+                slot.flags &= !REMEMBERED;
+            } else if slot.card_table != 0 {
+                let bits = &mut self.card_tables[slot.card_table as usize];
+                if let Some(word) = bits.get_mut((entry.element / 64) as usize) {
+                    *word &= !(1u64 << (entry.element % 64));
+                }
+            }
+        }
+        let mut remembered = remembered;
+        remembered.clear();
+        self.remembered = remembered;
     }
 
     pub fn sweep(&mut self) -> usize {
         let mut freed = 0;
-        self.major_collection = MajorCollection::Idle;
         for index in 0..self.objects.len() {
-            freed += usize::from(self.sweep_slot(index, false));
+            let slot = self.objects[index].as_mut();
+            let Some(object) = slot.object.as_mut() else {
+                continue;
+            };
+            if object.marked {
+                object.marked = false;
+            } else {
+                self.free_slot(index);
+                freed += 1;
+            }
         }
+        self.gray.clear();
+        self.clear_remembered();
+        let mut young = std::mem::take(&mut self.young);
+        young.retain(|index| {
+            let slot = &self.objects[*index as usize];
+            slot.object.is_some() && slot.heap_generation == HeapGeneration::Young
+        });
+        self.young = young;
         self.finish_major_collection();
         freed
     }
 
-    pub(super) fn sweep_slot(&mut self, index: usize, young_only: bool) -> bool {
-        let slot = &mut self.objects[index];
-        let eligible = !young_only || slot.heap_generation == super::HeapGeneration::Young;
-        let should_free = eligible && slot.object.as_ref().is_some_and(|object| !object.marked);
-
-        if let Some(object) = slot.object.as_mut() {
-            if eligible && object.marked {
-                slot.survival_count = slot.survival_count.saturating_add(1);
-                if slot.survival_count >= 2 {
-                    slot.heap_generation = super::HeapGeneration::Old;
-                }
-            }
-            if eligible {
-                object.marked = false;
-            }
-        }
-
-        if !should_free {
+    pub(super) fn sweep_major_slot(&mut self, index: usize) -> bool {
+        let Some(object) = self.objects[index].object.as_mut() else {
+            return false;
+        };
+        if object.marked {
+            object.marked = false;
             return false;
         }
+        self.free_slot(index);
+        true
+    }
 
-        let object = slot
-            .object
-            .take()
-            .expect("sweep candidate must be occupied");
+    fn free_slot(&mut self, index: usize) {
+        let slot = self.objects[index].as_mut();
+        let Some(object) = slot.object.take() else {
+            return;
+        };
+        let reference = GcRef::from_parts(
+            u32::try_from(index).expect("heap slot index exceeds u32"),
+            slot.generation,
+        );
+        slot.flags = 0;
+        let table = std::mem::take(&mut slot.card_table);
+        if slot.generation != GcRef::MAX_GENERATION {
+            slot.generation += 1;
+            self.free_list
+                .push(u32::try_from(index).expect("heap slot index exceeds u32"));
+        }
+        if table != 0 {
+            self.card_tables[table as usize] = Vec::new();
+            self.free_card_tables.push(table);
+        }
+        self.live_objects = self.live_objects.saturating_sub(1);
         self.bytes_allocated = self
             .bytes_allocated
             .saturating_sub(Self::freed_object_size(&object));
@@ -211,79 +357,22 @@ impl Heap {
             && string.is_interned()
         {
             let key = Self::fnv1a_hash(string.as_bytes());
-            let this = GcRef::from_parts(
-                u32::try_from(index).expect("heap slot index exceeds u32"),
-                slot.generation,
-            );
-            if self.intern_table.get(&key) == Some(&this) {
+            if self.intern_table.get(&key) == Some(&reference) {
                 self.intern_table.remove(&key);
             }
         }
-        if slot.generation != GcRef::MAX_GENERATION {
-            slot.generation += 1;
-            self.free_list
-                .push(u32::try_from(index).expect("heap slot index exceeds u32"));
-        }
-        self.remembered_set
-            .remove(&u32::try_from(index).expect("heap slot index exceeds u32"));
-        true
     }
 
     pub(super) fn finish_major_collection(&mut self) {
-        self.major_collection = MajorCollection::Idle;
-        self.next_gc =
-            (self.bytes_allocated * Self::GC_GROWTH_FACTOR).max(Self::INITIAL_GC_THRESHOLD);
+        self.phase = MajorPhase::Idle;
+        self.sweep_cursor = 0;
+        self.sweep_freed = 0;
+        self.next_gc = (self.bytes_allocated * Self::GC_GROWTH_FACTOR)
+            .max(Self::INITIAL_GC_THRESHOLD)
+            .min(self.max_heap / 2);
         self.major_collections = self.major_collections.saturating_add(1);
-        let candidates = self
-            .objects
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| {
-                slot.heap_generation == super::HeapGeneration::Old && slot.object.is_some()
-            })
-            .map(|(index, _)| u32::try_from(index).expect("heap slot index exceeds u32"))
-            .collect();
-        self.rebuild_remembered_set(candidates);
-    }
-
-    pub fn sweep_young(&mut self) -> usize {
-        let mut freed = 0;
-        let mut remembered_candidates = self.remembered_set.clone();
-        for index in 0..self.objects.len() {
-            let was_young = self.objects[index].heap_generation == super::HeapGeneration::Young;
-            freed += usize::from(self.sweep_slot(index, true));
-            if was_young
-                && self.objects[index].heap_generation == super::HeapGeneration::Old
-                && self.objects[index].object.is_some()
-            {
-                remembered_candidates
-                    .insert(u32::try_from(index).expect("heap slot index exceeds u32"));
-            }
-        }
-
-        self.next_gc =
-            (self.bytes_allocated * Self::GC_GROWTH_FACTOR).max(Self::INITIAL_GC_THRESHOLD);
-        self.minor_collections = self.minor_collections.saturating_add(1);
-        self.rebuild_remembered_set(remembered_candidates);
-        freed
-    }
-
-    fn rebuild_remembered_set(&mut self, candidates: std::collections::HashSet<u32>) {
-        let remembered = candidates
-            .into_iter()
-            .filter_map(|index| {
-                let slot = self.objects.get(index as usize)?;
-                (slot.heap_generation == super::HeapGeneration::Old && slot.object.is_some())
-                    .then(|| GcRef::from_parts(index, slot.generation))
-            })
-            .filter(|owner| {
-                self.children_of(*owner)
-                    .into_iter()
-                    .any(|child| self.heap_generation(child) == Some(super::HeapGeneration::Young))
-            })
-            .map(|owner| u32::try_from(owner.slot_index()).expect("heap slot index exceeds u32"))
-            .collect();
-        self.remembered_set = remembered;
+        self.slice_at = u64::MAX;
+        self.update_next_event();
     }
 
     fn freed_object_size(obj: &crate::object::GcObject) -> usize {

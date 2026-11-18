@@ -708,6 +708,19 @@ needs std::sys
 | `random_seed(seed)` | Restart the VM-local random sequence from a seed |
 | `random_state()` | Return the current random state |
 | `random_set_state(state)` | Restore a previously returned random state |
+| `gc_max_pause_us()` | Longest garbage collection pause since the VM started, in microseconds |
+| `gc_window_max_pause_us()` | Longest pause since the previous call of this function, in microseconds |
+| `gc_p99_pause_us()` | 99th percentile of the pauses, in microseconds (10 µs resolution) |
+| `gc_max_pause_cpu_us()` | Longest pause counted in thread CPU time, which leaves out time the OS spent running other processes |
+| `gc_total_pause_us()` | Sum of all pauses, in microseconds |
+| `gc_pause_count()` | Number of pauses (minor collections and major slices) |
+| `gc_minor_collections()` | Completed minor collections |
+| `gc_major_collections()` | Completed major collections |
+| `gc_heap_bytes()` | Estimated bytes currently allocated on the heap |
+| `gc_live_objects()` | Objects currently on the heap, garbage not yet collected included |
+| `gc_allocations()` | Objects allocated since the VM started |
+| `gc_stats()` | One-line summary of the figures above, as a string |
+| `gc_collect()` | Run a full collection now (minor, then a complete major); its pause grows with the heap |
 
 The command and directory functions return `Err(message)` when the operating
 system operation cannot be started or completed. A nonzero child exit status is
