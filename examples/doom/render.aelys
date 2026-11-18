@@ -42,6 +42,7 @@ let mut num_nodes = 0
 let mut tex_pics: Vec<Picture> = vec![]
 let mut tex_heights: Vec<int> = vec![]
 let mut flat_pix: Vec<Vec<int>> = vec![]
+let mut lit_flats: Vec<Vec<int>> = vec![]
 let mut sky_flat = -1
 let mut sky_tex = 0
 let mut actors: Vec<Actor> = vec![]
@@ -129,9 +130,6 @@ let mut frame_no = 0
 
 
 
-let mut plane_flat: Vec<int> = vec![]
-let mut plane_height = 0
-let mut plane_zrow = 0
 
 let mut time_bsp = 0.0
 let mut time_planes = 0.0
@@ -615,6 +613,18 @@ pub fn setup(w: Wad, g: Graphics, mut lv: Level) {
         sector_actors.push(fresh)
         if fp >= 0 and flat_pix[fp].len() == 0 { flat_pix[fp] = gfx::flat_pixels(w, g.flats[fp]); nflat++ }
         if cp >= 0 and flat_pix[cp].len() == 0 { flat_pix[cp] = gfx::flat_pixels(w, g.flats[cp]); nflat++ }
+    }
+    lit_flats = vec![]
+    for i in 0..(flat_pix.len() * 32) { lit_flats.push(no_flat) }
+    for s in 0..rm_light.len() {
+        let mut light = rm_light[s] >> 4
+        if light < 0 { light = 0 }
+        if light > 15 { light = 15 }
+        for j in 0..128 {
+            let level = zlight[light * 128 + j]
+            if rm_floorpic[s] >= 0 { let _ = lit_flat(rm_floorpic[s] * 32 + level) }
+            if rm_ceilpic[s] >= 0 and rm_ceilpic[s] != sky_flat { let _ = lit_flat(rm_ceilpic[s] * 32 + level) }
+        }
     }
     sg_x1 = vec![]
     sg_y1 = vec![]
@@ -1557,13 +1567,24 @@ fn render_node(n: int) {
     }
 }
 
-fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int) {
+fn lit_flat(k: int) -> Vec<int> {
+    let lit = lit_flats[k]
+    if lit.len() > 0 { return lit }
+    let flat = flat_pix[k / 32]
+    let cmrow = cmap_rows[k % 32]
+    let mut made: Vec<int> = vec![0; 4096]
+    for i in 0..4096 { made[i] = cmrow[flat[i]] }
+    lit_flats[k] = made
+    made
+}
+
+fn map_plane(mut out: Vec<int>, litbase: int, zrow: int, height: int, y: int, x1: int, x2: int) {
     let mut distance = 0
     let mut xstep = 0
     let mut ystep = 0
-    if plane_height != cachedheight[y] {
-        cachedheight[y] = plane_height
-        distance = plane_height.mul_shr(yslope[y], 16)
+    if height != cachedheight[y] {
+        cachedheight[y] = height
+        distance = height.mul_shr(yslope[y], 16)
         cacheddistance[y] = distance
         xstep = distance.mul_shr(basexscale, 16)
         cachedxstep[y] = xstep
@@ -1580,14 +1601,15 @@ fn map_plane(mut out: Vec<int>, flat: Vec<int>, y: int, x1: int, x2: int) {
     let yfrac = -viewy - fixed::finesine[angle].mul_shr(length, 16)
     let mut index = distance >> 20
     if index >= 128 { index = 127 }
-    let cmrow = cmap_rows[zlight[plane_zrow + index]]
-    let mut xf = xfrac
-    let mut yf = yfrac
+    let k = litbase + zlight[zrow + index]
+    let mut lit = lit_flats[k]
+    if lit.len() == 0 { lit = lit_flat(k) }
+    let mut pos = ((xfrac & 0x3FFFFF) << 24) | (yfrac & 0x3FFFFF)
+    let step = ((xstep & 0x3FFFFF) << 24) | (ystep & 0x3FFFFF)
     let row = y * 320
     for d in (row + x1)..=(row + x2) {
-        out[d] = cmrow[flat[((yf >> 10) & 4032) + ((xf >> 16) & 63)]]
-        xf += xstep
-        yf += ystep
+        out[d] = lit[((pos >> 10) & 4032) + (pos >> 40)]
+        pos = (pos + step) & 0x3FFFFF3FFFFF
     }
 }
 
@@ -1612,13 +1634,13 @@ fn draw_planes() {
             continue
         }
         if pl_pic[p] < 0 { continue }
-        plane_flat = flat_pix[pl_pic[p]]
-        plane_height = pl_height[p] - viewz
-        if plane_height < 0 { plane_height = -plane_height }
+        let litbase = pl_pic[p] * 32
+        let mut height = pl_height[p] - viewz
+        if height < 0 { height = -height }
         let mut light = pl_light[p] >> 4
         if light < 0 { light = 0 }
         if light > 15 { light = 15 }
-        plane_zrow = light * 128
+        let zrow = light * 128
         pl_top[base + maxx + 1] = 255
         pl_top[base + minx - 1] = 255
         let mut prev_t = 255
@@ -1632,11 +1654,11 @@ fn draw_planes() {
             prev_b = b2
             if t1 == t2 and b1 == b2 { continue }
             while t1 < t2 and t1 <= b1 {
-                map_plane(fb, plane_flat, t1, spanstart[t1], x - 1)
+                map_plane(fb, litbase, zrow, height, t1, spanstart[t1], x - 1)
                 t1++
             }
             while b1 > b2 and b1 >= t1 {
-                map_plane(fb, plane_flat, b1, spanstart[b1], x - 1)
+                map_plane(fb, litbase, zrow, height, b1, spanstart[b1], x - 1)
                 b1--
             }
             while t2 < t1 and t2 <= b2 {
