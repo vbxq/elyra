@@ -1,0 +1,40 @@
+# weekly plan
+add 3 Write the quarterly report
+add 5 Fix the login outage
+add 1 Water the office plants
+add 4 Review Mei's pull request
+list
+done 2
+done 2
+add high Buy coffee
+add 2 Book the team dinner
+rm 3
+stats
+undo
+undo
+list
+done 9
+frobnicate 4
+done
+add 2
+
+add 5 Prepare the demo for Friday
+done 4
+done 1
+undo
+rm 1
+list
+stats
+undo
+undo
+undo
+undo
+undo
+undo
+undo
+list
+undo
+undo
+done abc
+list
+stats

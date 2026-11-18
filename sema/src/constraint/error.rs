@@ -232,6 +232,9 @@ pub enum TypeErrorKind {
         name: String,
         suggestion: Option<String>,
     },
+    RefutableLetPattern {
+        name: String,
+    },
     TupleFieldOutOfRange {
         tuple: InferType,
         field: String,
@@ -1545,6 +1548,21 @@ impl TypeError {
                 trait_args,
                 ty,
                 ..
+            } if trait_name == crate::prelude::DISPLAY_TRAIT
+                && trait_args.is_empty()
+                && is_builtin_aggregate(ty) =>
+            {
+                write!(
+                    f,
+                    "trait 'Display' is not implemented for {}; a built-in aggregate renders only scalars, strings, chars and aggregates of them, so render each element",
+                    ty.source_spelling()
+                )
+            }
+            TypeErrorKind::UnsatisfiedTraitBound {
+                trait_name,
+                trait_args,
+                ty,
+                ..
             } => write!(
                 f,
                 "trait '{}' is not implemented for {}; add an impl or change the bound",
@@ -1715,6 +1733,11 @@ impl TypeError {
                     name
                 ),
             },
+            TypeErrorKind::RefutableLetPattern { name } => write!(
+                f,
+                "refutable pattern in `let`: `{}` names a constant, so this position matches its value and can fail\n   = help: use `match` or `if let` to compare with the constant, or a lowercase name to bind",
+                name
+            ),
             TypeErrorKind::TupleFieldOutOfRange { tuple, field } => write!(
                 f,
                 "tuple {} has no field {}",
@@ -2021,6 +2044,7 @@ impl TypeErrorKind {
             Self::UndefinedLabel { .. } => 390,
             Self::BreakValueOutsideLoop { .. } => 391,
             Self::CapitalizedBindingPattern { .. } => 392,
+            Self::RefutableLetPattern { .. } => 397,
             Self::TupleFieldAssignment { .. } => 393,
             Self::TupleFieldOutOfRange { .. } => 363,
             Self::TuplePatternArity { .. } => 301,
@@ -2124,6 +2148,20 @@ fn differs_only_by_mut(expected: &InferType, found: &InferType) -> bool {
                     .all(|(expected, found)| expected.source_spelling() == found.source_spelling())
                 && expected_ret.source_spelling() == found_ret.source_spelling()
         }
+        _ => false,
+    }
+}
+
+fn is_builtin_aggregate(ty: &InferType) -> bool {
+    match ty {
+        InferType::Vec(_)
+        | InferType::Array(_)
+        | InferType::FixedArray(..)
+        | InferType::Option(_)
+        | InferType::Result(..)
+        | InferType::Map(..)
+        | InferType::Tuple(_) => true,
+        InferType::Applied { name, .. } => aelys_syntax::tuple_arity(name).is_some(),
         _ => false,
     }
 }

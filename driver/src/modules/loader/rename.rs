@@ -131,7 +131,8 @@ fn rename_pattern(pattern: &mut Pattern, renames: &BTreeMap<String, String>) {
         | PatternKind::String(_)
         | PatternKind::Char(_)
         | PatternKind::Bool(_)
-        | PatternKind::Range { .. } => {}
+        | PatternKind::Range { .. }
+        | PatternKind::CharRange { .. } => {}
     }
 }
 

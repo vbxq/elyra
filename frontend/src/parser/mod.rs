@@ -8,7 +8,7 @@ use aelys_syntax::Source;
 use aelys_syntax::{Stmt, Token, TokenKind};
 use std::sync::Arc;
 
-const MAX_RECURSION_DEPTH: usize = 16; // pathological nesting guard
+const MAX_RECURSION_DEPTH: usize = 256; // pathological nesting guard
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -58,7 +58,11 @@ impl Parser {
         }
     }
 
-    pub fn parse(mut self) -> Result<Vec<Stmt>> {
+    pub fn parse(self) -> Result<Vec<Stmt>> {
+        aelys_common::stack::with_deep_stack(move || self.parse_statements())
+    }
+
+    fn parse_statements(mut self) -> Result<Vec<Stmt>> {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
@@ -89,6 +93,13 @@ impl Parser {
 
     pub(crate) fn exit_recursion(&mut self) {
         self.recursion_depth = self.recursion_depth.saturating_sub(1);
+    }
+
+    pub(crate) fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.enter_recursion()?;
+        let result = parse(self);
+        self.exit_recursion();
+        result
     }
 
     pub(crate) fn with_brace_construction<T>(
@@ -168,6 +179,10 @@ impl Parser {
         } else {
             false
         }
+    }
+
+    fn skip_line_ends(&mut self) {
+        while self.match_token(&TokenKind::Semicolon) {}
     }
 
     fn match_token(&mut self, kind: &TokenKind) -> bool {

@@ -64,6 +64,7 @@ impl Default for TypeInference {
             match_unit_residuals: Vec::new(),
             dynamic_residuals: Vec::new(),
             bound_residuals: Vec::new(),
+            bound_deductions: Vec::new(),
             alias_residuals: Vec::new(),
             imported_constants: HashMap::new(),
             global_constants: HashMap::new(),
@@ -91,6 +92,7 @@ impl Default for TypeInference {
             known_native_signatures: HashMap::new(),
             current_module: ModuleId::new("<unknown>"),
             collection_iter_allowed: false,
+            receiver_memo: None,
             withheld_nominals: std::collections::BTreeMap::new(),
             private_nominals: std::collections::BTreeMap::new(),
             unexported_nominals: std::collections::BTreeSet::new(),
@@ -1614,6 +1616,12 @@ impl TypeInference {
     pub fn infer_program_full_with_native_signatures_in_module(
         inputs: InferenceInputs,
     ) -> Result<InferenceResult, Vec<crate::constraint::TypeError>> {
+        aelys_common::stack::with_deep_stack(move || Self::infer_inputs(inputs))
+    }
+
+    fn infer_inputs(
+        inputs: InferenceInputs,
+    ) -> Result<InferenceResult, Vec<crate::constraint::TypeError>> {
         let InferenceInputs {
             stmts,
             source,
@@ -1690,6 +1698,7 @@ impl TypeInference {
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();
+        inf.deduce_bound_arguments(&mut subst);
         inf.settle_pending_int_literals(&mut subst);
 
         inf.validate_sum_method_residuals(&mut subst);
@@ -1705,6 +1714,10 @@ impl TypeInference {
         subst.close_modes();
 
         let mut resolved_stmts = inf.apply_substitution_stmts(&typed_stmts, &subst);
+        // the poisoned subtree is this limit, never an undetermined type of the later audits
+        if let Some(span) = inf.substitution_overflowed.get() {
+            inf.errors.push(TypeError::recursion_limit(span));
+        }
         inf.resolve_deferred_members(&mut resolved_stmts);
         let mut resolved_stmts = inf.monomorphize_program(resolved_stmts);
         inf.validate_collection_instances(&mut resolved_stmts);
@@ -1773,10 +1786,6 @@ impl TypeInference {
                 ),
             });
         }
-        if let Some(span) = inf.substitution_overflowed.get() {
-            inf.errors.push(TypeError::recursion_limit(span));
-        }
-
         inf.errors.sort_by_key(|error| {
             (
                 error_priority(&error.kind),

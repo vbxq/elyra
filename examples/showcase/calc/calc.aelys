@@ -1,0 +1,329 @@
+needs std::fs
+needs std::sys
+
+enum Token {
+    Num(float),
+    Ident(string),
+    Op(char),
+    LParen,
+    RParen,
+    Comma,
+    Assign,
+}
+
+struct Spanned { tok: Token, col: int, text: string }
+
+enum CalcError {
+    UnexpectedChar { col: int, ch: char },
+    UnexpectedToken { col: int, found: string },
+    BadNumber { col: int, text: string },
+    UnexpectedEnd,
+    UnknownVar(string),
+    UnknownFunc(string),
+    DivByZero,
+    BadArity { name: string, expected: int, got: int },
+    Domain { name: string, arg: float },
+}
+
+impl Display for CalcError {
+    fn to_display(self) -> string {
+        match self {
+            CalcError::UnexpectedChar { col, ch } => "column {col}: unexpected character '{ch}'",
+            CalcError::UnexpectedToken { col, found } => "column {col}: unexpected '{found}'",
+            CalcError::BadNumber { col, text } => "column {col}: malformed number '{text}'",
+            CalcError::UnexpectedEnd => "unexpected end of input",
+            CalcError::UnknownVar(name) => "unknown variable '{name}'",
+            CalcError::UnknownFunc(name) => "unknown function '{name}'",
+            CalcError::DivByZero => "division by zero",
+            CalcError::BadArity { name, expected, got } => {
+                let plural = if expected == 1 { "argument" } else { "arguments" }
+                "{name}() takes {expected} {plural}, got {got}"
+            }
+            CalcError::Domain { name, arg } => "{name}() is undefined for {arg}",
+        }
+    }
+}
+
+enum Expr {
+    Num(float),
+    Var(string),
+    Neg(Expr),
+    Bin { op: char, lhs: Expr, rhs: Expr },
+    Call { name: string, args: Vec<Expr> },
+}
+
+enum Stmt {
+    Let { name: string, value: Expr },
+    Eval(Expr),
+}
+
+fn is_number_char(c: char) -> bool { c.is_digit() or c == '.' }
+
+fn is_ident_char(c: char) -> bool { c.is_alphanumeric() or c == '_' }
+
+fn scan(chars: Vec<char>, start: int, keep: fn(char) -> bool) -> (string, int) {
+    let mut text = ""
+    let mut i = start
+    while let Some(c) = chars.get(i) {
+        if not keep(c) { break }
+        text.push(c)
+        i++
+    }
+    (text, i)
+}
+
+fn tokenize(src: string) -> Result<Vec<Spanned>, CalcError> {
+    let chars = src.chars()
+    let mut out: Vec<Spanned> = vec![]
+    let mut i = 0
+    while let Some(c) = chars.get(i) {
+        let col = i + 1
+        let tok = match c {
+            c if c.is_whitespace() => {
+                i++
+                continue
+            }
+            c if is_number_char(c) => {
+                let (text, next) = scan(chars, i, is_number_char)
+                i = next
+                let value = convert::parse_float(text).ok_or(CalcError::BadNumber { col: col, text: text })?
+                out.push(Spanned { tok: Token::Num(value), col: col, text: text })
+                continue
+            }
+            c if c.is_alpha() or c == '_' => {
+                let (name, next) = scan(chars, i, is_ident_char)
+                i = next
+                out.push(Spanned { tok: Token::Ident(name), col: col, text: name })
+                continue
+            }
+            '+' | '-' | '*' | '/' | '^' => Token::Op(c),
+            '(' => Token::LParen,
+            ')' => Token::RParen,
+            ',' => Token::Comma,
+            '=' => Token::Assign,
+            _ => { return Err(CalcError::UnexpectedChar { col: col, ch: c }) }
+        }
+        out.push(Spanned { tok: tok, col: col, text: string::from_char(c) })
+        i++
+    }
+    Ok(out)
+}
+
+struct Parser { toks: Vec<Spanned>, pos: int }
+
+impl Parser {
+    fn new(toks: Vec<Spanned>) -> Parser { Parser { toks: toks, pos: 0 } }
+
+    fn peek(self) -> Option<Token> {
+        if let Some(s) = self.toks.get(self.pos) { Some(s.tok) } else { None }
+    }
+
+    fn next(mut self) -> Result<Spanned, CalcError> {
+        let s = self.toks.get(self.pos).ok_or(CalcError::UnexpectedEnd)?
+        self.pos++
+        Ok(s)
+    }
+
+    fn eat(mut self, want: Token) -> bool {
+        if self.peek() == Some(want) {
+            self.pos++
+            true
+        } else {
+            false
+        }
+    }
+
+    fn eat_op(mut self, ops: string) -> Option<char> {
+        if let Some(Token::Op(op)) = self.peek() {
+            if ops.contains(string::from_char(op)) {
+                self.pos++
+                return Some(op)
+            }
+        }
+        None
+    }
+
+    fn unexpected(self) -> CalcError {
+        if let Some(s) = self.toks.get(self.pos) {
+            CalcError::UnexpectedToken { col: s.col, found: s.text }
+        } else {
+            CalcError::UnexpectedEnd
+        }
+    }
+
+    fn consume(mut self, want: Token) -> Result<unit, CalcError> {
+        if self.eat(want) { Ok(()) } else { Err(self.unexpected()) }
+    }
+
+    fn statement(mut self) -> Result<Stmt, CalcError> {
+        let stmt = if self.eat(Token::Ident("let")) {
+            let s: Spanned = self.next()?
+            let name = match s.tok {
+                Token::Ident(name) => name,
+                _ => { return Err(CalcError::UnexpectedToken { col: s.col, found: s.text }) }
+            }
+            self.consume(Token::Assign)?
+            Stmt::Let { name: name, value: self.expr()? }
+        } else {
+            Stmt::Eval(self.expr()?)
+        }
+        if self.pos < self.toks.len() {
+            return Err(self.unexpected())
+        }
+        Ok(stmt)
+    }
+
+    fn expr(mut self) -> Result<Expr, CalcError> {
+        let mut lhs = self.term()?
+        while let Some(op) = self.eat_op("+-") {
+            lhs = Expr::Bin { op: op, lhs: lhs, rhs: self.term()? }
+        }
+        Ok(lhs)
+    }
+
+    fn term(mut self) -> Result<Expr, CalcError> {
+        let mut lhs = self.unary()?
+        while let Some(op) = self.eat_op("*/") {
+            lhs = Expr::Bin { op: op, lhs: lhs, rhs: self.unary()? }
+        }
+        Ok(lhs)
+    }
+
+    fn unary(mut self) -> Result<Expr, CalcError> {
+        if self.eat(Token::Op('-')) {
+            return Ok(Expr::Neg(self.unary()?))
+        }
+        let base = self.atom()?
+        if self.eat(Token::Op('^')) {
+            Ok(Expr::Bin { op: '^', lhs: base, rhs: self.unary()? })
+        } else {
+            Ok(base)
+        }
+    }
+
+    fn atom(mut self) -> Result<Expr, CalcError> {
+        let s: Spanned = self.next()?
+        match s.tok {
+            Token::Num(n) => Ok(Expr::Num(n)),
+            Token::Ident(name) => {
+                if self.eat(Token::LParen) {
+                    Ok(Expr::Call { name: name, args: self.arguments()? })
+                } else {
+                    Ok(Expr::Var(name))
+                }
+            }
+            Token::LParen => {
+                let inner = self.expr()?
+                self.consume(Token::RParen)?
+                Ok(inner)
+            }
+            _ => Err(CalcError::UnexpectedToken { col: s.col, found: s.text }),
+        }
+    }
+
+    fn arguments(mut self) -> Result<Vec<Expr>, CalcError> {
+        let mut args: Vec<Expr> = vec![]
+        if self.eat(Token::RParen) {
+            return Ok(args)
+        }
+        args.push(self.expr()?)
+        while self.eat(Token::Comma) {
+            args.push(self.expr()?)
+        }
+        self.consume(Token::RParen)?
+        Ok(args)
+    }
+}
+
+fn parse(src: string) -> Result<Stmt, CalcError> {
+    let mut parser = Parser::new(tokenize(src)?)
+    parser.statement()
+}
+
+fn arity(name: string) -> Option<int> {
+    match name {
+        "sqrt" | "abs" => Some(1),
+        "max" | "min" => Some(2),
+        _ => None,
+    }
+}
+
+fn call(name: string, args: Vec<float>) -> Result<float, CalcError> {
+    let expected = arity(name).ok_or(CalcError::UnknownFunc(name))?
+    if args.len() != expected {
+        return Err(CalcError::BadArity { name: name, expected: expected, got: args.len() })
+    }
+    match name {
+        "sqrt" if args[0] < 0.0 => Err(CalcError::Domain { name: name, arg: args[0] }),
+        "sqrt" => Ok(math::sqrt(args[0])),
+        "abs" => Ok(math::abs(args[0])),
+        "max" => Ok(math::max(args[0], args[1])),
+        _ => Ok(math::min(args[0], args[1])),
+    }
+}
+
+fn eval(e: Expr, env: Map<string, float>) -> Result<float, CalcError> {
+    match e {
+        Expr::Num(n) => Ok(n),
+        Expr::Var(name) => env.get(name).ok_or(CalcError::UnknownVar(name)),
+        Expr::Neg(inner) => Ok(-eval(inner, env)?),
+        Expr::Bin { op, lhs, rhs } => {
+            let a = eval(lhs, env)?
+            let b = eval(rhs, env)?
+            match op {
+                '+' => Ok(a + b),
+                '-' => Ok(a - b),
+                '*' => Ok(a * b),
+                '/' if b == 0.0 => Err(CalcError::DivByZero),
+                '/' => Ok(a / b),
+                _ => Ok(math::pow(a, b)),
+            }
+        }
+        Expr::Call { name, args } => {
+            let mut values: Vec<float> = vec![]
+            for arg in args {
+                values.push(eval(arg, env)?)
+            }
+            call(name, values)
+        }
+    }
+}
+
+fn run_line(line: string, mut env: Map<string, float>) -> Result<string, CalcError> {
+    let stmt: Stmt = parse(line)?
+    match stmt {
+        Stmt::Let { name, value } => {
+            let v = eval(value, env)?
+            env[name] = v
+            Ok("{name} = {v}")
+        }
+        Stmt::Eval(e) => Ok("{eval(e, env)?}"),
+    }
+}
+
+fn run(script: string) {
+    let mut env: Map<string, float> = Map::new()
+    env["pi"] = math::PI
+    for line in script.lines() {
+        let line = line.trim()
+        if line.is_empty() or line.starts_with("#") { continue }
+        println("> {line}")
+        match run_line(line, env) {
+            Ok(text) => println(text),
+            Err(e) => println("error: {e}"),
+        }
+    }
+}
+
+if let Some(path) = sys::arg(0) {
+    match fs::read_text(path) {
+        Ok(script) => run(script),
+        Err(e) => {
+            eprintln("calc: {e}")
+            sys::exit(1)
+        }
+    }
+} else {
+    eprintln("usage: calc <script-file>")
+    sys::exit(2)
+}

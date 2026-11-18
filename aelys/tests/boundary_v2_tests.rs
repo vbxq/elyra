@@ -1012,7 +1012,7 @@ fn consecutive_wide_literals_keep_distinct_local_values() {
 
 #[test]
 fn inference_depth_limit_is_a_compile_error_instead_of_null_bytecode() {
-    let expression = (0..=200).fold("0".to_string(), |left, value| format!("{left} + {value}"));
+    let expression = (0..=1024).fold("0".to_string(), |left, value| format!("{left} + {value}"));
     let result = Runtime::new().compile(
         &expression,
         CompileOptions {
@@ -1039,7 +1039,7 @@ fn truncated_grouping_is_a_compile_error_instead_of_parser_recursion() {
 
 #[test]
 fn deeply_nested_grouping_hits_the_parser_recursion_limit() {
-    let depth = 100;
+    let depth = 300;
     let source = format!("{}0{}", "(".repeat(depth), ")".repeat(depth));
     let Err(error) = Runtime::new().compile(&source, CompileOptions::default()) else {
         panic!("deeply nested grouping must be rejected");
@@ -1047,7 +1047,7 @@ fn deeply_nested_grouping_hits_the_parser_recursion_limit() {
     assert!(matches!(
         error,
         AelysError::Compile(error)
-            if matches!(error.kind, CompileErrorKind::RecursionDepthExceeded { max: 16 })
+            if matches!(error.kind, CompileErrorKind::RecursionDepthExceeded { max: 256 })
     ));
 }
 
@@ -1443,7 +1443,7 @@ fn left_nested_sum(additions: usize) -> String {
 
 #[test]
 fn the_inference_depth_bound_accepts_the_expression_one_addition_below_it() {
-    let accepted = left_nested_sum(199);
+    let accepted = left_nested_sum(1023);
     let value = Runtime::new()
         .compile(
             &accepted,
@@ -1453,22 +1453,22 @@ fn the_inference_depth_bound_accepts_the_expression_one_addition_below_it() {
             },
         )
         .map(|_| aelys::run(&accepted, "depth-boundary.aelys"))
-        .expect("199 additions must compile")
-        .expect("199 additions must run");
+        .expect("1023 additions must compile")
+        .expect("1023 additions must run");
     assert_eq!(
         value.as_int(),
-        Some((0..199).sum::<i64>()),
+        Some((0..1023).sum::<i64>()),
         "the accepted side must produce the sum it is written to produce"
     );
 
     let Err(error) = Runtime::new().compile(
-        &left_nested_sum(200),
+        &left_nested_sum(1024),
         CompileOptions {
             optimization_level: aelys_opt::OptimizationLevel::None,
             ..CompileOptions::default()
         },
     ) else {
-        panic!("200 additions must be rejected");
+        panic!("1024 additions must be rejected");
     };
     assert!(
         error.to_string().contains("recursion limit"),

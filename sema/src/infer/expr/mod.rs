@@ -2,6 +2,7 @@ pub(super) mod array;
 mod assign;
 mod binary;
 mod call;
+pub(crate) use call::user_method_receiver;
 mod collections;
 mod if_expr;
 mod lambda;
@@ -26,6 +27,7 @@ impl TypeInference {
             span,
             reason: ConstraintReason::Other(reason.to_string()),
             nominal_only: true,
+            unless_method: None,
         });
     }
 

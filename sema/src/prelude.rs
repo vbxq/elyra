@@ -95,14 +95,8 @@ pub fn register(table: &mut TypeTable) {
 }
 
 pub fn provides(trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
-    if trait_name == DISPLAY_TRAIT && trait_args.is_empty() && is_display_scalar(ty) {
+    if trait_name == DISPLAY_TRAIT && trait_args.is_empty() && is_structural_display(ty) {
         return true;
-    }
-    if trait_name == DISPLAY_TRAIT
-        && trait_args.is_empty()
-        && let InferType::Map(key, value) = ty
-    {
-        return is_display_scalar(key) && is_display_scalar(value);
     }
     trait_name == FROM_TRAIT && matches!(trait_args, [source] if source == ty)
 }
@@ -111,6 +105,38 @@ pub fn provides(trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> b
 pub fn reserves_header(trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
     trait_name == FROM_TRAIT
         && matches!(trait_args, [source] if crate::types::headers_unify(source, ty))
+}
+
+pub fn is_structural_display(ty: &InferType) -> bool {
+    match ty {
+        InferType::Vec(element)
+        | InferType::Array(element)
+        | InferType::FixedArray(element, _)
+        | InferType::Option(element) => is_structural_display(element),
+        InferType::Result(first, second) | InferType::Map(first, second) => {
+            is_structural_display(first) && is_structural_display(second)
+        }
+        InferType::Tuple(elements) => elements.iter().all(is_structural_display),
+        InferType::Applied { name, args } if aelys_syntax::tuple_arity(name).is_some() => {
+            args.iter().all(is_structural_display)
+        }
+        _ => is_display_scalar(ty),
+    }
+}
+
+pub fn contains_nominal(ty: &InferType) -> bool {
+    match ty {
+        InferType::Struct(_) | InferType::Applied { .. } => true,
+        InferType::Vec(element)
+        | InferType::Array(element)
+        | InferType::FixedArray(element, _)
+        | InferType::Option(element) => contains_nominal(element),
+        InferType::Result(first, second) | InferType::Map(first, second) => {
+            contains_nominal(first) || contains_nominal(second)
+        }
+        InferType::Tuple(elements) => elements.iter().any(contains_nominal),
+        _ => false,
+    }
 }
 
 fn is_display_scalar(ty: &InferType) -> bool {

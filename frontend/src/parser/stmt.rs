@@ -77,6 +77,38 @@ impl Parser {
         self.expression_statement()
     }
 
+    pub(crate) fn arm_jump(&mut self) -> Result<Option<Stmt>> {
+        let ends_arm = |kind: &TokenKind| {
+            matches!(
+                kind,
+                TokenKind::Comma | TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof
+            )
+        };
+        let span = self.peek().span;
+        let kind = if self.match_token(&TokenKind::Break) {
+            let label = self.optional_label();
+            let value = if ends_arm(&self.peek().kind) {
+                None
+            } else {
+                Some(self.expression()?)
+            };
+            StmtKind::Break { label, value }
+        } else if self.match_token(&TokenKind::Continue) {
+            StmtKind::Continue {
+                label: self.optional_label(),
+            }
+        } else if self.match_token(&TokenKind::Return) {
+            if ends_arm(&self.peek().kind) {
+                StmtKind::Return(None)
+            } else {
+                StmtKind::Return(Some(self.expression()?))
+            }
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(Stmt::new(kind, span.merge(self.previous().span))))
+    }
+
     pub(crate) fn is_loop_keyword(&self) -> bool {
         matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "loop")
             && self.peek_at(1).kind == TokenKind::LBrace
@@ -393,6 +425,10 @@ impl Parser {
     }
 
     pub(crate) fn block_statements(&mut self) -> Result<Vec<Stmt>> {
+        self.nested(|parser| parser.block_statements_unguarded())
+    }
+
+    fn block_statements_unguarded(&mut self) -> Result<Vec<Stmt>> {
         self.with_brace_construction(true, |parser| {
             let mut stmts = Vec::new();
 

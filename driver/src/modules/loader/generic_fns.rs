@@ -307,6 +307,7 @@ fn pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
         | PatternKind::String(_)
         | PatternKind::Char(_)
         | PatternKind::Bool(_)
-        | PatternKind::Range { .. } => {}
+        | PatternKind::Range { .. }
+        | PatternKind::CharRange { .. } => {}
     }
 }

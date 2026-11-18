@@ -1,4 +1,6 @@
 use super::GlobalConstantPropagator;
+use crate::passes::effects::Effects;
+use crate::passes::unused_vars::analysis::collect_uses_in_stmt_recursive;
 use aelys_sema::{TypedExpr, TypedExprKind, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
 
@@ -53,7 +55,9 @@ impl GlobalConstantPropagator {
                     if self.is_constant_expr(initializer) {
                         let mut resolved = initializer.clone();
                         self.substitute_in_expr_for_collection(&mut resolved);
-                        self.constants.insert(name.clone(), resolved);
+                        if !Effects::default().has_effects(&resolved) {
+                            self.constants.insert(name.clone(), resolved);
+                        }
                     }
                 }
             }
@@ -125,10 +129,13 @@ fn late_constants(
 // a name the top level binds twice is two variables, and the substitution walk has no way
 fn rebound_globals(stmts: &[TypedStmt]) -> HashSet<String> {
     let mut seen = HashSet::new();
+    let mut read_so_far = HashSet::new();
     let mut rebound = HashSet::new();
     for stmt in stmts {
+        // a name read before its binding still means an import or an earlier value there
+        collect_uses_in_stmt_recursive(stmt, &mut read_so_far);
         if let TypedStmtKind::Let { name, .. } = &stmt.kind
-            && !seen.insert(name.clone())
+            && (!seen.insert(name.clone()) || read_so_far.contains(name))
         {
             rebound.insert(name.clone());
         }

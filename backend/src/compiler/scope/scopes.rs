@@ -10,6 +10,22 @@ impl Compiler {
         });
     }
 
+    pub fn close_scope_upvalues(&mut self) {
+        if let Some(&lowest_captured) = self
+            .scopes
+            .last()
+            .and_then(|scope| scope.captured_registers.iter().min())
+        {
+            self.current.emit_register_abc(
+                OpCode::CloseUpvals,
+                Register::new(lowest_captured),
+                Register::new(0),
+                Register::new(0),
+                0,
+            );
+        }
+    }
+
     // End scope: close upvalues for captured variables, free registers.
     // Note: we only emit CloseUpvals if something was actually captured.
     // Earlier versions emitted it unconditionally which was wasteful

@@ -113,6 +113,54 @@ impl TypeInference {
         args: &[Expr],
         span: Span,
     ) -> (TypedExprKind, InferType) {
+        let ExprKind::Member {
+            object,
+            separator: aelys_syntax::MemberSeparator::Dot,
+            ..
+        } = &callee.kind
+        else {
+            return self.infer_call_candidates(callee, args, span);
+        };
+        let saved = self.receiver_memo.replace(super::super::ReceiverMemo {
+            object: &**object,
+            iter_allowed: self.collection_iter_allowed,
+            typed: None,
+        });
+        let typed = self.infer_call_candidates(callee, args, span);
+        self.receiver_memo = saved;
+        typed
+    }
+
+    // every speculative method handler infers the receiver, so without the memo a chain of n calls is inferred exponentially often
+    pub(in crate::infer) fn infer_receiver(&mut self, object: &Expr) -> TypedExpr {
+        let iter_allowed = self.collection_iter_allowed;
+        let Some(memo) = self.receiver_memo.as_ref() else {
+            return self.infer_expr(object);
+        };
+        if !std::ptr::eq(memo.object, object) {
+            return self.infer_expr(object);
+        }
+        if memo.iter_allowed == iter_allowed
+            && let Some(typed) = memo.typed.clone()
+        {
+            return typed;
+        }
+        let typed = self.infer_expr(object);
+        if let Some(memo) = self.receiver_memo.as_mut()
+            && std::ptr::eq(memo.object, object)
+        {
+            memo.iter_allowed = iter_allowed;
+            memo.typed = Some(typed.clone());
+        }
+        typed
+    }
+
+    fn infer_call_candidates(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        span: Span,
+    ) -> (TypedExprKind, InferType) {
         // a '.' on a namespace has its own diagnostic, so the speculative method handlers must not run
         let dot_on_namespace = matches!(
             &callee.kind,
@@ -351,7 +399,7 @@ impl TypeInference {
         if !matches!(member.as_str(), "mul_shr" | "shl_div") {
             return None;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         let receiver = typed_object.ty.clone();
         if !matches!(receiver, InferType::I32 | InferType::I64) {
             return None;
@@ -535,6 +583,7 @@ impl TypeInference {
                         span,
                         reason: ConstraintReason::Other("native parameter bound".to_string()),
                         nominal_only: false,
+                        unless_method: None,
                     });
                 }
                 crate::native::NativeObligation::OneOf(options) => {
@@ -1046,7 +1095,7 @@ impl TypeInference {
         if member != "clone" || !args.is_empty() {
             return None;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         let clonable = match &typed_object.ty {
             InferType::Struct(name) | InferType::Applied { name, .. } => {
                 self.type_table.method(name, "clone").is_none()
@@ -1099,7 +1148,7 @@ impl TypeInference {
         if collection_pipeline {
             self.collection_iter_allowed = true;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         self.collection_iter_allowed = previous_iterator_context;
         if user_method_receiver(&typed_object.ty) {
             return None;
@@ -1254,8 +1303,60 @@ impl TypeInference {
             .into_iter()
             .map(|name| (name, self.type_gen.fresh()))
             .collect::<HashMap<_, _>>();
+        if let TypedExprKind::Identifier(name) = &callee.kind
+            && let Some(bounds) = self.generic_function_bounds.get(name)
+        {
+            for (subject, trait_name, trait_args) in bounds {
+                let Some(subject) = substitutions.get(subject) else {
+                    continue;
+                };
+                if trait_args.is_empty() {
+                    continue;
+                }
+                self.bound_deductions.push(crate::infer::BoundDeduction {
+                    subject: subject.clone(),
+                    trait_name: trait_name.clone(),
+                    trait_args: trait_args
+                        .iter()
+                        .map(|argument| substitute_generic_params(argument, &substitutions))
+                        .collect(),
+                });
+            }
+        }
         let ty = substitute_generic_params(&callee.ty, &substitutions);
         TypedExpr::new(callee.kind, ty, callee.span)
+    }
+
+    // a bound like `C: Collection<T>` fixes `T` once `C` is known, through the one impl covering it
+    pub(crate) fn deduce_bound_arguments(&mut self, subst: &mut crate::unify::Substitution) {
+        let deductions = std::mem::take(&mut self.bound_deductions);
+        loop {
+            let mut progress = false;
+            for deduction in &deductions {
+                let subject = subst.apply(&deduction.subject);
+                if crate::types::nominal_name(&subject).is_none() {
+                    continue;
+                }
+                let Some(impl_args) = self
+                    .type_table
+                    .unique_impl_trait_args(&deduction.trait_name, &subject)
+                else {
+                    continue;
+                };
+                for (argument, actual) in deduction.trait_args.iter().zip(&impl_args) {
+                    let argument = subst.apply(argument);
+                    if argument.has_vars()
+                        && crate::unify::unify(&argument, actual, subst).is_ok()
+                        && subst.apply(&argument) != argument
+                    {
+                        progress = true;
+                    }
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
     }
 
     fn infer_collection_method_call(
@@ -1276,7 +1377,7 @@ impl TypeInference {
         if consumes_iterator {
             self.collection_iter_allowed = true;
         }
-        let typed_object = self.infer_expr(object);
+        let typed_object = self.infer_receiver(object);
         self.collection_iter_allowed = previous_iterator_context;
         if member == "iter" && !previous_iterator_context {
             self.errors.push(TypeError {
@@ -1614,7 +1715,7 @@ fn substitute_generic_params(
     }
 }
 
-fn user_method_receiver(ty: &InferType) -> bool {
+pub(crate) fn user_method_receiver(ty: &InferType) -> bool {
     matches!(
         ty,
         InferType::Struct(_) | InferType::Applied { .. } | InferType::Param(_)

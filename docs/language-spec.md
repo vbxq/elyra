@@ -420,6 +420,12 @@ the width (`const Z = 1 >> -1` is `0`). Anything else, a function call, a `let`
 binding, a collection, a division by zero or an `int` result outside the 48-bit
 range, is E0395; for a division or remainder by zero or an overflow, the message
 names that cause (`cannot be evaluated at compile time: division by zero`).
+
+Outside a `const` initializer, an integer expression made only of literals is folded
+by the compiler only when every step stays inside the 48-bit range. A step that
+overflows is left to run, so the program traps at run time exactly as an unoptimised
+build would: `a[(140737488355327 * 2) & 255]` traps with the integer overflow error
+rather than reporting a constant index out of bounds (E0321).
 Declaring the same constant twice in one scope is E0396.
 
 A constant is folded when the program is compiled: every use is replaced by its
@@ -546,6 +552,12 @@ let h = grow
 h(fixed)                                                               // ✗ error[E0323]: cannot pass `fixed` to the `mut` parameter 1 of a function value of type `fn(mut Vec<int>) -> unit`
 ```
 
+An argument whose type is a type parameter `T` counts as an aggregate at a `mut`
+position, direct or through a function value, because an instance may give `T` a
+struct or a `Vec`: in `fn apply<T>(f: fn(mut T) -> int, x: T) -> int { f(x) }` the
+call `f(x)` is E0323; declare the parameter `mut x: T` so that callers must pass a
+mutable root.
+
 The callbacks of the built-in collection, `Option` and `Result` methods (`map`,
 `filter`, `fold`, `and_then`, ...) accept either form.
 
@@ -642,6 +654,27 @@ counter()  // 3
 ```
 
 The inner function holds a reference to `count`, which persists across calls.
+
+A captured variable belongs to the scope that declares it. When control leaves that
+scope, by reaching its end or by `break`, `continue`, `return`, `?`, the end of a
+`match` arm, a failing arm guard, or the end of an `if let` or `while let` body,
+every closure that captured one of its variables keeps the value the variable had
+then; a later variable reusing the slot never shows through. A closure made in a
+match arm, an `if let` branch or a loop iteration and stored in a `Vec` reads its
+own binding when it is called after the match or the loop:
+
+```rust
+let mut fs: Vec<fn() -> int> = vec![]
+for i in 0..3 {
+    match Some(i * 10) {
+        Some(v) => fs.push(fn() -> int { v + 1 }),
+        None => fs.push(fn() -> int { 0 }),
+    }
+}
+let mut t = 0
+for f in fs { t = t * 100 + f() }
+println(t)   // 11121
+```
 
 ### Higher-Order Functions
 
@@ -803,6 +836,33 @@ Short-circuit evaluation: `a and b` doesn't evaluate `b` if `a` is false. Same f
 Both operands have the same integer type. On `int` the shift count is taken modulo 64 and
 `<<` traps when the exact result leaves the 48-bit range, like `*`. On a sized type the
 count is taken modulo the width and the result wraps.
+
+### Evaluation order
+
+Operands are evaluated left to right, as in Rust and Java. The left operand of a
+binary operator is read before the right operand is evaluated, even when the right
+operand calls a function that writes the variable on the left through a closure:
+
+```rust
+fn main() -> int {
+    let mut x = 10
+    let bump = fn() -> int { x = 100; 1 }
+    x = x + bump()      // 11: x is read as 10 before bump runs
+    x
+}
+```
+
+The same order holds everywhere: in a call, the function value, then the arguments
+in order (`cb(rebind())` calls the function `cb` held before `rebind` ran, whether `cb`
+is a local, a captured variable or a global `let mut`); the receiver of a method call
+before its arguments (`m.mul_shr(f(), 8)` and `m.shl_div(f(), 8)` read `m` first);
+collection literal elements in order; in `v[i]` the container, then the index; in an assignment `place = value`
+the container and indices of the place, then the value, then the store; and in a
+compound assignment `place op= value` the place is read once, before the value is
+evaluated (`x += f()` adds `f()` to the value `x` had before the call, `v[i] += f()`
+and `s.a += f()` likewise). A field or index assignment stores into the object the
+place named when it was evaluated, even if the right-hand side rebinds the variable
+to another object.
 
 ### Precedence (lowest to highest)
 
@@ -1127,7 +1187,7 @@ are aggregate values shared by reference (like structs, see
 `==` compares them element by element. Tuples can be returned, passed, stored in
 `Vec`, arrays, struct fields and enum payloads, used in generic functions, and
 returned from a module; the tuple fields and payloads of a type imported from
-another module read and match like local ones. A tuple has no `Display`; print its elements. Reading an
+another module read and match like local ones. A tuple of displayable elements renders as `(1, "x")`; see [Display](#display). Reading an
 element past the arity, `t.2` on a pair, is E0363 `tuple (int, int) has no field
 2`. Names starting with `AelysTuple` are reserved for the compiler's tuple types:
 writing one anywhere (a type, a struct, a variable) is E0394.
@@ -1576,6 +1636,10 @@ Even without any attribute, the optimizer already inlines:
 
 So you don't need to annotate everything. `@inline` and `@inline_always` are for when you want explicit control !
 
+**Optimization never changes what a program does:**
+
+Every optimization level (`-O0` to `-O3`) produces the same output and exit code as `-O0`, and raises the same runtime error at the same point of the run. Only the location reported for an error raised inside an inlined function can differ: it is the line of the call that was inlined, and the stack trace has no frame for the inlined function. An inlined call evaluates each argument exactly once, left to right, before the body, as a real call does: an argument whose parameter is unused still runs, and one that traps (division by zero, an out-of-bounds index, an integer overflow, `<<` on `int` leaving the 48-bit range, a NaN or infinite float converted with `as`, a global read before its initialiser ran) traps at the same point. A call is only inlined when its name resolves to the top-level `fn`; a parameter, a local closure or a nested `fn` of the same name is called as written. An unused `let` is only removed when its initializer can neither write anything nor trap; `let _x = v[i]`, `let _x = a / b`, `let _x = a * b` or `let _x = g.x` with `g` a global bound after code ran still raise their error when they would at `-O0`. Operators on the sized types wrap and never trap, except `/` and `%` by zero.
+
 ## Semicolons
 
 Optional. The parser automatically inserts them after certain tokens (like Go does):
@@ -1805,7 +1869,8 @@ goes last, overwriting a key keeps its place, and removing a key does not
 reorder the others. A map is not iterable directly (E0365 points at `keys()` and
 `values()`). `==` on two maps is structural and ignores order: same key set and
 `==` values. A map whose key and value types are both scalars, `char` or
-`string` implements `Display`, rendering `{k: v, k: v}` in insertion order.
+`string` implements `Display`, rendering `{"k": v, "k": v}` in insertion order, keys and
+values in the aggregate form of [Display](#display); a value may itself be an aggregate.
 Lookups, inserts and removals are O(1) on average.
 
 ### Characters
@@ -1887,6 +1952,17 @@ payload field occupies one immutable value slot. The compiler assigns the
 constructor and variant IDs, checks their field count and types, and resolves
 pattern field offsets before emitting bytecode.
 
+An enum may contain itself, directly (`enum L { Nil, Cons(int, L) }`), through
+another enum (`enum A { End, Next(B) }` with `enum B { Stop, More(A) }`), through a
+generic parameter (`enum Tree<T> { Leaf, Node(Tree<T>, T, Tree<T>) }`), a `Vec` or an
+`Option` field of a struct (`struct Node { v: int, next: Option<Node> }`). Nesting
+depth is bounded only by memory: a list a hundred thousand cells deep is built,
+collected and matched like a short one. At run time a constructor checks each
+payload slot against its declared type. An enum value that a constructor built
+was checked then, so the check stops at it and building a value costs the same at
+every depth; an enum value the embedding host allocated is checked through its
+payload.
+
 Matching is exhaustive at compile time. The check is a usefulness analysis over
 the whole pattern, so it looks through every level of nesting: `Ok(_)`,
 `Err(AppE::Io(_))` and `Err(AppE::Bad(_))` together cover a
@@ -1903,7 +1979,9 @@ Integer matches are checked over the value range of the scrutinee's type
 (`int`, `i8` to `u32`): they need `_` unless their literals and
 [range patterns](#range-patterns) cover the whole range, and the message names
 the first uncovered interval, for example `missing 128` or `missing ..=-1`.
-String matches always need `_` (or a binding).
+`char` matches are checked the same way over the Unicode scalar values (`'\0'` to
+`'\u{10FFFF}'` without the surrogates), and an uncovered `char` is reported as
+`missing _`. String matches always need `_` (or a binding).
 
 A bare name in a pattern binds a new variable and matches everything. When the
 value at that position is an enum (including `Option` and `Result`) and the name
@@ -1938,17 +2016,55 @@ fn score(kind: BulletKind) -> int {
 println(score(BulletKind::Directed { damage: 2, speed: 1.5 }))
 ```
 
+An arm body may be `return`, `return value`, `break`, `break value`, `break 'label`,
+`continue` or `continue 'label` without braces; it ends at the arm's `,`, `;` or `}`
+and behaves exactly as the same jump written inside `{ ... }`. Such an arm, like an arm
+calling `panic(..)`, never produces a value, so it does not constrain the match's type:
+`let v = match o { Some(x) => x, None => return -1 }` gives `v` the type `int`.
+
+```rust
+fn first_or(o: Option<int>) -> int {
+    let v = match o { Some(x) => x, None => return -1 }
+    v * 2
+}
+
+for x in vec![Some(1), Some(2), None, Some(4)] {
+    match x { Some(n) => println(n), None => break }
+}
+```
+
 A `match` used as a statement (not as a value and not as the last statement of a
 block that gives a value) discards its arm values, so its arms need not agree:
 `match o { Ok(v) => total = v, Err(_) => {} }` and arms that all `return` are
 accepted. A discarded `Result` or `Option` arm value is still E0303/E0304. The
 last statement of a script is its value, so a `match` there keeps its arm values.
-An assignment (`r = Some(3)`) is never a discarded value, whatever its type.
+An assignment (`r = Some(3)`) is never a discarded value, whatever its type. A script
+whose last statement is an assignment (`a = 5`, `a += 2`, `v[i] = x`, `s.f *= 2`, or an
+block ending in one, or an `if`/`else` or `match` every branch of which ends in one or
+leaves by `return`, `break`, `continue` or a call that never returns) has the value unit,
+like a function without a declared return type. When some branch ends in a value instead,
+the script keeps the `if` or `match` value, and a branch ending in an assignment then gives
+the assigned value: `match a { 1 => 9, _ => { a = 2 } }` gives 9 when `a == 1` and 2
+otherwise. The CLI prints a script's value after it runs only when that value
+is neither unit nor null, so such a script prints nothing extra; the REPL follows the
+same rule for each line.
+A variable that is read anywhere in a loop (its condition included) and assigned
+later in the same loop body counts as used: the next iteration reads it, so
+`while let Some(n) = cur { cur = n.next }` is accepted. A value assigned in a
+loop and never read, in or after the loop, is still E0303/E0304, and so is a value
+assigned and then followed, in the same block and with no read in between, by a
+`break` or `return` (`r = find(5); break`): no next iteration of that loop reads it.
 
 A bare name in a pattern that names a `const` in scope matches the constant's value, as
 a literal would; it does not bind a new variable, and E0392 never applies to it. A local
 variable or parameter of the same name hides the constant, and then the name binds. A
 `float` constant cannot be a pattern (E0301).
+
+A destructuring `let` must be irrefutable, so a name in its pattern that names a
+constant in scope is E0397 `refutable pattern in let`: `let (LIMIT, b) = pair` with
+`const LIMIT` would have to compare the first element with `LIMIT`. Use `match` or
+`if let` to compare, or a lowercase name to bind. A local variable of the same name
+hides the constant, and then the name binds as usual.
 
 ```rust
 const LIMIT = 10
@@ -1998,17 +2114,24 @@ println(classify(Kind::A(-5)))   // 2
 
 ### Range patterns
 
-An integer pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
-excluded), `..=hi` and `lo..` (open). Bounds are integer literals, possibly
-negative. A range applies to `int` and to the sized integers, whose bounds must
-fit the type: a bound outside it is E0301 `integer literal 256 does not fit in u8`, and on
-any other type a range is E0301. Exhaustiveness covers a sized integer by its own bounds
+An integer or `char` pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
+excluded), `..=hi`, `..hi` and `lo..` (open). Bounds are integer literals, possibly
+negative, or `char` literals (`'0'..='9'`, `'a'..'g'`, `'\u{80}'..`); both bounds of
+one range are of the same kind. An integer range applies to `int` and to the sized
+integers, whose bounds must fit the type: a bound outside it is E0301 `integer literal 256
+does not fit in u8`. A `char` range applies to `char`. A range on any other scrutinee type
+(an integer range on a `char`, a `char` range on an `int`) is E0301. A range whose bound is
+a string or float literal, or whose bounds mix an integer and a `char`, is E0108.
+Exhaustiveness covers a sized integer by its own bounds
 (`u8` is covered by `0..=255`, `i8` by `-128..=127`), which is sound because sized
 arithmetic wraps, so a sized value never leaves its range. `int` is covered only by ranges
-reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character; the
-`char` domain is open, so a `match` on a `char` needs a `_` arm. A range that matches nothing
-(`9..=1`) or an inclusive range with no end is E0108. Ranges combine with `|`
-and nest inside variants and tuples.
+reaching its 48-bit bounds or by `_`. A `char` pattern (`'a'`) matches one character and a
+`char` range the scalar values between its bounds; a `char` match is exhaustive only when its
+literals and ranges cover every Unicode scalar value (`..='m'` with `'n'..`, or
+`'\0'..='\u{D7FF}'` with `'\u{E000}'..='\u{10FFFF}'`), otherwise it is E0302
+`missing _`. An arm covered by the earlier arms, such as `'c'` after `'a'..='z'`, is E0356.
+A range that matches nothing (`9..=1`, `'z'..='a'`, `'a'..'a'`) or an inclusive range with
+no end is E0108. Ranges combine with `|` and nest inside variants and tuples.
 
 ```rust
 fn class(n: int) -> int {
@@ -2022,6 +2145,15 @@ fn class(n: int) -> int {
 
 fn half(b: u8) -> int { match b { 0..=127 => 0, 128..=255 => 1 } }
 println(class(42) + half(200))   // 4
+
+fn kind(c: char) -> int {
+    match c {
+        '0'..='9' => 1,
+        'a'..='z' | 'A'..='Z' => 2,
+        _ => 0,
+    }
+}
+println(kind('7') + kind('q'))   // 3
 ```
 
 Enum values are heap objects traced through every payload slot. A malformed
@@ -2046,6 +2178,23 @@ fn move_bullet() -> float {
 Struct names start with an uppercase letter. Fields are checked against their
 declared types at compile time. A field place is resolved to its declared
 offset, not looked up by a runtime string key.
+
+A field initialiser written as a bare name is shorthand for `name: name`: `P { x, y }`
+reads the variables `x` and `y`, and shorthand mixes with explicit fields in any order
+(`P { x, y: 2 }`). It works in every literal form: a plain or generic struct
+(`W { inner, tag }`, `W::<int> { inner, tag }`), an enum struct variant
+(`E::V { x, y: 9 }`) and a nested literal, on one line or several. A shorthand naming no
+variable in scope is E0301 `undefined variable: y`, reported at the field name. Struct
+patterns accept the same shorthand: `P { x, y } => x + y` binds `x` and `y`.
+
+```rust
+struct P { x: int, y: int }
+
+fn mk(x: int, y: int) -> P { P { x, y } }
+let x = 3
+let p = P { x, y: 4 }
+println(match p { P { x, y } => x * 10 + y })   // 34
+```
 
 ### Reference semantics
 
@@ -2298,6 +2447,33 @@ println(rank(Bullet { n: 3 }, Bullet { n: 4 }))
 
 `where` is contextual, so it is still usable as an ordinary identifier.
 
+A type parameter that appears only in the arguments of a bound is deduced from the
+bound subject. In `fn drain<C: Collection<T>, T>(c: C) -> Vec<T>`, a call
+`drain(stack)` with `stack: Stack<int>` fixes `C` to `Stack<int>`, and the one impl
+of `Collection` covering `Stack<int>` (`impl<T> Collection<T> for Stack<T>`) fixes
+`T` to `int`. When no argument, return type or bound fixes a parameter, E0343 names
+that parameter.
+
+```rust
+trait Source<T> { fn first(self) -> T; }
+struct Ints { v: Vec<int> }
+impl Source<int> for Ints { fn first(self) -> int { self.v[0] } }
+
+fn head<S: Source<T>, T>(s: S) -> T { s.first() }
+
+println(head(Ints { v: vec![5, 6] }))   // 5
+```
+
+A trait cannot be implemented for a built-in type (`int`, `float`, `bool`,
+`string`, `char`, the sized integers and `f32`/`f64`): `impl Ordered for int` is
+E0112, which names the type and suggests wrapping the value in a struct. Traits
+are implemented for user structs and enums.
+
+A method declared on a user struct or enum, directly or through a trait, is
+always reachable by its name, including the names of the built-in `Option` and
+`Result` methods (`unwrap`, `expect`, `unwrap_or`, `map`, `ok`, `is_some`, and so
+on): `P { n: 3 }.expect(3)` calls `P::expect`.
+
 ### Supertraits
 
 A trait may require another trait of its implementors with `trait A: B`. Inside a
@@ -2336,7 +2512,10 @@ fn to_display(self) -> string
 
 The built-in scalars satisfy it by a compiler rule rather than by a registered
 impl: the signed and unsigned integer types, the floating point types, `bool`,
-and `string`. For every other type you write the impl yourself, and the impl is
+`char` and `string`. The same rule covers the built-in aggregates whose elements
+all satisfy it structurally: `Vec<T>`, arrays, `Map<K, V>`, tuples, `Option<T>` and
+`Result<T, E>` built from scalars, `char`, `string` and such aggregates, nested to
+any depth. For every other type you write the impl yourself, and the impl is
 an ordinary coherent trait impl held to the same rules as any other.
 
 ```rust
@@ -2373,12 +2552,34 @@ path that renders the value reports it: the direct argument of `println`,
 `convert::to_string` and `__tostring`, the argument behind a `{}` placeholder,
 and an interpolated `{p}` inside a format string.
 
-The built-in aggregates are not nominal types and cannot carry an impl, so a
-format string still renders an array, an `Option` or a `Result` structurally:
+An aggregate renders in a form modelled on Rust's `Debug`, everywhere a `Display`
+value is accepted (`println` and the other print functions, a `{}` placeholder, an
+interpolated `{v}`, `convert::to_string`, `__tostring` and a `T: Display` bound):
+
+| Value | Rendering |
+|-------|-----------|
+| `vec![1, 2, 3]`, `[1, 2, 3]` | `[1, 2, 3]` (a `Vec` and an array look alike; empty is `[]`) |
+| `Map` | `{"a": 1, "b": 2}`, in the map's insertion order; empty is `{}` |
+| `(1, "x")` | `(1, "x")` |
+| `Some(3)`, `None`, `Ok(2)`, `Err("bad")` | the same text |
+
+Inside an aggregate a `string` is quoted and escaped and a `char` is quoted, as Rust's
+`Debug` writes them (`["a", "b\"q"]`, `['a', '\n']`); a `string` or `char` at the top
+level renders as its text. Numbers and `bool` render as they do alone (`[1.5, 2.0]`).
+Nested aggregates nest: `Some([(1, "a")])`.
+
+The built-in aggregates are not nominal types and cannot carry an impl, and their
+rendering does not call a user impl: an aggregate holding a struct, an enum (even one
+that implements `Display`), a closure or unit is E0338 `trait 'Display' is not
+implemented for Vec<P>; a built-in aggregate renders only scalars, strings, chars and
+aggregates of them, so render each element`, in every position listed above.
 
 ```rust
 let arr = [1, 2, 3]
-println("arr = {arr}")   // arr = [1, 2, 3]
+println("arr = {arr}")              // arr = [1, 2, 3]
+println(vec!["a", "b"])             // ["a", "b"]
+println((1, 'c'))                   // (1, 'c')
+println(Some(vec![1]))              // Some([1])
 ```
 
 ## Associated Types and Constants
@@ -3057,6 +3258,11 @@ println(match parse("41") { Some(value) => value, None => 0 })    // 42
 println(match parse("nope") { Some(value) => value, None => 0 })  // 0
 ```
 
+The type of `expr?` is the payload type of `expr` as soon as that is known: after
+`let s = get(t)?` with `get` returning `Result<Tok, string>`, `s` is a `Tok`, so a
+following `match s { Tok::A(n) => ..., Tok::B => ... }`, a field match
+`match s.field { ... }`, or `if let Some(x) = g()?` checks against the user type.
+
 `match` on `Option` and `Result` is exhaustive. Omitting a variant is a compile
 error. A named `Option` or `Result` cannot be silently discarded: use it, return it,
 match it, call a consuming method, or write `let _ = expression` explicitly. That
@@ -3254,13 +3460,14 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0102 | ExpectedExpression | an expression was required |
 | E0103 | ExpectedIdentifier | an identifier was required |
 | E0104 | InvalidAssignmentTarget | the left side of `=` is not a place |
-| E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit |
+| E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit of 256 levels: each parenthesis, call, prefix operator, assignment, block and pattern level counts one, and so does the expression that holds them, so a `let` initializer accepts 255 nested parentheses, a call argument 254, and 254 nested `if` blocks |
 | E0106 | NullIsNotInSurface | `null` is not part of Aelys |
 | E0107 | ExpectedPattern | a pattern was required |
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
 | E0109 | UnknownVariant | no such variant on that type |
 | E0110 | MatchArmValueRequired | a match arm whose block ends without a value, in a match whose other arms produce a non-`unit` value |
 | E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
+| E0112 | PrimitiveImplUnsupported | a trait impl for a built-in type such as `int` or `string` |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
 | E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
 
@@ -3355,7 +3562,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0365 | NotIterable | the value cannot be iterated |
 | E0366 | InvalidIndex | the value cannot be indexed that way |
 | E0367 | UntypedNativeTypeMismatch | a native signature does not match its use |
-| E0368 | RecursionLimit | the type checker exceeded its recursion limit |
+| E0368 | RecursionLimit | the type checker exceeded its recursion limit: an expression tree of 1024 nested nodes or more, so a chain of 1023 `+` is accepted and 1024 is rejected; a method call counts two nodes, the call and its `.` member, so a chain of 511 calls is accepted and 512 is rejected |
 | E0369 | NamespaceIsNotAValue | a module path used where a value is required |
 | E0370 | NotANamespace | a path segment that names no module |
 | E0371 | NoSuchMember | no such member on that module |
@@ -3370,6 +3577,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 | E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
 | E0396 | DuplicateConstant | a `const` declared twice in the same scope |
+| E0397 | RefutableLetPattern | a destructuring `let` whose pattern names a constant in scope, which would match its value |
 | E0390 | UndefinedLabel | a `break` or `continue` names a label no enclosing loop declares |
 | E0391 | BreakValueOutsideLoop | `break` with a value targets a `while` or `for` |
 | E0392 | CapitalizedBindingPattern | a bare capitalised name in a pattern on an enum, which would bind instead of matching a variant |
