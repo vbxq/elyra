@@ -128,6 +128,14 @@ impl Compiler {
         self.compile_typed_expr(value, temp)?;
         let end = self.current.current_offset();
         if let Some(position) = self.last_instruction_start(start, end)
+            && self.current.bytecode_at(position) >> 24 == u32::from(u8::from(OpCode::StructLoad))
+            && self.current.bytecode_at(position + 1) >> 16 == u32::from(temp)
+        {
+            let operands = self.current.bytecode_at(position + 1);
+            *self.current.bytecode_mut(position + 1) = (operands & 0xffff) | (u32::from(reg) << 16);
+            return Ok(());
+        }
+        if let Some(position) = self.last_instruction_start(start, end)
             && let (Ok(target), Ok(temp)) = (u8::try_from(reg), u8::try_from(temp))
         {
             let word = self.current.bytecode_at(position);
@@ -154,7 +162,8 @@ impl Compiler {
             | TypedExprKind::Int(_)
             | TypedExprKind::Float(_)
             | TypedExprKind::Bool(_)
-            | TypedExprKind::Index { .. } => true,
+            | TypedExprKind::Index { .. }
+            | TypedExprKind::StructField { .. } => true,
             TypedExprKind::Grouping(inner) => Self::has_single_final_writer(inner),
             _ => false,
         }

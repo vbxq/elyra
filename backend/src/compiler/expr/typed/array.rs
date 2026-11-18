@@ -280,7 +280,7 @@ impl Compiler {
     }
 
     /// an operand already in a local's register is read where it is
-    fn operand_register(&mut self, expr: &TypedExpr) -> Result<(u16, bool)> {
+    pub(crate) fn operand_register(&mut self, expr: &TypedExpr) -> Result<(u16, bool)> {
         if let TypedExprKind::Identifier(name) = &expr.kind
             && let Some((register, _)) = self.resolve_variable(name)
         {

@@ -121,8 +121,7 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let object_reg = self.alloc_register()?;
-        self.compile_typed_expr(object, object_reg)?;
+        let (object_reg, object_owned) = self.operand_register(object)?;
         self.emit_struct(
             OpCode::StructLoad,
             schema_index,
@@ -131,7 +130,9 @@ impl Compiler {
             offset,
             span,
         );
-        self.free_register(object_reg);
+        if object_owned {
+            self.free_register(object_reg);
+        }
         Ok(())
     }
 
@@ -144,8 +145,13 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        let object_reg = self.alloc_register()?;
-        self.compile_typed_expr(object, object_reg)?;
+        let (object_reg, object_owned) = if Self::typed_expr_may_have_side_effects(value) {
+            let register = self.alloc_register()?;
+            self.compile_typed_expr(object, register)?;
+            (register, true)
+        } else {
+            self.operand_register(object)?
+        };
         self.compile_typed_expr(value, dest)?;
         self.emit_struct(
             OpCode::StructStore,
@@ -155,7 +161,9 @@ impl Compiler {
             offset,
             span,
         );
-        self.free_register(object_reg);
+        if object_owned {
+            self.free_register(object_reg);
+        }
         Ok(())
     }
 }

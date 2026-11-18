@@ -151,11 +151,12 @@ impl Compiler {
         else_branch: Option<&aelys_sema::TypedStmt>,
         span: Span,
     ) -> Result<()> {
-        let cond_reg = self.alloc_register()?;
-        self.compile_typed_expr(condition, cond_reg)?;
+        let (cond_reg, cond_owned) = self.operand_register(condition)?;
 
         let else_jump = self.emit_jump_if(OpCode::JumpIfNot, cond_reg, span);
-        self.free_register(cond_reg);
+        if cond_owned {
+            self.free_register(cond_reg);
+        }
 
         self.compile_typed_stmt(then_branch)?;
 

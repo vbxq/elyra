@@ -161,6 +161,42 @@ mask(5000)
 }
 
 #[test]
+fn fields_and_conditions_read_local_registers_in_place() {
+    let source = r#"
+struct P { a: int, b: int }
+fn walk(n: int, flag: bool) -> int {
+    let mut p = P { a: 1, b: 2 }
+    let mut total = 0
+    for i in 0..n {
+        p.a = (p.a + i) & 1023
+        if flag { p.b = p.b ^ p.a }
+        total = p.a + p.b
+    }
+    return total
+}
+walk(100, true) * 10000 + walk(7, false)
+"#;
+    let body = body_of(&assembly_of(source), "walk");
+    assert_eq!(
+        count(&body, "Move"),
+        2,
+        "only the loop bound and the returned value are copied:\n{body}"
+    );
+    let run = |n: i64, flag: bool| {
+        let (mut a, mut b, mut total) = (1i64, 2i64, 0i64);
+        for i in 0..n {
+            a = (a + i) & 1023;
+            if flag {
+                b ^= a;
+            }
+            total = a + b;
+        }
+        total
+    };
+    assert_aelys_int(source, run(100, true) * 10000 + run(7, false));
+}
+
+#[test]
 fn retargeted_assignments_compute_the_same_values() {
     assert_aelys_int(
         r#"
