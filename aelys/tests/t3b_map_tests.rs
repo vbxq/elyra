@@ -222,3 +222,23 @@ count(m, "a") * 10 + count(m, "b")
         40,
     );
 }
+
+#[test]
+#[ignore = "fixed by T1 compound assignment; un-ignore at merge"]
+fn compound_assignment_evaluates_the_map_key_once() {
+    assert_aelys_str(
+        r#"
+let mut calls = 0
+let mut m: Map<int, int> = Map::new()
+m[0] = 100
+m[1] = 200
+let next = fn() -> int {
+    calls += 1
+    calls - 1
+}
+m[next()] += 5
+"calls={calls} m0={m[0]} m1={m[1]}"
+"#,
+        "calls=1 m0=105 m1=200",
+    );
+}
