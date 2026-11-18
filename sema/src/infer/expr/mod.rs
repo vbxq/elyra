@@ -79,7 +79,12 @@ impl TypeInference {
             ExprKind::Binary { left, op, right } => {
                 let mut typed_left = self.infer_expr(left);
                 let mut typed_right = self.infer_expr(right);
-                self.narrow_binop_int_literals(&mut typed_left, &mut typed_right);
+                if !matches!(
+                    op,
+                    aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr
+                ) {
+                    self.narrow_binop_int_literals(&mut typed_left, &mut typed_right);
+                }
                 let result_type = self.infer_binary_op(*op, &typed_left, &typed_right, expr.span);
 
                 (
@@ -386,6 +391,11 @@ impl TypeInference {
             TypedExprKind::Grouping(inner) | TypedExprKind::Unary { operand: inner, .. } => {
                 self.retype_int_literal(inner, target);
             }
+            TypedExprKind::Binary {
+                left,
+                op: aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr,
+                ..
+            } => self.retype_int_literal(left, target),
             TypedExprKind::Binary { left, right, .. } => {
                 self.retype_int_literal(left, target);
                 self.retype_int_literal(right, target);
@@ -484,6 +494,13 @@ pub(crate) fn literal_shaped(expr: &TypedExpr) -> bool {
             op: aelys_syntax::UnaryOp::Neg | aelys_syntax::UnaryOp::BitNot,
             operand,
         } => literal_shaped(operand),
+        TypedExprKind::Binary {
+            left,
+            op: aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr,
+            right,
+        } => {
+            literal_shaped(left) && (right.ty.is_integer() || matches!(right.ty, InferType::Var(_)))
+        }
         TypedExprKind::Binary { left, op, right } => {
             !matches!(
                 op,
@@ -522,6 +539,11 @@ fn retype_open_literal(
         TypedExprKind::Grouping(inner) | TypedExprKind::Unary { operand: inner, .. } => {
             retype_open_literal(inner, target, values);
         }
+        TypedExprKind::Binary {
+            left,
+            op: aelys_syntax::BinaryOp::Shl | aelys_syntax::BinaryOp::Shr,
+            ..
+        } => retype_open_literal(left, target, values),
         TypedExprKind::Binary { left, right, .. } => {
             retype_open_literal(left, target, values);
             retype_open_literal(right, target, values);

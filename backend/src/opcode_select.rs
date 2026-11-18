@@ -21,8 +21,9 @@ pub fn select_opcode(op: BinaryOp, left: &ResolvedType, right: &ResolvedType) ->
     let left_inner = left.unwrap_uncertain();
     let right_inner = right.unwrap_uncertain();
 
+    let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
     if let Some(kind) = sized_kind(left_inner)
-        && left_inner == right_inner
+        && (left_inner == right_inner || (shift && right_inner.is_integer()))
     {
         return select_sized_opcode(op, kind);
     }

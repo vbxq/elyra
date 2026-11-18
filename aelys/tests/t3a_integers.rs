@@ -673,7 +673,7 @@ fn mixing_integer_types_in_a_binary_operation_is_refused_with_help() {
     for (source, left, right) in [
         ("let a: i32 = 1\nlet b = 2\na + b", "i32", "int"),
         ("let a: u8 = 1\nlet b: u16 = 2\na < b", "u8", "u16"),
-        ("let a: u32 = 1\nlet s = 3\na << s", "u32", "int"),
+        ("let a: u32 = 1\nlet s = 3\na | s", "u32", "int"),
         ("let a: i16 = 1\nlet b: i32 = 2\na == b", "i16", "i32"),
     ] {
         let error = run_aelys_err(source);

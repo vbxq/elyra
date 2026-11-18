@@ -187,23 +187,32 @@ println(c + c)            // 144
   zero divisor. `i32::MIN / -1` wraps to `i32::MIN` and `i32::MIN % -1` is `0` (likewise
   for `i8` and `i16`).
 - `<<` keeps the low bits. `>>` is arithmetic on a signed type and logical on an unsigned
-  one. The shift count is taken modulo the width (`& 7`, `& 15`, `& 31`), so `x << 33` on
-  an `i32` is `x << 1`.
+  one. The shift count may have any integer type, `int` included, and a literal count is
+  accepted whatever its value; it is taken modulo the width of the shifted value (`& 7`,
+  `& 15`, `& 31`, and `& 63` for `int`), so `x << 33` on an `i32` is `x << 1` and a count of
+  `-1` is the width minus one. The result has the type of the shifted value.
 - Comparisons compare the values.
 
 A binary operator takes two operands of the same integer type. Mixing two integer types,
 `int` included, is E0460 `mismatched integer types in '+': i32 and int` with the help line
-``convert with `as` ``. A shift count has the type of the shifted value too.
+``convert with `as` ``. A shift count is the exception: `x >> n` with `x: u32` and
+`n: int` or `n: u8` is accepted.
 
 An integer literal takes the sized type its context expects: a `let` annotation, a struct
-field, a function argument, a return value or a function's last expression, an element of
-an array or `Vec` literal whose type is known, a `push` onto a `Vec<T>`, an assignment to a
-variable, field or element, the other operand of a binary operator, a compound assignment,
-a `match` pattern on a sized value, and the bounds of a `for` range whose other bound is
-sized (the loop variable then has that type). A literal that does not fit its type is
-E0301 `integer literal 256 does not fit in u8`. A literal passed to a generic parameter
-stays `int`; the other operand of a binary operator whose type is still being inferred
-gives the literal that type once inference settles it.
+field, an enum constructor payload (`E::A(200)` with `A(u8)`, `E::B { x: -5 }` with an
+`i16` field), a function argument, a return value or a function's last expression, an
+element of an array or `Vec` literal whose type is known, a `push` onto a `Vec<T>`, an
+assignment to a variable, field or element, the other operand of a binary operator, a
+compound assignment, a `match` pattern on a sized value, a branch of an `if` or a `match`
+arm whose sibling branch is sized, and the bounds of a `for` range whose other bound is
+sized (the loop variable then has that type). The shifted value of `1 << n` takes the
+context's type; the count keeps its own. A literal that does not fit its type is E0301
+`integer literal 256 does not fit in u8`. The payload of a generic struct or enum takes
+the type its arguments name, written out (`Holder::<u8>::Full(200)`, `Box::<i8> { value:
+100 }`) or expected by a `let` annotation, a return type or a parameter (`let b: Box<u8> =
+Box { value: 200 }`). A literal passed to a generic parameter otherwise stays `int`; the
+other operand of a binary operator whose type is still being inferred gives the literal
+that type once inference settles it.
 
 ```rust
 let x: i32 = 5

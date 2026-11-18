@@ -12,7 +12,8 @@ impl TypeInference {
         right: &TypedExpr,
         span: Span,
     ) -> InferType {
-        if left.ty.is_integer() && right.ty.is_integer() && left.ty != right.ty {
+        let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
+        if !shift && left.ty.is_integer() && right.ty.is_integer() && left.ty != right.ty {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::MixedIntegerOperands {
                     op: op.to_string(),
@@ -197,11 +198,55 @@ impl TypeInference {
                 InferType::Bool
             }
 
-            BinaryOp::Shl
-            | BinaryOp::Shr
-            | BinaryOp::BitAnd
-            | BinaryOp::BitOr
-            | BinaryOp::BitXor => {
+            BinaryOp::Shl | BinaryOp::Shr => {
+                let left_invalid = self.reject_dynamic(
+                    &left.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                ) || self.reject_untyped_native(
+                    &left.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                );
+                let right_invalid = self.reject_dynamic(
+                    &right.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                ) || self.reject_untyped_native(
+                    &right.ty,
+                    &InferType::I64,
+                    span,
+                    ConstraintReason::BitwiseOp { op: op.to_string() },
+                );
+                if left_invalid || right_invalid {
+                    return InferType::Poison;
+                }
+                for operand in [left, right] {
+                    self.constraints.push(Constraint::one_of(
+                        operand.ty.clone(),
+                        InferType::all_integer_types(),
+                        span,
+                        ConstraintReason::BitwiseOp { op: op.to_string() },
+                    ));
+                }
+                if left.ty.is_integer() {
+                    left.ty.clone()
+                } else {
+                    let result_type = self.type_gen.fresh();
+                    self.constraints.push(Constraint::equal(
+                        left.ty.clone(),
+                        result_type.clone(),
+                        span,
+                        ConstraintReason::BitwiseOp { op: op.to_string() },
+                    ));
+                    result_type
+                }
+            }
+
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor => {
                 let left_invalid = self.reject_dynamic(
                     &left.ty,
                     &InferType::I64,

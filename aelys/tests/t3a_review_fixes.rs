@@ -671,3 +671,46 @@ fn l4_a_non_finite_float_cast_to_a_sized_type_names_the_value_and_the_target() {
         "integer overflow outside the supported 48-bit range",
     );
 }
+
+#[test]
+fn l6_a_shift_count_may_be_any_integer_type_and_is_masked_to_the_width() {
+    let cases: [(&str, i64); 14] = [
+        ("let x: u32 = 0x80000000\nlet n = 31\n(x >> n) as int", 1),
+        (
+            "let x: u32 = 0x80000000\nlet k: u8 = 4\n(x >> k) as int",
+            134217728,
+        ),
+        ("let y: i32 = -16\nlet k: u16 = 4\n(y >> k) as int", -1),
+        ("let y: i32 = -16\n(y << 300) as int", -65536),
+        ("let n = 31\nlet k: u8 = 4\nn << k", 496),
+        ("let z: u8 = 1\nz << 9 as int", 2),
+        ("let z: u8 = 1\n(z << 9) as int", 2),
+        ("let n = 31\nlet m: u32 = 1 << n\nm as int", 2147483648),
+        ("let k: u8 = 4\nlet w: u8 = 1 << k\nw as int", 16),
+        (
+            "let x: u32 = 5\nlet s: i8 = -1\n(x << s) as int",
+            2147483648,
+        ),
+        (
+            "let x: i16 = -32768\nlet s: u32 = 4294967295\n(x >> s) as int",
+            -1,
+        ),
+        ("let x: u16 = 0x8000\nlet s: i32 = 15\n(x >> s) as int", 1),
+        (
+            "fn sh(v: u8, n: int) -> u8 { v << n }\nfn sr(v: i8, n: u32) -> i8 { v >> n }\n(sh(3, 7) as int) * 1000 + sr(-128, 7) as int",
+            128 * 1000 - 1,
+        ),
+        (
+            "struct P { v: u16 }\nlet mut p = P { v: 1 }\nlet n: i32 = 17\np.v = p.v << n\np.v as int",
+            2,
+        ),
+    ];
+    for (source, expected) in cases {
+        assert_int_at_every_level(source, expected);
+    }
+    assert_traps_at_every_level("let a = 1\nlet s: i8 = -1\na << s", "integer overflow");
+    let error = run_aelys_err("let x: u32 = 5\nlet f = 2.0\nx << f");
+    assert!(error.contains("E0301"), "{error}");
+    let error = run_aelys_err("let x: u32 = 5\nlet y: i32 = 1\nx & y");
+    assert!(error.contains("E0460"), "{error}");
+}
