@@ -44,13 +44,9 @@ impl VM {
             }));
         }
 
-        let func = self
-            .native_registry
-            .get(&native.name)
-            .copied()
-            .ok_or_else(|| {
-                self.runtime_error(RuntimeErrorKind::UndefinedVariable(native.name.clone()))
-            })?;
+        let func = self.native_impl(native).ok_or_else(|| {
+            self.runtime_error(RuntimeErrorKind::UndefinedVariable(native.name.clone()))
+        })?;
         func.call(self, args)
     }
 }

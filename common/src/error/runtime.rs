@@ -178,7 +178,13 @@ impl RuntimeErrorKind {
                 "invalid enum field: expected schema {} variant {} at offset {}, got schema {} variant {}",
                 expected_schema, expected_variant, field_offset, actual_schema, actual_variant
             ),
-            Self::NativeError { code } => format!("native error: code {}", code),
+            Self::NativeError { code } => match code {
+                1 => "native error: code 1 (invalid argument)".to_string(),
+                2 => "native error: code 2 (integer outside the 48-bit int range)".to_string(),
+                5 => "native error: code 5 (byte buffer borrowed twice in one native call)"
+                    .to_string(),
+                _ => format!("native error: code {}", code),
+            },
             Self::NativeReturnedNull => {
                 "native function returned the forbidden null sentinel".to_string()
             }

@@ -1,13 +1,39 @@
-use super::{GcRef, ObjectKind, VM, Value};
+use super::{GcRef, NativeFunction, ObjectKind, VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use aelys_native::{AelysNativeFn, AelysValue, AelysVmApi};
 
 const NATIVE_CONTEXT_MAGIC: u64 = 0x4145_4c59_535f_5633;
+const MAX_BORROWS_PER_CALL: usize = 8;
+const INLINE_NATIVE_ARGS: usize = 8;
 
 #[repr(C)]
 struct RuntimeNativeContext {
     magic: u64,
     vm: *mut VM,
+    borrowed: [u64; MAX_BORROWS_PER_CALL],
+    borrowed_len: usize,
+}
+
+impl RuntimeNativeContext {
+    fn new(vm: *mut VM) -> Self {
+        Self {
+            magic: NATIVE_CONTEXT_MAGIC,
+            vm,
+            borrowed: [0; MAX_BORROWS_PER_CALL],
+            borrowed_len: 0,
+        }
+    }
+
+    fn claim(&mut self, handle: u64) -> bool {
+        if self.borrowed[..self.borrowed_len].contains(&handle)
+            || self.borrowed_len == MAX_BORROWS_PER_CALL
+        {
+            return false;
+        }
+        self.borrowed[self.borrowed_len] = handle;
+        self.borrowed_len += 1;
+        true
+    }
 }
 
 pub type NativeFn = fn(&mut VM, &[Value]) -> Result<Value, RuntimeError>;
@@ -85,7 +111,8 @@ impl ForeignReturnKind {
                 ok: ForeignPayloadKind::Unit,
                 err: ForeignPayloadKind::String,
             },
-            Some(aelys_native::AelysNativeType::Dynamic) | None => Self::Raw,
+            Some(aelys_native::AelysNativeType::Dynamic | aelys_native::AelysNativeType::Bytes)
+            | None => Self::Raw,
         }
     }
 }
@@ -107,20 +134,14 @@ impl NativeFunctionImpl {
                     .map_err(|_| vm.runtime_error(RuntimeErrorKind::NativePanic))?
             }
             NativeFunctionImpl::Foreign { function, result } => {
-                let mut native_args = Vec::with_capacity(args.len());
-                for arg in args {
-                    native_args.push(unsafe { std::mem::transmute::<Value, AelysValue>(*arg) });
-                }
                 let mut out = aelys_native::value_null();
-                let mut context = RuntimeNativeContext {
-                    magic: NATIVE_CONTEXT_MAGIC,
-                    vm,
-                };
+                let mut context = RuntimeNativeContext::new(vm);
+                // both types are repr(transparent) over the same nan-boxed u64
                 let status = unsafe {
                     function(
                         (&mut context as *mut RuntimeNativeContext).cast(),
-                        native_args.as_ptr(),
-                        native_args.len(),
+                        args.as_ptr().cast::<AelysValue>(),
+                        args.len(),
                         &mut out,
                     )
                 };
@@ -251,6 +272,9 @@ extern "C" fn native_borrow_bytes_callback(
     let Some(crate::stdlib::Resource::ByteBuffer(buffer)) = vm.get_resource_mut(handle) else {
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     };
+    if !context.claim(handle as u64) {
+        return aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
+    }
     unsafe {
         *out_ptr = buffer.data.as_mut_ptr();
         *out_len = buffer.data.len();
@@ -274,6 +298,57 @@ pub fn build_native_vm_api() -> AelysVmApi {
 }
 
 impl VM {
+    pub(crate) fn native_impl(&self, native: &NativeFunction) -> Option<NativeFunctionImpl> {
+        let slot = if native.slot == NativeFunction::UNREGISTERED {
+            *self.native_registry.get(&native.name)?
+        } else {
+            native.slot
+        };
+        self.native_impls.get(usize::try_from(slot).ok()?).copied()
+    }
+
+    pub(crate) fn register_native_impl(&mut self, name: &str, function: NativeFunctionImpl) -> u32 {
+        if let Some(&slot) = self.native_registry.get(name) {
+            self.native_impls[slot as usize] = function;
+            return slot;
+        }
+        let slot = u32::try_from(self.native_impls.len()).expect("native function count fits u32");
+        self.native_impls.push(function);
+        self.native_registry.insert(name.to_string(), slot);
+        slot
+    }
+
+    #[inline]
+    pub(crate) fn call_native_registers(
+        &mut self,
+        function: Option<NativeFunctionImpl>,
+        callee: GcRef,
+        first: usize,
+        count: usize,
+    ) -> Result<Value, RuntimeError> {
+        let Some(function) = function else {
+            let name = match self.heap.get(callee).map(|object| &object.kind) {
+                Some(ObjectKind::Native(native)) => native.name.clone(),
+                _ => "<native>".to_string(),
+            };
+            return Err(self.runtime_error(RuntimeErrorKind::UndefinedVariable(name)));
+        };
+        let Some(source) = self.registers.get(first..first + count) else {
+            return Err(self.runtime_error(RuntimeErrorKind::InvalidRegister {
+                reg: first + count,
+                max: self.registers.len(),
+            }));
+        };
+        if count <= INLINE_NATIVE_ARGS {
+            let mut inline = [Value::null(); INLINE_NATIVE_ARGS];
+            inline[..count].copy_from_slice(source);
+            function.call(self, &inline[..count])
+        } else {
+            let spilled = source.to_vec();
+            function.call(self, &spilled)
+        }
+    }
+
     fn validate_foreign_payload(
         &self,
         value: Value,
@@ -456,10 +531,7 @@ mod tests {
     #[test]
     fn read_string_callback_rejects_null_output_pointers() {
         let mut vm = VM::new(Source::new("native-null-output", "")).unwrap();
-        let mut context = RuntimeNativeContext {
-            magic: NATIVE_CONTEXT_MAGIC,
-            vm: &mut vm,
-        };
+        let mut context = RuntimeNativeContext::new(&mut vm);
         let context = (&mut context as *mut RuntimeNativeContext).cast();
         let value = aelys_native::value_null();
         let mut pointer = std::ptr::null();
@@ -478,10 +550,7 @@ mod tests {
     #[test]
     fn alloc_string_callback_rejects_null_input_even_when_empty() {
         let mut vm = VM::new(Source::new("native-null-input", "")).unwrap();
-        let mut context = RuntimeNativeContext {
-            magic: NATIVE_CONTEXT_MAGIC,
-            vm: &mut vm,
-        };
+        let mut context = RuntimeNativeContext::new(&mut vm);
         let context = (&mut context as *mut RuntimeNativeContext).cast();
         let mut output = aelys_native::value_null();
 
@@ -499,10 +568,7 @@ mod tests {
                 data: vec![1, 2, 3, 4],
             },
         ));
-        let mut context = RuntimeNativeContext {
-            magic: NATIVE_CONTEXT_MAGIC,
-            vm: &mut vm,
-        };
+        let mut context = RuntimeNativeContext::new(&mut vm);
         let context = (&mut context as *mut RuntimeNativeContext).cast();
         let value = aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap();
         let mut pointer = std::ptr::null_mut();
@@ -525,10 +591,7 @@ mod tests {
         ));
         let value = aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap();
         {
-            let mut context = RuntimeNativeContext {
-                magic: NATIVE_CONTEXT_MAGIC,
-                vm: &mut vm,
-            };
+            let mut context = RuntimeNativeContext::new(&mut vm);
             let context = (&mut context as *mut RuntimeNativeContext).cast();
             let mut pointer = std::ptr::null_mut();
             let mut length = 0;
@@ -548,10 +611,7 @@ mod tests {
     fn borrow_bytes_callback_refuses_a_handle_that_is_not_a_buffer() {
         let mut vm = VM::new(Source::new("native-borrow-bytes-wrong", "")).unwrap();
         let handle = vm.store_resource(crate::stdlib::Resource::Timer(std::time::Instant::now()));
-        let mut context = RuntimeNativeContext {
-            magic: NATIVE_CONTEXT_MAGIC,
-            vm: &mut vm,
-        };
+        let mut context = RuntimeNativeContext::new(&mut vm);
         let context = (&mut context as *mut RuntimeNativeContext).cast();
         let mut pointer = std::ptr::null_mut();
         let mut length = 0;
@@ -582,6 +642,45 @@ mod tests {
                 &mut length,
             ),
             aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn borrow_bytes_callback_hands_out_each_handle_once_per_call() {
+        let mut vm = VM::new(Source::new("native-borrow-once", "")).unwrap();
+        let handles: Vec<usize> = (0..=MAX_BORROWS_PER_CALL)
+            .map(|_| {
+                vm.store_resource(crate::stdlib::Resource::ByteBuffer(
+                    crate::stdlib::ByteBuffer { data: vec![0; 2] },
+                ))
+            })
+            .collect();
+        let value = |handle: usize| aelys_native::value_int(handle as i64).unwrap();
+        let mut context = RuntimeNativeContext::new(&mut vm);
+        let raw = (&mut context as *mut RuntimeNativeContext).cast();
+        let mut pointer = std::ptr::null_mut();
+        let mut length = 0;
+        let mut borrow =
+            |handle| native_borrow_bytes_callback(raw, value(handle), &mut pointer, &mut length);
+
+        assert_eq!(borrow(handles[0]), 0);
+        assert_eq!(
+            borrow(handles[0]),
+            aelys_native::AELYS_NATIVE_BORROW_CONFLICT
+        );
+        for &handle in &handles[1..MAX_BORROWS_PER_CALL] {
+            assert_eq!(borrow(handle), 0);
+        }
+        assert_eq!(
+            borrow(handles[MAX_BORROWS_PER_CALL]),
+            aelys_native::AELYS_NATIVE_BORROW_CONFLICT
+        );
+
+        let mut next_call = RuntimeNativeContext::new(&mut vm);
+        let raw = (&mut next_call as *mut RuntimeNativeContext).cast();
+        assert_eq!(
+            native_borrow_bytes_callback(raw, value(handles[0]), &mut pointer, &mut length),
+            0
         );
     }
 

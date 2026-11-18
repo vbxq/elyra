@@ -55,6 +55,7 @@ impl VM {
             resources: Vec::with_capacity(16),
             native_modules: HashMap::new(),
             native_registry: HashMap::new(),
+            native_impls: Vec::new(),
             random_state: random_seed,
             random_seed,
             execution_control: super::ExecutionControl::default(),

@@ -18,6 +18,7 @@ pub struct IntegerOverflowError {
 // The 48-bit integer limit is a tradeoff: 64-bit ints would need heap
 // allocation or a different encoding. ±140 trillion should be enough...
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Value(u64);
 
 // Tag bits are in bits 48-50, payload in bits 0-47
