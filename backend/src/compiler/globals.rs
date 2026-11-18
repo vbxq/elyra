@@ -26,14 +26,14 @@ impl Compiler {
     }
 
     pub fn resolve_global_name<'a>(&'a self, name: &'a str) -> &'a str {
+        if self.globals.contains_key(name) {
+            return name;
+        }
         // Only translate to qualified name if it's a stdlib import (contains ::)
         // Custom module entries contain module path (like "mod_a") not qualified names
         self.symbol_origins
             .get(name)
             .filter(|origin| origin.contains("::"))
-            .filter(|origin| {
-                !(aelys_sema::is_module_scoped_global(origin) && self.globals.contains_key(name))
-            })
             .map(String::as_str)
             .unwrap_or(name)
     }
