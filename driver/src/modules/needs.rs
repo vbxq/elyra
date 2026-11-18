@@ -465,7 +465,7 @@ fn load_modules(
                                         surface_module(&module_path),
                                     ],
                                     carried_by: Vec::new(),
-                                    repair: SymbolConflictRepair::Alias,
+                                    repair: SymbolConflictRepair::NameOne,
                                 },
                                 needs.span,
                                 source.clone(),

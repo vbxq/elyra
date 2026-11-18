@@ -46,6 +46,22 @@ impl TypeInference {
                 },
                 var_type,
             )
+        } else if let Some(modules) = self.ambiguous_imports.get(name) {
+            self.errors.push(TypeError {
+                kind: crate::constraint::TypeErrorKind::AmbiguousImport {
+                    name: name.to_string(),
+                    modules: modules.clone(),
+                },
+                span,
+                reason: ConstraintReason::Other("assignment".to_string()),
+            });
+            (
+                TypedExprKind::Assign {
+                    name: name.to_string(),
+                    value: Box::new(typed_value),
+                },
+                InferType::Poison,
+            )
         } else {
             self.errors
                 .push(TypeError::undefined_variable(name.to_string(), span));

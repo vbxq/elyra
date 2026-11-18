@@ -710,10 +710,11 @@ A whole-module import without an alias also binds the module's exports by their
 bare names. Two such imports may export the same name: `needs std::fs` next to
 `needs std::bytes` is accepted, and `fs::size(...)` or `bytes::size(...)` are
 both fine. Only an unqualified use of the shared name is refused, at the use, with
-E0445 `symbol 'size' is exported by multiple modules: bytes, fs`. A name imported
+E0445 `symbol 'size' is exported by multiple modules: bytes, fs`; assigning to
+the bare name is the same E0445. A name imported
 by name with `needs size from std::bytes` wins over the whole-module imports, and
 two `needs size from ...` lines naming different modules are E0410 at the second
-line.
+line, whose hint is to import the name from one module only.
 
 Aliases and bare names belong to the file that writes them. `needs util as u` in
 one module and `needs other as u` in another give each module its own `u`, and a

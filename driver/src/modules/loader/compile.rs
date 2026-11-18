@@ -249,7 +249,7 @@ impl ModuleLoader {
                                             ],
                                             carried_by: Vec::new(),
                                             repair:
-                                                aelys_common::error::SymbolConflictRepair::Alias,
+                                                aelys_common::error::SymbolConflictRepair::NameOne,
                                         },
                                         nested_needs.span,
                                         module_source.clone(),

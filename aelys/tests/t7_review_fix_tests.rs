@@ -203,3 +203,58 @@ fn a_file_own_function_shadowing_an_import_keeps_the_local_refusal() {
         3,
     );
 }
+
+#[test]
+fn writing_an_ambiguous_bare_import_is_the_ambiguity_error() {
+    let dir = tree(&[
+        ("p.aelys", "pub let mut kk = 1\npub fn sz() -> int { 1 }\n"),
+        ("q.aelys", "pub let mut kk = 2\npub fn sz() -> int { 2 }\n"),
+    ]);
+    let sources = [
+        ("top.aelys", "needs p\nneeds q\nkk = 3\n1\n"),
+        ("infn.aelys", "needs p\nneeds q\nfn f() { kk = 3 }\n1\n"),
+        (
+            "clos.aelys",
+            "needs p\nneeds q\nlet c = fn() { kk = 3 }\n1\n",
+        ),
+        ("compound.aelys", "needs p\nneeds q\nkk += 1\n1\n"),
+    ];
+    for (file, source) in sources {
+        let error = run_err(&dir, file, source);
+        assert!(error.contains("E0445"), "{file}: {error}");
+        assert!(error.contains("'p::kk' or 'q::kk'"), "{file}: {error}");
+    }
+    assert_eq!(
+        run_int(
+            &dir,
+            "own.aelys",
+            "needs p\nneeds q\nlet mut kk = 0\nkk = 3\nkk * 10 + p::kk\n"
+        ),
+        31,
+    );
+}
+
+#[test]
+fn a_selective_import_clash_never_suggests_an_alias() {
+    let dir = tree(&[
+        ("p.aelys", "pub fn sz() -> int { 1 }\n"),
+        ("q.aelys", "pub fn sz() -> int { 2 }\n"),
+        (
+            "nm.aelys",
+            "needs sz from p\nneeds sz from q\npub fn f() -> int { 1 }\n",
+        ),
+    ]);
+    for (file, source) in [
+        ("main.aelys", "needs sz from p\nneeds sz from q\n1\n"),
+        ("nested.aelys", "needs nm\n1\n"),
+        (
+            "std.aelys",
+            "needs size from std::bytes\nneeds size from std::fs\n1\n",
+        ),
+    ] {
+        let error = run_err(&dir, file, source);
+        assert!(error.contains("E0410"), "{file}: {error}");
+        assert!(!error.contains("'as' alias"), "{file}: {error}");
+        assert!(error.contains("from one module only"), "{file}: {error}");
+    }
+}
