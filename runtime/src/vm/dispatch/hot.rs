@@ -95,7 +95,7 @@ const RETURN0: u8 = OpCode::Return0 as u8;
 
 #[inline(always)]
 fn int48(value: i64) -> Option<Value> {
-    Value::int_checked(value).ok()
+    ((value << 16) >> 16 == value).then(|| Value::int_wrapping(value))
 }
 
 #[inline(always)]
@@ -115,6 +115,16 @@ fn exact_shl(value: i64, count: u32) -> Option<Value> {
         return None;
     }
     int48(shifted)
+}
+
+// the last word being a return means sequential flow can never run off the end of the code
+#[inline(always)]
+fn ends_in_return(code: *const u32, code_len: usize) -> bool {
+    code_len > 0
+        && matches!(
+            (unsafe { *code.add(code_len - 1) } >> 24) as u8,
+            RETURN | RETURN0
+        )
 }
 
 fn scalar_fits(value: Value, descriptor: &TypeDescriptor) -> bool {
@@ -174,8 +184,11 @@ impl VM {
             };
         }
         match base.checked_add(REGISTER_WINDOW) {
-            Some(end) if end <= self.registers.len() => {}
+            Some(end) if end <= self.registers.len() && ip < code_len => {}
             _ => leave!(),
+        }
+        if !ends_in_return(code, code_len) {
+            leave!();
         }
         let mut regs = unsafe { self.registers.as_mut_ptr().add(base) };
         let mut schemas: Option<Arc<FunctionSchemas>> = None;
@@ -246,7 +259,7 @@ impl VM {
         macro_rules! struct_operands {
             ($instr:ident, $next:ident) => {{
                 let (instr, next) = ($instr, $next);
-                if next + 1 >= code_len || instr & 0x00ff_0000 != 0 {
+                if next + 2 >= code_len || instr & 0x00ff_0000 != 0 {
                     leave!();
                 }
                 let first = unsafe { *code.add(next) };
@@ -278,7 +291,7 @@ impl VM {
         macro_rules! branch {
             ($target:expr) => {{
                 let target = $target;
-                if !loops_stay && target <= ip {
+                if (!loops_stay && target <= ip) || target >= code_len {
                     leave!();
                 }
                 target
@@ -286,14 +299,10 @@ impl VM {
         }
 
         loop {
-            if ip >= code_len {
-                leave!();
-            }
             let instr = unsafe { *code.add(ip) };
             let a = ((instr >> 16) & 0xff) as usize;
             let b = ((instr >> 8) & 0xff) as usize;
             let c = (instr & 0xff) as usize;
-            let imm = i64::from((instr & 0xffff) as u16 as i16);
             let next = ip + 1;
             ip = match (instr >> 24) as u8 {
                 MOVE => {
@@ -301,7 +310,7 @@ impl VM {
                     next
                 }
                 LOAD_I => {
-                    set!(a, Value::int_wrapping(imm));
+                    set!(a, Value::int_wrapping(i64::from(instr as u16 as i16)));
                     next
                 }
                 LOAD_K => {
@@ -551,10 +560,10 @@ impl VM {
                     set!(a, Value::int_wrapping(int!(b) ^ c as i64));
                     next
                 }
-                JUMP => branch!(next.wrapping_add_signed(imm as isize)),
+                JUMP => branch!(next.wrapping_add_signed(isize::from(instr as u16 as i16))),
                 JUMP_IF => {
                     if truthy(get!(a)) {
-                        branch!(next.wrapping_add_signed(imm as isize))
+                        branch!(next.wrapping_add_signed(isize::from(instr as u16 as i16)))
                     } else {
                         next
                     }
@@ -563,15 +572,15 @@ impl VM {
                     if truthy(get!(a)) {
                         next
                     } else {
-                        branch!(next.wrapping_add_signed(imm as isize))
+                        branch!(next.wrapping_add_signed(isize::from(instr as u16 as i16)))
                     }
                 }
                 JUMP_LONG | JUMP_IF_LONG | JUMP_IF_NOT_LONG => {
-                    if next >= code_len {
-                        leave!();
-                    }
                     let offset = unsafe { *code.add(next) } as i32;
                     let after = next + 1;
+                    if after >= code_len {
+                        leave!();
+                    }
                     let take = match (instr >> 24) as u8 {
                         JUMP_LONG => true,
                         JUMP_IF_LONG => truthy(get!(a)),
@@ -601,8 +610,8 @@ impl VM {
                     } else {
                         advanced > end
                     };
-                    let target = next.wrapping_add_signed(imm as isize);
-                    if again && !loops_stay && target <= ip {
+                    let target = next.wrapping_add_signed(isize::from(instr as u16 as i16));
+                    if again && ((!loops_stay && target <= ip) || target >= code_len) {
                         leave!();
                     }
                     set!(a, value);
@@ -610,7 +619,7 @@ impl VM {
                 }
                 WHILE_LOOP_LT => {
                     if int!(a) < int!(a + 1) {
-                        branch!(next.wrapping_add_signed(imm as isize))
+                        branch!(next.wrapping_add_signed(isize::from(instr as u16 as i16)))
                     } else {
                         next
                     }
@@ -775,6 +784,9 @@ impl VM {
                     let callee_constants_len = target.constants.len();
                     let registers = target.num_registers();
                     let mapping = target.function.global_layout.id();
+                    if !ends_in_return(callee_code, callee_code_len) {
+                        leave!();
+                    }
                     let callee_base = base + a + 1;
                     match callee_base.checked_add((registers as usize).max(REGISTER_WINDOW)) {
                         Some(end) if end <= self.registers.len() => {}
@@ -849,7 +861,10 @@ impl VM {
                     schemas = None;
                     loops_stay = !JIT || self.jit_loops_settled(function);
                     match base.checked_add(REGISTER_WINDOW) {
-                        Some(end) if end <= self.registers.len() => {}
+                        Some(end)
+                            if end <= self.registers.len()
+                                && ip < code_len
+                                && ends_in_return(code, code_len) => {}
                         _ => leave!(),
                     }
                     regs = unsafe { self.registers.as_mut_ptr().add(base) };
