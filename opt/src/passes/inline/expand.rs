@@ -1,4 +1,4 @@
-use crate::passes::effects::has_effects;
+use crate::passes::effects::Effects;
 use aelys_sema::{
     TypedExpr, TypedExprKind, TypedFunction, TypedMatchArm, TypedMatchArmBody, TypedPattern,
     TypedPatternKind, TypedStmt, TypedStmtKind,
@@ -20,6 +20,7 @@ impl InlineExpander {
         func: &TypedFunction,
         args: &[TypedExpr],
         call_span: Span,
+        effects: &Effects,
     ) -> Option<TypedExpr> {
         if func.params.len() != args.len() {
             return None;
@@ -43,7 +44,7 @@ impl InlineExpander {
             return None;
         }
 
-        let effectful: Vec<bool> = args.iter().map(has_effects).collect();
+        let effectful: Vec<bool> = args.iter().map(|arg| effects.has_effects(arg)).collect();
         let last_effectful = effectful.iter().rposition(|e| *e);
         let mut substitutions = HashMap::new();
         let mut bindings = Vec::new();

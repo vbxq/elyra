@@ -45,6 +45,7 @@ impl UnusedVarEliminator {
         stmts: &mut Vec<aelys_sema::TypedStmt>,
         used_vars: &HashSet<String>,
     ) {
-        eliminate::eliminate_unused_in_block(stmts, used_vars, &mut self.stats);
+        let effects = crate::passes::effects::Effects::of_program(stmts);
+        eliminate::eliminate_unused_in_block(stmts, used_vars, &effects, &mut self.stats);
     }
 }

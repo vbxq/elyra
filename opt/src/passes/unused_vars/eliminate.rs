@@ -1,15 +1,16 @@
 use super::super::OptimizationStats;
-use crate::passes::effects::has_effects;
+use crate::passes::effects::Effects;
 use aelys_sema::{InferType, TypedExpr, TypedExprKind, TypedFunction, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
 
 pub fn eliminate_unused_in_block(
     stmts: &mut Vec<TypedStmt>,
     used_vars: &HashSet<String>,
+    effects: &Effects,
     stats: &mut OptimizationStats,
 ) {
     for stmt in stmts.iter_mut() {
-        eliminate_unused_in_stmt(stmt, used_vars, stats);
+        eliminate_unused_in_stmt(stmt, used_vars, effects, stats);
     }
 
     let removable = |stmt: &TypedStmt| match &stmt.kind {
@@ -22,7 +23,7 @@ pub fn eliminate_unused_in_block(
             !*is_pub
                 && !aelys_sema::is_module_scoped_global(name)
                 && !used_vars.contains(name)
-                && !has_effects(initializer)
+                && !effects.has_effects(initializer)
         }
         _ => false,
     };
@@ -48,26 +49,29 @@ pub fn eliminate_unused_in_block(
 fn eliminate_unused_in_stmt(
     stmt: &mut TypedStmt,
     used_vars: &HashSet<String>,
+    effects: &Effects,
     stats: &mut OptimizationStats,
 ) {
     match &mut stmt.kind {
-        TypedStmtKind::Block(stmts) => eliminate_unused_in_block(stmts, used_vars, stats),
+        TypedStmtKind::Block(stmts) => eliminate_unused_in_block(stmts, used_vars, effects, stats),
         TypedStmtKind::If {
             then_branch,
             else_branch,
             ..
         } => {
-            eliminate_unused_in_stmt(then_branch, used_vars, stats);
+            eliminate_unused_in_stmt(then_branch, used_vars, effects, stats);
             if let Some(else_b) = else_branch {
-                eliminate_unused_in_stmt(else_b, used_vars, stats);
+                eliminate_unused_in_stmt(else_b, used_vars, effects, stats);
             }
         }
         TypedStmtKind::While { body, .. }
         | TypedStmtKind::For { body, .. }
         | TypedStmtKind::ForEach { body, .. } => {
-            eliminate_unused_in_stmt(body, used_vars, stats);
+            eliminate_unused_in_stmt(body, used_vars, effects, stats);
         }
-        TypedStmtKind::Function(func) => eliminate_unused_in_function(func, used_vars, stats),
+        TypedStmtKind::Function(func) => {
+            eliminate_unused_in_function(func, used_vars, effects, stats)
+        }
         _ => {}
     }
 }
@@ -75,6 +79,7 @@ fn eliminate_unused_in_stmt(
 fn eliminate_unused_in_function(
     func: &mut TypedFunction,
     used_vars: &HashSet<String>,
+    effects: &Effects,
     stats: &mut OptimizationStats,
 ) {
     let mut local_used = used_vars.clone();
@@ -84,5 +89,5 @@ fn eliminate_unused_in_function(
     for param in &func.params {
         local_used.insert(param.name.clone());
     }
-    eliminate_unused_in_block(&mut func.body, &local_used, stats);
+    eliminate_unused_in_block(&mut func.body, &local_used, effects, stats);
 }

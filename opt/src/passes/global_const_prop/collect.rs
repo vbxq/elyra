@@ -1,5 +1,5 @@
 use super::GlobalConstantPropagator;
-use crate::passes::effects::has_effects;
+use crate::passes::effects::Effects;
 use crate::passes::unused_vars::analysis::collect_uses_in_stmt_recursive;
 use aelys_sema::{TypedExpr, TypedExprKind, TypedStmt, TypedStmtKind};
 use std::collections::HashSet;
@@ -55,7 +55,7 @@ impl GlobalConstantPropagator {
                     if self.is_constant_expr(initializer) {
                         let mut resolved = initializer.clone();
                         self.substitute_in_expr_for_collection(&mut resolved);
-                        if !has_effects(&resolved) {
+                        if !Effects::default().has_effects(&resolved) {
                             self.constants.insert(name.clone(), resolved);
                         }
                     }
