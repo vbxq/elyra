@@ -478,7 +478,7 @@ impl VM {
                     Some(object) => match &object.kind {
                         ObjectKind::Array(array) => array.get(index_usize).ok_or_else(|| {
                             self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: self.int_value(index_value).unwrap_or(-1),
+                                index,
                                 length: i64::try_from(array.len()).unwrap_or(i64::MAX),
                             })
                         })?,
@@ -538,10 +538,9 @@ impl VM {
                             _ => false,
                         });
                 if !stored {
-                    return Err(self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                        index: i128::from(index),
-                        length,
-                    }));
+                    return Err(
+                        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length })
+                    );
                 }
                 self.heap
                     .write_barrier_element(array_ref, index_usize, value);
@@ -723,14 +722,14 @@ impl VM {
                     Some(object) => match &object.kind {
                         ObjectKind::Vec(vector) => vector.get(index_usize).ok_or_else(|| {
                             self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: self.int_value(index_value).unwrap_or(-1),
+                                index,
                                 length: i64::try_from(vector.len()).unwrap_or(i64::MAX),
                             })
                         })?,
                         ObjectKind::Array(array) if inner_opcode == OpCode::VecLoadP => {
                             array.get(index_usize).ok_or_else(|| {
                                 self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                    index: self.int_value(index_value).unwrap_or(-1),
+                                    index,
                                     length: i64::try_from(array.len()).unwrap_or(i64::MAX),
                                 })
                             })?
@@ -739,7 +738,7 @@ impl VM {
                             let character =
                                 string.as_str().chars().nth(index_usize).ok_or_else(|| {
                                     self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                        index: self.int_value(index_value).unwrap_or(-1),
+                                        index,
                                         length: i64::try_from(string.as_str().chars().count())
                                             .unwrap_or(i64::MAX),
                                     })
@@ -803,10 +802,9 @@ impl VM {
                             _ => false,
                         });
                 if !stored {
-                    return Err(self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                        index: i128::from(index),
-                        length,
-                    }));
+                    return Err(
+                        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length })
+                    );
                 }
                 self.heap.write_barrier_element(vec_ref, index_usize, value);
             }
@@ -825,13 +823,7 @@ impl VM {
                             {
                                 Some(character) => character,
                                 None => {
-                                    return Err(self.runtime_error(
-                                        RuntimeErrorKind::IndexOutOfBounds {
-                                            index: self.int_value(index_value).unwrap_or(-1),
-                                            length: i64::try_from(text.chars().count())
-                                                .unwrap_or(i64::MAX),
-                                        },
-                                    ));
+                                    return Err(self.index_error(index_value, string_value));
                                 }
                             }
                         }

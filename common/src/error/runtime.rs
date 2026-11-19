@@ -93,14 +93,21 @@ pub enum RuntimeErrorKind {
     Interrupted,
     Exit(i32),
     IndexOutOfBounds {
-        index: i128,
+        index: i64,
+        length: i64,
+    },
+    IndexOutOfBoundsU64 {
+        index: u64,
         length: i64,
     },
     MapKeyNotFound {
         key: String,
     },
     InvalidCharScalar {
-        value: i128,
+        value: i64,
+    },
+    InvalidCharScalarU64 {
+        value: u64,
     },
     VecChangedDuringSort,
     ByteRangeOutOfBounds {
@@ -242,8 +249,17 @@ impl RuntimeErrorKind {
                     index, length
                 )
             }
+            Self::IndexOutOfBoundsU64 { index, length } => {
+                format!(
+                    "index out of bounds: index {} is out of bounds for length {}",
+                    index, length
+                )
+            }
             Self::MapKeyNotFound { key } => format!("map key not found: {key}"),
             Self::InvalidCharScalar { value } => {
+                format!("invalid char: {value} is not a Unicode scalar value")
+            }
+            Self::InvalidCharScalarU64 { value } => {
                 format!("invalid char: {value} is not a Unicode scalar value")
             }
             Self::VecChangedDuringSort => {

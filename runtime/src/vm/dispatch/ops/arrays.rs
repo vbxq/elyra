@@ -211,7 +211,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: arr.len() as i64,
                             }));
                         }
@@ -248,7 +248,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: arr.len() as i64,
                             }));
                         }
@@ -285,7 +285,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: arr.len() as i64,
                             }));
                         }
@@ -322,7 +322,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: arr.len() as i64,
                             }));
                         }
@@ -405,7 +405,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -456,7 +456,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -507,7 +507,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -558,7 +558,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -912,7 +912,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: vec.len() as i64,
                             }));
                         }
@@ -949,7 +949,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: vec.len() as i64,
                             }));
                         }
@@ -986,7 +986,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: vec.len() as i64,
                             }));
                         }
@@ -1023,7 +1023,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: vec.len() as i64,
                             }));
                         }
@@ -1033,7 +1033,7 @@ macro_rules! execute_arrays {
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: arr.len() as i64,
                             }));
                         }
@@ -1043,10 +1043,7 @@ macro_rules! execute_arrays {
                             $reg_set!(dest, Value::char(ch));
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
-                            return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: $vm.int_value($reg_get!($base + c as usize)).unwrap_or(-1),
-                                length: text.chars().count() as i64,
-                            }));
+                            return Err($vm.index_error($reg_get!($base + c as usize), vec_val));
                         }
                     } else {
                         $vm.frames[$current_frame_idx].ip = $ip;
@@ -1127,7 +1124,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -1178,7 +1175,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -1229,7 +1226,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -1278,7 +1275,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -1292,7 +1289,7 @@ macro_rules! execute_arrays {
                         {
                             $vm.frames[$current_frame_idx].ip = $ip;
                             return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: i128::from(idx),
+                                index: idx,
                                 length: len,
                             }));
                         }
@@ -1328,10 +1325,7 @@ macro_rules! execute_arrays {
                             $reg_set!(dest, Value::char(ch));
                         } else {
                             $vm.frames[$current_frame_idx].ip = $ip;
-                            return Err($vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index: $vm.int_value($reg_get!($base + c as usize)).unwrap_or(-1),
-                                length: text.chars().count() as i64,
-                            }));
+                            return Err($vm.index_error($reg_get!($base + c as usize), str_val));
                         }
                     } else {
                         $vm.frames[$current_frame_idx].ip = $ip;
@@ -1394,9 +1388,9 @@ impl VM {
     ) -> Result<crate::vm::GcRef, RuntimeError> {
         let start = self.range_bound(start, "start")?;
         let end = self.range_bound(end, "end")?;
-        self.alloc_object(crate::vm::GcObject::new(ObjectKind::Range(
-            AelysRange::new(start, end, inclusive),
-        )))
+        let range = AelysRange::new(start, end, inclusive)
+            .ok_or_else(|| self.runtime_error(RuntimeErrorKind::IntegerOverflow))?;
+        self.alloc_object(crate::vm::GcObject::new(ObjectKind::Range(range)))
     }
 
     fn range_bound(&self, value: Value, bound: &'static str) -> Result<Option<i128>, RuntimeError> {
@@ -1438,21 +1432,19 @@ impl VM {
             None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
         };
         let length_wide = i128::try_from(length).unwrap_or(i128::MAX);
-        let start = range.start.unwrap_or(0);
-        let end = match range.end {
+        let start = range.start_value().unwrap_or(0);
+        let end = match range.end_value() {
             Some(value) if range.inclusive => value + 1,
             Some(value) => value,
             None => length_wide,
         };
         if start < 0 || end < 0 || start > end || end > length_wide {
-            return Err(self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                index: if start < 0 || start > length_wide {
-                    start
-                } else {
-                    end
-                },
-                length: i64::try_from(length).unwrap_or(i64::MAX),
-            }));
+            let reported = if start < 0 || start > length_wide {
+                start
+            } else {
+                end
+            };
+            return Err(self.index_out_of_bounds(reported, length));
         }
         Ok((
             usize::try_from(start).expect("validated slice start is non-negative"),

@@ -77,7 +77,7 @@ fn int_arg(vm: &VM, value: Value, operation: &'static str) -> Result<i64, Runtim
 
 fn out_of_bounds(vm: &VM, index: i64, length: usize) -> RuntimeError {
     vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-        index: i128::from(index),
+        index,
         length: i64::try_from(length).unwrap_or(i64::MAX),
     })
 }
@@ -990,7 +990,14 @@ pub(crate) fn char_from_scalar(vm: &VM, value: Value) -> Result<Value, RuntimeEr
         .ok()
         .and_then(char::from_u32)
         .map(Value::char)
-        .ok_or_else(|| vm.runtime_error(RuntimeErrorKind::InvalidCharScalar { value: raw }))
+        .ok_or_else(|| {
+            vm.runtime_error(match i64::try_from(raw) {
+                Ok(value) => RuntimeErrorKind::InvalidCharScalar { value },
+                Err(_) => RuntimeErrorKind::InvalidCharScalarU64 {
+                    value: u64::try_from(raw).unwrap_or(u64::MAX),
+                },
+            })
+        })
 }
 
 fn char_from_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

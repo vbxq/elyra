@@ -29,9 +29,17 @@ impl VM {
                 ObjectKind::String(string) => string.as_str().chars().count(),
                 _ => 0,
             });
-        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-            index: self.int_value(index).unwrap_or(-1),
-            length: i64::try_from(length).unwrap_or(i64::MAX),
+        self.index_out_of_bounds(self.int_value(index).unwrap_or(-1), length)
+    }
+
+    pub(crate) fn index_out_of_bounds(&self, index: i128, length: usize) -> RuntimeError {
+        let length = i64::try_from(length).unwrap_or(i64::MAX);
+        self.runtime_error(match i64::try_from(index) {
+            Ok(index) => RuntimeErrorKind::IndexOutOfBounds { index, length },
+            Err(_) => RuntimeErrorKind::IndexOutOfBoundsU64 {
+                index: u64::try_from(index).unwrap_or(u64::MAX),
+                length,
+            },
         })
     }
 
