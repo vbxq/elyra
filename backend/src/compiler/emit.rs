@@ -34,7 +34,6 @@ impl CompilerOperand for i32 {
 }
 
 impl Compiler {
-
     #[inline]
     pub fn current_line(&self, span: Span) -> u32 {
         span.line

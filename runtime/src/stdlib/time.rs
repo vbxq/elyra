@@ -1,4 +1,3 @@
-
 use crate::stdlib::helpers::{get_handle, get_int, get_string, make_string};
 use crate::stdlib::{Resource, StdModuleExports, register_native};
 use crate::vm::{VM, Value};

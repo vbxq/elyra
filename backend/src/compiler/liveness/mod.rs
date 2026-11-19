@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-
 mod analysis;
 mod cfg;
 mod def_use;

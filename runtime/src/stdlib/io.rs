@@ -44,9 +44,13 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
 // a reader that closed the pipe ends the program the way SIGPIPE ends a shell tool
 fn write_stdout(vm: &VM, text: &str, newline: bool) -> Result<Value, RuntimeError> {
     let mut out = io::stdout().lock();
-    let written = out
-        .write_all(text.as_bytes())
-        .and_then(|()| if newline { out.write_all(b"\n") } else { out.flush() });
+    let written = out.write_all(text.as_bytes()).and_then(|()| {
+        if newline {
+            out.write_all(b"\n")
+        } else {
+            out.flush()
+        }
+    });
     match written {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
             Err(vm.runtime_error(RuntimeErrorKind::Exit(141)))

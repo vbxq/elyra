@@ -3,7 +3,6 @@ use super::super::state::DispatchState;
 use crate::vm::{GcRef, ObjectKind, VM};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-
 #[inline(always)]
 pub(crate) fn execute(
     vm: &mut VM,

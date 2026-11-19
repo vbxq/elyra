@@ -1,6 +1,5 @@
 use super::{GcRef, Value};
 
-
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     pub function: GcRef,

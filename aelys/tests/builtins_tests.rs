@@ -14,4 +14,3 @@ fn test_register_builtins() {
     assert!(vm.get_global("type").is_none());
     assert!(vm.get_global("__tostring").is_some());
 }
-

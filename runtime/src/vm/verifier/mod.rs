@@ -28,4 +28,3 @@ pub fn verify_function(func: &Function, heap: &Heap, depth: usize) -> Result<(),
 
     Ok(())
 }
-

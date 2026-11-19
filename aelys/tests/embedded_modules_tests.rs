@@ -1,4 +1,3 @@
-
 use aelys::{CompileOptions, ExecutionOutcome, IsolateConfig, RunOptions, Runtime, Value};
 use aelys_common::error::{AelysError, CompileErrorKind};
 use std::fs;

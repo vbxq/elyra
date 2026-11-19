@@ -5,7 +5,6 @@ macro_rules! execute_control_flow {
         $bytecode_len:ident, $reg_get:ident, $reg_ref:ident,
         $reg_set:ident, $int_value:ident
     ) => {{
-
         match $opcode_byte {
             17 => {
                 let (a, b, _) = decode_abc($instr);

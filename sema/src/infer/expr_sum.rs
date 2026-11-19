@@ -676,10 +676,7 @@ impl TypeInference {
                 member: member.to_string(),
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
-            InferType::function(
-                vec![InferType::Poison; typed_args.len()],
-                InferType::Poison,
-            ),
+            InferType::function(vec![InferType::Poison; typed_args.len()], InferType::Poison),
             callee.span,
         );
         (

@@ -714,7 +714,9 @@ fn bind_use_forms(
                 .cloned()
                 .or_else(|| aelys_sema::native::function_signature(&qualified));
             if let Some(signature) = signature {
-                bindings.native_signatures.insert(spelling.clone(), signature);
+                bindings
+                    .native_signatures
+                    .insert(spelling.clone(), signature);
             }
             bindings.symbol_origins.insert(spelling, qualified);
         }

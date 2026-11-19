@@ -43,7 +43,8 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
         return Err(VmArgsError::InvalidValue {
             arg: "-ae.jit-sync".to_string(),
             value: "on".to_string(),
-            reason: "synchronous compilation needs the jit, which -ae.jit=off turns off".to_string(),
+            reason: "synchronous compilation needs the jit, which -ae.jit=off turns off"
+                .to_string(),
         });
     }
     let jit = jit.unwrap_or(jit_sync);

@@ -210,8 +210,10 @@ fn a_registered_native_module_honours_every_use_form() {
         "42"
     );
     assert_eq!(
-        run_registered("use cleannat::{triple, offset}\nfn f() -> int { offset(triple(3), 1) }\nf()")
-            .unwrap(),
+        run_registered(
+            "use cleannat::{triple, offset}\nfn f() -> int { offset(triple(3), 1) }\nf()"
+        )
+        .unwrap(),
         "10"
     );
     assert_eq!(
@@ -256,8 +258,10 @@ fn a_closed_stdout_pipe_ends_the_program_quietly() {
         .suffix(".aelys")
         .tempfile()
         .expect("temporary source file");
-    file.write_all(b"let mut i = 0\nwhile true {\n    println(\"line {i}\")\n    print(\"\")\n    i += 1\n}\n")
-        .expect("write source");
+    file.write_all(
+        b"let mut i = 0\nwhile true {\n    println(\"line {i}\")\n    print(\"\")\n    i += 1\n}\n",
+    )
+    .expect("write source");
     let mut child = std::process::Command::new(s1_support::cli_binary())
         .arg("run")
         .arg(file.path())
@@ -290,12 +294,22 @@ fn module_diagnostics_name_types_and_fields_as_written() {
     );
     assert_ne!(leak.code, Some(0), "{}", leak.stderr);
     assert!(leak.stderr.contains("error[E0407]"), "{}", leak.stderr);
-    assert!(leak.stderr.contains("'Hidden' cannot be exported"), "{}", leak.stderr);
+    assert!(
+        leak.stderr.contains("'Hidden' cannot be exported"),
+        "{}",
+        leak.stderr
+    );
     assert!(!leak.stderr.contains('@'), "{}", leak.stderr);
 
     for (main, code) in [
-        ("use shapes\nlet p = shapes::make()\nprintln(p.secret)\n", "E0412"),
-        ("use shapes::{P}\nlet p = P { secret: 1 }\nprintln(1)\n", "E0413"),
+        (
+            "use shapes\nlet p = shapes::make()\nprintln(p.secret)\n",
+            "E0412",
+        ),
+        (
+            "use shapes::{P}\nlet p = P { secret: 1 }\nprintln(1)\n",
+            "E0413",
+        ),
     ] {
         let outcome = s1_support::run_project(
             &[
@@ -307,8 +321,20 @@ fn module_diagnostics_name_types_and_fields_as_written() {
             ],
             "main.aelys",
         );
-        assert!(outcome.stderr.contains(&format!("error[{code}]")), "{}", outcome.stderr);
-        assert!(!outcome.stderr.contains("private field a "), "{}", outcome.stderr);
-        assert!(!outcome.stderr.contains("; private field"), "{}", outcome.stderr);
+        assert!(
+            outcome.stderr.contains(&format!("error[{code}]")),
+            "{}",
+            outcome.stderr
+        );
+        assert!(
+            !outcome.stderr.contains("private field a "),
+            "{}",
+            outcome.stderr
+        );
+        assert!(
+            !outcome.stderr.contains("; private field"),
+            "{}",
+            outcome.stderr
+        );
     }
 }

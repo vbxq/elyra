@@ -90,7 +90,6 @@ pub(crate) fn execute(
         }};
     }
 
-
     let (a, b, c) = decode_abc(instr);
     let dest = base + a as usize;
     match opcode_byte {

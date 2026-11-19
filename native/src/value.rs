@@ -1,4 +1,3 @@
-
 use crate::{AelysValue, NativeHandle};
 
 const QNAN: u64 = 0x7FF8_0000_0000_0000;

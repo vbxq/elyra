@@ -1,6 +1,5 @@
 #![allow(clippy::missing_safety_doc)]
 
-
 use aelys_native::{
     AELYS_ABI_VERSION, AelysExport, AelysExportKind, AelysModuleDescriptor, AelysNativeType,
     AelysRequiredModule,
