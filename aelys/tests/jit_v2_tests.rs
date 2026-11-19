@@ -136,7 +136,7 @@ fn a_hot_numeric_call_compiles_once_and_never_leaves_machine_code() {
             r#"
 fn increment(value: int) -> int { return value + 1 }
 let mut result = 0
-for index in 0..10000 {
+for index in 0..10001 {
     result = increment(41)
 }
 increment(42)
@@ -662,7 +662,7 @@ fn tiered_collection_calls_compile_optimized_code() {
 fn read(values: [Int; 2]) -> int { return values[1] }
 let values = [19, 42]
 let mut result = 0
-for index in 0..10000 {
+for index in 0..10001 {
     result = read(values)
 }
 result
