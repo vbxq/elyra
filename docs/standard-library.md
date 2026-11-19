@@ -277,7 +277,10 @@ Note: `find` and `rfind` return byte positions, not character positions. This ca
 
 `fill` is a `string`, not a `char` (`'0'` is E0301): only its first character is
 used, an empty `fill` pads with spaces, and a string already `width` characters or
-longer is returned unchanged.
+longer, or a negative `width`, returns the string unchanged. `s.repeat(n)` with `n <= 0`
+is `""`. A result of `repeat`, `pad_left` or `pad_right` that would not fit `-ae.max-heap`
+is a clean `out of memory` error before anything is allocated, and so is
+`v.resize(n, x)` growing past it.
 
 ```rust
 "  hello  ".trim()        // "hello"

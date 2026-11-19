@@ -261,7 +261,11 @@ the type its arguments name, written out (`Holder::<u8>::Full(200)`, `Box::<i8> 
 Box { value: 200 }`). A method argument takes the type the receiver's arguments give its
 parameter (`s.push(200)` on a `Stack<u8>`). A literal passed to a generic parameter
 otherwise stays `int`; the other operand of a binary operator whose type is still being
-inferred gives the literal that type once inference settles it.
+inferred gives the literal that type once inference settles it. In an array or `Vec`
+literal whose element type is not otherwise known, the plain literals take the sized type
+of the first element that is not a plain literal: `vec![a, 0]` with `a: i64` is a
+`Vec<i64>`, `[0, b]` with `b: u8` is a `[u8; 2]`, and `vec![1, 9223372036854775808]` is a
+`Vec<u64>` because a literal above the `int` maximum is a `u64`.
 
 ```rust
 let x: i32 = 5
@@ -306,7 +310,10 @@ partial value and never a trap:
 A number becomes text with `x.to_string()` (any `Display` value), and an integer
 with `n.to_hex()`, `n.to_binary()`, `n.to_octal()` or `n.to_radix(r)`, lowercase
 digits with a leading `-` for a negative value (`(-255).to_hex()` is `"-ff"`);
-`to_radix` traps on a radix outside 2..=36.
+`to_radix` traps on a radix outside 2..=36. These methods, and `mul_shr` and `shl_div`
+below, also apply to a value whose integer type inference fixes later, such as the result
+of a generic call (`gid(255).to_hex()` is `"ff"`); a receiver that turns out not to be an
+integer is E0301 `method 'to_hex' requires an integer, found string`.
 
 ```rust
 let n = "0x1F".to_int().unwrap_or(0)    // 31
@@ -879,7 +886,8 @@ println(a == b)   // true
 Short-circuit evaluation: `a && b` doesn't evaluate `b` if `a` is false. Same for `||` with true.
 `!` applies to the whole postfix expression after it: `!f(x)`, `!s.ready` and
 `!v[i]` negate the call, the field and the element. `!=` is one token, so `a != b`
-is a comparison, and `vec![...]` keeps its `!`.
+is a comparison, and `vec![...]` keeps its `!`. The operand of `!` is a `bool`; any other
+type is E0301 `expected bool, found int (operand of !)`.
 
 The words `and`, `or` and `not` are not operators (E0117). `not(x)` with no space
 before the parenthesis is a call to a function named `not`.
@@ -1130,7 +1138,14 @@ for i in start..end step 2 {   // with step
 }
 ```
 
-The loop variable is immutable within the body.
+The loop variable is immutable within the body. A positive step counts up and any
+other step counts down; the body runs for each value from the start that has not passed
+the end in that direction, so a range that starts past its end runs zero times. A loop
+never computes a value outside the type of its bounds: a range may start or end at either
+limit of any integer type (`for i in 18446744073709551610..=18446744073709551615 step 2`
+on `u64`, a range starting at the `int` minimum, `for i in m + 4..=m step -2` down to it),
+and the step that would leave the type after the last value ends the loop instead of
+overflowing.
 
 ### for-each
 
@@ -1863,8 +1878,10 @@ let middle = source[1..3]
 let inclusive = source[1..=2]
 ```
 
-Slice bounds are checked statically when all operands and the source length are
-known, and otherwise trap on an invalid runtime range.
+Slice bounds may have any integer type, like an index (`v[i..j]` with `i: u64`). They
+are checked statically when all operands and the source length are known, and otherwise
+trap on an invalid runtime range with `index out of bounds: index I is out of bounds for
+length N`, where `I` is the bound as written, a `u64` above the `int` maximum included.
 
 Ranges are values as well as slice syntax. Open and closed forms are available:
 `..end`, `start..`, and `start..=end`. A range value can be bound and reused for
@@ -1876,7 +1893,9 @@ collection context is still a type error.
 Beyond `len`, `is_empty`, `get`, `push`, `pop`, `capacity` and `reserve`, a Vec
 has these methods. Every method that changes the collection needs a mutable
 receiver (E0318); every index is checked at run time and an invalid one traps
-with `index out of bounds: index I is out of bounds for length N`.
+with `index out of bounds: index I is out of bounds for length N`. `I` is the index as
+written, negative or a `u64` above the `int` maximum, and `N` the collection's real
+length; the same message reports an invalid `v[i]` and `v[i] = x`.
 
 | Method | Result | Meaning |
 |--------|--------|---------|
@@ -1914,7 +1933,9 @@ comparator that changes the length of the Vec it is sorting traps with
 `resize` and `fill` store one value in many slots. Like a repeat literal, an
 aggregate value (a struct, enum, `Option`/`Result`, array, `Vec` or `Map`) is
 deep-copied into each slot, as by `clone()`, so every slot holds its own
-object. Scalars, strings, chars and closures are stored as they are.
+object. Scalars, strings, chars and closures are stored as they are. A `resize`
+whose new slots would not fit `-ae.max-heap` traps with `out of memory` before anything is
+stored, whatever the element type.
 
 Inside a generic function the element type may be a type parameter. E0471 is
 then checked on every instantiation, and reported at the `sort` call when one
@@ -1950,7 +1971,7 @@ for name in ages.keys() { println(name) }   // reimu, marisa, youmu
 | `m.len()`, `m.is_empty()` | `int`, `bool` | entry count |
 | `m.clear()` | `unit` | remove every entry |
 | `m.keys()`, `m.values()` | `Vec<K>`, `Vec<V>` | fresh Vecs of the keys or values |
-| `m[k]` | `V` | the value under `k`; a missing key traps with `map key not found: k` |
+| `m[k]` | `V` | the value under `k`; a missing key traps with `map key not found: k`, an integer key printed as its digits and a `string` or `char` key quoted |
 | `m[k] = v` | `unit` | insert or overwrite; `m[k] += x` reads then writes |
 
 `insert` and `remove` return an `Option`, which must be used like any other
@@ -2208,7 +2229,10 @@ println(classify(Kind::A(-5)))   // 2
 An integer or `char` pattern may be a range: `lo..=hi` (inclusive), `lo..hi` (end
 excluded), `..=hi`, `..hi` and `lo..` (open). Bounds are integer literals, possibly
 negative, or `char` literals (`'0'..='9'`, `'a'..'g'`, `'\u{80}'..`); both bounds of
-one range are of the same kind. An integer range applies to `int` and to the sized
+one range are of the same kind. A `u64` literal above the `int` maximum is a pattern and a
+bound like any other (`18446744073709551615 => ..`, `9223372036854775808..`), and so is a
+`const` of type `u64` holding such a value; on a scrutinee whose type is not yet known
+such a literal makes it a `u64`. An integer range applies to `int` and to the sized
 integers, whose bounds must fit the type: a bound outside it is E0301 `integer literal 256
 does not fit in u8`. A `char` range applies to `char`. A range on any other scrutinee type
 (an integer range on a `char`, a `char` range on an `int`) is E0301. A range whose bound is
@@ -2270,6 +2294,18 @@ fn move_bullet() -> float {
 Struct names start with an uppercase letter. Fields are checked against their
 declared types at compile time. A field place is resolved to its declared
 offset, not looked up by a runtime string key.
+
+A field and a method, inherent or from a trait, may share a name. Call syntax names the
+method and a member read without a call names the field, on a concrete receiver and on a
+generic one alike; a function-typed field shadowed by a method is called as `(s.f)(x)`.
+
+```rust
+struct Gate { ready: bool }
+impl Gate { fn ready(self) -> bool { !self.ready } }
+let g = Gate { ready: true }
+println(g.ready())   // false
+println(g.ready)     // true
+```
 
 A field initialiser written as a bare name is shorthand for `name: name`: `P { x, y }`
 reads the variables `x` and `y`, and shorthand mixes with explicit fields in any order

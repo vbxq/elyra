@@ -505,7 +505,7 @@ println("{run(30000)}")
 "#;
     assert_trap(
         source,
-        "index -1 is out of bounds for length 0",
+        "index -1 is out of bounds for length 16",
         "run (<file>:6)",
         RuntimeErrorKind::IndexOutOfBounds {
             index: 0,
