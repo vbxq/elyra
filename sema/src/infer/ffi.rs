@@ -10,12 +10,25 @@ use aelys_syntax::{
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
-pub(crate) struct FfiDecl {
-    pub(crate) library: String,
-    pub(crate) signature: FfiSignature,
-    pub(crate) params: Vec<InferType>,
-    pub(crate) ret: InferType,
-    pub(crate) valid: bool,
+pub struct FfiDecl {
+    pub library: String,
+    pub signature: FfiSignature,
+    pub params: Vec<InferType>,
+    pub ret: InferType,
+    pub valid: bool,
+    pub binding: String,
+    pub origin: Option<String>,
+}
+
+impl FfiDecl {
+    // a body carried out of its module calls the module's own binding and finds the library from the module's file
+    pub fn carried(&self, module: &str, name: &str, origin: &str) -> Self {
+        Self {
+            binding: crate::infer::module_scoped_global(module, name),
+            origin: Some(origin.to_string()),
+            ..self.clone()
+        }
+    }
 }
 
 enum Refusal {
@@ -216,7 +229,7 @@ pub(crate) fn int_width_type(width: &str) -> Option<InferType> {
     })
 }
 
-pub(crate) fn is_ptr_method(member: &str) -> bool {
+pub fn is_ptr_method(member: &str) -> bool {
     (0..=2).any(|arity| ptr_method_shape(member, arity).is_some())
 }
 
@@ -382,6 +395,8 @@ impl TypeInference {
                 params,
                 ret,
                 valid,
+                binding: function.name.clone(),
+                origin: None,
             },
         );
     }
@@ -406,11 +421,48 @@ impl TypeInference {
                         library: block.library.clone(),
                         symbol: function.name.clone(),
                         signature: decl.signature.clone(),
+                        origin: None,
                     },
                 )
             })
             .collect();
         TypedStmtKind::Extern(functions)
+    }
+
+    pub(super) fn own_extern_declarations(&self) -> std::collections::BTreeMap<String, FfiDecl> {
+        self.ffi_functions
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.clone()))
+            .collect()
+    }
+
+    pub(super) fn push_definition_module_externs(
+        &mut self,
+        module: &aelys_syntax::ModuleId,
+    ) -> Option<std::collections::HashMap<String, FfiDecl>> {
+        let carried: std::collections::HashMap<String, FfiDecl> = self
+            .module_externs
+            .get(module.as_str())?
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.clone()))
+            .collect();
+        for (name, decl) in &carried {
+            if decl.signature.variadic {
+                continue;
+            }
+            self.env.define_local(
+                name.clone(),
+                InferType::Function {
+                    params: decl.params.clone(),
+                    modes: byte_modes(&decl.signature),
+                    ret: Box::new(decl.ret.clone()),
+                },
+            );
+            self.env.set_mutable(name, false);
+            self.env
+                .define_local_alias(name.clone(), decl.binding.clone());
+        }
+        Some(std::mem::replace(&mut self.ffi_functions, carried))
     }
 
     pub(super) fn variadic_extern_value(&mut self, name: &str, span: Span) -> bool {
@@ -439,10 +491,11 @@ impl TypeInference {
         let ExprKind::Identifier(name) = &callee.kind else {
             return None;
         };
-        if self.env.binds_value(name) {
+        let decl = self.ffi_functions.get(name)?.clone();
+        if self.env.binds_value(name) && self.env.lookup_alias(name) != Some(decl.binding.as_str())
+        {
             return None;
         }
-        let decl = self.ffi_functions.get(name)?.clone();
         let fixed = decl.signature.fixed;
         if args.len() < fixed || (!decl.signature.variadic && args.len() != fixed) {
             self.errors.push(TypeError {
@@ -463,6 +516,26 @@ impl TypeInference {
                 Some(FfiType::BytesMut) if index < fixed => Some(ReferenceKind::Mutable),
                 _ => None,
             };
+            if index >= fixed
+                && decl.signature.variadic
+                && let ExprKind::Borrow { operand, .. } = &arg.kind
+            {
+                let typed = self.infer_expr(operand);
+                if !matches!(typed.ty, InferType::Poison) {
+                    self.errors.push(TypeError {
+                        kind: TypeErrorKind::VariadicArgument {
+                            function: name.clone(),
+                            found: typed.ty.clone(),
+                            borrowed: true,
+                        },
+                        span: arg.span,
+                        reason: ConstraintReason::Other("variadic argument".to_string()),
+                    });
+                }
+                extras.push(FfiType::I64);
+                typed_args.push(typed);
+                continue;
+            }
             let mut typed = self.infer_call_argument(arg, expected);
             if index < fixed {
                 let reason = ConstraintReason::Argument {
@@ -484,6 +557,7 @@ impl TypeInference {
                                 kind: TypeErrorKind::VariadicArgument {
                                     function: name.clone(),
                                     found: typed.ty.clone(),
+                                    borrowed: false,
                                 },
                                 span: typed.span,
                                 reason: ConstraintReason::Other("variadic argument".to_string()),
@@ -505,18 +579,19 @@ impl TypeInference {
                 ret: decl.signature.ret,
             };
             let spelled: Vec<&str> = extras.iter().map(|class| class.spelling()).collect();
-            let instance = format!("{name}(...{})", spelled.join(","));
+            let instance = format!("{}(...{})", decl.binding, spelled.join(","));
             if decl.valid && self.ffi_instance_names.insert(instance.clone()) {
                 self.ffi_variadic_instances.push(TypedExternFunction {
                     name: instance.clone(),
                     library: decl.library.clone(),
                     symbol: name.clone(),
                     signature,
+                    origin: decl.origin.clone(),
                 });
             }
             instance
         } else {
-            name.clone()
+            decl.binding.clone()
         };
         let params: Vec<InferType> = typed_args
             .iter()

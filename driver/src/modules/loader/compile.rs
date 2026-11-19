@@ -360,6 +360,7 @@ impl ModuleLoader {
                     scoped_globals.insert(aelys_sema::module_scoped_global(module, name));
                 }
             }
+            scoped_globals.extend(extern_bindings(&inherited_types.module_externs));
             imported_types.extend(inherited_types);
             imported_impl_stmts.extend(inherited_impls);
             for name in selected.nominal_names() {
@@ -397,6 +398,11 @@ impl ModuleLoader {
                 for name in &module_info.exported_types.scoped_globals {
                     scoped_globals.insert(aelys_sema::module_scoped_global(&module_id, name));
                 }
+                imported_types.module_externs.insert(
+                    module_id.clone(),
+                    module_info.exported_types.externs.clone(),
+                );
+                scoped_globals.extend(extern_bindings(&imported_types.module_externs));
                 imported_types
                     .module_scoped_globals
                     .insert(module_id, module_info.exported_types.scoped_globals.clone());
@@ -665,6 +671,17 @@ impl ModuleLoader {
             &applied_renames,
         )?;
         exported_types.pub_generic_fns = pub_generic_fns;
+        let own_module_id = ModuleId::new(module_path_str).as_str().to_string();
+        exported_types.externs = inference_result
+            .externs
+            .iter()
+            .map(|(name, decl)| {
+                (
+                    name.clone(),
+                    decl.carried(&own_module_id, name, &module_source.name),
+                )
+            })
+            .collect();
         exported_types.source = Some(module_source.clone());
         exported_types.scope = own_scope;
         exported_types.private_types = private_types;
@@ -745,12 +762,18 @@ impl ModuleLoader {
         let own_slots = typed_program
             .stmts
             .iter()
-            .filter_map(|stmt| match &stmt.kind {
-                TypedStmtKind::Function(function) => Some((
-                    function.name.clone(),
-                    aelys_sema::module_scoped_global(&module_id, &function.name),
-                )),
-                _ => None,
+            .flat_map(|stmt| match &stmt.kind {
+                TypedStmtKind::Function(function) => vec![function.name.clone()],
+                TypedStmtKind::Extern(functions) => functions
+                    .iter()
+                    .filter(|function| !aelys_sema::is_module_scoped_global(&function.name))
+                    .map(|function| function.name.clone())
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .map(|name| {
+                let slot = aelys_sema::module_scoped_global(&module_id, &name);
+                (name, slot)
             })
             .collect();
         let mut codegen_globals = known_globals.clone();
@@ -799,4 +822,17 @@ impl ModuleLoader {
 
         Ok(())
     }
+}
+
+pub(crate) fn extern_bindings(
+    externs: &std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, aelys_sema::FfiDecl>,
+    >,
+) -> impl Iterator<Item = String> + '_ {
+    externs
+        .values()
+        .flat_map(|decls| decls.values())
+        .filter(|decl| !decl.signature.variadic)
+        .map(|decl| decl.binding.clone())
 }

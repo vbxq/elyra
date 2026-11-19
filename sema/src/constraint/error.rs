@@ -378,6 +378,9 @@ pub enum TypeErrorKind {
     MutableLoanOverlap {
         place: String,
     },
+    MutableLoanOfImmutable {
+        place: String,
+    },
     MutableLoanAccess {
         place: String,
         access: String,
@@ -601,6 +604,7 @@ pub enum TypeErrorKind {
     VariadicArgument {
         function: String,
         found: InferType,
+        borrowed: bool,
     },
     DuplicateExtern {
         name: String,
@@ -1027,7 +1031,7 @@ impl TypeError {
             }
             TypeErrorKind::InvalidMapKey { key } => write!(
                 f,
-                "{} cannot be a Map key; a key must be int, a sized integer, string, char or bool",
+                "{} cannot be a Map key; a key must be int, a sized integer, string, char, bool or ptr",
                 key.source_spelling()
             ),
             TypeErrorKind::UnorderedSortElement { element } => write!(
@@ -1224,6 +1228,10 @@ impl TypeError {
                 f,
                 "borrow of '{}' would overlap an existing mutable loan\n   = help: end the first borrow before taking another mutable loan",
                 place
+            ),
+            TypeErrorKind::MutableLoanOfImmutable { place } => write!(
+                f,
+                "cannot borrow '{place}' as mutable: the binding '{place}' is immutable\n   = help: declare it with `let mut`, or receive it as a `mut` parameter"
             ),
             TypeErrorKind::MutableLoanAccess { place, access } => write!(
                 f,
@@ -1726,7 +1734,18 @@ impl TypeError {
                 f,
                 "variadic C function `{name}` can only be called directly, not used as a value\n   = help: call it, or wrap the call in an Elyra function with a fixed parameter list"
             ),
-            TypeErrorKind::VariadicArgument { function, found } => write!(
+            TypeErrorKind::VariadicArgument {
+                function,
+                found,
+                borrowed: true,
+            } => write!(
+                f,
+                "a borrow of a {} cannot be passed in the `...` part of `{function}`\n   = help: pass a ptr: a byte buffer crosses only as a declared `&[u8]` or `&mut [u8]` parameter, so allocate the memory with `ptr::alloc(n)` and read it back with `read_<t>`",
+                found.source_spelling()
+            ),
+            TypeErrorKind::VariadicArgument {
+                function, found, ..
+            } => write!(
                 f,
                 "a value of type {} cannot be passed in the `...` part of `{function}`\n   = help: variadic arguments take an integer, `float`, `f32`, `bool`, `ptr` or `string` (passed as a `cstr`)",
                 found.source_spelling()
@@ -2022,7 +2041,7 @@ impl TypeErrorKind {
             Self::ImmutableStructField { .. } => 330,
             Self::ImmutableStructMethod { .. } => 331,
             Self::SharedLoanMutation { .. } => 414,
-            Self::MutableLoanOverlap { .. } => 415,
+            Self::MutableLoanOverlap { .. } | Self::MutableLoanOfImmutable { .. } => 415,
             Self::MutableLoanAccess { .. } => 416,
             Self::BorrowEscapes { .. } => 417,
             Self::BorrowInvalidated { .. } => 418,

@@ -116,6 +116,7 @@ pub struct TypedExternFunction {
     pub library: String,
     pub symbol: String,
     pub signature: aelys_common::ffi::FfiSignature,
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone)]

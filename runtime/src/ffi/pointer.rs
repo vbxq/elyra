@@ -279,6 +279,12 @@ fn to_string(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::ptr(reference.index()))
 }
 
+fn display(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let address = pointer(vm, args[0], "ptr.to_string")?;
+    let reference = vm.alloc_string(&format!("{address:#x}"))?;
+    Ok(Value::ptr(reference.index()))
+}
+
 pub(crate) const POINTER_NATIVES: &[(&str, u16, Native)] = &[
     ("__ptr_null", 0, null),
     ("__ptr_is_null", 1, is_null),
@@ -288,6 +294,7 @@ pub(crate) const POINTER_NATIVES: &[(&str, u16, Native)] = &[
     ("__ptr_alloc", 1, alloc),
     ("__ptr_free", 1, free),
     ("__ptr_to_string", 1, to_string),
+    ("__ptr_display", 1, display),
     ("__ptr_read_i8", 2, read_i8),
     ("__ptr_write_i8", 3, write_i8),
     ("__ptr_read_i16", 2, read_i16),

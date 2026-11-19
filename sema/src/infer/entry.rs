@@ -29,6 +29,7 @@ pub struct InferenceResult {
     pub generic_structs: Vec<crate::types::StructDef>,
     pub generic_enums: Vec<crate::types::EnumDef>,
     pub constants: std::collections::BTreeMap<String, crate::infer::constants::ConstValue>,
+    pub externs: std::collections::BTreeMap<String, crate::infer::FfiDecl>,
 }
 
 impl Default for TypeInference {
@@ -91,6 +92,7 @@ impl Default for TypeInference {
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),
             ffi_functions: HashMap::new(),
+            module_externs: std::collections::BTreeMap::new(),
             ffi_variadic_instances: Vec::new(),
             ffi_instance_names: HashSet::new(),
             top_level_externs: HashSet::new(),
@@ -1792,6 +1794,7 @@ impl TypeInference {
             return Err(inf.errors);
         }
 
+        let externs = inf.own_extern_declarations();
         let type_table = inf.type_table;
 
         Ok(InferenceResult {
@@ -1805,6 +1808,7 @@ impl TypeInference {
             generic_structs: generic_templates.0,
             generic_enums: generic_templates.1,
             constants: inf.exported_constants,
+            externs,
         })
     }
 

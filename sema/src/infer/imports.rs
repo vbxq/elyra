@@ -10,6 +10,7 @@ pub struct ImportedTypes {
     pub withheld: BTreeMap<String, String>,
     pub module_globals: BTreeMap<String, BTreeMap<String, InferType>>,
     pub module_scoped_globals: BTreeMap<String, BTreeSet<String>>,
+    pub module_externs: BTreeMap<String, BTreeMap<String, crate::infer::FfiDecl>>,
     // declares it; the importing file never asked for it and may not name it
     pub private_nominals: BTreeMap<String, String>,
     // the subset of `private_nominals` its own module never made public, so no `use` line
@@ -82,6 +83,7 @@ impl ImportedTypes {
         self.module_globals.extend(other.module_globals);
         self.module_scoped_globals
             .extend(other.module_scoped_globals);
+        self.module_externs.extend(other.module_externs);
         self.private_nominals.extend(other.private_nominals);
         self.unexported_nominals.extend(other.unexported_nominals);
         self.struct_def_ordinals.extend(other.struct_def_ordinals);
@@ -129,6 +131,7 @@ impl TypeInference {
         self.withheld_nominals = imported.withheld;
         self.module_globals = imported.module_globals;
         self.module_scoped_globals = imported.module_scoped_globals;
+        self.module_externs = imported.module_externs;
         self.module_scopes = imported.module_scopes;
         self.ambiguous_imports = imported.ambiguous_imports;
         self.immutable_imports = imported.immutable_imports;

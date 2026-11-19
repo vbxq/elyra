@@ -97,7 +97,10 @@ pub fn register(table: &mut TypeTable) {
 }
 
 pub fn provides(trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
-    if trait_name == DISPLAY_TRAIT && trait_args.is_empty() && is_structural_display(ty) {
+    if trait_name == DISPLAY_TRAIT
+        && trait_args.is_empty()
+        && (is_structural_display(ty) || *ty == InferType::Ptr)
+    {
         return true;
     }
     trait_name == FROM_TRAIT && matches!(trait_args, [source] if source == ty)
@@ -137,6 +140,23 @@ pub fn contains_nominal(ty: &InferType) -> bool {
             contains_nominal(first) || contains_nominal(second)
         }
         InferType::Tuple(elements) => elements.iter().any(contains_nominal),
+        _ => false,
+    }
+}
+
+// a ptr is a plain integer at run time, so only the compiler can render it as an address
+pub fn contains_ptr(ty: &InferType) -> bool {
+    match ty {
+        InferType::Ptr => true,
+        InferType::Vec(element)
+        | InferType::Array(element)
+        | InferType::FixedArray(element, _)
+        | InferType::Option(element) => contains_ptr(element),
+        InferType::Result(first, second) | InferType::Map(first, second) => {
+            contains_ptr(first) || contains_ptr(second)
+        }
+        InferType::Tuple(elements) => elements.iter().any(contains_ptr),
+        InferType::Applied { args, .. } => args.iter().any(contains_ptr),
         _ => false,
     }
 }

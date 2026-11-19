@@ -14,6 +14,7 @@ mod stdlib_loaded;
 mod stdlib_register;
 mod types;
 
+pub(crate) use compile::extern_bindings;
 pub use exported_types::{
     ExportedTypes, NominalScope, NominalScopeEntry, select_exported_nominals, widen_nominal_scope,
 };

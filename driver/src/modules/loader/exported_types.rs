@@ -27,6 +27,7 @@ pub struct ExportedTypes {
     pub scope: aelys_sema::infer::imports::ModuleScope,
     pub generic_fns: Vec<Stmt>,
     pub pub_generic_fns: BTreeMap<String, String>,
+    pub externs: BTreeMap<String, aelys_sema::FfiDecl>,
 }
 
 #[derive(Debug, Clone, Copy)]

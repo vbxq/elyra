@@ -18,13 +18,13 @@ impl Compiler {
         functions: &[TypedExternFunction],
         span: Span,
     ) -> Result<()> {
-        let origin = self.source.name.clone();
         for function in functions {
+            let origin = function.origin.as_ref().unwrap_or(&self.source.name);
             let operands = [
                 text(&function.library, span),
                 text(&function.symbol, span),
                 text(&function.signature.encode(), span),
-                text(&origin, span),
+                text(origin, span),
             ];
             let operands: Vec<Operand<'_>> = operands.iter().map(Operand::Expr).collect();
             let register = self.alloc_register()?;
@@ -50,13 +50,22 @@ impl Compiler {
             return Ok(false);
         }
         let mut operands = Vec::with_capacity(args.len() + 1);
-        match separator {
-            MemberSeparator::Path if matches!(object.kind, TypedExprKind::Unit) => {}
-            MemberSeparator::Dot => operands.push(Operand::Expr(object)),
-            MemberSeparator::Path => return Ok(false),
-        }
+        let native = match separator {
+            MemberSeparator::Path if matches!(object.kind, TypedExprKind::Unit) => {
+                format!("__ptr_{member}")
+            }
+            MemberSeparator::Dot if member == "to_string" && args.is_empty() => {
+                operands.push(Operand::Expr(object));
+                "__ptr_display".to_string()
+            }
+            MemberSeparator::Dot if aelys_sema::is_ptr_method(member) => {
+                operands.push(Operand::Expr(object));
+                format!("__ptr_{member}")
+            }
+            MemberSeparator::Dot | MemberSeparator::Path => return Ok(false),
+        };
         operands.extend(args.iter().map(Operand::Expr));
-        self.call_native(&format!("__ptr_{member}"), &operands, dest, span)?;
+        self.call_native(&native, &operands, dest, span)?;
         Ok(true)
     }
 }

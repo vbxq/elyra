@@ -35,6 +35,7 @@ impl TypeInference {
         let mut definition_mark = None;
         let mut definition_qualified: Vec<String> = Vec::new();
         let mut importer_scope = None;
+        let mut importer_externs = None;
         if let Some(definition_module) = &stmt.definition_module {
             self.current_module = definition_module.clone();
             definition_scope = self.push_definition_module_globals(definition_module);
@@ -53,6 +54,13 @@ impl TypeInference {
                     std::mem::replace(&mut self.module_aliases, scope.module_aliases),
                     std::mem::replace(&mut self.known_native_globals, native_globals),
                 ));
+            }
+            if self.module_externs.contains_key(definition_module.as_str()) {
+                if !definition_scope {
+                    self.env.push_scope();
+                    definition_scope = true;
+                }
+                importer_externs = self.push_definition_module_externs(definition_module);
             }
             definition_mark = Some((
                 self.errors.len(),
@@ -199,6 +207,9 @@ impl TypeInference {
         };
         if definition_scope {
             self.env.pop_scope();
+        }
+        if let Some(externs) = importer_externs {
+            self.ffi_functions = externs;
         }
         if let Some((module_aliases, known_native_globals)) = importer_scope {
             self.module_aliases = module_aliases;

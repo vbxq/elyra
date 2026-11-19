@@ -8,7 +8,12 @@ use aelys_syntax::{
 
 pub(crate) fn map_key_types() -> Vec<InferType> {
     let mut keys = InferType::all_integer_types();
-    keys.extend([InferType::String, InferType::Char, InferType::Bool]);
+    keys.extend([
+        InferType::String,
+        InferType::Char,
+        InferType::Bool,
+        InferType::Ptr,
+    ]);
     keys
 }
 

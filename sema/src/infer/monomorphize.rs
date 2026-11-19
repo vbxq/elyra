@@ -3805,7 +3805,34 @@ fn resolve_deferred_statement_types(stmt: &mut TypedStmt) {
     }
 }
 
+fn render_ptr_address(expr: &mut TypedExpr) {
+    let span = expr.span;
+    let placeholder = TypedExpr::new(TypedExprKind::Unit, InferType::Unit, span);
+    let object = std::mem::replace(expr, placeholder);
+    let callee = TypedExpr::new(
+        TypedExprKind::Member {
+            object: Box::new(object),
+            member: "to_string".to_string(),
+            separator: aelys_syntax::MemberSeparator::Dot,
+        },
+        InferType::function(Vec::new(), InferType::String),
+        span,
+    );
+    *expr = TypedExpr::new(
+        TypedExprKind::Call {
+            callee: Box::new(callee),
+            args: Vec::new(),
+        },
+        InferType::String,
+        span,
+    );
+}
+
 pub(crate) fn mark_display_argument(arg: &mut TypedExpr) {
+    if arg.ty == InferType::Ptr {
+        render_ptr_address(arg);
+        return;
+    }
     if matches!(arg.kind, TypedExprKind::FmtString(_))
         || crate::prelude::provides(crate::prelude::DISPLAY_TRAIT, &arg.ty, &[])
     {
@@ -3848,6 +3875,14 @@ fn resolve_display_marker(expr: &mut TypedExpr, type_table: &crate::types::TypeT
     let Some(receiver) = concrete_receiver(type_table, &object.ty) else {
         return;
     };
+    if receiver == InferType::Ptr {
+        let placeholder = TypedExpr::new(TypedExprKind::Unit, InferType::Unit, expr.span);
+        let mut object = std::mem::replace(object.as_mut(), placeholder);
+        object.ty = InferType::Ptr;
+        render_ptr_address(&mut object);
+        *expr = object;
+        return;
+    }
     if let BoundSelection::Selected(resolved) = type_table.select_bound_method(
         crate::prelude::DISPLAY_TRAIT,
         &receiver,

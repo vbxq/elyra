@@ -87,7 +87,7 @@ impl TypeInference {
         };
         if mutable && !self.env.is_mutable(&root) {
             self.push_borrow_error(
-                TypeErrorKind::MutableLoanOverlap {
+                TypeErrorKind::MutableLoanOfImmutable {
                     place: root.clone(),
                 },
                 span,
@@ -124,7 +124,7 @@ impl TypeInference {
         };
         if kind == ReferenceKind::Mutable && !self.env.is_mutable(&root) {
             self.push_borrow_error(
-                TypeErrorKind::MutableLoanOverlap {
+                TypeErrorKind::MutableLoanOfImmutable {
                     place: root.clone(),
                 },
                 span,

@@ -103,6 +103,9 @@ impl NominalImports {
                     .insert(aelys_sema::module_scoped_global(module, name));
             }
         }
+        self.body_globals.extend(super::loader::extern_bindings(
+            &exported.private_types.module_externs,
+        ));
         for (name, origin) in &selected.private_nominals {
             self.inherited
                 .entry(name.clone())
@@ -163,6 +166,12 @@ impl NominalImports {
                 module.as_str().to_string(),
                 module_info.exported_types.scoped_globals.clone(),
             );
+            self.types.module_externs.insert(
+                module.as_str().to_string(),
+                module_info.exported_types.externs.clone(),
+            );
+            self.body_globals
+                .extend(super::loader::extern_bindings(&self.types.module_externs));
             for name in exported.own_private_types.nominal_names() {
                 self.inherited
                     .entry(name.clone())

@@ -7,6 +7,7 @@ mod exhaustive;
 mod expr;
 mod expr_sum;
 mod ffi;
+pub use ffi::{FfiDecl, is_ptr_method};
 mod finalize;
 mod functions;
 pub mod imports;
@@ -229,6 +230,8 @@ pub struct TypeInference {
     known_native_globals: HashSet<String>,
     known_native_signatures: HashMap<String, InferType>,
     ffi_functions: HashMap<String, ffi::FfiDecl>,
+    module_externs:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, ffi::FfiDecl>>,
     ffi_variadic_instances: Vec<crate::typed_ast::TypedExternFunction>,
     ffi_instance_names: HashSet<String>,
     top_level_externs: HashSet<(usize, usize)>,
@@ -475,7 +478,7 @@ impl TypeInference {
                 continue;
             }
             let checked = if residual.trait_name == crate::prelude::DISPLAY_TRAIT {
-                crate::prelude::contains_nominal(&ty)
+                crate::prelude::contains_nominal(&ty) || crate::prelude::contains_ptr(&ty)
             } else {
                 matches!(ty, InferType::Struct(_) | InferType::Applied { .. })
             };
