@@ -16,6 +16,25 @@ impl VM {
         )
     }
 
+    // the index as written and the container's real length, whatever encoding the index has
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn index_error(&self, index: super::Value, container: super::Value) -> RuntimeError {
+        let length = container
+            .as_ptr()
+            .and_then(|raw| self.heap.get(super::GcRef::new(raw)))
+            .map_or(0, |object| match &object.kind {
+                ObjectKind::Array(array) => array.len(),
+                ObjectKind::Vec(vector) => vector.len(),
+                ObjectKind::String(string) => string.as_str().chars().count(),
+                _ => 0,
+            });
+        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
+            index: self.int_value(index).unwrap_or(-1),
+            length: i64::try_from(length).unwrap_or(i64::MAX),
+        })
+    }
+
     pub fn runtime_error_with_hint(&self, kind: RuntimeErrorKind, var_name: &str) -> RuntimeError {
         let mut error = self.runtime_error(kind);
 

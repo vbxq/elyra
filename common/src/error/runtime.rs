@@ -93,14 +93,14 @@ pub enum RuntimeErrorKind {
     Interrupted,
     Exit(i32),
     IndexOutOfBounds {
-        index: i64,
+        index: i128,
         length: i64,
     },
     MapKeyNotFound {
         key: String,
     },
     InvalidCharScalar {
-        value: i64,
+        value: i128,
     },
     VecChangedDuringSort,
 }

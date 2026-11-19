@@ -232,9 +232,8 @@ fn native_alloc(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             format!("size {} exceeds max {}", size, MAX_ALLOC),
         ));
     }
-    let handle = vm.store_resource(Resource::ByteBuffer(ByteBuffer {
-        data: vec![0u8; size as usize],
-    }));
+    let data = vm.zeroed_host_bytes(size as usize)?;
+    let handle = vm.store_resource(Resource::ByteBuffer(ByteBuffer { data }));
     Ok(Value::int(handle as i64))
 }
 
@@ -272,12 +271,22 @@ fn native_resize(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             format!("size {} exceeds max {}", new_size, MAX_ALLOC),
         ));
     }
-    if let Some(Resource::ByteBuffer(buf)) = vm.get_resource_mut(h) {
-        buf.data.resize(new_size as usize, 0);
-        Ok(Value::unit())
-    } else {
-        Err(err(vm, "resize", "invalid handle".into()))
-    }
+    let new_size = new_size as usize;
+    let resized = match vm.get_resource_mut(h) {
+        Some(Resource::ByteBuffer(buf)) => {
+            let growth = new_size.saturating_sub(buf.data.len());
+            if buf.data.try_reserve_exact(growth).is_ok() {
+                buf.data.resize(new_size, 0);
+                Ok(())
+            } else {
+                Err(growth)
+            }
+        }
+        _ => return Err(err(vm, "resize", "invalid handle".into())),
+    };
+    resized
+        .map(|()| Value::unit())
+        .map_err(|growth| vm.host_out_of_memory(growth))
 }
 
 fn native_clone(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {

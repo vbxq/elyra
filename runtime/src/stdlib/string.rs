@@ -221,8 +221,13 @@ fn native_repeat(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if n <= 0 {
         return make_string(vm, "");
     }
-
-    make_string(vm, &s.repeat(n as usize))
+    let s = s.to_string();
+    let count = usize::try_from(n).unwrap_or(usize::MAX);
+    let mut repeated = vm.host_string(s.len().checked_mul(count))?;
+    for _ in 0..count {
+        repeated.push_str(&s);
+    }
+    make_string(vm, &repeated)
 }
 
 /// reverse(s) - Reverse string (by characters).
@@ -263,7 +268,7 @@ fn native_trim_end(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 /// pad_left(s, width, char) - Pad start to width with char.
 fn native_pad_left(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.pad_left")?.to_string();
-    let width = get_int(vm, args[1], "string.pad_left")? as usize;
+    let width = usize::try_from(get_int(vm, args[1], "string.pad_left")?).unwrap_or(0);
     let pad_char = get_string(vm, args[2], "string.pad_left")?.to_string();
 
     let pad_c = pad_char.chars().next().unwrap_or(' ');
@@ -273,14 +278,22 @@ fn native_pad_left(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         return make_string(vm, &s);
     }
 
-    let padding: String = std::iter::repeat_n(pad_c, width - char_count).collect();
-    make_string(vm, &format!("{}{}", padding, s))
+    let missing = width - char_count;
+    let mut padding = vm.host_string(
+        pad_c
+            .len_utf8()
+            .checked_mul(missing)
+            .and_then(|bytes| bytes.checked_add(s.len())),
+    )?;
+    padding.extend(std::iter::repeat_n(pad_c, missing));
+    padding.push_str(&s);
+    make_string(vm, &padding)
 }
 
 /// pad_right(s, width, char) - Pad end to width with char.
 fn native_pad_right(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.pad_right")?.to_string();
-    let width = get_int(vm, args[1], "string.pad_right")? as usize;
+    let width = usize::try_from(get_int(vm, args[1], "string.pad_right")?).unwrap_or(0);
     let pad_char = get_string(vm, args[2], "string.pad_right")?.to_string();
 
     let pad_c = pad_char.chars().next().unwrap_or(' ');
@@ -290,8 +303,17 @@ fn native_pad_right(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
         return make_string(vm, &s);
     }
 
-    let padding: String = std::iter::repeat_n(pad_c, width - char_count).collect();
-    make_string(vm, &format!("{}{}", s, padding))
+    let missing = width - char_count;
+    let mut padding = vm.host_string(
+        pad_c
+            .len_utf8()
+            .checked_mul(missing)
+            .and_then(|bytes| bytes.checked_add(s.len())),
+    )?;
+    padding.extend(std::iter::repeat_n(pad_c, missing));
+    let mut padded = s;
+    padded.push_str(&padding);
+    make_string(vm, &padded)
 }
 
 /// is_empty(s) - Check if string is empty.

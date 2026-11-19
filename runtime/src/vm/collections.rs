@@ -77,7 +77,7 @@ fn int_arg(vm: &VM, value: Value, operation: &'static str) -> Result<i64, Runtim
 
 fn out_of_bounds(vm: &VM, index: i64, length: usize) -> RuntimeError {
     vm.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-        index,
+        index: i128::from(index),
         length: i64::try_from(length).unwrap_or(i64::MAX),
     })
 }
@@ -310,8 +310,14 @@ fn vec_resize(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
             push_all(vm, vector, &[copy], "vec resize")?;
         }
     } else {
-        let fill = vec![args[2]; target - current];
-        push_all(vm, vector, &fill, "vec resize")?;
+        vm.reserve_vec(vector, target - current)?;
+        let fill = [args[2]; 256];
+        let mut remaining = target - current;
+        while remaining > 0 {
+            let count = remaining.min(fill.len());
+            push_all(vm, vector, &fill[..count], "vec resize")?;
+            remaining -= count;
+        }
     }
     Ok(Value::unit())
 }
@@ -783,7 +789,8 @@ fn map_index(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let key = key_of(vm, args[1], "map index")?;
     read_map(vm, map, |inner| inner.get(&key)).ok_or_else(|| {
         let rendered = match args[1].as_ptr() {
-            Some(_) => format!("{:?}", vm.value_to_string(args[1])),
+            Some(_) if !vm.is_int_value(args[1]) => format!("{:?}", vm.value_to_string(args[1])),
+            Some(_) => vm.value_to_string(args[1]),
             None => match args[1].as_char() {
                 Some(c) => format!("{c:?}"),
                 None => vm.value_to_string(args[1]),
@@ -949,7 +956,9 @@ pub(crate) fn string_from_char(vm: &mut VM, args: &[Value]) -> Result<Value, Run
 }
 
 pub(crate) fn char_from_scalar(vm: &VM, value: Value) -> Result<Value, RuntimeError> {
-    let raw = int_arg(vm, value, "int as char")?;
+    let raw = vm
+        .int_value(value)
+        .ok_or_else(|| type_error(vm, "int as char", "int", value))?;
     u32::try_from(raw)
         .ok()
         .and_then(char::from_u32)

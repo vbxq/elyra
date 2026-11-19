@@ -178,6 +178,40 @@ impl VM {
         }
     }
 
+    // a host buffer sized by a program value passes the heap budget before it exists
+    pub fn reserve_host_bytes(&mut self, bytes: Option<usize>) -> Result<(), RuntimeError> {
+        let requested = bytes
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .unwrap_or(u64::MAX);
+        self.maybe_collect_for(requested);
+        self.ensure_heap_capacity(requested)
+    }
+
+    pub fn host_string(&mut self, bytes: Option<usize>) -> Result<String, RuntimeError> {
+        self.reserve_host_bytes(bytes)?;
+        let bytes = bytes.unwrap_or(usize::MAX);
+        let mut text = String::new();
+        text.try_reserve_exact(bytes)
+            .map_err(|_| self.host_out_of_memory(bytes))?;
+        Ok(text)
+    }
+
+    pub fn zeroed_host_bytes(&mut self, bytes: usize) -> Result<Vec<u8>, RuntimeError> {
+        let mut buffer = Vec::new();
+        buffer
+            .try_reserve_exact(bytes)
+            .map_err(|_| self.host_out_of_memory(bytes))?;
+        buffer.resize(bytes, 0);
+        Ok(buffer)
+    }
+
+    pub fn host_out_of_memory(&self, bytes: usize) -> RuntimeError {
+        self.runtime_error(RuntimeErrorKind::OutOfMemory {
+            requested: u64::try_from(bytes).unwrap_or(u64::MAX),
+            max: self.config.max_heap_bytes,
+        })
+    }
+
     pub(crate) fn ensure_heap_capacity(&self, additional: u64) -> Result<(), RuntimeError> {
         let heap_bytes = u64::try_from(self.heap.bytes_allocated()).unwrap_or(u64::MAX);
         let new_total = heap_bytes.checked_add(additional).ok_or_else(|| {

@@ -469,19 +469,16 @@ impl VM {
                 let index = self.int64_value(index_value).unwrap_or(-1);
                 if index < 0 {
                     self.frames[current_frame_idx].ip = ip;
-                    return Err(
-                        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
-                    );
+                    return Err(self.index_error(index_value, array_value));
                 }
-                let index_usize = usize::try_from(index).map_err(|_| {
-                    self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
-                })?;
+                let index_usize = usize::try_from(index)
+                    .map_err(|_| self.index_error(index_value, array_value))?;
                 let array_ref = GcRef::new(array_value.as_ptr().unwrap_or(0));
                 let value = match self.heap.get(array_ref) {
                     Some(object) => match &object.kind {
                         ObjectKind::Array(array) => array.get(index_usize).ok_or_else(|| {
                             self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index,
+                                index: self.int_value(index_value).unwrap_or(-1),
                                 length: i64::try_from(array.len()).unwrap_or(i64::MAX),
                             })
                         })?,
@@ -514,9 +511,8 @@ impl VM {
                 let index_value = reg_get!(base + b);
                 let index = self.int64_value(index_value).unwrap_or(-1);
                 let value = reg_get!(base + c);
-                let index_usize = usize::try_from(index).map_err(|_| {
-                    self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
-                })?;
+                let index_usize = usize::try_from(index)
+                    .map_err(|_| self.index_error(index_value, array_value))?;
                 let array_ref = GcRef::new(array_value.as_ptr().unwrap_or(0));
                 let length = match self.heap.get(array_ref) {
                     Some(object) => match &object.kind {
@@ -542,9 +538,10 @@ impl VM {
                             _ => false,
                         });
                 if !stored {
-                    return Err(
-                        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length })
-                    );
+                    return Err(self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
+                        index: i128::from(index),
+                        length,
+                    }));
                 }
                 self.heap
                     .write_barrier_element(array_ref, index_usize, value);
@@ -716,22 +713,21 @@ impl VM {
                 let vec_value = reg_get!(base + b);
                 let index_value = reg_get!(base + c);
                 let index = self.int64_value(index_value).unwrap_or(-1);
-                let index_usize = usize::try_from(index).map_err(|_| {
-                    self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
-                })?;
+                let index_usize =
+                    usize::try_from(index).map_err(|_| self.index_error(index_value, vec_value))?;
                 let vec_ref = GcRef::new(vec_value.as_ptr().unwrap_or(0));
                 let value = match self.heap.get(vec_ref) {
                     Some(object) => match &object.kind {
                         ObjectKind::Vec(vector) => vector.get(index_usize).ok_or_else(|| {
                             self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                index,
+                                index: self.int_value(index_value).unwrap_or(-1),
                                 length: i64::try_from(vector.len()).unwrap_or(i64::MAX),
                             })
                         })?,
                         ObjectKind::Array(array) if inner_opcode == OpCode::VecLoadP => {
                             array.get(index_usize).ok_or_else(|| {
                                 self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                    index,
+                                    index: self.int_value(index_value).unwrap_or(-1),
                                     length: i64::try_from(array.len()).unwrap_or(i64::MAX),
                                 })
                             })?
@@ -740,7 +736,7 @@ impl VM {
                             let character =
                                 string.as_str().chars().nth(index_usize).ok_or_else(|| {
                                     self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
-                                        index,
+                                        index: self.int_value(index_value).unwrap_or(-1),
                                         length: i64::try_from(string.as_str().chars().count())
                                             .unwrap_or(i64::MAX),
                                     })
@@ -777,9 +773,8 @@ impl VM {
                 let index_value = reg_get!(base + b);
                 let index = self.int64_value(index_value).unwrap_or(-1);
                 let value = reg_get!(base + c);
-                let index_usize = usize::try_from(index).map_err(|_| {
-                    self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length: 0 })
-                })?;
+                let index_usize =
+                    usize::try_from(index).map_err(|_| self.index_error(index_value, vec_value))?;
                 let vec_ref = GcRef::new(vec_value.as_ptr().unwrap_or(0));
                 let length = match self.heap.get(vec_ref) {
                     Some(object) => match &object.kind {
@@ -805,9 +800,10 @@ impl VM {
                             _ => false,
                         });
                 if !stored {
-                    return Err(
-                        self.runtime_error(RuntimeErrorKind::IndexOutOfBounds { index, length })
-                    );
+                    return Err(self.runtime_error(RuntimeErrorKind::IndexOutOfBounds {
+                        index: i128::from(index),
+                        length,
+                    }));
                 }
                 self.heap.write_barrier_element(vec_ref, index_usize, value);
             }
@@ -828,7 +824,7 @@ impl VM {
                                 None => {
                                     return Err(self.runtime_error(
                                         RuntimeErrorKind::IndexOutOfBounds {
-                                            index,
+                                            index: self.int_value(index_value).unwrap_or(-1),
                                             length: i64::try_from(text.chars().count())
                                                 .unwrap_or(i64::MAX),
                                         },
