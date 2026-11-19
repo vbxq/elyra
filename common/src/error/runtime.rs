@@ -124,8 +124,8 @@ pub enum RuntimeErrorKind {
     FfiLibraryNotFound {
         library: String,
         function: String,
-        tried: Vec<String>,
-        reason: String,
+        tried: Box<[String]>,
+        reason: Box<str>,
     },
     FfiSymbolNotFound {
         library: String,

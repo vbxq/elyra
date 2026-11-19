@@ -146,8 +146,8 @@ fn resolve(vm: &VM, function: &FfiFunction) -> Result<Resolved, RuntimeError> {
         vm.runtime_error(RuntimeErrorKind::FfiLibraryNotFound {
             library: function.library.clone(),
             function: function.symbol.clone(),
-            tried: missing.tried,
-            reason: missing.reason,
+            tried: missing.tried.into_boxed_slice(),
+            reason: missing.reason.into_boxed_str(),
         })
     })?;
     let target = unsafe {
