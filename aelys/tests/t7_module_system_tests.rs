@@ -252,7 +252,7 @@ fn a_runtime_error_inside_a_module_names_the_module_file_and_line() {
     assert!(error.contains("main.aelys:4)"), "{error}");
 }
 
-const SCOPED_LIB: &str = "use std::bytes as by
+const SCOPED_LIB: &str = "use std::math as by
 use util as u
 use util::{thrice}
 pub struct Key { pub lo: int, pub hi: int }
@@ -269,8 +269,7 @@ impl Table {
         let h = Hidden { v: helper(n) }
         let kind = Kind::A(u::twice(n))
         let extra = match kind { Kind::A(x) => x, Kind::B => 0 }
-        let b = by::from_string(\"AB\")
-        let first = by::read_u8(b, 0)
+        let first = by::abs(0 - 65)
         Table { total: k.lo + k.hi + h.v + extra + thrice(1) + SCALE + first + math::abs(0 - 1) + \"5\".to_int().unwrap_or(0) }
     }
     fn get(self) -> int { self.total }
@@ -397,17 +396,17 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
         run_int(
             &dir,
             "qualified.aelys",
-            "use std::fs\nuse std::bytes\nlet b = bytes::alloc(4)\nbytes::size(b)\n"
+            "use std::fs\nuse std::net\nmatch net::close(4) { Ok(_) => 0, Err(_) => 4 }\n"
         ),
         4
     );
     let bare = run_err(
         &dir,
         "bare.aelys",
-        "use std::fs\nuse std::bytes\nlet b = bytes::alloc(4)\nsize(b)\n",
+        "use std::fs\nuse std::net\nlet h = 4\nclose(h)\n",
     );
     assert!(bare.contains("E0445"), "{bare}");
-    assert!(bare.contains("'size'"), "{bare}");
+    assert!(bare.contains("'close'"), "{bare}");
     assert!(
         bare.contains("bare.aelys:4:1"),
         "the use site carries it: {bare}"
@@ -416,7 +415,7 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
         run_int(
             &dir,
             "named.aelys",
-            "use std::fs\nuse std::bytes::{size}\nuse std::bytes\nsize(bytes::alloc(3))\n"
+            "use std::fs\nuse std::net::{close}\nuse std::net\nmatch close(3) { Ok(_) => 0, Err(_) => 3 }\n"
         ),
         3,
         "a name imported by name wins over the whole-module ones"
@@ -424,7 +423,7 @@ fn two_whole_module_imports_sharing_a_name_clash_only_on_a_bare_use() {
     let twice = run_err(
         &dir,
         "twice.aelys",
-        "use std::fs::{size}\nuse std::bytes::{size}\n",
+        "use std::fs::{close}\nuse std::net::{close}\n",
     );
     assert!(twice.contains("E0410"), "{twice}");
     assert!(twice.contains("twice.aelys:2:1"), "{twice}");
@@ -531,7 +530,7 @@ fn an_alias_or_a_bare_import_never_rebinds_another_module_reference() {
         ),
         (
             "sb.aelys",
-            "use std::bytes as io2\npub fn run() -> int { io2::size(io2::alloc(7)) }\n",
+            "use std::string as io2\npub fn run() -> int { io2::len(\"seven!!\") }\n",
         ),
     ]);
     assert_eq!(

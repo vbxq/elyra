@@ -778,6 +778,14 @@ impl TypeInference {
                         },
                         lookup_reason,
                     )
+                } else if path == "bytes" {
+                    (
+                        TypeErrorKind::RemovedBytesFunction {
+                            name: member.to_string(),
+                            replacement: crate::native::removed_bytes_replacement(member),
+                        },
+                        lookup_reason,
+                    )
                 } else {
                     (
                         TypeErrorKind::UndefinedFunction {

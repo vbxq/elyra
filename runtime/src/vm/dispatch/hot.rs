@@ -1120,11 +1120,14 @@ impl VM {
                     else {
                         leave!();
                     };
-                    let Some(&value) = vector.data.as_ints().and_then(|items| items.get(index))
-                    else {
-                        leave!();
+                    let value = match vector.data.as_ints() {
+                        Some(items) => Value::int_wrapping(*or_leave!(items.get(index))),
+                        None => {
+                            let items = or_leave!(vector.data.as_bytes());
+                            Value::int(i64::from(*or_leave!(items.get(index))))
+                        }
                     };
-                    set!(a, Value::int_wrapping(value));
+                    set!(a, value);
                     next
                 }
                 SET_GLOBAL_IDX => {
@@ -1195,14 +1198,13 @@ impl VM {
                     else {
                         leave!();
                     };
-                    let Some(slot) = vector
-                        .data
-                        .as_ints_mut()
-                        .and_then(|items| items.get_mut(index))
-                    else {
-                        leave!();
-                    };
-                    *slot = value;
+                    match vector.data.as_ints_mut() {
+                        Some(items) => *or_leave!(items.get_mut(index)) = value,
+                        None => {
+                            let items = or_leave!(vector.data.as_bytes_mut());
+                            *or_leave!(items.get_mut(index)) = or_leave!(u8::try_from(value).ok());
+                        }
+                    }
                     next
                 }
                 VEC_STORE_F => {

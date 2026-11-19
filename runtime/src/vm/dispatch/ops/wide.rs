@@ -623,6 +623,9 @@ impl VM {
             }
             OpCode::VecNewI | OpCode::VecNewF | OpCode::VecNewB | OpCode::VecNewP => {
                 let vector = match inner_opcode {
+                    OpCode::VecNewI if c == usize::from(aelys_bytecode::VEC_NEW_BYTES) => {
+                        AelysVec::new_bytes()
+                    }
                     OpCode::VecNewI => AelysVec::new_ints(),
                     OpCode::VecNewF => AelysVec::new_floats(),
                     OpCode::VecNewB => AelysVec::new_bools(),

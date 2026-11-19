@@ -1,6 +1,6 @@
 use super::super::checksum::compute_file_checksum;
 use super::super::types::{
-    ExportInfo, LoadedNativeInfo, ModuleInfo, ModuleLoader, native_type_to_infer_type,
+    ExportInfo, LoadedNativeInfo, ModuleInfo, ModuleLoader, native_signature_type,
 };
 use aelys_common::Result;
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
@@ -112,16 +112,7 @@ impl ModuleLoader {
                     if let Some(signature) = &export.signature {
                         native_signatures.insert(
                             format!("{}::{}", module_alias, name),
-                            aelys_sema::InferType::Function {
-                                modes: aelys_sema::types::ParamModes::plain(),
-                                params: signature
-                                    .params
-                                    .iter()
-                                    .copied()
-                                    .map(native_type_to_infer_type)
-                                    .collect(),
-                                ret: Box::new(native_type_to_infer_type(signature.result)),
-                            },
+                            native_signature_type(&signature.params, signature.result),
                         );
                     }
 
@@ -143,11 +134,14 @@ impl ModuleLoader {
 
                     let display_name = format!("{}::{}", module_alias, name);
                     let func_ref = vm
-                        .alloc_foreign_with_result(
+                        .alloc_foreign_with_signature(
                             &display_name,
                             export.arity,
                             func,
-                            export.signature.as_ref().map(|signature| signature.result),
+                            export
+                                .signature
+                                .as_ref()
+                                .map(|signature| (signature.params.as_slice(), signature.result)),
                         )
                         .map_err(AelysError::Runtime)?;
                     vm.set_global(name, Value::ptr(func_ref.index()));

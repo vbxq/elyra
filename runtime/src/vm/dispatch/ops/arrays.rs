@@ -630,9 +630,13 @@ macro_rules! execute_arrays {
             }
 
             148 => {
-                let (a, _, _) = decode_abc($instr);
+                let (a, _, c) = decode_abc($instr);
                 let dest = $base + a as usize;
-                let vec = AelysVec::new_ints();
+                let vec = if c == aelys_bytecode::VEC_NEW_BYTES {
+                    AelysVec::new_bytes()
+                } else {
+                    AelysVec::new_ints()
+                };
                 $vm.frames[$current_frame_idx].ip = $ip;
                 match $vm.alloc_vec(vec) {
                     Ok(vec_ref) => {
@@ -1553,9 +1557,10 @@ impl VM {
                 got: vector_value.type_name().to_string(),
             })
         })?;
-        let vector = match self.heap.get(crate::vm::GcRef::new(pointer)) {
+        let reference = crate::vm::GcRef::new(pointer);
+        let length = match self.heap.get(reference) {
             Some(object) => match &object.kind {
-                ObjectKind::Vec(vector) => vector.clone(),
+                ObjectKind::Vec(vector) => vector.len(),
                 _ => {
                     return Err(self.runtime_error(RuntimeErrorKind::TypeError {
                         operation: "vec slice",
@@ -1566,8 +1571,12 @@ impl VM {
             },
             None => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
         };
-        let (start, end) = self.slice_bounds(range_value, vector.len())?;
-        let result = self.alloc_vec(vector.slice(start, end))?;
+        let (start, end) = self.slice_bounds(range_value, length)?;
+        let sliced = match self.heap.get(reference).map(|object| &object.kind) {
+            Some(ObjectKind::Vec(vector)) => vector.slice(start, end),
+            _ => return Err(self.runtime_error(RuntimeErrorKind::InvalidMemoryHandle)),
+        };
+        let result = self.alloc_vec(sliced)?;
         Ok(Value::ptr(result.index()))
     }
 

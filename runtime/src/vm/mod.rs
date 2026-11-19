@@ -25,6 +25,7 @@ mod resources;
 mod roots;
 
 mod arithmetic;
+pub(crate) mod byte_vec;
 mod call_data;
 mod calls;
 mod clone;
@@ -58,7 +59,8 @@ pub use jit_frame::{
     aelys_frame_tier_up, aelys_frame_vec_push, aelys_frame_view,
 };
 pub use native::{
-    ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl, build_native_vm_api,
+    ByteParams, ForeignPayloadKind, ForeignReturnKind, NativeFn, NativeFunctionImpl,
+    build_native_vm_api,
 };
 pub use roots::HostRoot;
 pub use verifier::{verify_emitted_function, verify_function};

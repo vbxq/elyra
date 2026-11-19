@@ -12,42 +12,106 @@ struct Borrow {
     exclusive: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ByteParams {
+    shared: u64,
+    writable: u64,
+    untyped: bool,
+}
+
+impl ByteParams {
+    pub const UNTYPED: Self = Self {
+        shared: 0,
+        writable: 0,
+        untyped: true,
+    };
+    pub const NONE: Self = Self {
+        shared: 0,
+        writable: 0,
+        untyped: false,
+    };
+
+    pub fn from_params(params: Option<&[aelys_native::AelysNativeType]>) -> Self {
+        let Some(params) = params else {
+            return Self::UNTYPED;
+        };
+        let mut bytes = Self::NONE;
+        for (index, param) in params.iter().enumerate().take(64) {
+            match param {
+                aelys_native::AelysNativeType::Bytes => bytes.shared |= 1 << index,
+                aelys_native::AelysNativeType::BytesMut => bytes.writable |= 1 << index,
+                _ => {}
+            }
+        }
+        bytes
+    }
+
+    fn admits(self, args: &[Value], pointer: usize, exclusive: bool) -> bool {
+        if self.untyped {
+            return true;
+        }
+        let mask = if exclusive {
+            self.writable
+        } else {
+            self.shared | self.writable
+        };
+        args.iter()
+            .take(64)
+            .enumerate()
+            .any(|(index, arg)| mask & (1 << index) != 0 && arg.as_ptr() == Some(pointer))
+    }
+}
+
 #[repr(C)]
 struct RuntimeNativeContext {
     magic: u64,
     vm: *mut VM,
+    args: *const Value,
+    arg_count: usize,
+    bytes: ByteParams,
     borrowed: [Borrow; INLINE_BORROWS_PER_CALL],
     borrowed_len: usize,
     spilled: Vec<Borrow>,
 }
 
 impl RuntimeNativeContext {
+    #[cfg(test)]
     fn new(vm: *mut VM) -> Self {
+        Self::for_call(vm, &[], ByteParams::UNTYPED)
+    }
+
+    fn for_call(vm: *mut VM, args: &[Value], bytes: ByteParams) -> Self {
         Self {
             magic: NATIVE_CONTEXT_MAGIC,
             vm,
+            args: args.as_ptr(),
+            arg_count: args.len(),
+            bytes,
             borrowed: [Borrow::default(); INLINE_BORROWS_PER_CALL],
             borrowed_len: 0,
             spilled: Vec::new(),
         }
     }
 
-    fn claim(&mut self, handle: u64, exclusive: bool) -> bool {
-        let held = self.borrowed[..self.borrowed_len]
+    fn borrows(&self) -> impl Iterator<Item = &Borrow> {
+        self.borrowed[..self.borrowed_len]
             .iter()
             .chain(&self.spilled)
-            .find(|borrow| borrow.handle == handle);
-        if let Some(held) = held {
-            return !exclusive && !held.exclusive;
-        }
-        let borrow = Borrow { handle, exclusive };
+    }
+
+    fn find(&self, handle: u64) -> Option<Borrow> {
+        self.borrows()
+            .find(|borrow| borrow.handle == handle)
+            .copied()
+    }
+
+    fn push(&mut self, borrow: Borrow) {
         if self.borrowed_len < INLINE_BORROWS_PER_CALL {
             self.borrowed[self.borrowed_len] = borrow;
             self.borrowed_len += 1;
         } else {
             self.spilled.push(borrow);
         }
-        true
     }
 }
 
@@ -126,7 +190,11 @@ impl ForeignReturnKind {
                 ok: ForeignPayloadKind::Unit,
                 err: ForeignPayloadKind::String,
             },
-            Some(aelys_native::AelysNativeType::Dynamic | aelys_native::AelysNativeType::Bytes)
+            Some(
+                aelys_native::AelysNativeType::Dynamic
+                | aelys_native::AelysNativeType::Bytes
+                | aelys_native::AelysNativeType::BytesMut,
+            )
             | None => Self::Raw,
         }
     }
@@ -138,6 +206,7 @@ pub enum NativeFunctionImpl {
     Foreign {
         function: AelysNativeFn,
         result: ForeignReturnKind,
+        bytes: ByteParams,
     },
 }
 
@@ -152,9 +221,13 @@ impl NativeFunctionImpl {
                     name: String::new(),
                 })
             })?,
-            NativeFunctionImpl::Foreign { function, result } => {
+            NativeFunctionImpl::Foreign {
+                function,
+                result,
+                bytes,
+            } => {
                 let roots_base = vm.native_call_roots.len();
-                let value = Self::call_foreign(vm, function, result, args);
+                let value = Self::call_foreign(vm, function, result, bytes, args);
                 vm.native_call_roots.truncate(roots_base);
                 value
             }
@@ -170,10 +243,11 @@ impl NativeFunctionImpl {
         vm: &mut VM,
         function: AelysNativeFn,
         result: ForeignReturnKind,
+        bytes: ByteParams,
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
         let mut out = aelys_native::value_null();
-        let mut context = RuntimeNativeContext::new(vm);
+        let mut context = RuntimeNativeContext::for_call(vm, args, bytes);
         // both types are repr(transparent) over the same nan-boxed u64
         let status = unsafe {
             function(
@@ -365,34 +439,35 @@ fn borrow_bytes(
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     }
     let vm = unsafe { &mut *context.vm };
-    let handle = unsafe { std::mem::transmute::<AelysValue, Value>(handle) };
-    let Some(handle) = handle
-        .as_int()
-        .and_then(|value| usize::try_from(value).ok())
-    else {
+    let value = unsafe { std::mem::transmute::<AelysValue, Value>(handle) };
+    let args = if context.args.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(context.args, context.arg_count) }
+    };
+    let Some(pointer) = value.as_ptr() else {
         return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
     };
-    let memory = if exclusive {
-        match vm.get_resource_mut(handle) {
-            Some(crate::stdlib::Resource::ByteBuffer(buffer)) => {
-                (buffer.data.as_mut_ptr(), buffer.data.len())
-            }
-            _ => return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT,
-        }
-    } else {
-        match vm.get_resource(handle) {
-            Some(crate::stdlib::Resource::ByteBuffer(buffer)) => {
-                (buffer.data.as_ptr().cast_mut(), buffer.data.len())
-            }
-            _ => return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT,
-        }
-    };
-    if !context.claim(handle as u64, exclusive) {
+    if !context.bytes.admits(args, pointer, exclusive) {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    }
+    let key = pointer as u64;
+    let held = context.find(key);
+    if held.is_some_and(|held| exclusive || held.exclusive) {
         return aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
     }
+    let Some((data, len)) = crate::vm::byte_vec::lend_bytes(vm, value, exclusive) else {
+        return aelys_native::AELYS_NATIVE_INVALID_ARGUMENT;
+    };
+    if held.is_none() {
+        context.push(Borrow {
+            handle: key,
+            exclusive,
+        });
+    }
     unsafe {
-        *out_ptr = memory.0;
-        *out_len = memory.1;
+        *out_ptr = data;
+        *out_len = len;
     }
     0
 }
@@ -700,134 +775,159 @@ mod tests {
         );
     }
 
+    fn byte_vec(vm: &mut VM, bytes: &[u8]) -> Value {
+        let vector = crate::vm::byte_vec::bytes_vec(bytes);
+        Value::ptr(vm.alloc_vec(vector).unwrap().index())
+    }
+
+    fn vec_ints(vm: &VM, value: Value) -> Vec<i64> {
+        match &vm
+            .heap
+            .get(GcRef::new(value.as_ptr().unwrap()))
+            .unwrap()
+            .kind
+        {
+            ObjectKind::Vec(vector) => (0..vector.len())
+                .map(|index| vector.get(index).and_then(|item| item.as_int()).unwrap())
+                .collect(),
+            other => panic!("expected a vec, got {other:?}"),
+        }
+    }
+
+    fn raw(value: Value) -> AelysValue {
+        unsafe { std::mem::transmute::<Value, AelysValue>(value) }
+    }
+
+    unsafe extern "C" fn foreign_write_789(
+        context: *mut aelys_native::NativeContext,
+        args: *const AelysValue,
+        _arg_count: usize,
+        out: *mut AelysValue,
+    ) -> i32 {
+        let mut pointer = std::ptr::null_mut();
+        let mut length = 0;
+        let status =
+            native_borrow_bytes_callback(context, unsafe { *args }, &mut pointer, &mut length);
+        if status != 0 {
+            return status;
+        }
+        unsafe { std::slice::from_raw_parts_mut(pointer, length) }.copy_from_slice(&[7, 8, 9]);
+        unsafe { *out = aelys_native::value_unit() };
+        0
+    }
+
     #[test]
-    fn borrow_bytes_callback_hands_back_the_whole_buffer() {
+    fn borrow_bytes_callback_hands_back_the_whole_vector() {
         let mut vm = VM::new(Source::new("native-borrow-bytes", "")).unwrap();
-        let handle = vm.store_resource(crate::stdlib::Resource::ByteBuffer(
-            crate::stdlib::ByteBuffer {
-                data: vec![1, 2, 3, 4],
-            },
-        ));
+        let value = byte_vec(&mut vm, &[1, 2, 3, 255]);
         let mut context = RuntimeNativeContext::new(&mut vm);
         let context = (&mut context as *mut RuntimeNativeContext).cast();
-        let value = aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap();
         let mut pointer = std::ptr::null_mut();
         let mut length = 0;
 
         assert_eq!(
-            native_borrow_bytes_callback(context, value, &mut pointer, &mut length),
+            native_borrow_bytes_callback(context, raw(value), &mut pointer, &mut length),
             0
         );
         assert_eq!(length, 4);
         let seen = unsafe { std::slice::from_raw_parts(pointer, length) };
-        assert_eq!(seen, &[1, 2, 3, 4]);
+        assert_eq!(seen, &[1, 2, 3, 255]);
     }
 
     #[test]
-    fn borrow_bytes_callback_writes_through_to_the_buffer() {
+    fn a_mutable_byte_parameter_writes_back_into_the_vector() {
         let mut vm = VM::new(Source::new("native-borrow-bytes-write", "")).unwrap();
-        let handle = vm.store_resource(crate::stdlib::Resource::ByteBuffer(
-            crate::stdlib::ByteBuffer { data: vec![0; 3] },
-        ));
-        let value = aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap();
-        {
-            let mut context = RuntimeNativeContext::new(&mut vm);
-            let context = (&mut context as *mut RuntimeNativeContext).cast();
-            let mut pointer = std::ptr::null_mut();
-            let mut length = 0;
-            assert_eq!(
-                native_borrow_bytes_callback(context, value, &mut pointer, &mut length),
-                0
-            );
-            unsafe { std::slice::from_raw_parts_mut(pointer, length) }.copy_from_slice(&[7, 8, 9]);
+        let value = byte_vec(&mut vm, &[0, 0, 0]);
+        NativeFunctionImpl::Foreign {
+            function: foreign_write_789,
+            result: ForeignReturnKind::Scalar(ForeignPayloadKind::Unit),
+            bytes: ByteParams::from_params(Some(&[aelys_native::AelysNativeType::BytesMut])),
         }
-        let Some(crate::stdlib::Resource::ByteBuffer(buffer)) = vm.get_resource(handle) else {
-            panic!("the buffer must still be there");
-        };
-        assert_eq!(buffer.data, vec![7, 8, 9]);
+        .call(&mut vm, &[value])
+        .unwrap();
+        assert_eq!(vec_ints(&vm, value), vec![7, 8, 9]);
     }
 
     #[test]
-    fn borrow_bytes_callback_refuses_a_handle_that_is_not_a_buffer() {
+    fn a_shared_byte_parameter_cannot_be_borrowed_mutably() {
+        let mut vm = VM::new(Source::new("native-borrow-bytes-shared", "")).unwrap();
+        let value = byte_vec(&mut vm, &[1, 2, 3]);
+        let error = NativeFunctionImpl::Foreign {
+            function: foreign_write_789,
+            result: ForeignReturnKind::Scalar(ForeignPayloadKind::Unit),
+            bytes: ByteParams::from_params(Some(&[aelys_native::AelysNativeType::Bytes])),
+        }
+        .call(&mut vm, &[value])
+        .unwrap_err();
+        assert!(matches!(
+            error.kind,
+            RuntimeErrorKind::NativeError {
+                code: aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
+            }
+        ));
+        assert_eq!(vec_ints(&vm, value), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn borrow_bytes_callback_refuses_a_value_that_is_not_a_vector() {
         let mut vm = VM::new(Source::new("native-borrow-bytes-wrong", "")).unwrap();
-        let handle = vm.store_resource(crate::stdlib::Resource::Timer(std::time::Instant::now()));
+        let text = Value::ptr(vm.alloc_string("abc").unwrap().index());
         let mut context = RuntimeNativeContext::new(&mut vm);
         let context = (&mut context as *mut RuntimeNativeContext).cast();
         let mut pointer = std::ptr::null_mut();
         let mut length = 0;
 
-        assert_eq!(
-            native_borrow_bytes_callback(
-                context,
-                aelys_native::value_int(i64::try_from(handle).unwrap()).unwrap(),
-                &mut pointer,
-                &mut length,
-            ),
-            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
-        );
-        assert_eq!(
-            native_borrow_bytes_callback(
-                context,
-                aelys_native::value_int(9999).unwrap(),
-                &mut pointer,
-                &mut length,
-            ),
-            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
-        );
-        assert_eq!(
-            native_borrow_bytes_callback(
-                context,
-                aelys_native::value_null(),
-                &mut pointer,
-                &mut length,
-            ),
-            aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
-        );
+        for value in [
+            aelys_native::value_int(3).unwrap(),
+            aelys_native::value_null(),
+            raw(text),
+        ] {
+            assert_eq!(
+                native_borrow_bytes_callback(context, value, &mut pointer, &mut length),
+                aelys_native::AELYS_NATIVE_INVALID_ARGUMENT
+            );
+        }
     }
 
     #[test]
     fn borrow_bytes_callback_shares_read_only_views_and_keeps_a_mutable_one_alone() {
         let mut vm = VM::new(Source::new("native-borrow-once", "")).unwrap();
-        let handles: Vec<usize> = (0..INLINE_BORROWS_PER_CALL + 3)
-            .map(|_| {
-                vm.store_resource(crate::stdlib::Resource::ByteBuffer(
-                    crate::stdlib::ByteBuffer { data: vec![0; 2] },
-                ))
-            })
+        let vectors: Vec<Value> = (0..INLINE_BORROWS_PER_CALL + 3)
+            .map(|_| byte_vec(&mut vm, &[0, 0]))
             .collect();
-        let value = |handle: usize| aelys_native::value_int(handle as i64).unwrap();
         let mut context = RuntimeNativeContext::new(&mut vm);
-        let raw = (&mut context as *mut RuntimeNativeContext).cast();
+        let raw_context = (&mut context as *mut RuntimeNativeContext).cast();
         let mut pointer = std::ptr::null_mut();
         let mut shared = std::ptr::null();
         let mut length = 0;
-        let mut exclusive =
-            |handle| native_borrow_bytes_callback(raw, value(handle), &mut pointer, &mut length);
+        let mut exclusive = |value: Value| {
+            native_borrow_bytes_callback(raw_context, raw(value), &mut pointer, &mut length)
+        };
         let conflict = aelys_native::AELYS_NATIVE_BORROW_CONFLICT;
 
-        assert_eq!(exclusive(handles[0]), 0);
-        assert_eq!(exclusive(handles[0]), conflict);
-        for &handle in &handles[1..INLINE_BORROWS_PER_CALL + 2] {
-            assert_eq!(exclusive(handle), 0);
+        assert_eq!(exclusive(vectors[0]), 0);
+        assert_eq!(exclusive(vectors[0]), conflict);
+        for &value in &vectors[1..INLINE_BORROWS_PER_CALL + 2] {
+            assert_eq!(exclusive(value), 0);
         }
-        assert_eq!(exclusive(handles[INLINE_BORROWS_PER_CALL + 1]), conflict);
-        let last = handles[INLINE_BORROWS_PER_CALL + 2];
-        let mut share = |handle| {
-            native_borrow_bytes_shared_callback(raw, value(handle), &mut shared, &mut length)
+        assert_eq!(exclusive(vectors[INLINE_BORROWS_PER_CALL + 1]), conflict);
+        let last = vectors[INLINE_BORROWS_PER_CALL + 2];
+        let mut share = |value: Value| {
+            native_borrow_bytes_shared_callback(raw_context, raw(value), &mut shared, &mut length)
         };
-        assert_eq!(share(handles[0]), conflict);
-        assert_eq!(share(handles[INLINE_BORROWS_PER_CALL + 1]), conflict);
+        assert_eq!(share(vectors[0]), conflict);
+        assert_eq!(share(vectors[INLINE_BORROWS_PER_CALL + 1]), conflict);
         assert_eq!(share(last), 0);
         assert_eq!(share(last), 0);
         assert_eq!(
-            native_borrow_bytes_callback(raw, value(last), &mut pointer, &mut length),
+            native_borrow_bytes_callback(raw_context, raw(last), &mut pointer, &mut length),
             conflict
         );
 
         let mut next_call = RuntimeNativeContext::new(&mut vm);
-        let raw = (&mut next_call as *mut RuntimeNativeContext).cast();
+        let raw_context = (&mut next_call as *mut RuntimeNativeContext).cast();
         assert_eq!(
-            native_borrow_bytes_callback(raw, value(handles[0]), &mut pointer, &mut length),
+            native_borrow_bytes_callback(raw_context, raw(vectors[0]), &mut pointer, &mut length),
             0
         );
     }
@@ -850,6 +950,7 @@ mod tests {
                 ok: ForeignPayloadKind::Int,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -868,6 +969,7 @@ mod tests {
                 ok: ForeignPayloadKind::Int,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -911,6 +1013,7 @@ mod tests {
         let option_some = NativeFunctionImpl::Foreign {
             function: foreign_option_string_some,
             result: ForeignReturnKind::Option(ForeignPayloadKind::String),
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -921,6 +1024,7 @@ mod tests {
         let option_none = NativeFunctionImpl::Foreign {
             function: foreign_option_none,
             result: ForeignReturnKind::Option(ForeignPayloadKind::String),
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -932,6 +1036,7 @@ mod tests {
                 ok: ForeignPayloadKind::String,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -944,6 +1049,7 @@ mod tests {
                 ok: ForeignPayloadKind::String,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -953,6 +1059,7 @@ mod tests {
         let option_unit = NativeFunctionImpl::Foreign {
             function: foreign_option_unit_some,
             result: ForeignReturnKind::Option(ForeignPayloadKind::Unit),
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -966,6 +1073,7 @@ mod tests {
                 ok: ForeignPayloadKind::Unit,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -977,6 +1085,7 @@ mod tests {
                 ok: ForeignPayloadKind::Unit,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap();
@@ -997,6 +1106,7 @@ mod tests {
                 ok: ForeignPayloadKind::String,
                 err: ForeignPayloadKind::String,
             },
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap_err();
@@ -1012,6 +1122,7 @@ mod tests {
         let null_option = NativeFunctionImpl::Foreign {
             function: foreign_option_string_null_payload,
             result: ForeignReturnKind::Option(ForeignPayloadKind::String),
+            bytes: ByteParams::UNTYPED,
         }
         .call(&mut vm, &[])
         .unwrap_err();

@@ -44,31 +44,73 @@ mod buffers {
             format!("{read_back}:{}", buffer.len())
         }
 
-        #[aelys_export]
-        pub fn borrow_by_handle(context: &mut CallContext<'_>, handle: i64) -> Result<i64, String> {
-            let handle = value_int(handle).ok_or("handle out of range")?;
-            let first = context
-                .borrow_bytes(handle)
-                .map_err(|code| format!("first borrow refused with code {code}"))?;
-            first[0] = 42;
-            match context.borrow_bytes(handle) {
-                Ok(_) => Ok(-1),
-                Err(code) => Ok(i64::from(code) * 100 + i64::from(first[0])),
-            }
+        fn reply(out: *mut AelysValue, value: i64) -> i32 {
+            unsafe { *out = value_int(value).unwrap() };
+            0
         }
 
-        #[aelys_export]
-        pub fn param_then_context(
-            context: &mut CallContext<'_>,
-            buffer: &mut [u8],
-            handle: i64,
-        ) -> i64 {
-            buffer[0] = 9;
-            let handle = value_int(handle).expect("handle fits");
-            match context.borrow_bytes_ref(handle) {
-                Ok(other) => 1000 + i64::from(other[0]),
-                Err(code) => i64::from(code),
-            }
+        #[aelys_export(params = [BytesMut], result = Int)]
+        pub unsafe extern "C" fn borrow_twice(
+            context: *mut NativeContext,
+            args: *const AelysValue,
+            _arg_count: usize,
+            out: *mut AelysValue,
+        ) -> i32 {
+            let vector = unsafe { *args };
+            let value = unsafe {
+                with_call_context(context, |call| {
+                    let first = match call.borrow_bytes(vector) {
+                        Ok(bytes) => bytes,
+                        Err(code) => return -i64::from(code),
+                    };
+                    first[0] = 42;
+                    match call.borrow_bytes(vector) {
+                        Ok(_) => -1,
+                        Err(code) => i64::from(code) * 100 + i64::from(first[0]),
+                    }
+                })
+            };
+            reply(out, value)
+        }
+
+        #[aelys_export(params = [BytesMut, Bytes], result = Int)]
+        pub unsafe extern "C" fn mut_then_shared(
+            context: *mut NativeContext,
+            args: *const AelysValue,
+            _arg_count: usize,
+            out: *mut AelysValue,
+        ) -> i32 {
+            let (target, other) = unsafe { (*args, *args.add(1)) };
+            let value = unsafe {
+                with_call_context(context, |call| {
+                    let buffer = match call.borrow_bytes(target) {
+                        Ok(bytes) => bytes,
+                        Err(code) => return -i64::from(code),
+                    };
+                    buffer[0] = 9;
+                    match call.borrow_bytes_ref(other) {
+                        Ok(view) => 1000 + i64::from(view[0]),
+                        Err(code) => i64::from(code),
+                    }
+                })
+            };
+            reply(out, value)
+        }
+
+        #[aelys_export(params = [Int], result = Int)]
+        pub unsafe extern "C" fn borrow_an_int(
+            context: *mut NativeContext,
+            args: *const AelysValue,
+            _arg_count: usize,
+            out: *mut AelysValue,
+        ) -> i32 {
+            let value = unsafe {
+                with_call_context(context, |call| match call.borrow_bytes_ref(*args) {
+                    Ok(bytes) => bytes.len() as i64,
+                    Err(code) => -i64::from(code),
+                })
+            };
+            reply(out, value)
         }
 
         #[aelys_export(params = [Int, Bytes], result = Int)]
@@ -149,20 +191,20 @@ fn run_runtime_error(source: &str) -> (RuntimeErrorKind, String) {
     }
 }
 
-const SETUP: &str = "let a = bytes::alloc(4)\nlet b = bytes::alloc(4)\nbytes::write_u8(a, 0, 1)\nbytes::write_u8(a, 1, 2)\nbytes::write_u8(a, 2, 3)\nbytes::write_u8(a, 3, 250)\n";
+const SETUP: &str = "let mut a: Vec<u8> = vec![1, 2, 3, 250]\nlet mut b: Vec<u8> = vec![0; 4]\n";
 
 #[test]
 fn a_typed_export_reads_a_borrowed_buffer() {
-    assert_eq!(run_ok(&format!("{SETUP}buffers::sum(a)")), "256");
+    assert_eq!(run_ok(&format!("{SETUP}buffers::sum(&a)")), "256");
     assert_eq!(
         run_ok(&format!(
-            "{SETUP}fn total(h: int) -> int {{ return buffers::sum(h) + buffers::sum(h) }}\ntotal(a)"
+            "{SETUP}fn total(h: Vec<u8>) -> int {{ return buffers::sum(&h) + buffers::sum(&h) }}\ntotal(a)"
         )),
         "512"
     );
     assert_eq!(
         run_ok(&format!(
-            "{SETUP}let mut s = 0\nfor i in 0..3 {{ s += buffers::sum(a) }}\ns"
+            "{SETUP}let mut s = 0\nfor i in 0..3 {{ s += buffers::sum(&a) }}\ns"
         )),
         "768"
     );
@@ -172,13 +214,13 @@ fn a_typed_export_reads_a_borrowed_buffer() {
 fn a_mutable_borrow_writes_through_to_the_elyra_buffer() {
     assert_eq!(
         run_ok(&format!(
-            "{SETUP}buffers::fill(b, 7)\nbytes::read_u8(b, 0) * 1000 + bytes::read_u8(b, 3)"
+            "{SETUP}buffers::fill(&mut b, 7)\nb.read_u8(0) * 1000 + b.read_u8(3)"
         )),
         "7007"
     );
     assert_eq!(
         run_ok(&format!(
-            "{SETUP}let n = buffers::copy_into(b, a)\nn * 1000 + bytes::read_u8(b, 3)"
+            "{SETUP}let n = buffers::copy_into(&mut b, &a)\nn * 1000 + b.read_u8(3)"
         )),
         "4250"
     );
@@ -186,13 +228,14 @@ fn a_mutable_borrow_writes_through_to_the_elyra_buffer() {
 
 #[test]
 fn two_distinct_buffers_borrow_in_one_call() {
-    let source = format!("{SETUP}let c = bytes::alloc(9)\nbuffers::both_lengths(a, c)");
+    let source = format!("{SETUP}let c: Vec<u8> = vec![0; 9]\nbuffers::both_lengths(&a, &c)");
     assert_eq!(run_ok(&source), "4009");
 }
 
 #[test]
-fn one_handle_borrowed_mutably_and_again_in_one_call_is_refused() {
-    let (kind, text) = run_runtime_error(&format!("{SETUP}buffers::copy_into(a, a)"));
+fn one_vec_borrowed_mutably_and_again_in_one_call_is_refused() {
+    let (kind, text) =
+        run_runtime_error(&format!("{SETUP}let copy = buffers::copy_into\ncopy(a, a)"));
     assert!(
         matches!(kind, RuntimeErrorKind::NativeError { code: 5 }),
         "{kind:?}"
@@ -201,32 +244,42 @@ fn one_handle_borrowed_mutably_and_again_in_one_call_is_refused() {
         text.contains("borrowed mutably while another borrow of it is live"),
         "{text}"
     );
+    let error = run(&format!("{SETUP}buffers::copy_into(&mut a, &a)"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("E0416") || error.contains("E0415"),
+        "{error}"
+    );
     assert_eq!(
-        run_ok(&format!("{SETUP}buffers::both_lengths(a, a)")),
+        run_ok(&format!("{SETUP}buffers::both_lengths(&a, &a)")),
         "4004"
     );
     assert_eq!(
         run_ok(&format!(
-            "{SETUP}let r = match buffers::borrow_by_handle(a) {{ Ok(n) => n, Err(e) => -2 }}\nr * 1000 + bytes::read_u8(a, 0)"
+            "{SETUP}let r = buffers::borrow_twice(&mut a)\nr * 1000 + a.read_u8(0)"
         )),
         "542042"
     );
     assert_eq!(
-        run_ok(&format!("{SETUP}buffers::param_then_context(a, a)")),
-        "5"
+        run_ok(&format!(
+            "{SETUP}let f = buffers::mut_then_shared\nf(a, a) * 1000 + a.read_u8(0)"
+        )),
+        "5009"
     );
     assert_eq!(
         run_ok(&format!(
-            "{SETUP}bytes::write_u8(b, 0, 66)\nbuffers::param_then_context(a, b) * 1000 + bytes::read_u8(a, 0)"
+            "{SETUP}b[0] = 66\nbuffers::mut_then_shared(&mut a, &b) * 1000 + a.read_u8(0)"
         )),
         "1066009"
     );
+    assert_eq!(run_ok("buffers::borrow_an_int(7)"), "-1");
 }
 
 #[test]
 fn a_borrow_ends_with_its_call() {
     let source = format!(
-        "{SETUP}let mut s = 0\nfor i in 0..4 {{ s += buffers::copy_into(b, a) }}\ns + buffers::sum(b)"
+        "{SETUP}let mut s = 0\nfor i in 0..4 {{ s += buffers::copy_into(&mut b, &a) }}\ns + buffers::sum(&b)"
     );
     assert_eq!(run_ok(&source), "272");
 }
@@ -234,41 +287,42 @@ fn a_borrow_ends_with_its_call() {
 #[test]
 fn a_typed_export_takes_the_context_and_allocates_a_string() {
     assert_eq!(
-        run_ok(&format!("{SETUP}buffers::describe(a, \"frame\")")),
+        run_ok(&format!("{SETUP}buffers::describe(&a, \"frame\")")),
         "frame:4"
     );
 }
 
 #[test]
-fn a_handle_that_is_not_a_buffer_is_an_invalid_argument() {
-    let (kind, text) = run_runtime_error("buffers::sum(123456)");
-    assert!(
-        matches!(kind, RuntimeErrorKind::NativeError { code: 1 }),
-        "{kind:?}"
-    );
-    assert!(text.contains("invalid argument"), "{text}");
-    let (kind, _) = run_runtime_error("let t = time::timer()\nbuffers::sum(t)");
-    assert!(
-        matches!(kind, RuntimeErrorKind::NativeError { code: 1 }),
-        "{kind:?}"
-    );
+fn a_byte_parameter_takes_a_vec_of_u8_only() {
+    for source in [
+        "buffers::sum(123456)",
+        "let t = time::timer()\nbuffers::sum(&t)",
+        "let v: Vec<int> = vec![1]\nbuffers::sum(&v)",
+        "let s = \"text\"\nbuffers::sum(&s)",
+    ] {
+        let error = run(source).unwrap_err().to_string();
+        assert!(
+            error.contains("E0301") || error.contains("E0417"),
+            "{source}: {error}"
+        );
+    }
 }
 
 #[test]
 fn a_raw_export_declares_its_signature_and_arity() {
-    assert_eq!(run_ok(&format!("{SETUP}buffers::peek(3, a)")), "250");
-    let error = run(&format!("{SETUP}buffers::peek(a)"))
+    assert_eq!(run_ok(&format!("{SETUP}buffers::peek(3, &a)")), "250");
+    let error = run(&format!("{SETUP}buffers::peek(&a)"))
         .unwrap_err()
         .to_string();
     assert!(
         error.contains("E0301") || error.contains("argument"),
         "{error}"
     );
-    let error = run(&format!("{SETUP}buffers::peek(true, a)"))
+    let error = run(&format!("{SETUP}buffers::peek(true, &a)"))
         .unwrap_err()
         .to_string();
     assert!(error.contains("type mismatch"), "{error}");
-    let (kind, _) = run_runtime_error(&format!("{SETUP}buffers::peek(9, a)"));
+    let (kind, _) = run_runtime_error(&format!("{SETUP}buffers::peek(9, &a)"));
     assert!(
         matches!(kind, RuntimeErrorKind::NativeError { code: 1 }),
         "{kind:?}"

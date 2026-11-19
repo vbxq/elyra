@@ -107,6 +107,7 @@ pub enum AelysNativeType {
     ResultStringString = 15,
     ResultUnitString = 16,
     Bytes = 17,
+    BytesMut = 18,
 }
 
 impl TryFrom<u8> for AelysNativeType {
@@ -131,6 +132,7 @@ impl TryFrom<u8> for AelysNativeType {
             15 => Ok(Self::ResultStringString),
             16 => Ok(Self::ResultUnitString),
             17 => Ok(Self::Bytes),
+            18 => Ok(Self::BytesMut),
             _ => Err(()),
         }
     }

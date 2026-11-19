@@ -10,9 +10,11 @@ use aelys_syntax::{Source, Span};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 
+pub type NativeTypes = Option<(Vec<AelysNativeType>, AelysNativeType)>;
+
 pub struct NativeModuleRegistration {
     pub alias: String,
-    pub functions: Vec<(String, u16, AelysNativeFn, Option<AelysNativeType>)>,
+    pub functions: Vec<(String, u16, AelysNativeFn, NativeTypes)>,
     pub signatures: HashMap<String, InferType>,
 }
 
@@ -88,8 +90,17 @@ impl ValidatedNativeModule {
             let function =
                 unsafe { std::mem::transmute::<*const c_void, AelysNativeFn>(export.value) };
             let qualified = format!("{alias}::{name}");
-            let result_type = export.signature.as_ref().map(|signature| signature.result);
+            let typed = export
+                .signature
+                .as_ref()
+                .map(|signature| (signature.params.clone(), signature.result));
             if let Some(signature) = export.signature {
+                let modes = aelys_sema::types::ParamModes::from_flags(
+                    signature
+                        .params
+                        .iter()
+                        .map(|param| *param == AelysNativeType::BytesMut),
+                );
                 let params = signature
                     .params
                     .into_iter()
@@ -97,10 +108,14 @@ impl ValidatedNativeModule {
                     .collect();
                 signatures.insert(
                     qualified.clone(),
-                    InferType::function(params, native_type_to_infer_type(signature.result)),
+                    InferType::Function {
+                        params,
+                        modes,
+                        ret: Box::new(native_type_to_infer_type(signature.result)),
+                    },
                 );
             }
-            functions.push((qualified, export.arity, function, result_type));
+            functions.push((qualified, export.arity, function, typed));
         }
         // `validate_descriptor` returns exports in a `HashMap`; sort so the resolved order is deterministic across runs.
         functions.sort_by(|(left, _, _, _), (right, _, _, _)| left.cmp(right));
@@ -121,7 +136,9 @@ fn native_type_to_infer_type(native_type: AelysNativeType) -> InferType {
         AelysNativeType::String => InferType::String,
         AelysNativeType::Unit => InferType::Unit,
         AelysNativeType::Dynamic => InferType::Dynamic,
-        AelysNativeType::Bytes => InferType::I64,
+        AelysNativeType::Bytes | AelysNativeType::BytesMut => {
+            InferType::Vec(Box::new(InferType::U8))
+        }
         AelysNativeType::OptionInt => InferType::Option(Box::new(InferType::I64)),
         AelysNativeType::OptionFloat => InferType::Option(Box::new(InferType::F64)),
         AelysNativeType::OptionBool => InferType::Option(Box::new(InferType::Bool)),

@@ -18,46 +18,85 @@ fn ordered_element_types() -> Vec<InferType> {
     types
 }
 
+fn byte_method_shape(member: &str, arity: usize) -> Option<MethodShape> {
+    let int = InferType::I64;
+    let shape = match (member, arity) {
+        (
+            "read_u8" | "read_i8" | "read_u16_le" | "read_u16_be" | "read_i16_le" | "read_i16_be"
+            | "read_u32_le" | "read_u32_be" | "read_i32_le" | "read_i32_be" | "read_u64_le"
+            | "read_u64_be" | "read_i64_le" | "read_i64_be",
+            1,
+        ) => MethodShape::new(vec![int.clone()], int, false),
+        ("read_f32_le" | "read_f32_be" | "read_f64_le" | "read_f64_be", 1) => {
+            MethodShape::new(vec![int], InferType::F64, false)
+        }
+        (
+            "write_u8" | "write_i8" | "write_u16_le" | "write_u16_be" | "write_i16_le"
+            | "write_i16_be" | "write_u32_le" | "write_u32_be" | "write_i32_le" | "write_i32_be"
+            | "write_u64_le" | "write_u64_be" | "write_i64_le" | "write_i64_be",
+            2,
+        ) => MethodShape::new(vec![int.clone(), int], InferType::Unit, true),
+        ("write_f32_le" | "write_f32_be" | "write_f64_le" | "write_f64_be", 2) => {
+            MethodShape::new(vec![int, InferType::F64], InferType::Unit, true)
+        }
+        ("to_utf8", 0) => MethodShape::new(
+            Vec::new(),
+            InferType::Option(Box::new(InferType::String)),
+            false,
+        ),
+        ("copy_within", 3) => {
+            MethodShape::new(vec![int.clone(), int.clone(), int], InferType::Unit, true)
+        }
+        _ => return None,
+    };
+    Some(shape)
+}
+
+fn byte_method_name(member: &str) -> bool {
+    (0..=3).any(|arity| byte_method_shape(member, arity).is_some())
+}
+
 fn container_method_name(member: &str) -> bool {
-    matches!(
-        member,
-        "insert"
-            | "remove"
-            | "swap_remove"
-            | "clear"
-            | "extend"
-            | "append"
-            | "truncate"
-            | "resize"
-            | "swap"
-            | "reverse"
-            | "contains"
-            | "index_of"
-            | "sort"
-            | "sort_by"
-            | "first"
-            | "last"
-            | "set"
-            | "fill"
-            | "join"
-            | "get"
-            | "contains_key"
-            | "len"
-            | "is_empty"
-            | "keys"
-            | "values"
-            | "is_digit"
-            | "is_alpha"
-            | "is_whitespace"
-            | "is_alphanumeric"
-            | "to_upper"
-            | "to_lower"
-            | "push"
-            | "to_hex"
-            | "to_binary"
-            | "to_octal"
-            | "to_radix"
-    )
+    byte_method_name(member)
+        || matches!(
+            member,
+            "insert"
+                | "remove"
+                | "swap_remove"
+                | "clear"
+                | "extend"
+                | "append"
+                | "truncate"
+                | "resize"
+                | "swap"
+                | "reverse"
+                | "contains"
+                | "index_of"
+                | "sort"
+                | "sort_by"
+                | "first"
+                | "last"
+                | "set"
+                | "fill"
+                | "join"
+                | "get"
+                | "contains_key"
+                | "len"
+                | "is_empty"
+                | "keys"
+                | "values"
+                | "is_digit"
+                | "is_alpha"
+                | "is_whitespace"
+                | "is_alphanumeric"
+                | "to_upper"
+                | "to_lower"
+                | "push"
+                | "to_hex"
+                | "to_binary"
+                | "to_octal"
+                | "to_radix"
+        )
 }
 
 struct MethodShape {
@@ -308,6 +347,22 @@ impl TypeInference {
     ) -> Option<MethodShape> {
         let t = element.clone();
         let vec_only = |shape: MethodShape| is_vec.then_some(shape);
+        if let Some(shape) = byte_method_shape(member, arity) {
+            if !is_vec {
+                return None;
+            }
+            match element {
+                InferType::U8 => {}
+                InferType::Var(_) => self.constraints.push(Constraint::equal(
+                    InferType::U8,
+                    t,
+                    span,
+                    ConstraintReason::Other(format!("`{member}` needs a Vec<u8>")),
+                )),
+                _ => return None,
+            }
+            return Some(shape);
+        }
         let shape = match (member, arity) {
             ("insert", 2) => vec_only(MethodShape::new(
                 vec![InferType::I64, t],

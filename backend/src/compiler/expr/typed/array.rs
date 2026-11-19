@@ -1,9 +1,18 @@
 use super::super::Compiler;
-use aelys_bytecode::OpCode;
+use super::containers::Operand;
+use aelys_bytecode::{OpCode, VEC_NEW_BYTES};
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
 use aelys_sema::{InferType, ResolvedType, TypedExpr, TypedExprKind};
 use aelys_syntax::Span;
+
+pub(super) fn vec_storage_operand(inner: &InferType) -> u16 {
+    if *inner == InferType::U8 {
+        u16::from(VEC_NEW_BYTES)
+    } else {
+        0
+    }
+}
 
 impl Compiler {
     pub(super) fn compile_typed_array_repeat(
@@ -107,11 +116,28 @@ impl Compiler {
             OpCode::VecNewB,
             OpCode::VecNewP,
         );
-        self.emit_a(allocation_opcode, dest, 0, 0, span);
+        self.emit_a(allocation_opcode, dest, 0, vec_storage_operand(inner), span);
         self.emit_a(OpCode::VecReserve, dest, count_reg, 0, span);
 
         let value_reg = self.alloc_register()?;
         self.compile_typed_expr(value, value_reg)?;
+        if **inner == InferType::U8 {
+            let result = self.alloc_register()?;
+            self.call_native(
+                "__vec_resize",
+                &[
+                    Operand::Reg(dest),
+                    Operand::Reg(count_reg),
+                    Operand::Reg(value_reg),
+                ],
+                result,
+                span,
+            )?;
+            self.free_register(result);
+            self.free_register(value_reg);
+            self.free_register(count_reg);
+            return Ok(());
+        }
         let loop_reg = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_reg, 3)?;
         let end_reg = loop_reg + 1;
@@ -272,20 +298,25 @@ impl Compiler {
     ) -> Result<()> {
         let count = elements.len();
 
-        if count == 0 {
-            let opcode = if let InferType::Vec(inner) = expr_ty {
-                Self::select_typed_opcode(
+        let byte_elements = matches!(expr_ty, InferType::Vec(inner) if **inner == InferType::U8);
+        if count == 0 || byte_elements {
+            let (opcode, storage) = if let InferType::Vec(inner) = expr_ty {
+                let opcode = Self::select_typed_opcode(
                     inner,
                     OpCode::VecNewI,
                     OpCode::VecNewF,
                     OpCode::VecNewB,
                     OpCode::VecNewP,
-                )
+                );
+                (opcode, vec_storage_operand(inner))
             } else {
-                OpCode::VecNewP
+                (OpCode::VecNewP, 0)
             };
-            self.emit_a(opcode, dest, 0, 0, span);
-            return Ok(());
+            if count == 0 {
+                self.emit_a(opcode, dest, 0, storage, span);
+                return Ok(());
+            }
+            return self.compile_byte_vec_literal(elements, dest, span);
         }
 
         let count_operand = self.checked_call_arity(count, span)?;
@@ -318,6 +349,31 @@ impl Compiler {
             self.free_register(reg);
         }
 
+        Ok(())
+    }
+
+    fn compile_byte_vec_literal(
+        &mut self,
+        elements: &[TypedExpr],
+        dest: u16,
+        span: Span,
+    ) -> Result<()> {
+        let element_reg = self.alloc_register()?;
+        let vector_reg = self.alloc_register()?;
+        self.emit_a(
+            OpCode::VecNewI,
+            vector_reg,
+            0,
+            u16::from(VEC_NEW_BYTES),
+            span,
+        );
+        for element in elements {
+            self.compile_typed_expr(element, element_reg)?;
+            self.emit_a(OpCode::VecPushI, vector_reg, element_reg, 0, span);
+        }
+        self.emit_a(OpCode::Move, dest, vector_reg, 0, span);
+        self.free_register(vector_reg);
+        self.free_register(element_reg);
         Ok(())
     }
 

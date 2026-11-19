@@ -14,6 +14,7 @@ pub fn register_builtins(vm: &mut VM) -> Result<(), RuntimeError> {
     for &(name, arity, function) in super::collections::COLLECTION_NATIVES
         .iter()
         .chain(crate::stdlib::scalar::INT_FORMATTERS)
+        .chain(super::byte_vec::BYTE_VEC_NATIVES)
     {
         let native = vm.alloc_native(name, arity, function)?;
         vm.set_global(name.to_string(), Value::ptr(native.index()));

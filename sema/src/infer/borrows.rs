@@ -143,9 +143,50 @@ impl TypeInference {
         {
             return modes.clone();
         }
-        source_call_path(callee)
-            .and_then(|name| self.function_reference_modes.get(&name).cloned())
+        let path = source_call_path(callee);
+        if let Some(modes) = path
+            .as_ref()
+            .and_then(|name| self.function_reference_modes.get(name))
+        {
+            return modes.clone();
+        }
+        path.and_then(|name| self.native_byte_reference_modes(&name, &typed_callee.ty))
             .unwrap_or_default()
+    }
+
+    // a native byte parameter borrows the caller's Vec<u8> for the call, like a Rust slice
+    fn native_byte_reference_modes(
+        &self,
+        name: &str,
+        callee_ty: &InferType,
+    ) -> Option<Vec<Option<ReferenceKind>>> {
+        let signature = if self.known_native_globals.contains(name) {
+            self.known_native_signatures.get(name).cloned()
+        } else {
+            None
+        }
+        .or_else(|| crate::native::function_signature(name))?;
+        if signature != *callee_ty || self.env.binds_value(name) {
+            return None;
+        }
+        let InferType::Function { params, modes, .. } = signature else {
+            return None;
+        };
+        let byte_vec = InferType::Vec(Box::new(InferType::U8));
+        let reference = params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| {
+                (*param == byte_vec).then(|| {
+                    if modes.get(index) == crate::types::ParamMode::Mut {
+                        ReferenceKind::Mutable
+                    } else {
+                        ReferenceKind::Shared
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        reference.iter().any(Option::is_some).then_some(reference)
     }
 
     pub(crate) fn declared_param_modes(

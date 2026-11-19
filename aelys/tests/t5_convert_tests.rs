@@ -170,26 +170,29 @@ fn abs_of_the_smallest_int_is_an_overflow_error() {
 
 #[test]
 fn reading_a_64_bit_value_outside_the_int_range_is_an_error() {
-    for (fill, function) in [(255, "read_u64"), (255, "read_u64_be"), (128, "read_u64")] {
+    for (fill, function) in [
+        (255, "read_u64_le"),
+        (255, "read_u64_be"),
+        (128, "read_u64_le"),
+    ] {
         let message = runtime_error(&format!(
-            "use std::bytes\nlet b = bytes::alloc(8)\nbytes::fill(b, 0, 8, {fill})\nprintln(bytes::{function}(b, 0))\n"
+            "let mut b: Vec<u8> = vec![0; 8]\nb.fill({fill})\nprintln(b.{function}(0))\n"
         ));
         assert!(
-            message.contains("exceeds the int range"),
+            message.contains(&format!("{function}: value "))
+                && message.contains("does not fit in int"),
             "{function} {fill}: {message}"
         );
     }
-    for function in ["read_i64", "read_i64_be"] {
+    for function in ["read_i64_le", "read_i64_be"] {
         let lines = run_ok(
-            &format!(
-                "use std::bytes\nlet b = bytes::alloc(8)\nbytes::fill(b, 0, 8, 127)\nprintln(bytes::{function}(b, 0))\n"
-            ),
+            &format!("let mut b: Vec<u8> = vec![0; 8]\nb.fill(127)\nprintln(b.{function}(0))\n"),
             &[],
         );
         assert_eq!(lines, ["9187201950435737471"], "{function}");
     }
     let lines = run_ok(
-        "use std::bytes\nlet b = bytes::alloc(8)\nbytes::fill(b, 0, 8, 255)\nprintln(bytes::read_i64(b, 0))\nbytes::fill(b, 0, 8, 0)\nbytes::write_u8(b, 0, 9)\nprintln(bytes::read_u64(b, 0))\n",
+        "let mut b: Vec<u8> = vec![0; 8]\nb.fill(255)\nprintln(b.read_i64_le(0))\nb.fill(0)\nb[0] = 9\nprintln(b.read_u64_le(0))\n",
         &[],
     );
     assert_eq!(lines, ["-1", "9"]);

@@ -11,25 +11,36 @@ pub(super) enum Operand<'a> {
     Int(i16),
 }
 
+fn byte_vec_native(member: &str, arity: usize) -> bool {
+    match arity {
+        0 => member == "to_utf8",
+        1 => member.starts_with("read_"),
+        2 => member.starts_with("write_"),
+        3 => member == "copy_within",
+        _ => false,
+    }
+}
+
 fn sequence_native(member: &str, arity: usize) -> bool {
-    matches!(
-        (member, arity),
-        ("insert" | "resize" | "swap" | "set", 2)
-            | (
-                "remove"
-                    | "swap_remove"
-                    | "extend"
-                    | "append"
-                    | "truncate"
-                    | "contains"
-                    | "index_of"
-                    | "fill"
-                    | "join"
-                    | "sort_by",
-                1
-            )
-            | ("clear" | "reverse" | "sort" | "first" | "last", 0)
-    )
+    byte_vec_native(member, arity)
+        || matches!(
+            (member, arity),
+            ("insert" | "resize" | "swap" | "set", 2)
+                | (
+                    "remove"
+                        | "swap_remove"
+                        | "extend"
+                        | "append"
+                        | "truncate"
+                        | "contains"
+                        | "index_of"
+                        | "fill"
+                        | "join"
+                        | "sort_by",
+                    1
+                )
+                | ("clear" | "reverse" | "sort" | "first" | "last", 0)
+        )
 }
 
 fn map_native(member: &str, arity: usize) -> bool {
@@ -42,7 +53,9 @@ fn map_native(member: &str, arity: usize) -> bool {
 }
 
 fn element_tag(element: &InferType) -> TypeTag {
-    if element.is_integer() {
+    if *element == InferType::U8 {
+        TypeTag::Byte
+    } else if element.is_integer() {
         TypeTag::Int
     } else if element.is_float() {
         TypeTag::Float

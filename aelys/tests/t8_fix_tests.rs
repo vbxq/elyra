@@ -394,7 +394,7 @@ fn the_binary_write_snippet_of_the_stdlib_doc_runs_from_a_file() {
         &dir,
         "main.aelys",
         &format!(
-            "use std::fs\nuse std::bytes as bytes\nlet buffer = bytes::alloc(2)\nbytes::write_u8(buffer, 0, 0xC8)\nbytes::write_u8(buffer, 1, 0xFF)\nlet _ = fs::write_file_bytes(\"{}\", buffer)\n7\n",
+            "use std::fs\nlet buffer: Vec<u8> = vec![0xC8, 0xFF]\nlet _ = fs::write_bytes(\"{}\", &buffer)\n7\n",
             out.display().to_string().replace('\\', "/")
         ),
     );

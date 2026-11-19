@@ -220,6 +220,7 @@ This distinction matters for non-ASCII text.
 | `s.substr(start, len)` | Extract substring by character position |
 | `s.chars()` | `Vec<char>` of the characters |
 | `s.bytes()` | `Vec<int>` of the UTF-8 bytes |
+| `s.to_bytes()` | `Vec<u8>` of the UTF-8 bytes, the input of the binary methods of [`Vec<u8>`](#binary-data-vecu8) |
 | `string::from_char(c)` | One-character string from a `char` |
 | `s.push(c)` | Append a `char` to a string variable or place with a mutable root (`p.name.push(c)`) |
 
@@ -511,13 +512,13 @@ use std::fs
 | `open(path, mode)` | Open file as `Result<int, string>` |
 | `read(handle)` | Read as `Result<string, string>` |
 | `read_line(handle)` | Read as `Result<Option<string>, string>` |
-| `read_bytes(handle, n)` | Read up to `n` bytes (at most 16 MiB) into a new byte buffer, `Result<int, string>`; fewer than `n` only at end of file |
-| `read_file_bytes(path)` | Read a whole file into one new byte buffer, `Result<int, string>`; a file larger than the 256 MiB (268435456-byte) byte-buffer limit, or an endless one such as `/dev/zero`, is an `Err` after reading at most one byte past the limit |
+| `read_bytes(path)` | Read a whole file as `Result<Vec<u8>, string>`; a file larger than 256 MiB (268435456 bytes), or an endless one such as `/dev/zero`, is an `Err` after reading at most one byte past the limit |
+| `read_chunk(handle, n)` | Read up to `n` bytes (at most 16 MiB) from a handle as `Result<Vec<u8>, string>`; fewer than `n` only at end of file |
 | `close(handle)` | Close as `Result<unit, string>` |
 
 Modes: `"r"` (read), `"w"` (write), `"a"` (append), `"rw"` (read+write).
 
-`read`, `read_line` and `read_bytes` share one buffered reader per handle, so they can be mixed: each continues where the previous one stopped.
+`read`, `read_line` and `read_chunk` share one buffered reader per handle, so they can be mixed: each continues where the previous one stopped.
 
 ```rust
 let content = match fs::read_text("config.txt") {
@@ -546,22 +547,20 @@ let _ = fs::close(f)
 |----------|-------------|
 | `write_text(path, content)` | Write string to file (overwrite) |
 | `append_text(path, content)` | Append string to file |
-| `write(handle, data)` | Write to handle |
-| `write_bytes(handle, data)` | Same as `write`: `data` is a string and is written as UTF-8 |
+| `write(handle, data)` | Write a string to a handle |
 | `write_line(handle, line)` | Write with newline |
-| `write_buffer(handle, buffer)` | Write the raw bytes of a `std::bytes` buffer to a handle as `Result<int, string>` (bytes written) |
-| `write_file_bytes(path, buffer)` | Write the raw bytes of a `std::bytes` buffer to `path` (overwrite) as `Result<unit, string>` |
+| `write_bytes(path, &v)` | Write the bytes of a `Vec<u8>` to `path` (overwrite) as `Result<unit, string>` |
+| `write_chunk(handle, &v)` | Write the bytes of a `Vec<u8>` to a handle as `Result<int, string>` (bytes written) |
 
-Strings are UTF-8, so a byte of 0x80 or more cannot pass through `write`,
-`write_bytes` or `write_text` unchanged. Binary files go through a byte buffer:
+Strings are UTF-8, so a byte of 0x80 or more cannot pass through `write` or
+`write_text` unchanged. Binary files go through a `Vec<u8>`, borrowed with `&`
+for the call:
 
 ```rust
 use std::fs
-use std::bytes as bytes
-let buffer = bytes::alloc(2)
-bytes::write_u8(buffer, 0, 0xC8)
-bytes::write_u8(buffer, 1, 0xFF)
-let _ = fs::write_file_bytes("out.bin", buffer)
+let buffer: Vec<u8> = vec![0xC8, 0xFF]
+let _ = fs::write_bytes("out.bin", &buffer)
+let back = fs::read_bytes("out.bin").unwrap()
 ```
 
 ```rust
@@ -770,129 +769,75 @@ println("Running on {sys::platform()} {sys::arch()}")
 
 ---
 
-## std::bytes
+## Binary data (`Vec<u8>`)
 
-Byte-level memory operations for binary data manipulation.
+There is no byte-buffer module: binary data is an ordinary `Vec<u8>`, collected
+by the garbage collector like any other Vec. `v[i]` reads and writes one byte as a
+`u8`; the methods below decode and encode wider values at a byte offset. They exist
+only on `Vec<u8>` (another element type has no `read_u16_le`), and every `write_*`
+needs a mutable receiver (E0318). `use std::bytes` is E0480 and a `bytes::name`
+call is E0481; both name the replacement.
 
 ```rust
-use std::bytes
+let mut v: Vec<u8> = vec![0; 16]
+let header = "PWAD".to_bytes()
+let file = fs::read_bytes("doom.wad").unwrap()
 ```
 
-### Allocation & Buffer Management
+| Method | Result | Meaning |
+|--------|--------|---------|
+| `v.read_u8(off)`, `v.read_i8(off)` | `int` | one byte, unsigned or signed |
+| `v.read_u16_le(off)`, `v.read_u16_be(off)` | `int` | 16-bit unsigned, little or big endian |
+| `v.read_i16_le(off)`, `v.read_i16_be(off)` | `int` | 16-bit signed |
+| `v.read_u32_le(off)`, `v.read_u32_be(off)` | `int` | 32-bit unsigned |
+| `v.read_i32_le(off)`, `v.read_i32_be(off)` | `int` | 32-bit signed |
+| `v.read_u64_le(off)`, `v.read_u64_be(off)` | `int` | 64-bit unsigned; a value `int` cannot hold traps |
+| `v.read_i64_le(off)`, `v.read_i64_be(off)` | `int` | 64-bit signed; a value `int` cannot hold traps |
+| `v.read_f32_le(off)`, `v.read_f32_be(off)` | `float` | IEEE 754 single, widened exactly |
+| `v.read_f64_le(off)`, `v.read_f64_be(off)` | `float` | IEEE 754 double |
+| `v.write_u8(off, x)` ... `v.write_i64_be(off, x)` | `unit` | the same widths and byte orders as the reads; `x` is an `int` |
+| `v.write_f32_le(off, x)` ... `v.write_f64_be(off, x)` | `unit` | `x` is a `float`; `f32` rounds to nearest |
+| `v.to_utf8()` | `Option<string>` | the bytes as a string, `None` when they are not valid UTF-8 |
+| `v.copy_within(start, end, dest)` | `unit` | copy the bytes `start..end` to `dest`, overlapping ranges included |
+| `s.to_bytes()` | `Vec<u8>` | the UTF-8 bytes of the string `s` |
 
-| Function | Description |
-|----------|-------------|
-| `alloc(size)` | Allocate `size` bytes, initialized to zero. Returns handle. |
-| `free(handle)` | Free a buffer handle. |
-| `size(handle)` | Return buffer size in bytes. |
-| `resize(handle, new_size)` | Resize buffer (preserves existing data). |
-| `clone(handle)` | Create a copy of the buffer. |
-| `equals(a, b)` | Compare two buffers for equality. |
+Every offset is checked: an access that does not fit traps with
+`read_u32_le: bytes 13..17 are out of bounds for length 16`, which names the method,
+the byte range and the length (a negative offset is shown as such). A `write_*`
+whose value does not fit its width traps with
+`write_u16_le: value 65536 does not fit in u16`; signed and unsigned writes accept
+exactly the range of their type, so `write_u8(off, -1)` traps and `write_i8(off, -1)`
+stores 255. A 64-bit read whose value `int` cannot represent traps with
+`read_u64_le: value 18446744073709551615 does not fit in int`.
 
-### Unsigned Integer Operations (Little-Endian)
-
-| Function | Description |
-|----------|-------------|
-| `read_u8(buf, offset)` | Read unsigned byte (0-255) |
-| `write_u8(buf, offset, value)` | Write unsigned byte |
-| `read_u16(buf, offset)` | Read 16-bit unsigned int |
-| `write_u16(buf, offset, value)` | Write 16-bit unsigned int |
-| `read_u32(buf, offset)` | Read 32-bit unsigned int |
-| `write_u32(buf, offset, value)` | Write 32-bit unsigned int |
-| `read_u64(buf, offset)` | Read 64-bit unsigned int; a value above `9223372036854775807` is an error |
-| `write_u64(buf, offset, value)` | Write 64-bit unsigned int |
-
-### Signed Integer Operations (Little-Endian)
-
-| Function | Description |
-|----------|-------------|
-| `read_i8(buf, offset)` | Read signed byte (-128 to 127) |
-| `write_i8(buf, offset, value)` | Write signed byte |
-| `read_i16(buf, offset)` | Read 16-bit signed int |
-| `write_i16(buf, offset, value)` | Write 16-bit signed int |
-| `read_i32(buf, offset)` | Read 32-bit signed int |
-| `write_i32(buf, offset, value)` | Write 32-bit signed int |
-| `read_i64(buf, offset)` | Read 64-bit signed int |
-| `write_i64(buf, offset, value)` | Write 64-bit signed int |
-
-### Big-Endian Operations
-
-All `_be` variants for network byte order:
-
-| Function | Description |
-|----------|-------------|
-| `read_u16_be`, `write_u16_be` | 16-bit unsigned big-endian |
-| `read_i16_be`, `write_i16_be` | 16-bit signed big-endian |
-| `read_u32_be`, `write_u32_be` | 32-bit unsigned big-endian |
-| `read_i32_be`, `write_i32_be` | 32-bit signed big-endian |
-| `read_u64_be`, `write_u64_be` | 64-bit unsigned big-endian |
-| `read_i64_be`, `write_i64_be` | 64-bit signed big-endian |
-| `read_f32_be`, `write_f32_be` | 32-bit float big-endian |
-| `read_f64_be`, `write_f64_be` | 64-bit float big-endian |
-
-### Float Operations (Little-Endian)
-
-| Function | Description |
-|----------|-------------|
-| `read_f32(buf, offset)` | Read 32-bit float |
-| `write_f32(buf, offset, value)` | Write 32-bit float |
-| `read_f64(buf, offset)` | Read 64-bit float |
-| `write_f64(buf, offset, value)` | Write 64-bit float |
-
-### Bulk Operations
-
-| Function | Description |
-|----------|-------------|
-| `copy(src, src_off, dst, dst_off, len)` | Copy `len` bytes. Handles overlapping regions. |
-| `fill(buf, offset, len, value)` | Fill `len` bytes with `value` (0-255). |
-| `reverse(buf, offset, len)` | Reverse bytes in range. |
-| `swap(buf, i, j)` | Swap bytes at indices i and j. |
-| `find(buf, start, end, byte)` | Find first occurrence of byte. Returns -1 if not found. Use -1 for end to search to buffer end. |
-| `copy_from_vec(buf, offset, v)` | Write every element of `v: Vec<int>` as one byte at `offset`, `offset + 1`, ... in one call. Returns `Result<unit, string>`: `Err` names the first element outside 0..=255, or the range past the buffer end, and then nothing is written. |
-| `copy_to_vec(buf, offset, v)` | Overwrite every element of `v: Vec<int>` with the byte at `offset`, `offset + 1`, ...; `v` keeps its length. Returns `Result<unit, string>`: `Err` when the range passes the buffer end, and then `v` is unchanged. |
-
-`copy_from_vec` and `copy_to_vec` take a `Vec<int>`, not a fixed array. They
-move a whole frame in one native call: copying 64000 elements costs well under a
-millisecond, against one native call per byte for `write_u8`.
-
-### String Operations
-
-| Function | Description |
-|----------|-------------|
-| `from_string(str)` | Create buffer from UTF-8 string. |
-| `decode(buf, offset, len)` | Decode UTF-8 bytes to string. |
-| `write_string(buf, offset, str)` | Write string to buffer. Returns bytes written. |
-
-### Example
+Slices, `fill`, `len`, `resize`, `extend` and the other Vec methods work as on any
+Vec: `v[4..8].to_utf8()` decodes four bytes, `v.fill(0)` clears a frame.
 
 ```rust
-use std::bytes
-
-fn parse_network_packet() {
-    let buf = bytes::alloc(16)
-
-    // Write big-endian header (network byte order)
-    let _ = bytes::write_u32_be(buf, 0, 0xDEADBEEF)  // magic
-    let _ = bytes::write_u16_be(buf, 4, 1024)         // length
-    let _ = bytes::write_i16_be(buf, 6, -100)         // signed field
-
-    // String data
-    let _ = bytes::write_string(buf, 8, "Meow")
-
-    // Read back
-    let magic = bytes::read_u32_be(buf, 0)
-    let msg = bytes::decode(buf, 8, 4)
-
-    let _ = bytes::free(buf)
+fn parse_header(packet: Vec<u8>) -> string {
+    let magic = packet.read_u32_be(0)
+    let length = packet.read_u16_le(4)
+    let name = match packet[8..12].to_utf8() {
+        Some(text) => text,
+        None => "?",
+    }
+    "{magic} {length} {name}"
 }
+
+let mut packet: Vec<u8> = vec![0; 12]
+packet.write_u32_be(0, 0xDEADBEEF)
+packet.write_u16_le(4, 1024)
+packet.write_i16_be(6, -100)
+let name = "Meow".to_bytes()
+for i in 0..4 { packet[8 + i] = name[i] }
 ```
 
-### Notes
-
-- All operations are bounds-checked
-- Invalid handles produce runtime errors
-- Maximum allocation size: 256MB
-- Buffers are NOT garbage collected, always call `free()`
+A `Vec<u8>` is handed to a native function as `&v`, or `&mut v` when the native
+writes into it; see [Native modules](native-modules.md). A `Vec<u8>` stores one
+byte per element, however it was made (`vec![0; n]`, a literal, `push`,
+`to_bytes`, `fs::read_bytes`, a slice, `clone`, `collect`), so a file read with
+`fs::read_bytes` takes one byte of heap per byte of file and `v[i]` reads or
+writes that byte directly. A `[u8; N]` array keeps an 8-byte slot per element.
 
 ---
 
