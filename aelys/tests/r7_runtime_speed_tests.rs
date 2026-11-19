@@ -577,36 +577,39 @@ run(20)
 }
 
 #[test]
-fn natives_that_succeed_with_unit_return_one_shared_ok_and_copy_without_a_temporary() {
-    let source = "use std::bytes
-let buf = bytes::alloc(64)
-let mut frame: Vec<int> = vec![0; 64]
+fn natives_that_succeed_with_unit_return_one_shared_ok() {
+    let directory = tempfile::tempdir().expect("scratch directory");
+    let path = directory.path().join("frame.bin");
+    let source = format!(
+        "use std::fs
+let mut frame: Vec<u8> = vec![0; 64]
 let mut oks = 0
 let mut sum = 0
 let mut tags = 0
-for round in 0..300 {
-TAG    for i in 0..64 { frame[i] = (i * 7 + round) % 256 }
-    let first = bytes::copy_from_vec(buf, 0, frame)
-    let again = bytes::copy_from_vec(buf, 0, frame)
-    if first == again { oks = oks + 1 }
-    match first {
-        Ok(_) => { oks = oks + 1 }
-        Err(e) => { oks = oks - 1000 }
-    }
-    sum = (sum + bytes::read_u8(buf, round % 64)) % 1000000007
-}
-let bad = bytes::copy_from_vec(buf, 60, frame)
-let high = bytes::copy_from_vec(buf, 0, vec![1, 300])
-let errs = match bad { Ok(_) => 0, Err(e) => 1 } + match high { Ok(_) => 0, Err(e) => e.len() }
+for round in 0..300 {{
+TAG    for i in 0..64 {{ frame[i] = ((i * 7 + round) % 256) as u8 }}
+    let first = fs::write_bytes(\"{path}\", &frame)
+    let again = fs::write_bytes(\"{path}\", &frame)
+    if first == again {{ oks = oks + 1 }}
+    match first {{
+        Ok(_) => {{ oks = oks + 1 }}
+        Err(e) => {{ oks = oks - 1000 }}
+    }}
+    sum = (sum + frame[round % 64] as int) % 1000000007
+}}
+let bad = fs::write_bytes(\"{missing}\", &frame)
+let errs = match bad {{ Ok(_) => 0, Err(e) => 1 }}
 oks * 1000000 + sum * 100 + errs + tags * 0
-";
+",
+        path = path.display(),
+        missing = directory.path().join("missing").join("frame.bin").display()
+    );
     let mut sum = 0i64;
     for round in 0..300i64 {
         let i = round % 64;
         sum = (sum + (i * 7 + round) % 256) % 1_000_000_007;
     }
-    let high = "copy_from_vec: element 1 is 300, not a byte in 0..=255";
-    let expected = 600 * 1_000_000 + sum * 100 + 1 + high.len() as i64;
+    let expected = 600 * 1_000_000 + sum * 100 + 1;
     let tagged = source.replace(
         "TAG",
         "    let junk: Vec<int> = vec![round; 64]\n    tags = tags + junk[3]\n",
@@ -622,7 +625,7 @@ oks * 1000000 + sum * 100 + errs + tags * 0
     let allocated = vm.heap().allocation_count() - before;
     assert!(
         allocated < 300,
-        "{allocated} objects for 600 successful copies"
+        "{allocated} objects for 600 successful writes"
     );
 }
 

@@ -787,7 +787,9 @@ mod tests {
             .unwrap()
             .kind
         {
-            ObjectKind::Vec(vector) => vector.data.as_ints().unwrap().to_vec(),
+            ObjectKind::Vec(vector) => (0..vector.len())
+                .map(|index| vector.get(index).and_then(|item| item.as_int()).unwrap())
+                .collect(),
             other => panic!("expected a vec, got {other:?}"),
         }
     }

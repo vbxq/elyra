@@ -239,7 +239,8 @@ fn test_type_tag_from_u8() {
     assert_eq!(TypeTag::from_u8(1), Some(TypeTag::Float));
     assert_eq!(TypeTag::from_u8(2), Some(TypeTag::Bool));
     assert_eq!(TypeTag::from_u8(3), Some(TypeTag::Object));
-    assert_eq!(TypeTag::from_u8(4), None);
+    assert_eq!(TypeTag::from_u8(4), Some(TypeTag::Byte));
+    assert_eq!(TypeTag::from_u8(5), None);
     assert_eq!(TypeTag::from_u8(255), None);
 }
 
