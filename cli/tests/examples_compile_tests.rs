@@ -32,10 +32,6 @@ const KNOWN_FAILING: &[(&str, &str)] = &[
         "examples/sdl/gradient.aelys",
         "E0401: needs the sdl native module, built out of tree per docs/native-modules.md",
     ),
-    (
-        "main.aelys",
-        "E0301: the program itself is wrong, main is declared -> i64 and its body ends in println",
-    ),
 ];
 
 fn repo_root() -> PathBuf {
