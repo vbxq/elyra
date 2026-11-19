@@ -448,11 +448,23 @@ impl Runtime {
         let statements = Parser::new_rust_collections(tokens, source.clone()).parse()?;
         let (mut module_aliases, mut known_globals, mut known_native_globals) =
             self.standard_module_symbols()?;
-        let (native_aliases, native_globals, native_signatures) = self.native_module_symbols();
+        let (native_aliases, native_globals, mut native_signatures) = self.native_module_symbols();
         module_aliases.extend(native_aliases);
         known_globals.extend(native_globals.iter().cloned());
         known_native_globals.extend(native_globals);
         reject_unprovided_needs(&statements, &module_aliases, &source)?;
+        let mut symbol_origins = HashMap::new();
+        bind_use_forms(
+            &statements,
+            &mut UseBindings {
+                module_aliases: &mut module_aliases,
+                known_globals: &mut known_globals,
+                known_native_globals: &mut known_native_globals,
+                native_signatures: &mut native_signatures,
+                symbol_origins: &mut symbol_origins,
+            },
+            &source,
+        )?;
         let typed = TypeInference::infer_program_full_with_native_signatures(
             statements,
             source.clone(),
@@ -471,7 +483,7 @@ impl Runtime {
             module_aliases,
             known_globals,
             known_native_globals,
-            HashMap::new(),
+            symbol_origins,
         )
         .compile_typed(&typed)?;
 
@@ -635,6 +647,81 @@ fn reject_unprovided_needs(
     Ok(())
 }
 
+struct UseBindings<'a> {
+    module_aliases: &'a mut HashSet<String>,
+    known_globals: &'a mut HashSet<String>,
+    known_native_globals: &'a mut HashSet<String>,
+    native_signatures: &'a mut HashMap<String, InferType>,
+    symbol_origins: &'a mut HashMap<String, String>,
+}
+
+fn bind_use_forms(
+    statements: &[aelys_syntax::Stmt],
+    bindings: &mut UseBindings<'_>,
+    source: &Arc<Source>,
+) -> Result<(), AelysError> {
+    for statement in statements {
+        let aelys_syntax::StmtKind::Needs(needs) = &statement.kind else {
+            continue;
+        };
+        let module = aelys_runtime::stdlib::get_std_module_name(&needs.path)
+            .map(str::to_string)
+            .unwrap_or_else(|| needs.path.join("::"));
+        let prefix = format!("{module}::");
+        let mut exports: Vec<String> = bindings
+            .known_globals
+            .iter()
+            .filter_map(|name| name.strip_prefix(&prefix))
+            .filter(|name| !name.contains("::"))
+            .map(str::to_string)
+            .collect();
+        exports.sort();
+        let wanted: Vec<(String, String)> = match &needs.kind {
+            aelys_syntax::ImportKind::Symbols(symbols) => {
+                if let Some(missing) = symbols.iter().find(|symbol| !exports.contains(symbol)) {
+                    return Err(AelysError::Compile(CompileError::new(
+                        CompileErrorKind::SymbolNotFound {
+                            symbol: missing.clone(),
+                            module: needs.path.join("::"),
+                        },
+                        needs.span,
+                        Arc::clone(source),
+                    )));
+                }
+                symbols.iter().map(|s| (s.clone(), s.clone())).collect()
+            }
+            aelys_syntax::ImportKind::Wildcard => {
+                exports.iter().map(|s| (s.clone(), s.clone())).collect()
+            }
+            aelys_syntax::ImportKind::Module { alias: Some(alias) } => {
+                bindings.module_aliases.insert(alias.clone());
+                exports
+                    .iter()
+                    .map(|s| (format!("{alias}::{s}"), s.clone()))
+                    .collect()
+            }
+            aelys_syntax::ImportKind::Module { alias: None } => Vec::new(),
+        };
+        for (spelling, export) in wanted {
+            let qualified = format!("{prefix}{export}");
+            bindings.known_globals.insert(spelling.clone());
+            if bindings.known_native_globals.contains(&qualified) {
+                bindings.known_native_globals.insert(spelling.clone());
+            }
+            let signature = bindings
+                .native_signatures
+                .get(&qualified)
+                .cloned()
+                .or_else(|| aelys_sema::native::function_signature(&qualified));
+            if let Some(signature) = signature {
+                bindings.native_signatures.insert(spelling.clone(), signature);
+            }
+            bindings.symbol_origins.insert(spelling, qualified);
+        }
+    }
+    Ok(())
+}
+
 fn is_runtime_provided(path: &[String], module_aliases: &HashSet<String>) -> bool {
     if aelys_runtime::stdlib::is_std_module(path) {
         return true;
@@ -706,7 +793,12 @@ fn build_standard_module_symbols() -> Result<StandardSymbols, AelysError> {
     let mut aliases = vm.repl_module_aliases().clone();
     let mut globals = vm.repl_known_globals().clone();
     let mut natives = vm.repl_known_native_globals().clone();
-    for (module, register) in STANDARD_MODULES {
+    let preloaded: [(&str, StandardModuleRegister); 3] = [
+        ("io", aelys_runtime::stdlib::io::register),
+        ("math", aelys_runtime::stdlib::math::register),
+        ("time", aelys_runtime::stdlib::time::register),
+    ];
+    for (module, register) in preloaded.into_iter().chain(STANDARD_MODULES) {
         let exports = register(&mut vm).map_err(AelysError::Runtime)?;
         aliases.insert(module.to_string());
         for name in exports.all_exports {
