@@ -275,3 +275,40 @@ fn a_closed_stdout_pipe_ends_the_program_quietly() {
     assert!(!stderr.contains("panicked"), "{stderr}");
     assert_eq!(output.status.code(), Some(141), "{stderr}");
 }
+
+#[test]
+fn module_diagnostics_name_types_and_fields_as_written() {
+    let leak = s1_support::run_project(
+        &[
+            (
+                "shapes.aelys",
+                "struct Hidden { value: int }\npub fn leak() -> Hidden { Hidden { value: 1 } }\n",
+            ),
+            ("main.aelys", "use shapes\nprintln(shapes::leak().value)\n"),
+        ],
+        "main.aelys",
+    );
+    assert_ne!(leak.code, Some(0), "{}", leak.stderr);
+    assert!(leak.stderr.contains("error[E0407]"), "{}", leak.stderr);
+    assert!(leak.stderr.contains("'Hidden' cannot be exported"), "{}", leak.stderr);
+    assert!(!leak.stderr.contains('@'), "{}", leak.stderr);
+
+    for (main, code) in [
+        ("use shapes\nlet p = shapes::make()\nprintln(p.secret)\n", "E0412"),
+        ("use shapes::{P}\nlet p = P { secret: 1 }\nprintln(1)\n", "E0413"),
+    ] {
+        let outcome = s1_support::run_project(
+            &[
+                (
+                    "shapes.aelys",
+                    "pub struct P { secret: int }\npub fn make() -> P { P { secret: 3 } }\n",
+                ),
+                ("main.aelys", main),
+            ],
+            "main.aelys",
+        );
+        assert!(outcome.stderr.contains(&format!("error[{code}]")), "{}", outcome.stderr);
+        assert!(!outcome.stderr.contains("private field a "), "{}", outcome.stderr);
+        assert!(!outcome.stderr.contains("; private field"), "{}", outcome.stderr);
+    }
+}
