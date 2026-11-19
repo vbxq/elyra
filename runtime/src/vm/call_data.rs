@@ -1,6 +1,5 @@
 use super::{GcRef, NativeFunctionImpl, Value};
 
-/// Cached function call data to avoid repeated heap lookups.
 pub(super) enum CallData {
     Function {
         func_ref: GcRef,

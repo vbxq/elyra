@@ -5,8 +5,6 @@ use super::{
 
 impl Value {
     #[inline(always)]
-    /// Construct an integer, panicking when it cannot be represented by the
-    /// 48-bit NaN-box payload. Use [`Self::int_checked`] for host input.
     pub fn int(n: i64) -> Self {
         Self::int_checked(n).unwrap_or_else(|_| {
             panic!(
@@ -18,7 +16,6 @@ impl Value {
     }
 
     #[inline(always)]
-    /// Construct an integer without panicking on out-of-range host data.
     pub fn int_checked(n: i64) -> Result<Self, IntegerOverflowError> {
         Self::inline_int(n).ok_or(IntegerOverflowError { value: n })
     }
@@ -79,8 +76,6 @@ impl Value {
         Self(QNAN | TAG_PTR | u64::try_from(p).expect("pointer payload fits u64"))
     }
 
-    /// create a nested function marker for use in constants array.
-    /// this uses a dedicated tag that can't collide with heap pointers.
     pub fn nested_fn_marker(idx: usize) -> Self {
         let payload_limit = usize::try_from(PAYLOAD_MASK).unwrap_or(usize::MAX);
         assert!(idx <= payload_limit, "nested fn index too big");

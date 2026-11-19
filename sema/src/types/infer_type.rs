@@ -50,7 +50,6 @@ pub enum InferType {
 
     Param(String),
 
-    /// an unresolved associated projection `Self::Item` or `t::item`.
     Projection {
         trait_name: Option<String>,
         item: String,
@@ -404,7 +403,6 @@ impl InferType {
         }
     }
 
-    /// nothing inference can still change: each leaf is fixed or a type parameter
     pub fn is_rigid(&self) -> bool {
         match self {
             InferType::Param(_) => true,
@@ -734,7 +732,6 @@ impl fmt::Display for InferType {
 }
 
 impl InferType {
-    /// new type cannot reach a message under its internal spelling
     pub fn source_spelling(&self) -> String {
         match self {
             InferType::I64 => "int".to_string(),
@@ -824,7 +821,6 @@ impl InferType {
     }
 }
 
-/// `$` is not in the identifier grammar, so no source can write a name that ends this way, and no lookup keyed by a written name can
 pub(crate) const SHADOWED_METHOD_SUFFIX: &str = "$m";
 
 pub(crate) fn written_param(name: &str) -> &str {

@@ -66,7 +66,6 @@ impl VM {
         }
     }
 
-    /// mapping ids come from a process wide counter, so an unusual number of layouts stops being cached
     const MAX_PREPARED_MAPPING: usize = 1 << 20;
 
     #[inline]

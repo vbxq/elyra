@@ -3,7 +3,6 @@ use super::super::state::DispatchState;
 use crate::vm::{GcRef, ObjectKind, VM};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
-// Global variable operations: GetGlobal(24), SetGlobal(25)
 
 #[inline(always)]
 pub(crate) fn execute(
@@ -14,7 +13,6 @@ pub(crate) fn execute(
     instruction: u32,
 ) -> Result<(), RuntimeError> {
     match opcode {
-        // GetGlobal (24)
         24 => {
             let (destination, immediate) = decode_aimm(instruction);
             let index = usize::from(u16::from_ne_bytes(immediate.to_ne_bytes()));
@@ -26,7 +24,6 @@ pub(crate) fn execute(
             };
             state.write_register(vm, state.base + usize::from(destination), value, ip)?;
         }
-        // SetGlobal (25)
         25 => {
             let (source, immediate) = decode_aimm(instruction);
             let index = usize::from(u16::from_ne_bytes(immediate.to_ne_bytes()));

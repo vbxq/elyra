@@ -20,7 +20,6 @@ impl TypeError {
     }
 }
 
-/// the position a projection is written in names the namespace, never its
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemNamespace {
     Type,
@@ -79,11 +78,9 @@ pub enum ProjectionFailure {
         found: ItemNamespace,
     },
     BuiltinReceiver,
-    /// the receiver is generic and the definition is one of the impl's parameters
     ReceiverArguments {
         param: String,
     },
-    /// the constant is defined, but its value cannot be computed: the checked
     NotComputable,
     NotConstant {
         declared: Option<String>,
@@ -101,7 +98,6 @@ pub enum ProjectionFailure {
         constructor: String,
         instantiations: Vec<String>,
     },
-    /// the receiver is written whole, as `self` or with its arguments, and still reaches impls that define the item differently
     AmbiguousAcrossReceivers {
         trait_name: String,
         constructor: String,
@@ -142,11 +138,9 @@ pub enum TypeErrorKind {
     NotCallable {
         ty: InferType,
     },
-    /// undefined variable
     UndefinedVariable {
         name: String,
     },
-    /// undefined function
     UndefinedFunction {
         name: String,
     },
@@ -306,7 +300,6 @@ pub enum TypeErrorKind {
     },
     NegativeArraySize {
         size: i64,
-        /// `some` when the length was written as a projection rather than a literal
         constant: Option<String>,
     },
     NonConstantArrayRepeat,
@@ -461,7 +454,6 @@ pub enum TypeErrorKind {
     AssociatedBindingNamespaceMismatch {
         trait_name: String,
         item: String,
-        /// the right-hand side as written, so the message never renders a type
         value: String,
         declared: ItemNamespace,
     },
@@ -516,10 +508,8 @@ pub enum TypeErrorKind {
     },
     UnsatisfiedTraitBound {
         trait_name: String,
-        /// the instantiation the question carried, so the message does not name a
         trait_args: Vec<InferType>,
         ty: InferType,
-        /// set when a negative impl removed the trait, so the message does not
         denied: bool,
     },
     MissingSupertraitImpl {
@@ -632,7 +622,6 @@ pub enum TypeErrorKind {
         name: String,
         module: String,
     },
-    /// a nominal carried in only for an inlined body, which its own module never exported
     PrivateNominalNotExported {
         name: String,
         module: String,

@@ -29,7 +29,6 @@ pub struct StructMethod {
     pub return_type: InferType,
     pub has_self: bool,
     pub mutable_self: bool,
-    /// instantiates anew; the ones it inherits from its impl or its trait are
     pub own_type_params: Vec<String>,
 }
 
@@ -43,7 +42,6 @@ pub struct TraitMethod {
     pub mutable_self: bool,
     pub own_type_params: Vec<String>,
     pub has_body: bool,
-    /// written `default fn`, which opens the method to replacement by a more
     pub is_default: bool,
 }
 
@@ -52,7 +50,6 @@ pub struct TraitDef {
     pub name: String,
     pub owner: ModuleId,
     pub type_params: Vec<String>,
-    /// a supertrait is written with its arguments, and the obligation it lays is
     pub super_bounds: Vec<(String, Vec<InferType>)>,
     pub methods: Vec<TraitMethod>,
     pub associated_types: Vec<String>,
@@ -61,7 +58,6 @@ pub struct TraitDef {
     pub default_bodies: Vec<aelys_syntax::Function>,
 }
 
-/// a header's own spelling, with its parameters numbered by first appearance so
 pub(crate) fn positional_spelling(self_ty: &InferType) -> String {
     let mut seen: Vec<String> = Vec::new();
     render_positional(self_ty, &mut seen)
@@ -90,7 +86,6 @@ fn render_positional(ty: &InferType, seen: &mut Vec<String>) -> String {
     }
 }
 
-/// a trait at one instantiation, spelled so that two instantiations of one trait
 pub(crate) fn instantiation_key(name: &str, args: &[InferType]) -> String {
     // positional numbering restarted per obligation renders two different
     let mut key = name.to_string();
@@ -132,7 +127,6 @@ fn parameter_marked_spelling(ty: &InferType) -> String {
     }
 }
 
-/// the trait arguments an impl reaches for a given receiver: its declared ones,
 fn instantiate_args(
     self_type: &InferType,
     args: &[InferType],
@@ -149,7 +143,6 @@ fn instantiate_args(
     args.iter().map(|arg| substitution.apply(arg)).collect()
 }
 
-/// a header is one pattern, its target and every trait argument matched under a
 fn header_covers(
     pattern: &InferType,
     pattern_args: &[InferType],
@@ -165,7 +158,6 @@ fn header_covers(
     })
 }
 
-/// a conversion header is a pair, target and source, matched under **one**
 fn conversion_fits(general: &TraitImplDef, special: &TraitImplDef) -> bool {
     let mut mapping = std::collections::HashMap::new();
     crate::infer::monomorphize::match_types(&general.self_type, &special.self_type, &mut mapping)
@@ -179,17 +171,14 @@ fn conversion_fits(general: &TraitImplDef, special: &TraitImplDef) -> bool {
         .is_some()
 }
 
-/// one header outranks another by covering it and not being covered by it
 fn conversion_outranks(left: &TraitImplDef, right: &TraitImplDef) -> bool {
     conversion_fits(right, left) && !conversion_fits(left, right)
 }
 
-/// two impls of one trait at different instantiations declare different method
 fn same_instantiation(left: &[InferType], right: &[InferType]) -> bool {
     left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a == b)
 }
 
-/// two headers are comparable when one is an instance of the other, target and
 fn comparable_headers(
     left_self: &InferType,
     left_args: &[InferType],
@@ -208,7 +197,6 @@ fn comparable_headers(
         || header_covers(right_self, right_args, left_self, left_args)
 }
 
-/// a header subsumes another when a consistent substitution of its parameters
 pub(crate) fn subsumes(general: &InferType, special: &InferType) -> bool {
     let mut mapping = std::collections::HashMap::new();
     crate::infer::monomorphize::match_types(general, special, &mut mapping).is_some()
@@ -218,15 +206,12 @@ pub(crate) fn strictly_more_specific(special: &InferType, general: &InferType) -
     subsumes(general, special) && !subsumes(special, general)
 }
 
-/// a negative impl states that a type does not implement a trait; it lives apart
 pub enum SpecializationChoice {
     Keep,
     Redirect(String),
     Ambiguous(String),
     TooMany(String),
-    /// the receiver reached a trait a denial removes it from; a call inside a
     Denied(String),
-    /// no impl of the trait at the instantiation the receiver reaches covers it
     NoImpl(String, Vec<InferType>),
 }
 
@@ -285,7 +270,6 @@ pub enum FromSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundSelection {
     CompilerRule,
-    /// impls of one instantiation of one trait, none of them outranking the rest
     AmbiguousSpecialization,
     Selected(String),
     Ambiguous,
@@ -683,7 +667,6 @@ impl TypeTable {
             .collect()
     }
 
-    /// an impl that replaces an open root inherits the root's associated items,
     pub fn replaces_an_open_root(&self, trait_name: &str, self_type: &InferType) -> bool {
         self.trait_impl_defs.iter().any(|root| {
             root.opens
@@ -692,7 +675,6 @@ impl TypeTable {
         })
     }
 
-    /// two headers of one trait that subsume each other: no type will ever tell
     pub fn equally_specific_overlap(
         &self,
         indices: &[usize],
@@ -716,7 +698,6 @@ impl TypeTable {
             .collect()
     }
 
-    /// an overlap is licit when one header is strictly more specific than the
     fn opens_to_specialization(
         &self,
         seen: &TraitImplDef,
@@ -760,7 +741,6 @@ impl TypeTable {
         self.trait_declaring_item_in(trait_name, item, None)
     }
 
-    /// every supertrait an impl of this trait at this instantiation must satisfy,
     pub fn supertrait_obligations(
         &self,
         trait_name: &str,
@@ -938,7 +918,6 @@ impl TypeTable {
         Some(instantiate_impl_definition(&chosen.self_type, self_ty, ty))
     }
 
-    /// a receiver whose type parameters stay open reads the item of the impl that covers it, when every impl that reaches it agrees
     fn resolve_rigid_projection(
         &self,
         closure: Option<&[String]>,
@@ -1018,7 +997,6 @@ impl TypeTable {
         self.negative_impls.push(definition);
     }
 
-    /// two headers of one trait on one nominal that overlap without one being
     pub fn negative_header_clash(
         &self,
         trait_name: &str,
@@ -1038,7 +1016,6 @@ impl TypeTable {
         })
     }
 
-    /// only a denial strictly more specific than a positive header carves a hole
     pub fn positive_negative_clash(
         &self,
         trait_name: &str,
@@ -1057,7 +1034,6 @@ impl TypeTable {
         })
     }
 
-    /// the mirror, for a negative header meeting the positive impls already seen
     pub fn positive_header_clash(
         &self,
         trait_name: &str,
@@ -1076,7 +1052,6 @@ impl TypeTable {
         })
     }
 
-    /// the symbol of the most specific impl that can receive this type, when the
     pub const MAX_APPLICABLE_IMPLS: usize = 64;
 
     pub fn select_specialization(
@@ -1156,7 +1131,6 @@ impl TypeTable {
             .unwrap_or(SpecializationChoice::Keep)
     }
 
-    /// when several impls of one trait supply the method and they form a chain,
     pub fn specialization_root(
         &self,
         target: &str,
@@ -1229,7 +1203,6 @@ impl TypeTable {
             .map(|entry| entry.symbol.clone())
     }
 
-    /// the symbols `method` receives from impls of `trait_name` at another instantiation than the one `header` names
     pub fn symbols_at_other_instantiations(
         &self,
         trait_name: &str,
@@ -1249,12 +1222,10 @@ impl TypeTable {
             .collect()
     }
 
-    /// some instantiation of both reaches this header from the receiver
     pub fn reaches(&self, header: &InferType, receiver: &InferType) -> bool {
         headers_overlap(header, &[], receiver, &[])
     }
 
-    /// the impl that supplies `symbol` receives the receiver whatever its own type parameters become
     pub fn impl_covers(&self, symbol: &str, receiver: &InferType) -> bool {
         self.trait_impl_defs
             .iter()
@@ -1267,7 +1238,6 @@ impl TypeTable {
             .is_some_and(|definition| subsumes(&definition.self_type, receiver))
     }
 
-    /// the symbols an ordering leaves out: every applicable impl that another
     pub fn symbols_outranked(&self, receiver: &InferType, method: &str) -> Vec<String> {
         if !receiver.is_concrete() {
             return Vec::new();
@@ -1302,7 +1272,6 @@ impl TypeTable {
         out
     }
 
-    /// the symbols of impls whose self type cannot receive this receiver; a
     pub fn symbols_not_applying(&self, receiver: &InferType, method: &str) -> Vec<String> {
         let mut out = Vec::new();
         // an open receiver rules nothing out: every impl could still be the one
@@ -1327,7 +1296,6 @@ impl TypeTable {
         out
     }
 
-    /// the symbol an impl of this trait on this nominal gives the named method
     pub fn trait_impl_method(
         &self,
         trait_name: &str,
@@ -1354,7 +1322,6 @@ impl TypeTable {
         found
     }
 
-    /// the traits whose impls on this nominal supply the named method
     pub fn traits_supplying(&self, target: &str, method: &str) -> Vec<String> {
         let mut names = Vec::new();
         for definition in &self.trait_impl_defs {
@@ -1371,7 +1338,6 @@ impl TypeTable {
         names
     }
 
-    /// the denial is matched against the receiver type, never against its bare
     pub fn denies(&self, trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
         self.negative_impls.iter().any(|definition| {
             definition.trait_name == trait_name
@@ -1385,7 +1351,6 @@ impl TypeTable {
         })
     }
 
-    /// the impls of `target` that supply any of `symbols`, as (trait name, its instantiation) one entry per impl
     pub fn trait_impls_supplying(
         &self,
         target: &str,
@@ -1487,7 +1452,6 @@ impl TypeTable {
         self.implements(trait_name, ty, trait_args)
     }
 
-    /// whether an impl of this trait covers this exact type with these exact trait
     pub fn implements(&self, trait_name: &str, ty: &InferType, trait_args: &[InferType]) -> bool {
         // answered by the name alone; only a concrete question can be refused on
         if !ty.is_concrete() || trait_args.iter().any(|arg| !arg.is_concrete()) {
@@ -1556,7 +1520,6 @@ impl TypeTable {
         found
     }
 
-    /// the denial is read first, and before the prelude short circuit. a display
     pub fn select_bound_method(
         &self,
         trait_name: &str,
@@ -2037,12 +2000,10 @@ pub(crate) fn headers_unify(left: &InferType, right: &InferType) -> bool {
     types_overlap(left, right)
 }
 
-/// two headers overlap when **one** type satisfies both. that is a unification, not
 fn types_overlap(left: &InferType, right: &InferType) -> bool {
     headers_overlap(left, &[], right, &[])
 }
 
-/// a header is its target **and** its trait arguments, and the overlap question is
 fn headers_overlap(
     left: &InferType,
     left_args: &[InferType],
@@ -2069,7 +2030,6 @@ fn headers_overlap(
     })
 }
 
-/// the two headers name their parameters independently, so one side is renamed
 fn tag_params(ty: &InferType, prefix: &str) -> InferType {
     match ty {
         InferType::Param(name) => InferType::Param(format!("{prefix}{name}")),
@@ -2103,7 +2063,6 @@ fn tag_params(ty: &InferType, prefix: &str) -> InferType {
     }
 }
 
-/// a type with every bound parameter replaced by what it is bound to, through chains of bindings
 fn settle_bindings(
     ty: &InferType,
     bindings: &std::collections::HashMap<String, InferType>,
@@ -2133,7 +2092,6 @@ fn resolved_binding(
     current
 }
 
-/// a parameter cannot stand for a type that contains it: the answer would be an
 fn occurs_in(
     name: &str,
     ty: &InferType,
@@ -2251,7 +2209,6 @@ pub(crate) fn trait_instantiation_spelling(trait_name: &str, trait_args: &[Infer
     format!("{trait_name}<{}>", args.join(", "))
 }
 
-/// each parameter of a header, mapped to the first position of the receiver it stands at, spelled so that no source can write it
 fn receiver_positions(ty: &InferType, path: &mut Vec<usize>, out: &mut HashMap<String, InferType>) {
     let mut visit = |index: usize, inner: &InferType, out: &mut HashMap<String, InferType>| {
         path.push(index);

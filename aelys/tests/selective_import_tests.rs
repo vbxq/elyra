@@ -564,7 +564,7 @@ pub fn make() -> int { return 11 }
 fn secret() -> int { return 7 }
 "#;
 
-// receiver as the bare type the `needs` brought into scope, the rejected half
+// receiver as the bare type the `use` brought into scope, the rejected half
 fn whole_module_main(receiver: &str, item: &str, position: &str) -> String {
     let projection = format!("{receiver}::{item}");
     let line = match position {

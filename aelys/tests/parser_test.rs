@@ -204,7 +204,6 @@ fn test_function_with_decorator() {
 fn test_and_or_expressions() {
     let stmts = parse("a && b || c");
 
-    // Should be ((a and b) or c)
     match &stmts[0].kind {
         StmtKind::Expression(expr) => match &expr.kind {
             ExprKind::Or { left, right } => {

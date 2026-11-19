@@ -1,6 +1,3 @@
-// constant folding - evaluates compile-time constant expressions
-// handles: arithmetic, comparisons, string concat, boolean logic
-// TODO: fold pure builtins like len("hello") -> 5
 
 mod expr;
 mod stmt;

@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-// FIXME: liveness analysis is pretty basic, doesn't handle all control flow
 
 mod analysis;
 mod cfg;

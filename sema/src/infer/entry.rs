@@ -761,7 +761,6 @@ impl TypeInference {
         Ok(result.program)
     }
 
-    /// projection. the chain is followed directly, never through composite
     pub(super) fn resolve_associated_projection(
         &self,
         projection: &InferType,
@@ -915,7 +914,6 @@ impl TypeInference {
         found
     }
 
-    /// the headers of the impls that reach the receiver and define the item
     fn reaching_headers(
         &self,
         trait_name: Option<&str>,
@@ -995,7 +993,6 @@ impl TypeInference {
         None
     }
 
-    /// resolves a symbolic fixed-array length `[t; bounds::limit]` by looking
     fn resolve_array_length_path(
         &self,
         path: &[String],
@@ -1150,7 +1147,6 @@ impl TypeInference {
         }
     }
 
-    /// the offered repair is written in the file the caret is in, and a carried body cannot
     pub(super) fn trait_nameable_here(&self, name: &str) -> bool {
         if self.current_module == self.root_module {
             return true;
@@ -1186,7 +1182,6 @@ impl TypeInference {
         }
     }
 
-    /// its own position requires. `none` means this point cannot classify the
     pub(super) fn associated_item_namespace(
         &self,
         receiver: &str,
@@ -1356,7 +1351,6 @@ impl TypeInference {
         self.eval_const_expr_value(&expr, &owner, &mut state)
     }
 
-    /// budget on this path rejected legitimate programs at 256. recursion is
     pub(super) fn eval_const_expr_value(
         &self,
         expr: &aelys_syntax::Expr,
@@ -1464,7 +1458,6 @@ impl TypeInference {
         }
     }
 
-    /// item. built once so the monomorphizer can resolve `t::limit` nodes
     pub(super) fn associated_const_resolutions(
         &self,
     ) -> HashMap<(String, String), ConstResolution> {
@@ -1977,7 +1970,6 @@ fn error_priority(kind: &TypeErrorKind) -> u8 {
     }
 }
 
-/// errors of one kind raised in a trait's default body come once per impl that adopts it, in the order the file declared those impls
 fn order_errors_of_one_kind_at_one_place(
     errors: &mut [TypeError],
     default_bodies: &[(usize, usize)],
@@ -2028,7 +2020,6 @@ fn order_errors_of_one_kind_at_one_place(
     }
 }
 
-/// the refusal a selection that chose no impl stands for
 pub(super) fn specialization_error_kind(
     verdict: crate::types::SpecializationChoice,
     ty: InferType,

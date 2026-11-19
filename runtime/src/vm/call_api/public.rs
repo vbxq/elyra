@@ -2,7 +2,6 @@ use super::super::{VM, Value};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 impl VM {
-    /// Call a function by name with the given arguments.
     pub fn call_function_by_name(
         &mut self,
         name: &str,
@@ -18,7 +17,6 @@ impl VM {
         self.call_value(func_value, args)
     }
 
-    /// Get a function value by name for repeated calls.
     pub fn get_function_value(&self, name: &str) -> Option<Value> {
         self.named_global(name)
     }

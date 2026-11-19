@@ -26,12 +26,10 @@ pub enum ConstraintReason {
     NotOperand,
     IfBranches,
     WhileCondition,
-    /// for loop bounds must be int
     ForBounds,
     Comparison,
     ArrayElement,
     ArrayIndex,
-    /// range bounds must be int
     RangeBound,
     CollectionMethodReceiver {
         method: String,

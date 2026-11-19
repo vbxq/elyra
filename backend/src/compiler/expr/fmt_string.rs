@@ -6,8 +6,6 @@ use aelys_syntax::Span;
 use aelys_syntax::ast::{Expr, FmtStringPart};
 
 impl Compiler {
-    /// Compile a format string into concatenation of parts.
-    /// `extra_args` are used to fill in Placeholder slots.
     pub fn compile_fmt_string(
         &mut self,
         parts: &[FmtStringPart],
@@ -102,7 +100,7 @@ impl Compiler {
     }
 
     fn compile_expr_to_string(&mut self, expr: &Expr, dest: u16, span: Span) -> Result<()> {
-        // Native calls read args from dest+1, so compile the expression there.
+        // native calls read their arguments from dest+1
         let arg_reg = dest + 1;
 
         if crate::compiler::call::util::call_window_available(

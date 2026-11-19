@@ -64,10 +64,6 @@ let s = "world"
     assert_aelys_str(code, "r");
 }
 
-// =============================================================================
-// String ForEach Iteration Tests (for letter in stuff)
-// =============================================================================
-
 #[test]
 fn string_foreach_count_chars() {
     let code = r#"
@@ -173,10 +169,6 @@ count
     assert_aelys_int(code, 3);
 }
 
-// =============================================================================
-// String Indexing + ForEach Consistency
-// =============================================================================
-
 #[test]
 fn string_index_and_foreach_same_count() {
     let code = r#"
@@ -194,10 +186,6 @@ if count_index == count_foreach { count_index } else { -1 }
 "#;
     assert_aelys_int(code, 11);
 }
-
-// =============================================================================
-// Unicode Handling
-// =============================================================================
 
 #[test]
 fn string_foreach_unicode_accented() {
@@ -223,10 +211,6 @@ count
     assert_aelys_int(code, 5);
 }
 
-// =============================================================================
-// ForEach with break
-// =============================================================================
-
 #[test]
 fn string_foreach_break_early() {
     let code = r#"
@@ -241,10 +225,6 @@ count
 "#;
     assert_aelys_int(code, 3);
 }
-
-// =============================================================================
-// Indexing on string literal
-// =============================================================================
 
 #[test]
 fn string_literal_index() {

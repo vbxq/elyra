@@ -367,10 +367,6 @@ fn test_bitwise_in_function_check_bit() {
     assert_eq!(result.as_bool(), Some(true));
 }
 
-// =============================================================================
-// Edge Cases - Shift Amount Wrap-Around (branchless behavior with & 63)
-// =============================================================================
-
 #[test]
 fn test_negative_shift_count_overflows() {
     let code = r#"
@@ -422,10 +418,6 @@ fn test_shift_by_46_succeeds() {
     assert_eq!(result.as_int(), Some(1_i64 << 46));
 }
 
-// =============================================================================
-// Edge Cases - String Type Errors (compile-time)
-// =============================================================================
-
 #[test]
 fn test_string_bitwise_and_fails() {
     assert!(run_fails("\"hello\" & 5"));
@@ -455,10 +447,6 @@ fn test_string_right_shift_fails() {
 fn test_string_bitwise_not_fails() {
     assert!(run_fails("~\"hello\""));
 }
-
-// =============================================================================
-// Edge Cases - Boolean Type Errors (compile-time)
-// =============================================================================
 
 #[test]
 fn test_bool_bitwise_and_fails() {

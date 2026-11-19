@@ -1,16 +1,10 @@
-/// Integration tests for the Aelys language.
-///
-/// These tests verify end-to-end execution of Aelys programs,
-/// running the full pipeline: Lexer -> Parser -> Compiler -> VM.
 use aelys::run;
 use aelys_runtime::Value;
 
-/// Helper to run code and expect success
 fn run_ok(source: &str) -> Value {
     run(source, "test.aelys").expect("Expected program to run successfully")
 }
 
-/// Helper to run code and expect an error
 fn run_err(source: &str) -> String {
     match run(source, "test.aelys") {
         Ok(_) => panic!("Expected program to fail, but it succeeded"),

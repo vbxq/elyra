@@ -1,9 +1,6 @@
-//! Integration tests for Aelys - converted from examples/test_*.aelys
 
 mod common;
 use common::*;
-
-// ==Simple function tests =====
 
 #[test]
 fn test_simple_function_return() {
@@ -30,8 +27,6 @@ add(10, 20)
     );
     assert_eq!(result.as_int(), Some(30));
 }
-
-// ==If expression tests =====
 
 #[test]
 fn test_if_expression_simple() {
@@ -98,8 +93,6 @@ nested(1, 2)
     assert_eq!(result.as_int(), Some(3));
 }
 
-// ==Large integer tests =====
-
 #[test]
 fn test_large_integers() {
     let result = run_aelys(
@@ -133,8 +126,6 @@ fn test_power_of_two_40() {
     let result = run_aelys("1099511627776");
     assert_eq!(result.as_int(), Some(1099511627776));
 }
-
-// ==Recursion tests =====
 
 #[test]
 fn test_recursion_factorial() {
@@ -200,8 +191,6 @@ deep(1020)
     assert_eq!(result.as_int(), Some(0));
 }
 
-// ==Mutual recursion =====
-
 #[test]
 fn test_mutual_recursion_is_even() {
     let result = run_aelys(
@@ -250,8 +239,6 @@ is_odd(99)
     assert_eq!(result.as_bool(), Some(true));
 }
 
-// ==Division tests =====
-
 #[test]
 fn test_integer_division() {
     let result = run_aelys("10 / 3");
@@ -289,15 +276,11 @@ fn test_float_division() {
     assert!((f - 3.3333333333333335).abs() < 0.0001);
 }
 
-// ==Modulo tests =====
-
 #[test]
 fn test_modulo() {
     let result = run_aelys("17 % 5");
     assert_eq!(result.as_int(), Some(2));
 }
-
-// ==Error tests =====
 
 #[test]
 fn test_division_by_zero() {
@@ -310,8 +293,6 @@ fn test_modulo_by_zero() {
     let result = aelys::run("10 % 0", "<test>");
     assert!(result.is_err());
 }
-
-// ==Logic tests =====
 
 #[test]
 fn test_and_short_circuit() {
@@ -348,8 +329,6 @@ fn test_grouped_boolean() {
     let result = run_aelys("(true || false) && (false || true)");
     assert_eq!(result.as_bool(), Some(true));
 }
-
-// ==Control flow tests =====
 
 #[test]
 fn test_while_loop() {
@@ -401,8 +380,6 @@ sum
     // sum of odd numbers 1,3,5,7,9 = 25
     assert_eq!(result.as_int(), Some(25));
 }
-
-// ==Variable shadowing tests =====
 
 #[test]
 fn test_variable_shadowing_simple() {
@@ -465,8 +442,6 @@ get_inner()
     assert_eq!(result.as_int(), Some(5));
 }
 
-// ==GC stress tests =====
-
 #[test]
 fn test_gc_stress_loop() {
     // This should complete without running out of memory
@@ -507,8 +482,6 @@ gc_stress2()
     assert_eq!(result.as_int(), Some(1000));
 }
 
-// ==Edge case tests =====
-
 #[test]
 fn test_negative_zero() {
     let result = run_aelys("-0");
@@ -539,8 +512,6 @@ fn test_equality_types() {
     let err = run_aelys_err("42 == true");
     assert!(err.contains("type mismatch"), "{err}");
 }
-
-// ==@no_gc tests =====
 
 #[test]
 fn test_no_gc_decorator() {
@@ -597,7 +568,6 @@ fn test_complex_expression() {
 
 #[test]
 fn test_max_int_value() {
-    // Test actual 48-bit max value: (1 << 47) - 1 = 140737488355327
     let result = run_aelys("140737488355327");
     assert_eq!(result.as_int(), Some(140737488355327));
 

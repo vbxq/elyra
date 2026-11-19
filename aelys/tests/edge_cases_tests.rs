@@ -1,8 +1,6 @@
 mod common;
 use common::*;
 
-// Unicode edge cases
-
 #[test]
 fn unicode_surrogate_pairs() {
     let code = r#"
@@ -51,8 +49,6 @@ if byte_len > char_len { 1 } else { 0 }
     assert_aelys_int(code, 1);
 }
 
-// String literal max length tests
-
 #[test]
 fn very_long_string_literal() {
     let long_str = "x".repeat(10000);
@@ -79,8 +75,6 @@ s.len()
 "#;
     assert_aelys_int(code, 1000);
 }
-
-// Recursion at MAX_FRAMES
 
 #[test]
 fn recursion_near_max_frames() {
@@ -114,8 +108,6 @@ if even(200) { 1 } else { 0 }
     assert_aelys_int(code, 1);
 }
 
-// GC during allocation
-
 #[test]
 fn gc_stress_many_allocations() {
     let code = r#"
@@ -143,8 +135,6 @@ make_strings(1000)
 "#;
     assert_aelys_int(code, 1000);
 }
-
-// Type system edge cases
 
 #[test]
 fn deeply_nested_function_types() {
@@ -176,8 +166,6 @@ closure()
     assert_aelys_int(code, 36);
 }
 
-// Integer boundary values
-
 #[test]
 fn int_max_value() {
     let code = r#"
@@ -196,8 +184,6 @@ if result > 0.0 { 1 } else { 0 }
 "#;
     assert_aelys_int(code, 1);
 }
-
-// Float special values
 
 #[test]
 fn float_infinity_operations() {
@@ -228,8 +214,6 @@ if result > 1000000000.0 { 1 } else { 0 }
     assert_aelys_int(code, 1);
 }
 
-// Empty collections and edge cases
-
 #[test]
 fn empty_string_operations() {
     let code = r#"
@@ -249,8 +233,6 @@ let parts = "".split(",")
 "#;
     assert_aelys_int(code, 42);
 }
-
-// Boundary conditions for loops
 
 #[test]
 fn loop_zero_iterations() {
@@ -302,8 +284,6 @@ count
     assert_aelys_int(code, 1000);
 }
 
-// Variable shadowing edge cases
-
 #[test]
 fn extreme_variable_shadowing() {
     let code = r#"
@@ -325,8 +305,6 @@ x
     assert_aelys_int(code, 1);
 }
 
-// Function parameter edge cases
-
 #[test]
 fn function_with_zero_params() {
     let code = r#"
@@ -347,13 +325,10 @@ add10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert_aelys_int(code, 55);
 }
 
-// Whitespace and formatting edge cases
-
 #[test]
 fn code_with_excessive_whitespace() {
     let code = r#"
 let     x     =     42
-
 
 x
 "#;
@@ -365,8 +340,6 @@ fn code_with_tabs() {
     let code = "let\tx\t=\t42\nx";
     assert_aelys_int(code, 42);
 }
-
-// Math edge cases
 
 #[test]
 fn sqrt_zero() {

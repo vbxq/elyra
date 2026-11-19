@@ -57,9 +57,7 @@ pub enum MajorStep {
 }
 
 pub struct Heap {
-    // Keep each slot in its own allocation.  Frames cache pointers into
-    // function/closure objects for the duration of a run; growing the slot
-    // table must not move those objects.
+    // frames cache pointers into function objects for a whole run, so growing the slot table must not move them
     #[allow(clippy::vec_box)]
     objects: Vec<Box<HeapSlot>>,
     free_list: Vec<u32>,

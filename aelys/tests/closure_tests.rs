@@ -1,14 +1,9 @@
 use aelys::run;
 use aelys_runtime::Value;
 
-/// Helper to run code and expect success
 fn run_ok(source: &str) -> Value {
     run(source, "test.aelys").expect("Expected program to run successfully")
 }
-
-// =============================================================================
-// Basic Closure Tests
-// =============================================================================
 
 #[test]
 fn test_closure_basic_capture() {
@@ -83,10 +78,6 @@ fn test_closure_calls_captured_function_and_closure() {
     );
     assert_eq!(result.as_int(), Some(28));
 }
-
-// =============================================================================
-// Mutable Upvalue Tests
-// =============================================================================
 
 #[test]
 fn test_closure_mutable_counter() {
@@ -180,10 +171,6 @@ fn test_closure_accumulator() {
     assert_eq!(result.as_int(), Some(35));
 }
 
-// =============================================================================
-// Nested Closure Tests
-// =============================================================================
-
 #[test]
 fn test_closure_nested_capture() {
     // Nested closures capturing from multiple levels
@@ -229,10 +216,6 @@ fn test_closure_deeply_nested() {
     assert_eq!(result.as_int(), Some(1234));
 }
 
-// =============================================================================
-// Block-Scoped Closing Tests
-// =============================================================================
-
 #[test]
 fn test_closure_block_scoped_capture() {
     // Variable captured in block, closure escapes block
@@ -273,10 +256,6 @@ fn test_closure_captures_after_block_exit() {
     );
     assert_eq!(result.as_int(), Some(42));
 }
-
-// =============================================================================
-// Closure in Loop Tests
-// =============================================================================
 
 #[test]
 fn test_closure_in_loop_capture_current() {
@@ -320,10 +299,6 @@ fn test_closure_captures_loop_variable_by_ref() {
     // f sees final value of i = 5
     assert_eq!(result.as_int(), Some(5));
 }
-
-// =============================================================================
-// Higher-Order Function Tests with Closures
-// =============================================================================
 
 #[test]
 fn test_closure_as_callback() {
@@ -377,10 +352,6 @@ fn test_closure_partial_application() {
     // 15 + 25 = 40
     assert_eq!(result.as_int(), Some(40));
 }
-
-// =============================================================================
-// Edge Cases
-// =============================================================================
 
 #[test]
 fn test_closure_captures_bool() {

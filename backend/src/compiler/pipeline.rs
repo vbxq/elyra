@@ -324,10 +324,8 @@ fn poisoned_schema_error(source: &Arc<aelys_syntax::Source>) -> aelys_common::Ae
     .into()
 }
 
-/// escaped cycle a `none` (a hard compile error here) rather than a stack
 const MAX_PROJECTION_HOPS: usize = 64;
 
-/// a hop count bounds a chain, not a fan: an associated type naming another one
 const MAX_DESCRIPTOR_NODES: usize = 65_536;
 
 // returns none for the poison marker so a poisoned type can never reach the bytecode schema

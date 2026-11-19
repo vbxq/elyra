@@ -20,7 +20,6 @@ fn read(relative: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
 }
 
-/// drops line comments so that a comma or a brace inside one cannot end an arm
 fn strip_line_comments(source: &str) -> String {
     source
         .lines()
@@ -182,7 +181,6 @@ fn documented_codes() -> Vec<(u16, String, usize)> {
     out
 }
 
-/// one code per condition, not per variant: each entry pins the exact variants that share it
 const SHARED_CODES: &[(u16, &[&str])] = &[
     (209, &["IntegerLiteralOutOfRange", "IntegerOverflow"]),
     (

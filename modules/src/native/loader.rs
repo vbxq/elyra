@@ -1,5 +1,5 @@
-// FFI native module loading
-// FIXME: consider dlopen flags for lazy vs eager binding
+#![allow(clippy::missing_safety_doc)]
+
 
 use aelys_native::{
     AELYS_ABI_VERSION, AelysExport, AelysExportKind, AelysModuleDescriptor, AelysNativeType,
@@ -244,7 +244,6 @@ fn generated_descriptor_symbols(name: &str) -> Vec<Vec<u8>> {
     names
 }
 
-/// The metadata and exports read out of a validated module descriptor.
 pub struct DescriptorContents {
     pub name: String,
     pub version: Option<String>,
@@ -252,8 +251,6 @@ pub struct DescriptorContents {
     pub exports: HashMap<String, NativeExport>,
 }
 
-#[doc = "# Safety"]
-#[doc = "the descriptor must point to a valid static abi descriptor."]
 pub unsafe fn validate_descriptor(
     descriptor: &AelysModuleDescriptor,
     fallback_name: Option<&str>,
@@ -317,8 +314,6 @@ fn check_descriptor_layout(descriptor: &AelysModuleDescriptor) -> Result<(), Nat
     Ok(())
 }
 
-#[doc = "# Safety"]
-#[doc = "the descriptor must point to a valid static abi descriptor."]
 pub unsafe fn descriptor_module_name(descriptor: &AelysModuleDescriptor) -> Option<String> {
     check_descriptor_layout(descriptor).ok()?;
     if descriptor.module_name().is_null() {
@@ -328,7 +323,6 @@ pub unsafe fn descriptor_module_name(descriptor: &AelysModuleDescriptor) -> Opti
 }
 
 fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result<(), NativeError> {
-    // Check 1: Non-null (this is also checked in module_loader, but we validate early)
     if ptr.is_null() {
         return Err(NativeError::InvalidFunctionPointer {
             export_name: name.to_string(),
@@ -336,8 +330,6 @@ fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result
         });
     }
 
-    // Check 2: Alignment check for function pointers
-    // Function pointers should be at least aligned to the size of a pointer
     let ptr_addr = ptr as usize;
     let fn_ptr_align = std::mem::align_of::<aelys_native::AelysNativeFn>();
     if !ptr_addr.is_multiple_of(fn_ptr_align) {
@@ -347,10 +339,7 @@ fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result
         });
     }
 
-    // Check 3: Address range sanity check
-    // The first 4KB (0x1000) is typically unmapped on most operating systems
-    // to catch null pointer dereferences. A valid function pointer should not
-    // be in this range.
+    // the first page is unmapped on common systems, so no function pointer lies below 0x1000
     const MIN_VALID_ADDRESS: usize = 0x1000;
     if ptr_addr < MIN_VALID_ADDRESS {
         return Err(NativeError::InvalidFunctionPointer {
@@ -359,12 +348,9 @@ fn validate_function_pointer(name: &str, ptr: *const std::ffi::c_void) -> Result
         });
     }
 
-    // Check 4: On 64-bit systems, verify the pointer is in a reasonable range
-    // User-space addresses typically don't exceed certain bounds
     #[cfg(target_pointer_width = "64")]
     {
-        // On most 64-bit systems, user-space is limited to 48-bit addresses (256TB)
-        // or 57-bit with 5-level paging. We use a conservative upper bound.
+        // user space is at most 57-bit with 5-level paging, so the bound is conservative
         const MAX_USER_ADDRESS: usize = 0x0000_7FFF_FFFF_FFFF;
         if ptr_addr > MAX_USER_ADDRESS {
             return Err(NativeError::InvalidFunctionPointer {
@@ -402,7 +388,6 @@ fn read_exports(
             return Err(NativeError::DuplicateExport(name));
         }
 
-        // Validate function pointers before storing
         if matches!(export.kind, AelysExportKind::Function) {
             validate_function_pointer(&name, export.value)?;
         }

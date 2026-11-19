@@ -1110,7 +1110,7 @@ impl VM {
                     set!(a, value);
                     next
                 }
-                // int storage only ever receives 48-bit values, so a load needs no range check
+                // packed int storage only holds inline values, so a load needs no range check
                 VEC_LOAD_I => {
                     let index = index!(c);
                     let Some(GcObject {

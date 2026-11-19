@@ -1,5 +1,3 @@
-#![doc = include_str!("docs.md")]
-
 mod accessors;
 mod checks;
 mod constructors;
@@ -11,16 +9,12 @@ pub struct IntegerOverflowError {
     pub value: i64,
 }
 
-// NaN-boxing: all values fit in 64 bits. Floats are stored directly,
-// everything else uses the NaN space (quiet NaN has 51 bits of payload).
-// This approach is used by LuaJIT, JavaScriptCore, etc. - proven fast.
-//
 // an integer outside the 48-bit payload lives in a heap BoxedInt; every integer has exactly one encoding
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Value(u64);
 
-// Tag bits are in bits 48-50, payload in bits 0-47
+// tag bits 48-50, payload bits 0-47
 const QNAN: u64 = 0x7FF8_0000_0000_0000;
 const TAG_MASK: u64 = 0x0007_0000_0000_0000;
 const TAG_PTR: u64 = 0x0000_0000_0000_0000;

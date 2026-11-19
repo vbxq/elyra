@@ -25,7 +25,6 @@ impl VM {
 
         let func_ref = GcRef::new(func_ptr);
 
-        // Extract call data without holding the borrow
         let call_data = {
             let obj = self.heap.get(func_ref).ok_or_else(|| {
                 self.runtime_error(RuntimeErrorKind::NotCallable(
@@ -70,7 +69,6 @@ impl VM {
             }
         };
 
-        // Now perform the call with the extracted data
         match call_data {
             CallData::Function {
                 func_ref,
@@ -165,7 +163,6 @@ impl VM {
         Ok(())
     }
 
-    /// Return from a function call with a result value.
     pub fn return_from_call(&mut self, result: Value) -> Result<StepResult, RuntimeError> {
         let frame = self.pop_frame().ok_or_else(|| {
             self.runtime_error(RuntimeErrorKind::InvalidBytecode(

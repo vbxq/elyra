@@ -63,7 +63,6 @@ impl Heap {
         Some(self.alloc(GcObject::new(ObjectKind::String(joined))))
     }
 
-    // FNV-1a - simple and fast enough for string interning
     pub fn fnv1a_hash(bytes: &[u8]) -> u64 {
         let mut h = 0xcbf29ce484222325u64;
         for &b in bytes {

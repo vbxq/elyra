@@ -5,7 +5,6 @@ use crate::unify::{Substitution, UnifyError, unify, unify_error_to_type_error};
 use aelys_syntax::Span;
 use std::collections::HashMap;
 
-/// rejected at collection; this bounds an acyclic but exponentially expanding
 const MAX_PROJECTION_NODES: usize = 4096;
 
 fn type_node_count(ty: &InferType) -> usize {
@@ -55,7 +54,6 @@ struct NormalizeState {
 }
 
 impl TypeInference {
-    /// monomorphizer substitutes it and the backend resolves it.
     pub(super) fn normalize_projection_types(
         &mut self,
         ty: &InferType,
@@ -83,7 +81,6 @@ impl TypeInference {
         normalized
     }
 
-    /// builds a bounded multiple of the budget, never the explosion.
     pub(super) fn report_oversized_projection(
         &mut self,
         ty: &InferType,
@@ -112,7 +109,6 @@ impl TypeInference {
         });
     }
 
-    /// already rejected with e0423 when the impls are collected, so reaching
     fn normalize_projection_types_bounded(
         &self,
         ty: &InferType,

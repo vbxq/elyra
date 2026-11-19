@@ -1,11 +1,5 @@
 use super::{GcRef, Value};
 
-// The windowed register approach is borrowed from Lua's implementation.
-// Each function sees r0, r1, r2... but they're actually offsets from `base`
-// in a shared register stack. This avoids copying arguments on calls.
-//
-// Note: all the raw pointers here are cached to avoid going through the heap
-// on every instruction. The safety invariants are documented on each field.
 
 #[derive(Debug, Clone)]
 pub struct CallFrame {

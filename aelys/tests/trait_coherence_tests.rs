@@ -20,7 +20,6 @@ fn compile_message(source: &str) -> String {
     }
 }
 
-/// every error the program draws, as a set: the public pipeline reports them all, where a compile reports the first
 fn every_error(source: &str) -> Vec<String> {
     let mut pipeline = aelys_driver::pipeline::standard_pipeline();
     let error = pipeline
@@ -78,7 +77,6 @@ fn bodies_of(function: &Function, method: &str) -> Vec<String> {
         .collect()
 }
 
-/// a call names the impl it took; the returned value does not, and two
 fn calls_of(function: &Function, caller: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     walk(function, &mut |candidate| {
@@ -176,10 +174,8 @@ fn probe() -> int {
 probe()
 ";
 
-/// the instance infix the monomorphizer writes for a generic impl body
 const INSTANCE_INFIX: &str = "$s2$";
 
-/// a mangled name carries the nominal in clear, length prefixed; only the
 fn segment_of(name: &str) -> String {
     format!("{:08x}:{name}", name.len())
 }
@@ -746,7 +742,6 @@ probe()
     );
 }
 
-/// the same program that calls the method: a coherence verdict must not lose the
 #[test]
 fn unordered_specialization_is_e0442_even_when_the_trait_is_used() {
     let message = compile_message(
@@ -977,7 +972,6 @@ fn specialization_limit_is_e0444() {
     );
 }
 
-/// one witness above the bound would leave every value between the two free; the
 #[test]
 fn the_selection_bound_is_pinned_from_both_sides() {
     let at = compile_message(&specialization_chain(64));
@@ -992,7 +986,6 @@ fn the_selection_bound_is_pinned_from_both_sides() {
     );
 }
 
-/// a totally ordered chain: each header fixes one more position to int than the
 fn specialization_chain(links: usize) -> String {
     let params: Vec<String> = (0..links).map(|index| format!("T{index}")).collect();
     let fields: Vec<String> = (0..links)
@@ -1029,7 +1022,6 @@ fn specialization_chain(links: usize) -> String {
     source
 }
 
-/// every k-subset of the positions fixed to int gives one header; two headers of
 fn exploding_selection(width: usize, size: usize) -> String {
     let params: Vec<String> = (0..width).map(|index| format!("T{index}")).collect();
     let fields: Vec<String> = (0..width)
@@ -1291,7 +1283,6 @@ probe()
     assert_ne!(bodies[0], bodies[1], "{bodies:?}");
 }
 
-/// the two lifted frontiers must not answer any program once their forms are
 #[test]
 fn no_program_still_receives_a_lifted_frontier_code() {
     for source in [
@@ -1419,7 +1410,6 @@ probe()
     );
 }
 
-/// a projection names its nominal, not an application of it, so a denial that
 #[test]
 fn a_projection_cannot_be_reached_through_a_denied_impl() {
     let message = compile_message(
@@ -1508,7 +1498,6 @@ probe()
     );
 }
 
-/// two impls of one trait at different instantiations declare different method
 #[test]
 fn specialization_never_crosses_two_instantiations_of_one_trait() {
     for item in ["0", "1", "5", "99"] {
@@ -1680,7 +1669,6 @@ probe()
     );
 }
 
-/// the coherence verdicts share priority zero with the duplicate-nominal
 #[test]
 fn a_duplicate_nominal_still_outranks_a_coherence_verdict() {
     let message = compile_message(
@@ -1704,7 +1692,6 @@ probe()
     );
 }
 
-/// a hole carved in a generic impl is the subtle case: the impl is emitted, but
 #[test]
 fn a_hole_emits_no_instance_for_the_type_it_denies() {
     let source = "\
@@ -1820,7 +1807,6 @@ probe()
     );
 }
 
-/// different answers, and one of them is a refusal
 #[test]
 fn a_hole_and_a_specialization_share_one_root() {
     let source = "\
@@ -1865,7 +1851,6 @@ probe()
     );
 }
 
-/// where two incomparable impls meet, a bound must say the same thing a direct
 #[test]
 fn an_ambiguous_specialization_through_a_bound_is_e0443() {
     let source = "\
@@ -1915,7 +1900,6 @@ probe()
     );
 }
 
-/// a bound names the trait, not the impl; the receiver that reaches the call is
 #[test]
 fn a_specialization_is_selected_through_a_generic_bound() {
     let source = "\
@@ -2000,7 +1984,6 @@ probe()
     );
 }
 
-/// the only shape that carries a hole on a conversion is a generic impl the
 #[test]
 fn a_hole_in_a_generic_conversion_refuses_the_question_mark() {
     let source = "\
@@ -2037,7 +2020,6 @@ match probe() {
     );
 }
 
-/// parameter, so the denial it would meet is not the one the instance meets; the
 #[test]
 fn a_denied_conversion_is_refused_in_every_generic_shape() {
     let hole = "\
@@ -2126,7 +2108,6 @@ probe()
     assert_eq!(value_of(&format!("{open}{two}")), 305);
 }
 
-/// a conversion is specialized like any other impl, and the instance decides:
 #[test]
 fn a_conversion_takes_the_specialization_its_instance_names() {
     let source = "\
@@ -2178,7 +2159,6 @@ probe()
     );
 }
 
-/// `default fn` on one of two impls at different instantiations does not make
 #[test]
 fn two_instantiations_are_not_made_a_specialization_by_default_fn() {
     let with_default = "\
@@ -2215,7 +2195,6 @@ probe()
     );
 }
 
-/// the order between two conversion headers reads them as one pair too: binding
 #[test]
 fn the_order_between_two_conversions_binds_both_halves_at_once() {
     let source = "\
@@ -2272,7 +2251,6 @@ probe()
     );
 }
 
-/// two conversion headers can be useful apart and undecidable where they meet,
 #[test]
 fn two_incomparable_conversions_are_refused_only_where_they_meet() {
     let source = "\
@@ -2324,7 +2302,6 @@ probe()
     );
 }
 
-/// the two halves of a conversion header name one substitution, not two: a header
 #[test]
 fn a_conversion_header_binds_its_target_and_source_together() {
     let message = compile_message(
@@ -2354,7 +2331,6 @@ probe()
     );
 }
 
-/// a bound declared and not used leaves no marker and no residual the substitution
 #[test]
 fn a_declared_but_unused_bound_still_says_the_denial() {
     let source = "\
@@ -2382,7 +2358,6 @@ probe()
     );
 }
 
-/// a replacement of an open root supplies the associated item too, so a projection
 #[test]
 fn a_projection_on_a_specialized_nominal_resolves_to_the_replacement() {
     let source = "\
@@ -2439,7 +2414,6 @@ probe()
     );
 }
 
-/// the object still carries the projection it was written with; once the marker is
 #[test]
 fn a_projection_receiver_carries_the_type_it_resolved_to() {
     assert_eq!(
@@ -2474,7 +2448,6 @@ probe()
     );
 }
 
-/// a receiver that is still a projection is not yet concrete, and a marker on it
 #[test]
 fn a_projection_receiver_resolves_before_the_marker_is_judged() {
     let carrier = "\
@@ -2544,7 +2517,6 @@ impl Display for Wrap<bool> {{
     );
 }
 
-/// the display marker is the one path to a trait method that leaves no bound
 #[test]
 fn a_denied_display_is_refused_where_the_marker_resolves() {
     let source = "\
@@ -2635,7 +2607,6 @@ probe()
     );
 }
 
-/// a denial and a missing impl are two different things, and the repair differs:
 #[test]
 fn a_denied_bound_says_that_it_is_denied() {
     let denied = compile_message(
@@ -2722,7 +2693,6 @@ probe()
     );
 }
 
-/// a call inside a generic body carries no bound, so no obligation is left to
 #[test]
 fn a_denial_is_honoured_in_a_generic_body_without_a_bound() {
     let denied = "\
@@ -2782,7 +2752,6 @@ probe()
     );
 }
 
-/// a parameter the source does not mention is still pinned by the signature the
 #[test]
 fn a_conversion_takes_the_target_its_signature_pins() {
     let source = "\
@@ -2914,7 +2883,6 @@ probe()
     );
 }
 
-/// a generic conversion reached by `?` must name the instance, not the template
 #[test]
 fn a_generic_conversion_through_the_question_mark_names_its_instance() {
     let source = "\
@@ -2948,7 +2916,6 @@ match probe() {
     );
 }
 
-/// reader acts on must read the same too, or the file order is still an input
 #[test]
 fn a_coherence_diagnostic_reads_the_same_in_either_order() {
     let pairs: [(&str, &str, &str); 4] = [
@@ -2998,7 +2965,6 @@ struct H<T> { v: T }
     }
 }
 
-/// `default fn` is how an author says this impl admits exceptions; an impl
 #[test]
 fn a_hole_in_a_closed_impl_is_e0432() {
     let message = compile_message(
@@ -3043,7 +3009,6 @@ probe()
     );
 }
 
-/// the denial declared first is the only shape that reaches
 #[test]
 fn a_hole_declared_before_the_impl_it_carves_still_carves_it() {
     let source = "\
@@ -3084,7 +3049,6 @@ probe()
     );
 }
 
-/// every site that asks whether an impl can receive a type must answer the same;
 #[test]
 fn an_impl_that_does_not_apply_changes_nothing_about_a_call() {
     let base = "\
@@ -3132,7 +3096,6 @@ probe()
     );
 }
 
-/// which means the two headers share no instance; following the binding instead
 #[test]
 fn two_headers_that_would_need_an_infinite_type_do_not_overlap() {
     assert_eq!(
@@ -3180,7 +3143,6 @@ probe()
     }
 }
 
-/// does not know it declares disjoint two headers that meet
 #[test]
 fn an_array_header_overlaps_like_the_vector_it_mirrors() {
     let shape = |inner: &str, concrete: &str| {
@@ -3216,7 +3178,6 @@ probe()
     );
 }
 
-/// two headers that no type satisfies at once do not overlap, whatever the
 #[test]
 fn two_headers_with_no_common_instance_do_not_overlap() {
     let source = "\
@@ -3268,7 +3229,6 @@ probe()
     );
 }
 
-/// two different parameters are two different obligations, and a numbering that
 #[test]
 fn two_parameters_are_two_obligations() {
     let source = "\
@@ -3315,7 +3275,6 @@ probe()
     );
 }
 
-/// obligations apart must not read them as one
 #[test]
 fn a_struct_and_a_parameter_of_the_same_name_are_two_obligations() {
     let shape = |parameter: &str| {
@@ -3393,7 +3352,6 @@ probe()
     );
 }
 
-/// a bound and a denial name an instantiation, and the diagnostic that judges them
 #[test]
 fn an_unsatisfied_bound_names_the_instantiation_it_judged() {
     let source = "\
@@ -3439,7 +3397,6 @@ probe()
     );
 }
 
-/// the listing of instantiations a call cannot choose between reads the impls, not
 #[test]
 fn the_instantiations_a_bound_cannot_choose_read_in_one_order() {
     let shape = |first: &str, second: &str| {
@@ -3481,7 +3438,6 @@ probe()
     );
 }
 
-/// a method of a generic impl has the impl's parameter already fixed by the
 #[test]
 fn a_method_of_a_generic_impl_keeps_the_parameter_its_receiver_fixed() {
     let through_a_method = compile_message(
@@ -3577,7 +3533,6 @@ probe()
     }
 }
 
-/// a method reached through a bound has the trait's parameters already replaced by
 #[test]
 fn a_bound_method_keeps_the_parameter_the_function_declared() {
     let source = "\
@@ -3657,7 +3612,6 @@ probe()
     );
 }
 
-/// a trait that takes parameters is not a type until they are given: naming it
 #[test]
 fn a_parameterised_trait_named_without_its_arguments_is_refused() {
     let source = "\
@@ -3736,7 +3690,6 @@ probe()
     );
 }
 
-/// never meet a denial that names one, so a written `impl !` was invisible
 #[test]
 fn a_denial_is_not_hidden_by_a_bound_that_omits_its_arguments() {
     let message = compile_message(
@@ -3765,7 +3718,6 @@ probe()
     );
 }
 
-/// a supertrait named twice at two instantiations lays two obligations; keeping
 #[test]
 fn a_supertrait_named_twice_lays_both_its_obligations() {
     let source = "\
@@ -3846,7 +3798,6 @@ probe()
     );
 }
 
-/// a subtrait that passes its own parameter to one supertrait and a fixed type to
 #[test]
 fn a_subtrait_lays_every_supertrait_it_names() {
     let source = "\
@@ -3893,7 +3844,6 @@ probe()
     );
 }
 
-/// a supertrait is written with its arguments, and the obligation it lays on an
 #[test]
 fn a_supertrait_obligation_reads_its_instantiation() {
     let source = "\
@@ -3951,7 +3901,6 @@ probe()
     );
 }
 
-/// a denial of the very instantiation a supertrait requires contradicts the impl
 #[test]
 fn a_denied_supertrait_instantiation_refuses_the_subtrait_impl() {
     let message = compile_message(
@@ -3986,7 +3935,6 @@ probe()
     );
 }
 
-/// a subtrait passes its own parameters to its supertrait, so the obligation an
 #[test]
 fn a_supertrait_argument_follows_the_subtrait_that_names_it() {
     let source = "\
@@ -4035,7 +3983,6 @@ probe()
     );
 }
 
-/// the name of a type parameter is not part of a header's identity, so renaming
 #[test]
 fn two_headers_equal_up_to_renaming_are_one_instantiation() {
     let shape = |parameter: &str| {
@@ -4067,7 +4014,6 @@ probe()
     );
 }
 
-/// a bound reads the whole header of the impl it claims to satisfy: the same
 #[test]
 fn a_bound_reads_the_whole_header_it_claims_to_satisfy() {
     let source = "\
@@ -4142,7 +4088,6 @@ probe()
     );
 }
 
-/// the overlap question is one question about one pair of headers, so the same
 #[test]
 fn two_headers_that_disagree_on_one_parameter_do_not_overlap() {
     let disjoint = "\
@@ -4187,7 +4132,6 @@ probe()
     );
 }
 
-/// the matcher a bound reads must know every constructor the language writes, or
 #[test]
 fn a_bound_finds_its_impl_through_every_constructor() {
     let shape = |argument: &str, concrete: &str| {
@@ -4225,7 +4169,6 @@ probe()
     }
 }
 
-/// the denial is asked about the trait the receiver actually reaches, so the
 #[test]
 fn a_denied_instantiation_is_refused_through_a_generic_root() {
     let source = "\
@@ -4295,7 +4238,6 @@ probe()
     );
 }
 
-/// a header that repeats a parameter names the types where the two occurrences
 #[test]
 fn a_repeated_parameter_denies_only_where_its_occurrences_agree() {
     let source = "\
@@ -4353,7 +4295,6 @@ probe()
     );
 }
 
-/// an impl whose header repeats a parameter is not applicable to a receiver whose
 #[test]
 fn a_repeated_parameter_impl_is_not_applicable_off_its_diagonal() {
     let source = "\
@@ -4413,7 +4354,6 @@ probe()
     );
 }
 
-/// a denial names one instantiation of a generic trait; the impls of the other
 #[test]
 fn a_denial_of_one_instantiation_leaves_the_others() {
     let source = "\
@@ -4444,7 +4384,6 @@ probe()
     );
 }
 
-/// the same denial seen through a bound, where the residual carries the
 #[test]
 fn a_denial_of_one_instantiation_leaves_a_bound_on_another() {
     assert_eq!(
@@ -4473,7 +4412,6 @@ probe()
     );
 }
 
-/// a trait's own default body and `default fn` are two different things: the
 #[test]
 fn a_trait_default_body_is_not_a_specialization_marker() {
     assert_eq!(
@@ -4507,7 +4445,6 @@ probe()
     );
 }
 
-/// only a denial more specific than a positive header carves a hole in it; a
 #[test]
 fn a_denial_more_general_than_a_positive_impl_is_e0432() {
     let message = compile_message(
@@ -4597,7 +4534,6 @@ probe()
     );
 }
 
-/// the caller's parameter is rigid at the call, the method's own parameter is
 #[test]
 fn a_method_keeps_its_own_parameter_when_the_caller_names_it_too() {
     let inherent = "\
@@ -4662,7 +4598,6 @@ probe()
     );
 }
 
-/// a qualified call has no receiver to fix anything, so nothing else freshens
 #[test]
 fn a_qualified_call_freshens_the_method_own_parameters() {
     let alone = "\
@@ -4707,7 +4642,6 @@ probe()
     );
 }
 
-/// a method's own type parameter and one of the same spelling on the impl or on
 #[test]
 fn a_method_own_parameter_is_not_the_one_its_nominal_declares() {
     let crossing = "\
@@ -4770,7 +4704,6 @@ probe()
     );
 }
 
-/// a specialized method is reached with two impls in scope, where an unspecialized
 #[test]
 fn a_specialized_method_keeps_its_own_parameter() {
     assert_eq!(
@@ -4801,7 +4734,6 @@ probe()
     );
 }
 
-/// the refusal is on the body, so it holds whatever route reaches the method
 #[test]
 fn a_method_own_parameter_is_its_own_on_every_route() {
     let impl_block = "\
@@ -4864,7 +4796,6 @@ probe()
     );
 }
 
-/// three programs that were refused only for reusing a spelling the nominal or the impl already had
 #[test]
 fn a_reused_spelling_no_longer_refuses_a_sound_method() {
     let argument_only = "\
@@ -4919,7 +4850,6 @@ probe()
     );
 }
 
-/// a qualified call reads the method record, not the typed body, so a respelled parameter must be recorded there too
 #[test]
 fn a_qualified_call_deduces_a_respelled_method_parameter() {
     assert_eq!(
@@ -4945,7 +4875,6 @@ probe()
     );
 }
 
-/// a bound on a respelled parameter must follow the respelling or no lookup finds it
 #[test]
 fn a_bound_follows_a_respelled_method_parameter() {
     let prelude = "\
@@ -4978,7 +4907,6 @@ probe()
     }
 }
 
-/// every other reading of a respelled parameter inside the method
 #[test]
 fn a_respelled_method_parameter_reads_its_own_items() {
     let constant = "\
@@ -5042,7 +4970,6 @@ probe()
     );
 }
 
-/// a method's signature is written in its impl's names, so the receiver is matched against the impl header
 #[test]
 fn a_receiver_binds_the_names_its_impl_header_wrote() {
     let renamed = "\
@@ -5094,7 +5021,6 @@ impl<B, A> P<B, A> {
     }
 }
 
-/// a position the trait declares with a method parameter takes the impl method's own, one the trait fixes takes neither a free parameter nor another type
 #[test]
 fn a_trait_signature_is_honoured_position_by_position() {
     let caller = "\
@@ -5175,7 +5101,6 @@ fn g<X: Tr>(x: X) -> bool { return x.m() }
     }
 }
 
-/// a redeclared trait parameter is the method's own, so a bound fixing the trait does not fix it
 #[test]
 fn a_trait_method_parameter_that_shadows_the_trait_is_its_own() {
     let generic = "\
@@ -5219,7 +5144,6 @@ probe()
     );
 }
 
-/// `Self::Item` is the impl's own annotation, read in the impl's scope, where a method's respelled parameter does not reach
 #[test]
 fn an_associated_type_is_read_in_its_impl_scope() {
     let sound = "\
@@ -5326,7 +5250,6 @@ probe()
     );
 }
 
-/// a turbofish binds a method's own parameters in the order they first appear after the receiver, whatever order the impl declared them in
 #[test]
 fn a_turbofish_binds_a_method_own_parameters() {
     let inherent = "\
@@ -5362,7 +5285,6 @@ impl Tr for P { fn f<X, Y>(self, u: Y, w: X) -> X { return w } }
     assert_eq!(value_of(&through_bound), 111, "the same through a bound");
 }
 
-/// a receiver whose type is not resolved yet is still bound by the impl header
 #[test]
 fn an_unresolved_receiver_is_bound_by_the_impl_header() {
     for (source, what) in [
@@ -5404,7 +5326,6 @@ probe()
     }
 }
 
-/// the call is typed through the trait's own declaration, and an associated type resolves through the impl that will run
 #[test]
 fn several_impls_answer_through_the_trait_at_the_receiver() {
     let impls = "\
@@ -5437,7 +5358,6 @@ impl Tr for H<bool> {
     );
 }
 
-/// several impls of one parameterized trait at one instantiation, on different receiver instantiations, cannot be told apart
 #[test]
 fn an_unknown_receiver_among_impls_of_one_instantiation_is_e0438() {
     let impls = "\
@@ -5470,7 +5390,6 @@ impl Tr<int> for H<bool> {
     );
 }
 
-/// a specializing impl gives the associated type the monomorphizer will read, so a concrete receiver resolves it through the most
 #[test]
 fn a_specialized_associated_type_is_read_from_the_impl_that_runs() {
     let keeps_it = "\
@@ -5507,7 +5426,6 @@ probe()
     );
 }
 
-/// a member call whose receiver is not a nominal until later is resolved after solving
 #[test]
 fn a_deferred_member_binds_its_header_and_honours_denials() {
     let swapped = "\
@@ -5550,7 +5468,6 @@ probe()
     );
 }
 
-/// several impls whose answer depends on which one runs are refused in a generic context
 #[test]
 fn several_impls_are_not_chosen_through_a_type_parameter() {
     let message = compile_message(
@@ -5574,7 +5491,6 @@ probe()
     );
 }
 
-/// the conformance rule walks every shape a type can take: a fixed array, a projection on a paired parameter, an unannotated position
 #[test]
 fn a_trait_signature_is_honoured_in_every_shape() {
     let caller = "\
@@ -5616,7 +5532,6 @@ fn g<X: Tr>(x: X) -> int { return 1 }
     }
 }
 
-/// a position the impl leaves unannotated takes the type the trait declares there, and the body is checked against it
 #[test]
 fn an_unannotated_impl_position_takes_the_trait_type() {
     let unit = "\
@@ -5697,7 +5612,6 @@ probe()
     );
 }
 
-/// the shapes the conformance rule walks are walked to accept as well as to refuse
 #[test]
 fn a_paired_parameter_conforms_in_every_shape() {
     let fixed_array = "\
@@ -5755,7 +5669,6 @@ probe()
     );
 }
 
-/// a parameterized trait with several impls is not typed through its declaration, so a concrete receiver that leaves one impl standing
 #[test]
 fn a_concrete_receiver_binds_the_one_impl_it_leaves() {
     let impls = "\
@@ -5778,7 +5691,6 @@ impl<Z> Tr<Z> for N<bool, Z> { fn m(self) -> Z { return self.b } }
     assert_eq!(value_of(&into_bool), 1, "and it answers a bool");
 }
 
-/// a member call resolved after solving chooses among impls by its resolved receiver, as the member route does
 #[test]
 fn a_deferred_member_chooses_among_impls_by_its_receiver() {
     assert_eq!(
@@ -5801,7 +5713,6 @@ probe()
     );
 }
 
-/// a call in a generic body is specialized per instance
 #[test]
 fn an_instance_runs_the_impl_that_covers_its_receiver() {
     let impls = "\
@@ -5828,7 +5739,6 @@ impl Tr for N<bool, int> { fn m(self) -> int { return self.b } }
     );
 }
 
-/// two instances of one generic body need two different impls, so one of them contradicts whichever impl sema kept while typing the body
 #[test]
 fn two_instances_of_one_body_run_two_impls() {
     assert_eq!(
@@ -5850,7 +5760,6 @@ probe()
     );
 }
 
-/// the root of a specialization chain covers every receiver the chain covers, so for a trait with parameters its header binds an open
 #[test]
 fn a_specialization_root_binds_an_open_receiver() {
     let impls = "\
@@ -5885,7 +5794,6 @@ impl Tr<int> for N<int> { fn m(self) -> int { return 5 } }
     );
 }
 
-/// a trait without parameters is typed through its declaration, so a chain with a disjoint sibling needs no annotation
 #[test]
 fn a_chain_with_a_disjoint_sibling_needs_no_annotation() {
     let impls = "\
@@ -5925,7 +5833,6 @@ fn id<Y>(y: Y) -> Y { return y }
     );
 }
 
-/// a negative impl supplies nothing, so no default body of its trait is typed on its header, and it refuses only the receivers it names
 #[test]
 fn a_negative_impl_adopts_no_default_body() {
     assert_eq!(
@@ -5955,7 +5862,6 @@ probe()
     );
 }
 
-/// which diagnostic an ambiguity gets does not depend on the names the impls give their parameters, and no diagnostic prints one
 #[test]
 fn a_diagnostic_does_not_read_an_impl_parameter_name() {
     let spelled = |second: &str| {
@@ -5998,7 +5904,6 @@ probe()
     );
 }
 
-/// a specialization may give an associated type another value
 #[test]
 fn a_redefined_associated_type_types_the_call_by_the_impl_that_runs() {
     let impls = "\
@@ -6089,7 +5994,6 @@ probe()
     );
 }
 
-/// impls are grouped by what they give the receiver, not by how their parameters are spelled or declared in the file
 #[test]
 fn impls_are_grouped_by_what_they_give_the_receiver() {
     let same_instantiation = "\
@@ -6125,7 +6029,6 @@ probe()
     );
 }
 
-/// neither impl of an overlapping pair stands, so what the rest of the program is told does not depend on which one the file declares
 #[test]
 fn an_overlap_withdraws_both_impls_whatever_the_order() {
     let program = |first: &str, second: &str| {
@@ -6151,7 +6054,6 @@ fn an_overlap_withdraws_both_impls_whatever_the_order() {
     );
 }
 
-/// a receiver whose type parameters leave a single impl reachable names the one that runs, in a trait's default body and in a generic
 #[test]
 fn a_generic_receiver_one_impl_can_reach_needs_no_annotation() {
     let impls = "\
@@ -6170,7 +6072,6 @@ impl<B> Tr<int> for N<bool, B> { fn m(self) -> int { return 101 } }
     assert_eq!(value_of(&generic), 100 * 1000 + 100);
 }
 
-/// where two incomparable impls both outrank the root, the call is refused for the lattice left open, not for a missing method
 #[test]
 fn an_open_lattice_is_refused_as_ambiguous() {
     let message = compile_message(
@@ -6190,7 +6091,6 @@ probe()
     assert!(message.contains("error[E0443]"), "{message}");
 }
 
-/// each call site gives a method's own parameter its argument, even on a receiver known only at its instance
 #[test]
 fn a_deferred_receiver_calls_a_method_with_its_own_parameter() {
     let source = "\
@@ -6215,7 +6115,6 @@ probe()
     );
 }
 
-/// a qualified call instantiates the impl's parameters and, among several impls, takes the one the receiver leaves standing
 #[test]
 fn a_qualified_call_reads_the_impl_its_receiver_leaves() {
     let single = "\
@@ -6266,7 +6165,6 @@ probe()
     assert!(mismatch.contains("error[E0301]"), "{mismatch}");
 }
 
-/// `Self::Out` inside a chain that defines `out` twice is refused, and the message names the impls rather than a projection no program
 #[test]
 fn an_ambiguous_self_projection_names_the_impls() {
     let message = compile_message(
@@ -6292,7 +6190,6 @@ probe()
     );
 }
 
-/// an impl refused for an overlap is still one later impls overlap, so the impls a chain of overlaps withdraws are the same in any order
 #[test]
 fn a_chain_of_overlaps_withdraws_the_same_impls_in_any_order() {
     let first = "impl<B> Tr for N<int, B> { fn m(self) -> int { return 1 } }";
@@ -6311,7 +6208,6 @@ fn a_chain_of_overlaps_withdraws_the_same_impls_in_any_order() {
     );
 }
 
-/// two equally specific impls are both withdrawn, and the verdict comes before what a default body typed against neither of them reports
 #[test]
 fn an_unordered_pair_is_reported_before_its_symptoms() {
     let message = compile_message(
@@ -6336,7 +6232,6 @@ probe()
     );
 }
 
-/// a negative impl refuses a qualified call as it refuses a method call
 #[test]
 fn a_negative_impl_refuses_a_qualified_call() {
     let impls = "\
@@ -6371,7 +6266,6 @@ probe()
     }
 }
 
-/// a call on a receiver known only at its instance binds the method's own parameters, never a parameter of the function the call sits in
 #[test]
 fn a_deferred_call_does_not_bind_the_enclosing_parameter() {
     let message = compile_message(
@@ -6396,7 +6290,6 @@ probe()
     assert!(message.contains("error[E0301]"), "{message}");
 }
 
-/// the impl a generic receiver alone reaches binds its header, so its signature is read against the receiver
 #[test]
 fn a_reachable_impl_reads_its_signature_at_the_receiver() {
     let source = "\
@@ -6414,7 +6307,6 @@ probe()
     assert_eq!(value_of(source), 7);
 }
 
-/// a receiver known only at its instance does not let a projection in the method's signature stand for whatever the call site expects
 #[test]
 fn a_deferred_call_does_not_read_a_projection_as_any_type() {
     let message = compile_message(
@@ -6436,7 +6328,6 @@ probe()
     assert!(message.contains("error[E0301]"), "{message}");
 }
 
-/// two chains on one nominal each keep their root, and each receiver runs the impl that covers it
 #[test]
 fn two_chains_on_one_nominal_keep_their_own_roots() {
     let source = "\
@@ -6458,7 +6349,6 @@ probe()
     assert_eq!(value_of(source), 101_020_303);
 }
 
-/// errors several impls raise at one place are reported by what they say, not in the order the file declared the impls
 #[test]
 fn errors_at_one_place_do_not_follow_the_declaration_order() {
     let program = |first: &str, second: &str| {
@@ -6474,7 +6364,6 @@ fn errors_at_one_place_do_not_follow_the_declaration_order() {
     assert_eq!(forward.lines().next(), reversed.lines().next());
 }
 
-/// an impl a generic receiver reaches without covering it runs for some instances only
 #[test]
 fn an_impl_reached_without_covering_is_left_to_each_instance() {
     let program = |argument: &str| {
@@ -6487,7 +6376,6 @@ fn an_impl_reached_without_covering_is_left_to_each_instance() {
     assert!(uncovered.contains("error[E0338]"), "{uncovered}");
 }
 
-/// a receiver known only at its instance still has its arguments checked, even when nothing constrains what the call returns
 #[test]
 fn a_deferred_call_checks_its_arguments_when_its_result_is_free() {
     let inherent = compile_message(
@@ -6525,7 +6413,6 @@ probe()
     }
 }
 
-/// an open lattice receiver is refused as the member route refuses it
 #[test]
 fn a_deferred_call_in_an_open_lattice_is_e0443_in_either_order() {
     let program = |second: &str, third: &str| {
@@ -6544,7 +6431,6 @@ fn a_deferred_call_in_an_open_lattice_is_e0443_in_either_order() {
     }
 }
 
-/// a chain's root is the impl every other refines, found whatever the order the file declares the chain in
 #[test]
 fn a_chain_root_is_found_in_every_declaration_order() {
     let root = "impl<A, B> Tr<A> for N<W<A>, B> { default fn m(self) -> A { return self.a.v } }";
@@ -6567,7 +6453,6 @@ fn a_chain_root_is_found_in_every_declaration_order() {
     }
 }
 
-/// what a generic receiver reaches decides the call
 #[test]
 fn what_a_generic_receiver_reaches_decides_the_call() {
     let reached_not_covered = "\
@@ -6624,7 +6509,6 @@ probe()
     }
 }
 
-/// `Self::Out` names one type when every impl reaching the receiver agrees, and otherwise lists only those impls
 #[test]
 fn a_self_projection_reads_the_impls_that_reach_the_receiver() {
     let agreeing = "\
@@ -6674,7 +6558,6 @@ probe()
     );
 }
 
-/// a qualified call several impls still apply to is E0443 for one instantiation, E0437 for several
 #[test]
 fn an_ambiguous_qualified_call_says_why() {
     let lattice = compile_message(
@@ -6712,7 +6595,6 @@ probe()
     );
 }
 
-/// a projection on a generic receiver is read when every impl that reaches the receiver gives, wherever it applies, what the covering
 #[test]
 fn a_projection_every_instance_agrees_on_is_read_in_a_generic_body() {
     let source = "\
@@ -6731,7 +6613,6 @@ probe()
     assert_eq!(value_of(source), 101);
 }
 
-/// a trait's default body calls on `self` the trait at the instantiation its adopting impl gives it, so another instantiation reaching
 #[test]
 fn a_default_body_calls_its_own_instantiation_of_the_trait() {
     let source = "\
@@ -6752,7 +6633,6 @@ probe()
     assert_eq!(value_of(source), 1101);
 }
 
-/// of the impls covering a generic receiver, the most specific runs, so an impl it outranks never answers
 #[test]
 fn a_projection_reads_the_most_specific_covering_impl() {
     let source = "\
@@ -6767,7 +6647,6 @@ probe()
     assert_eq!(value_of(source), 101);
 }
 
-/// a method's own parameter may carry the name of a parameter of the caller, which the receiver brings into the signature
 #[test]
 fn a_method_parameter_named_like_the_callers_stays_apart() {
     let member = compile_message(
@@ -6824,7 +6703,6 @@ probe()
     );
 }
 
-/// a field read on a receiver known only at its instance is checked against what the site typed, even where that is not wholly known
 #[test]
 fn a_deferred_field_read_is_checked() {
     let message = compile_message(
@@ -6839,7 +6717,6 @@ probe()
     assert!(message.contains("error[E0301]"), "{message}");
 }
 
-/// the deferred route reads a projection the receiver's impls answer alike, on the result and on an argument, as the member route does
 #[test]
 fn a_deferred_call_reads_an_agreed_projection() {
     let result = "\
@@ -6869,7 +6746,6 @@ probe()
     assert_eq!(value_of(argument), 10051);
 }
 
-/// an impl that reaches a generic receiver only where a more specific impl covers it never runs there
 #[test]
 fn an_impl_outranked_where_it_applies_does_not_answer() {
     let source = "\
@@ -6888,7 +6764,6 @@ probe()
     assert_eq!(value_of(source), 1);
 }
 
-/// E0423 on `Self::Item` lists every impl that reaches the receivers, an incomparable one included
 #[test]
 fn a_self_projection_refusal_lists_an_incomparable_impl() {
     let message = compile_message(
@@ -6909,7 +6784,6 @@ probe()
     );
 }
 
-/// `Self::Item` written in a method's body is read on the impl's header, as in its signature
 #[test]
 fn a_self_projection_in_a_body_reads_the_impl_header() {
     let source = "\
@@ -6929,7 +6803,6 @@ probe()
     assert_eq!(value_of(source), 1);
 }
 
-/// a body's annotation names `self` as the impl's header, and a projection the impls answer differently there is refused as such
 #[test]
 fn a_body_annotation_names_self_as_the_impl_header() {
     let message = compile_message(
@@ -6959,7 +6832,6 @@ probe()
     );
 }
 
-/// a call through a bound weighs the impls by what they give the trait at the receiver, so which one the file declares first decides
 #[test]
 fn a_bound_call_reads_the_instantiation_at_the_receiver_in_any_order() {
     let root = "impl<A, B> Tr<bool> for N<W<A>, B> { default fn m(self) -> int { return 0 } }";
@@ -6977,7 +6849,6 @@ fn a_bound_call_reads_the_instantiation_at_the_receiver_in_any_order() {
     assert_eq!(forward.lines().next(), reversed.lines().next());
 }
 
-/// an argument call resolves before the call it feeds, so the method is given what it turns out to be
 #[test]
 fn a_nested_deferred_call_gives_the_method_what_it_returns() {
     let impls = "\
@@ -7010,7 +6881,6 @@ fn id<Z>(z: Z) -> Z { return z }
     }
 }
 
-/// a bound takes an impl only where it refines the others as a specialization does, header and trait arguments together, as the member
 #[test]
 fn a_bound_takes_no_impl_that_does_not_refine_the_others() {
     let impls = "\
@@ -7037,7 +6907,6 @@ impl<A> Tq<int> for N<A, A> {
     }
 }
 
-/// a projection under a constructor in a trait's signature is read at the receiver, so the instance materializes the constructor
 #[test]
 fn a_projection_under_a_constructor_is_read_at_the_receiver() {
     let source = "\

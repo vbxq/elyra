@@ -2822,7 +2822,6 @@ struct ImplCallRewrite<'a> {
     replacements: &'a HashMap<String, Vec<ImplInstanceMethod>>,
 }
 
-/// the conversion a `?` selected, read as a call of the impl method it names:
 fn try_conversion_call(expr: &TypedExpr) -> Option<ImplCallSite> {
     let TypedExprKind::Try {
         operand,
@@ -3629,7 +3628,6 @@ fn resolve_deferred_member(
     expr.ty = function_type.substitute_params(&own);
 }
 
-/// every projection inside a type that the impls answer, replaced by the answer
 fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> InferType {
     let settle = |inner: &InferType| settle_projections(inner, type_table);
     match ty {
@@ -3661,7 +3659,6 @@ fn settle_projections(ty: &InferType, type_table: &crate::types::TypeTable) -> I
     }
 }
 
-/// what the call site left open accepts whatever the method says; the rest, arguments included, must be what the method takes
 fn fits_call_site(
     formal: &InferType,
     actual: &InferType,
@@ -3858,7 +3855,6 @@ fn resolve_display_marker(expr: &mut TypedExpr, type_table: &crate::types::TypeT
     strip_display_marker(expr);
 }
 
-/// a projection is a spelling of a type, not a type of its own: a marker whose
 fn concrete_receiver(type_table: &crate::types::TypeTable, ty: &InferType) -> Option<InferType> {
     if ty.is_concrete() {
         return Some(ty.clone());

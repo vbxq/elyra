@@ -2,7 +2,6 @@ use crate::{EnumSchema, Function, SchemaId, StructSchema, Value};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
-/// the schema tables a struct or enum instruction reads
 #[derive(Debug)]
 pub struct FunctionSchemas {
     pub structs: Vec<StructSchema>,
@@ -11,7 +10,6 @@ pub struct FunctionSchemas {
     pub enum_runtime_ids: Vec<u16>,
 }
 
-/// a wrapped bytecode function for the gc heap.
 #[derive(Debug)]
 pub struct AelysFunction {
     pub function: Function,
@@ -56,7 +54,6 @@ impl AelysFunction {
         self.jit_slot.store(slot, Ordering::Relaxed);
     }
 
-    /// runtime schema ids are materialized before this object is built, so the first reader observes the final tables.
     pub fn schemas(&self) -> Arc<FunctionSchemas> {
         Arc::clone(self.schemas.get_or_init(|| {
             Arc::new(FunctionSchemas {

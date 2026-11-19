@@ -1,5 +1,3 @@
-// NaN-boxing helpers for native modules
-// mirrors aelys-runtime/src/vm/value.rs
 
 use crate::{AelysValue, NativeHandle};
 

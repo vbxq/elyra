@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc)]
+
 use aelys_common::error::{AelysError, CompileError, CompileErrorKind};
 use aelys_modules::native::{
     NativeError, NativeExport, descriptor_module_name, validate_descriptor,
@@ -19,8 +21,6 @@ pub struct NativeModuleRegistration {
 }
 
 impl NativeModuleRegistration {
-    #[doc = "# Safety"]
-    #[doc = "the descriptor must refer to a valid static abi descriptor."]
     pub unsafe fn validate(
         descriptor: &'static AelysModuleDescriptor,
     ) -> Result<ValidatedNativeModule, AelysError> {

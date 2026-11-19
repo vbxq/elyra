@@ -38,16 +38,13 @@ pub struct VM {
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) globals: HashMap<String, Value>,
     pub(crate) global_mutability: HashMap<String, bool>,
-    /// prepared views by mapping id. reaching them by index rather than by hash matters
     pub(crate) globals_by_index_cache: Vec<Option<PreparedGlobals>>,
     pub(crate) global_name_ids: HashMap<String, u32>,
     pub(crate) global_names_by_id: Vec<String>,
     pub(crate) global_users: Vec<Vec<(usize, u32)>>,
-    /// by name id: the value an indexed write left while the name keyed entry still holds an older one
     pub(crate) global_latest: Vec<Option<Value>>,
     pub(crate) global_stale: Vec<u32>,
     pub(crate) globals_by_index: Vec<Value>,
-    /// set when an indexed write has not reached the name keyed table yet, so a call between two readers costs nothing
     pub(crate) globals_by_index_dirty: bool,
     pub(crate) global_generations: Vec<u64>,
     pub(crate) inline_call_cache: HashMap<InlineCacheKey, InlineCallCacheEntry>,
@@ -64,7 +61,6 @@ pub struct VM {
     pub(crate) open_upvalues: Vec<GcRef>,
     pub(crate) current_upvalues: Vec<GcRef>,
     pub(crate) resources: Vec<Option<Resource>>,
-    /// one immutable Ok(()) handed out by every native that succeeds with unit; it stays rooted
     pub(crate) unit_ok: Option<GcRef>,
     pub(crate) native_modules: HashMap<String, NativeModule>,
     pub(crate) native_registry: HashMap<String, u32>,

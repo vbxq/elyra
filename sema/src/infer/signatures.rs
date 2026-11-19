@@ -704,7 +704,6 @@ impl TypeInference {
         }
     }
 
-    /// a supertrait annotation carries its arguments, and they are resolved once,
     fn resolved_super_bounds(
         &mut self,
         type_params: &[String],
@@ -717,7 +716,6 @@ impl TypeInference {
         resolved
     }
 
-    /// a trait that takes parameters is not named until they are given: leaving
     fn check_trait_arity(&mut self, trait_name: &str, given: usize, span: aelys_syntax::Span) {
         let Some(definition) = self.type_table.get_trait(trait_name) else {
             return;
@@ -1176,7 +1174,6 @@ impl TypeInference {
         }
     }
 
-    /// a negative header reaches here having passed the orphan, visibility and
     fn check_negative_impl_header(
         &mut self,
         block: &ImplBlock<'_>,
@@ -2379,7 +2376,6 @@ impl TypeInference {
             .collect()
     }
 
-    /// none while a parameter or an unresolved projection leaves it open
     pub(super) fn settled_associated_const_type(&self, ty: &InferType) -> Option<InferType> {
         let settled = match ty {
             InferType::Projection { .. } => self.resolve_associated_projection(ty)?,
@@ -2654,7 +2650,6 @@ fn call_site_binds_param(methods: &[Function], trait_args: &[InferType], param: 
         })
 }
 
-/// overflowing or dividing-by-zero constant stays unresolved and is diagnosed
 fn constant_int_literal(expr: &aelys_syntax::Expr) -> Option<i64> {
     use aelys_syntax::{BinaryOp, ExprKind, UnaryOp};
     match &expr.kind {
@@ -2681,7 +2676,6 @@ fn constant_int_literal(expr: &aelys_syntax::Expr) -> Option<i64> {
 }
 
 impl TypeInference {
-    /// used: an unused cycle would otherwise compile silently, and a used one
     pub(super) fn validate_associated_type_cycles(&mut self) {
         let definitions = std::mem::take(&mut self.associated_type_definitions);
         let mut first: HashMap<(&str, &str), usize> = HashMap::new();
@@ -3056,7 +3050,6 @@ fn renamed_own_params(written: &[String], renames: &HashMap<String, String>) -> 
         .collect()
 }
 
-/// a trait position declared with a method parameter takes the impl method's own, wherever it recurs
 fn own_params_conform(
     expected: &InferType,
     actual: &InferType,

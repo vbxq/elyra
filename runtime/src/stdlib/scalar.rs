@@ -96,7 +96,6 @@ fn native_parse_float(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     }
 }
 
-// Lenient boolean parsing: true/false, 1/0, yes/no, on/off all work
 fn native_parse_bool(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.to_bool")?;
     match s.trim().to_lowercase().as_str() {
@@ -147,7 +146,6 @@ fn native_to_octal(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// to_radix(n, radix) - Convert integer to string in given radix (2-36).
 fn native_to_radix(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let n = get_wide_int(vm, args[0], "int.to_radix")?;
     let radix = get_int(vm, args[1], "int.to_radix")?;

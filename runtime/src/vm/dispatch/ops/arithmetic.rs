@@ -4,8 +4,6 @@ macro_rules! execute_arithmetic {
         $current_frame_idx:ident, $ip:ident, $reg_get:ident,
         $reg_ref:ident, $reg_set:ident, $int_value:ident
     ) => {{
-        // Arithmetic: Add(5), Sub(6), Mul(7), Div(8), Mod(9), Neg(10),
-        // plus the specialized int/float variants (AddI, AddII, AddFF, etc)
         use aelys_bytecode::IntOp;
 
         macro_rules! int_slow {
@@ -16,7 +14,6 @@ macro_rules! execute_arithmetic {
         }
 
         match $opcode_byte {
-            // Add (5)
             5 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -33,7 +30,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // Sub (6)
             6 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -50,7 +46,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // Mul (7)
             7 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -74,7 +69,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // Div (8) - no fast path because we need to check for div by zero anyway
             8 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -86,7 +80,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // Mod (9) - same deal
             9 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -98,7 +91,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // Neg (10)
             10 => {
                 let (a, b, _) = decode_abc($instr);
                 let value = $reg_get!($base + b as usize);
@@ -113,7 +105,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // AddI (42)
             42 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -128,7 +119,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // SubI (43)
             43 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -143,7 +133,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // AddII (49)
             49 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -157,7 +146,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // SubII (50)
             50 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -171,7 +159,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // MulII (51)
             51 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -191,7 +178,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // DivII (52)
             52 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -205,7 +191,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // ModII (53)
             53 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -219,7 +204,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // AddFF (54)
             54 => {
                 let (a, b, c) = decode_abc($instr);
                 let l = $reg_ref!($base + b as usize).as_float_unchecked();
@@ -227,7 +211,6 @@ macro_rules! execute_arithmetic {
                 $reg_set!($base + a as usize, Value::float(l + r));
             }
 
-            // SubFF (55)
             55 => {
                 let (a, b, c) = decode_abc($instr);
                 let l = $reg_ref!($base + b as usize).as_float_unchecked();
@@ -235,7 +218,6 @@ macro_rules! execute_arithmetic {
                 $reg_set!($base + a as usize, Value::float(l - r));
             }
 
-            // MulFF (56)
             56 => {
                 let (a, b, c) = decode_abc($instr);
                 let l = $reg_ref!($base + b as usize).as_float_unchecked();
@@ -243,7 +225,6 @@ macro_rules! execute_arithmetic {
                 $reg_set!($base + a as usize, Value::float(l * r));
             }
 
-            // DivFF (57)
             57 => {
                 let (a, b, c) = decode_abc($instr);
                 let l = $reg_ref!($base + b as usize).as_float_unchecked();
@@ -251,7 +232,6 @@ macro_rules! execute_arithmetic {
                 $reg_set!($base + a as usize, Value::float(l / r));
             }
 
-            // ModFF (58)
             58 => {
                 let (a, b, c) = decode_abc($instr);
                 let l = $reg_ref!($base + b as usize).as_float_unchecked();
@@ -259,7 +239,6 @@ macro_rules! execute_arithmetic {
                 $reg_set!($base + a as usize, Value::float(l % r));
             }
 
-            // AddIIG (82)
             82 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -284,7 +263,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // SubIIG (83)
             83 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -309,7 +287,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // MulIIG (84)
             84 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -332,7 +309,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // DivIIG (85)
             85 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -355,7 +331,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // ModIIG (86)
             86 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -378,7 +353,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // AddFFG (87)
             87 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -396,7 +370,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // SubFFG (88)
             88 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -414,7 +387,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // MulFFG (89)
             89 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -432,7 +404,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // DivFFG (90)
             90 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);
@@ -450,7 +421,6 @@ macro_rules! execute_arithmetic {
                 }
             }
 
-            // ModFFG (91)
             91 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = $reg_get!($base + b as usize);

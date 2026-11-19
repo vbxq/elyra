@@ -195,15 +195,14 @@ pub struct NeedsStmt {
 
 #[derive(Debug, Clone)]
 pub enum ImportKind {
-    Module { alias: Option<String> }, // needs foo.bar (as alias)?
-    Symbols(Vec<String>),             // needs x, y from foo.bar
-    Wildcard,                         // needs foo.bar.*
+    Module { alias: Option<String> }, // use foo::bar (as alias)?
+    Symbols(Vec<String>),             // use foo::bar::{x, y}
+    Wildcard,                         // use foo::bar::*
 }
 
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    /// written `default fn`, which marks the method replaceable by a more
     pub is_default: bool,
     pub type_params: Vec<String>,
     pub where_clauses: Vec<WhereClause>,

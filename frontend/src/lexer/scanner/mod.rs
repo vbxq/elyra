@@ -1,5 +1,3 @@
-// lexer: chars -> tokens
-// TODO: consider switching to logos for speed
 
 use aelys_common::error::AelysError;
 use aelys_syntax::{Source, Token, TokenKind};

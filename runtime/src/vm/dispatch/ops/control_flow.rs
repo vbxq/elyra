@@ -5,11 +5,8 @@ macro_rules! execute_control_flow {
         $bytecode_len:ident, $reg_get:ident, $reg_ref:ident,
         $reg_set:ident, $int_value:ident
     ) => {{
-        // Control flow operations: Not(17), Jump(18), JumpIf(19), JumpIfNot(20),
-        // ForLoopI(40), ForLoopIInc(41), LtImm(44)-GeImm(47), WhileLoopLt(48)
 
         match $opcode_byte {
-            // Not (17)
             17 => {
                 let (a, b, _) = decode_abc($instr);
                 let value = $reg_get!($base + b as usize);
@@ -18,27 +15,22 @@ macro_rules! execute_control_flow {
                 $reg_set!($base + a as usize, Value::bool(is_falsy));
             }
 
-            // Jump (18)
             18 => {
                 let (_, imm) = decode_aimm($instr);
                 $ip = ($ip as isize + imm as isize) as usize;
             }
 
-            // JumpIf (19)
             19 => {
                 let (a, imm) = decode_aimm($instr);
                 let value = $reg_get!($base + a as usize);
-                // Truthy: not null and not false
                 if !value.is_null() && value.as_bool() != Some(false) {
                     $ip = ($ip as isize + imm as isize) as usize;
                 }
             }
 
-            // JumpIfNot (20)
             20 => {
                 let (a, imm) = decode_aimm($instr);
                 let value = $reg_get!($base + a as usize);
-                // Falsy: null or false
                 if value.is_null() || value.as_bool() == Some(false) {
                     $ip = ($ip as isize + imm as isize) as usize;
                 }
@@ -238,7 +230,6 @@ macro_rules! execute_control_flow {
                 }
             }
 
-            // LtImm (44)
             44 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -251,7 +242,6 @@ macro_rules! execute_control_flow {
                 $reg_set!($base + a as usize, Value::bool(result));
             }
 
-            // LeImm (45)
             45 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -264,7 +254,6 @@ macro_rules! execute_control_flow {
                 $reg_set!($base + a as usize, Value::bool(result));
             }
 
-            // GtImm (46)
             46 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -277,7 +266,6 @@ macro_rules! execute_control_flow {
                 $reg_set!($base + a as usize, Value::bool(result));
             }
 
-            // GeImm (47)
             47 => {
                 let (a, b, c) = decode_abc($instr);
                 let left = *$reg_ref!($base + b as usize);
@@ -290,7 +278,6 @@ macro_rules! execute_control_flow {
                 $reg_set!($base + a as usize, Value::bool(result));
             }
 
-            // WhileLoopLt (48)
             48 => {
                 let (a, imm) = decode_aimm($instr);
                 let iter = *$reg_ref!($base + a as usize);

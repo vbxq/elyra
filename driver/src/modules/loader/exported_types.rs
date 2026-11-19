@@ -94,7 +94,6 @@ fn impl_ends(stmt: &Stmt) -> Option<(String, Option<String>)> {
     Some((target, trait_name))
 }
 
-/// every word, so a name the carried text mentions is never missed; a word that
 fn collect_identifiers(text: &str, out: &mut HashSet<String>) -> bool {
     let mut grew = false;
     let mut word = String::new();
@@ -402,7 +401,7 @@ pub fn collect_exported_types(
     let mut exported = ExportedTypes {
         generic_fns,
         renamed_privates: applied_renames.clone(),
-        // a needs line spells the bare name, so a refusal still has to recognise it
+        // a `use` line spells the bare name, so a refusal still has to recognise it
         private_names: applied_renames.keys().cloned().collect(),
         ..Default::default()
     };

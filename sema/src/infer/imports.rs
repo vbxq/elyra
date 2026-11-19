@@ -12,7 +12,7 @@ pub struct ImportedTypes {
     pub module_scoped_globals: BTreeMap<String, BTreeSet<String>>,
     // declares it; the importing file never asked for it and may not name it
     pub private_nominals: BTreeMap<String, String>,
-    // the subset of `private_nominals` its own module never made public, so no `needs` line
+    // the subset of `private_nominals` its own module never made public, so no `use` line
     pub unexported_nominals: BTreeSet<String>,
     pub struct_def_ordinals: std::collections::HashMap<String, u32>,
     pub enum_def_ordinals: std::collections::HashMap<String, u32>,
@@ -268,7 +268,6 @@ impl TypeInference {
         self.withheld_nominals.get(name).map(String::as_str)
     }
 
-    /// a name the importing file never asked for reports how to ask for it; anything else keeps
     pub(crate) fn nominal_error_kind(
         &self,
         name: &str,

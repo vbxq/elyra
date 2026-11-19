@@ -1,7 +1,6 @@
 use super::Value;
 
 impl Value {
-    /// Check if value is truthy.
     pub fn is_truthy(&self) -> bool {
         if self.is_null() || self.is_none() || self.is_unit() {
             false
@@ -16,7 +15,6 @@ impl Value {
         }
     }
 
-    /// Get type name for error messages.
     pub fn type_name(&self) -> &'static str {
         if self.is_null() {
             "Null"

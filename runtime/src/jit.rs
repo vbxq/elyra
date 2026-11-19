@@ -10,7 +10,6 @@ pub const JIT_TIER1_BACKEDGE_THRESHOLD: u64 = 10_000;
 
 static NEXT_JIT_MODULE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// the module half of a function key
 pub fn next_jit_module_id() -> u64 {
     NEXT_JIT_MODULE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }

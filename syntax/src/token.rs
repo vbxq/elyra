@@ -143,7 +143,7 @@ impl TokenKind {
                 | Self::RBracket
                 | Self::RBrace
                 | Self::Question
-                | Self::Star // for `needs module.*`
+                | Self::Star // for `use module::*`
                 | Self::PlusPlus
                 | Self::MinusMinus
         )

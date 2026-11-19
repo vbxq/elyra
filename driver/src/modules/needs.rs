@@ -55,7 +55,6 @@ struct NominalImports {
 }
 
 impl NominalImports {
-    /// nominal declarations key on their short name all the way down to the mangled method
     fn absorb(
         &mut self,
         module_info: &crate::modules::loader::ModuleInfo,
@@ -339,7 +338,6 @@ impl NominalClash {
     }
 }
 
-/// silently shadow it is rejected instead.
 fn reject_local_nominal_conflicts(
     stmts: &[Stmt],
     imports: &NominalImports,
@@ -410,12 +408,12 @@ fn load_modules(
         let is_stdlib = module_path.starts_with("std.");
         let (module_info, module_path, fallback_symbol) = resolve_loaded_module(&loader, needs);
         if let Some(module_info) = module_info {
-            // `needs a::b::c` resolved to module `a::b`, so it names one symbol and must not pull
+            // `use a::b::c` resolved to module `a::b`, so it names one symbol and must not pull
             let effective_kind = match &fallback_symbol {
                 Some(symbol) => ImportKind::Symbols(vec![symbol.clone()]),
                 None => needs.kind.clone(),
             };
-            // `needs a::b::c` names one member of `a::b` and never a type, so it
+            // `use a::b::c` names one member of `a::b` and never a type, so it
             let wanted = match (&fallback_symbol, &effective_kind) {
                 (Some(_), _) => Some(Vec::new()),
                 (None, ImportKind::Symbols(symbols)) => Some(symbols.clone()),

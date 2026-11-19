@@ -68,7 +68,6 @@ pub fn run_file_full_with_control(
     )
 }
 
-/// the JIT only ever ran behind the isolate API: the VM turns a function down when it has no key, and only the isolate handed one out
 pub fn run_file_full_with_control_and_jit(
     file_path: &std::path::Path,
     config: VmConfig,

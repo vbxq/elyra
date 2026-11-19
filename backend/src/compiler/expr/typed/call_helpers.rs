@@ -11,7 +11,6 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        // Fallback for builtins like `type`.
         let idx = self.get_or_create_global_index(name);
         self.accessed_globals.insert(name.to_string());
 

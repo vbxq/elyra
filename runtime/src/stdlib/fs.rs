@@ -106,11 +106,10 @@ fn native_open(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         }
     };
 
-    // Build OpenOptions with O_NOFOLLOW on Unix to prevent symlink attacks (TOCTOU)
     #[cfg(unix)]
     let file = {
         let mut opts = OpenOptions::new();
-        // O_NOFOLLOW prevents following symlinks, mitigating TOCTOU race conditions
+        // O_NOFOLLOW refuses a symlink, closing the check-then-open race
         opts.custom_flags(libc::O_NOFOLLOW);
         match mode {
             FileMode::Read => opts.read(true).open(path),
@@ -153,7 +152,6 @@ fn native_open(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
                     mode,
                 },
                 FileMode::ReadWrite => {
-                    // For read+write, we need to clone the file handle
                     let f2 = match f.try_clone() {
                         Ok(file) => file,
                         Err(e) => {
@@ -564,9 +562,7 @@ fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let base = get_string(vm, args[0], "fs.join")?.to_string();
     let rel = get_string(vm, args[1], "fs.join")?.to_string();
 
-    // Use has_root() instead of is_absolute() — on Windows, is_absolute()
-    // requires a drive letter (C:\), missing paths like /etc/passwd.
-    // has_root() catches both /foo and C:\foo on all platforms.
+    // has_root, not is_absolute: on windows is_absolute needs a drive letter and misses /etc/passwd
     if Path::new(&rel).has_root() {
         return fs_fail(vm, "fs.join", "path must not be absolute");
     }

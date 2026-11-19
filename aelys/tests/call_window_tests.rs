@@ -8,8 +8,6 @@ use aelys_driver::run_file;
 use common::*;
 use tempfile::TempDir;
 
-// a callglobal/callcached/callupval hands the callee a frame based at dst+1 and lets it use its own
-
 #[test]
 fn field_write_from_zero_arg_global_keeps_the_target() {
     let code = r#"

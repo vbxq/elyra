@@ -1,10 +1,8 @@
-//! std.string - String manipulation functions
 use crate::stdlib::helpers::{get_int, get_string, make_string};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
 use aelys_common::error::RuntimeError;
 
-/// Register all string functions in the VM.
 pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     let mut all_exports = Vec::new();
     let mut native_functions = Vec::new();
@@ -64,20 +62,16 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     })
 }
 
-/// len(s) - Get string length in bytes.
 fn native_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.len")?;
     Ok(Value::int(s.len() as i64))
 }
 
-/// char_len(s) - Get string length in characters.
 fn native_char_len(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.char_len")?;
     Ok(Value::int(s.chars().count() as i64))
 }
 
-/// char_at(s, index) - Get character at index (0-based).
-/// Returns empty string if index is out of bounds.
 fn native_char_at(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.char_at")?;
     let index = get_int(vm, args[1], "string.char_at")?;
@@ -92,8 +86,6 @@ fn native_char_at(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// byte_at(s, index) - Get byte at index (0-based).
-/// Returns -1 if index is out of bounds.
 fn native_byte_at(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.byte_at")?;
     let index = get_int(vm, args[1], "string.byte_at")?;
@@ -105,8 +97,6 @@ fn native_byte_at(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::int(s.as_bytes()[index as usize] as i64))
 }
 
-/// substr(s, start, len) - Extract substring.
-/// start is 0-based character index, len is number of characters.
 fn native_substr(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.substr")?;
     let start = get_int(vm, args[1], "string.substr")?;
@@ -165,8 +155,7 @@ fn native_ends_with(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     Ok(Value::bool(s.ends_with(suf)))
 }
 
-// returns byte pos, not char pos - might be confusing w/ unicode
-// FIXME: add find_char?
+// a byte position, not a char position
 fn native_find(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.find")?;
     let needle = get_string(vm, args[1], "string.find")?;
@@ -189,7 +178,6 @@ fn native_count(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::int(s.matches(n).count() as i64))
 }
 
-/// replace(s, old, new) - Replace all occurrences.
 fn native_replace(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.replace")?;
     let old = get_string(vm, args[1], "string.replace")?;
@@ -197,7 +185,6 @@ fn native_replace(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &s.replace(old, new))
 }
 
-/// replace_first(s, old, new) - Replace first occurrence.
 fn native_replace_first(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.replace_first")?;
     let old = get_string(vm, args[1], "string.replace_first")?;
@@ -205,8 +192,6 @@ fn native_replace_first(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
     make_string(vm, &s.replacen(old, new, 1))
 }
 
-/// join(parts, sep) - Join parts by separator.
-/// parts are expected to be newline-separated.
 fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let parts = get_string(vm, args[0], "string.join")?;
     let sep = get_string(vm, args[1], "string.join")?;
@@ -214,7 +199,6 @@ fn native_join(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &result)
 }
 
-/// repeat(s, n) - Repeat string n times.
 fn native_repeat(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.repeat")?;
     let n = get_int(vm, args[1], "string.repeat")?;
@@ -231,42 +215,36 @@ fn native_repeat(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &repeated)
 }
 
-/// reverse(s) - Reverse string (by characters).
 fn native_reverse(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.reverse")?;
     let reversed: String = s.chars().rev().collect();
     make_string(vm, &reversed)
 }
 
-/// concat(a, b) - Concatenate two strings.
 fn native_concat(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let a = get_string(vm, args[0], "string.concat")?;
     let b = get_string(vm, args[1], "string.concat")?;
     make_string(vm, &format!("{}{}", a, b))
 }
 
-/// trim(s) - Trim whitespace from both ends.
 fn native_trim(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.trim")?.to_string();
     let trimmed = s.trim().to_string();
     make_string(vm, &trimmed)
 }
 
-/// trim_start(s) - Trim whitespace from start.
 fn native_trim_start(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.trim_start")?.to_string();
     let trimmed = s.trim_start().to_string();
     make_string(vm, &trimmed)
 }
 
-/// trim_end(s) - Trim whitespace from end.
 fn native_trim_end(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.trim_end")?.to_string();
     let trimmed = s.trim_end().to_string();
     make_string(vm, &trimmed)
 }
 
-/// pad_left(s, width, char) - Pad start to width with char.
 fn native_pad_left(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.pad_left")?.to_string();
     let width = usize::try_from(get_int(vm, args[1], "string.pad_left")?).unwrap_or(0);
@@ -291,7 +269,6 @@ fn native_pad_left(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &padding)
 }
 
-/// pad_right(s, width, char) - Pad end to width with char.
 fn native_pad_right(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.pad_right")?.to_string();
     let width = usize::try_from(get_int(vm, args[1], "string.pad_right")?).unwrap_or(0);
@@ -317,13 +294,11 @@ fn native_pad_right(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     make_string(vm, &padded)
 }
 
-/// is_empty(s) - Check if string is empty.
 fn native_is_empty(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.is_empty")?;
     Ok(Value::bool(s.is_empty()))
 }
 
-/// is_whitespace(s) - Check if string contains only whitespace.
 fn native_is_whitespace(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.is_whitespace")?;
     Ok(Value::bool(
@@ -331,7 +306,6 @@ fn native_is_whitespace(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
     ))
 }
 
-/// is_numeric(s) - Check if string contains only digits.
 fn native_is_numeric(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.is_numeric")?;
     Ok(Value::bool(
@@ -339,7 +313,6 @@ fn native_is_numeric(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     ))
 }
 
-/// is_alphabetic(s) - Check if string contains only alphabetic characters.
 fn native_is_alphabetic(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.is_alphabetic")?;
     Ok(Value::bool(
@@ -347,7 +320,6 @@ fn native_is_alphabetic(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeErr
     ))
 }
 
-/// is_alphanumeric(s) - Check if string contains only alphanumeric characters.
 fn native_is_alphanumeric(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.is_alphanumeric")?;
     Ok(Value::bool(
@@ -355,7 +327,6 @@ fn native_is_alphanumeric(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeE
     ))
 }
 
-/// line_count(s) - Count number of lines.
 fn native_line_count(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = get_string(vm, args[0], "string.line_count")?;
     Ok(Value::int(s.lines().count() as i64))

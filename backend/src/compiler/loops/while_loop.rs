@@ -5,15 +5,12 @@ use aelys_syntax::ast::{BinaryOp, Expr, ExprKind, Stmt};
 
 impl Compiler {
     pub fn compile_while(&mut self, condition: &Expr, body: &Stmt) -> Result<()> {
-        // Fast path: `while i < bound` is super common, use specialized opcode
         if let Some(optimized) = self.try_compile_while_loop_lt(condition, body)? {
             return Ok(optimized);
         }
         self.compile_while_generic(condition, body)
     }
 
-    // WhileLoopLt: fuses comparison + conditional jump into one instruction.
-    // Only works for `while local_var < expr` pattern - anything else falls back to generic.
     pub fn try_compile_while_loop_lt(
         &mut self,
         condition: &Expr,
@@ -27,9 +24,7 @@ impl Compiler {
             && let ExprKind::Identifier(name) = &left.kind
             && let Some((iter_reg, _)) = self.resolve_variable(name)
         {
-            // Need the bound in the register right after the iterator.
-            // WhileLoopLt expects them adjacent. If that register is taken, bail.
-            // FIXME: could spill/move but probably not worth the complexity
+            // WhileLoopLt reads the bound from the register right after the iterator
             let bound_reg = match iter_reg.checked_add(1) {
                 Some(r) if (r as usize) < self.register_pool.len() => r,
                 _ => return Ok(None),
@@ -74,8 +69,6 @@ impl Compiler {
         Ok(None)
     }
 
-    // Fallback for arbitrary conditions. Less efficient than WhileLoopLt
-    // but handles everything: `while a && b`, `while func()`, etc.
     pub fn compile_while_generic(&mut self, condition: &Expr, body: &Stmt) -> Result<()> {
         let loop_start = self.current_offset();
 

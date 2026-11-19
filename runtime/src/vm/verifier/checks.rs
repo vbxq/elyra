@@ -10,8 +10,6 @@ pub(super) fn check_reg(reg: usize, num_regs: usize, op: &str) -> Result<(), Str
     Ok(())
 }
 
-/// validates a range of consecutive registers starting at `base` with `count` registers.
-/// uses checked arithmetic to prevent overflow attacks.
 pub(super) fn check_reg_range(
     base: usize,
     count: usize,
@@ -21,7 +19,6 @@ pub(super) fn check_reg_range(
     if count == 0 {
         return Ok(());
     }
-    // Check that base + count - 1 doesn't overflow and is within bounds
     let last = base
         .checked_add(count - 1)
         .ok_or_else(|| format!("{} register range overflow at base {}", op, base))?;

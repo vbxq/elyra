@@ -117,13 +117,11 @@ impl OccurrenceRole {
     }
 }
 
-/// keyed by the mangled impl symbol: a receiver call reaches no generic
 pub(crate) struct ImplMethodSignature {
     pub(crate) params: Vec<InferType>,
     pub(crate) return_type: InferType,
 }
 
-/// only monomorphization can say what it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProjectionNamespace {
     Found,
@@ -145,7 +143,6 @@ pub(crate) enum ConstResolution {
         instantiations: Vec<String>,
     },
     Cyclic,
-    /// checked arithmetic refused: overflow, or division/modulo by zero.
     NotComputable,
     NotConstant,
 }
@@ -181,10 +178,8 @@ pub struct TypeInference {
     warnings: Vec<Warning>,
     pub(crate) type_table: TypeTable,
     type_params_in_scope: Vec<String>,
-    /// a method that redeclares a parameter of its impl or of the nominal it is
     method_param_renames: std::collections::HashMap<String, String>,
     freshened_own_params: Option<Vec<InferType>>,
-    /// impls withdrawn because a later impl clashes with them: both of a pair go
     retracted_by_overlap: std::collections::HashSet<usize>,
     trait_defaults: HashMap<(String, String), aelys_syntax::Function>,
     generic_function_bounds: HashMap<String, Vec<(String, String, Vec<InferType>)>>,
@@ -197,7 +192,6 @@ pub struct TypeInference {
     forwarded_mutable_borrows: HashSet<String>,
     try_residuals: Vec<expr_sum::TryResidual>,
     try_conversions: HashMap<(usize, usize), (String, InferType, InferType)>,
-    /// with `&self`, so its verdicts are filed here and drained once
     conversion_verdicts: std::cell::RefCell<
         Vec<(
             crate::types::FromSelection,
@@ -252,36 +246,27 @@ pub struct TypeInference {
     current_trait_associated_items: Vec<String>,
     projected_associated_const_types: Vec<ProjectedAssociatedConstType>,
     nominal_parameter_scope: bool,
-    /// bounds of the function currently being collected, for `t::item` projections.
     current_function_bounds: Vec<(String, String, Vec<InferType>)>,
     current_function_bindings: AssociatedBindings,
-    /// associated bindings per (function, subject param): `item = int` bounds.
     generic_function_bindings: HashMap<String, AssociatedBindings>,
     impl_method_signatures: HashMap<String, ImplMethodSignature>,
     impl_method_symbol_targets: HashMap<String, InferType>,
-    /// deeply nested typed tree cannot overflow the stack.
     substitution_depth: std::cell::Cell<usize>,
     associated_type_definitions: Vec<AssociatedTypeDefinition>,
-    /// memo for `associated_const_resolutions`, which the monomorphizer asks for at
     associated_const_resolution_cache:
         std::cell::RefCell<Option<HashMap<(String, String), ConstResolution>>>,
     trait_qualified_items: HashMap<(String, String), Vec<String>>,
-    /// demand, after every impl is registered, so the result cannot depend on
     associated_const_exprs: HashMap<(String, String), (String, aelys_syntax::Expr)>,
     defer_projection_resolution: bool,
     annotation_namespace: crate::constraint::ItemNamespace,
     occurrence_role: Option<OccurrenceRole>,
     current_impl_self: Option<InferType>,
     in_trait_default_body: bool,
-    /// in an impl's bodies, its header, which `Self::Item` is read on
     current_impl_header: Option<InferType>,
-    /// in a default body, the trait, header and arguments of the impl adopting it
     adopted_instantiation: Option<(String, InferType, Vec<InferType>)>,
     impls_missing_supertraits:
         std::collections::BTreeMap<(String, String), (InferType, Vec<String>)>,
-    /// reject, so the compile reports it instead of yielding a poisoned type.
     projection_cycle_escaped: std::cell::Cell<bool>,
-    /// compile reports a recursion-limit error instead of silently emitting a
     substitution_overflowed: std::cell::Cell<Option<aelys_syntax::Span>>,
     specialization_verdicts: std::cell::RefCell<
         Vec<(

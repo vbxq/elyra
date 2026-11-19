@@ -163,13 +163,11 @@ impl Parser {
         Ok(clauses)
     }
 
-    /// a body item is `default fn` only when the word is followed by `fn`; the
     pub(super) fn at_default_method(&self) -> bool {
         matches!(&self.peek().kind, TokenKind::Identifier(word) if word == "default")
             && matches!(self.peek_at(1).kind, TokenKind::Fn)
     }
 
-    /// `deferred` leaves the word to sema, which refuses the whole body of a
     pub(super) fn take_default_method(&mut self, placement: DefaultPlacement) -> Result<bool> {
         if !self.at_default_method() {
             return Ok(false);

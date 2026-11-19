@@ -104,7 +104,7 @@ impl Compiler {
         dest: u16,
         span: Span,
     ) -> Result<()> {
-        // Native calls read args from dest+1, so compile the expression there.
+        // native calls read their arguments from dest+1
         let arg_reg = dest + 1;
 
         if crate::compiler::call::util::call_window_available(

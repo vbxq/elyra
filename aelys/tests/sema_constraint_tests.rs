@@ -2529,8 +2529,6 @@ fn a_constant_binding_mismatch_prints_both_values_it_compared() {
     }
 }
 
-// and the rejected half of one program, so the reason a code renders is pinned
-
 fn required_item_program(copies: usize) -> String {
     let mut items = String::new();
     for _ in 0..copies {

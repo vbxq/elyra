@@ -67,7 +67,6 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     })
 }
 
-/// Create a sys error.
 fn sys_error(vm: &VM, op: &'static str, msg: String) -> RuntimeError {
     vm.runtime_error(RuntimeErrorKind::TypeError {
         operation: op,
@@ -76,7 +75,6 @@ fn sys_error(vm: &VM, op: &'static str, msg: String) -> RuntimeError {
     })
 }
 
-/// args() - Get command line arguments as newline-separated string.
 fn native_args(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let joined = {
         let args = vm.program_args();
@@ -85,8 +83,6 @@ fn native_args(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &joined)
 }
 
-/// arg(index) - Get specific argument by index (0-based).
-/// Returns null if index is out of bounds.
 fn native_arg(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let index = get_int(vm, args[0], "sys.arg")?;
 
@@ -105,13 +101,10 @@ fn native_arg(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// arg_count() - Get number of command line arguments.
 fn native_arg_count(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::int(vm.program_args().len() as i64))
 }
 
-/// script_path() - Get the absolute path to the currently executing script.
-/// Returns null if not available.
 fn native_script_path(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     match vm.script_path().map(|s| s.to_string()) {
         Some(path) => {
@@ -122,8 +115,6 @@ fn native_script_path(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeErro
     }
 }
 
-/// script_dir() - Get the directory containing the currently executing script.
-/// Returns null if not available.
 fn native_script_dir(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     use std::path::Path;
     match vm.script_path().map(|s| s.to_string()) {
@@ -141,8 +132,6 @@ fn native_script_dir(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError
     }
 }
 
-/// env(name) - Get environment variable.
-/// Returns null if not set.
 fn native_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let name = get_string(vm, args[0], "sys.env")?;
     match env::var(name) {
@@ -154,7 +143,6 @@ fn native_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// set_env(name, value) - Set environment variable.
 fn native_set_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let name = get_string(vm, args[0], "sys.set_env")?.to_string();
     let value = get_string(vm, args[1], "sys.set_env")?.to_string();
@@ -164,7 +152,6 @@ fn native_set_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::unit())
 }
 
-/// unset_env(name) - Unset environment variable.
 fn native_unset_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let name = get_string(vm, args[0], "sys.unset_env")?.to_string();
     // SAFETY: We're removing environment variables.
@@ -173,13 +160,11 @@ fn native_unset_env(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     Ok(Value::unit())
 }
 
-/// env_vars() - Get all environment variables as NAME=VALUE lines.
 fn native_env_vars(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let vars: Vec<String> = env::vars().map(|(k, v)| format!("{}={}", k, v)).collect();
     make_string(vm, &vars.join("\n"))
 }
 
-/// exit(code) - Exit with status code.
 fn native_exit(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let code = get_int(vm, args[0], "sys.exit")?;
     let code = i32::try_from(code)
@@ -187,12 +172,10 @@ fn native_exit(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Err(vm.runtime_error(RuntimeErrorKind::Exit(code)))
 }
 
-/// pid() - Get current process ID.
 fn native_pid(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::int(std::process::id() as i64))
 }
 
-/// cwd() - Get current working directory.
 fn native_cwd(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     match env::current_dir() {
         Ok(path) => {
@@ -203,7 +186,6 @@ fn native_cwd(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// set_cwd(path) - Set current working directory.
 fn native_set_cwd(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let path = get_string(vm, args[0], "sys.set_cwd")?;
     match env::set_current_dir(path) {
@@ -215,7 +197,6 @@ fn native_set_cwd(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// home() - Get home directory.
 fn native_home(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     match home_dir() {
         Some(path) => {
@@ -226,19 +207,15 @@ fn native_home(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// Get home directory in a cross-platform way.
 fn home_dir() -> Option<String> {
-    // Try HOME first (Unix)
     if let Ok(home) = env::var("HOME") {
         return Some(home);
     }
 
-    // Try USERPROFILE (Windows)
     if let Ok(home) = env::var("USERPROFILE") {
         return Some(home);
     }
 
-    // Try HOMEDRIVE + HOMEPATH (Windows fallback)
     if let (Ok(drive), Ok(path)) = (env::var("HOMEDRIVE"), env::var("HOMEPATH")) {
         return Some(format!("{}{}", drive, path));
     }
@@ -246,7 +223,6 @@ fn home_dir() -> Option<String> {
     None
 }
 
-/// platform() - Get platform name.
 fn native_platform(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let platform = if cfg!(target_os = "linux") {
         "linux"
@@ -270,7 +246,6 @@ fn native_platform(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> 
     make_string(vm, platform)
 }
 
-/// arch() - Get architecture.
 fn native_arch(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let arch = if cfg!(target_arch = "x86_64") {
         "x86_64"
@@ -298,32 +273,26 @@ fn native_arch(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, arch)
 }
 
-/// os() - Get OS name (more detailed than platform).
 fn native_os(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, std::env::consts::OS)
 }
 
-/// hostname() - Get hostname.
 fn native_hostname(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
-    // Try to get hostname from environment
     if let Ok(hostname) = env::var("HOSTNAME") {
         return make_string(vm, &hostname);
     }
 
-    // Fall back to reading /etc/hostname on Unix
     #[cfg(unix)]
     {
         if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
             return make_string(vm, hostname.trim());
         }
 
-        // Try reading from /proc/sys/kernel/hostname
         if let Ok(hostname) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
             return make_string(vm, hostname.trim());
         }
     }
 
-    // Windows: use COMPUTERNAME
     if let Ok(hostname) = env::var("COMPUTERNAME") {
         return make_string(vm, &hostname);
     }
@@ -331,27 +300,22 @@ fn native_hostname(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> 
     make_string(vm, "unknown")
 }
 
-/// cpu_count() - Get number of CPUs.
 fn native_cpu_count(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::int(num_cpus() as i64))
 }
 
-/// Get number of CPUs (portable implementation).
 fn num_cpus() -> usize {
-    // Try to get from environment (for containers/cgroups)
     if let Ok(cpus) = env::var("AELYS_CPU_COUNT")
         && let Ok(n) = cpus.parse::<usize>()
     {
         return n;
     }
 
-    // Use std::thread::available_parallelism if available
     std::thread::available_parallelism()
         .map(|p| p.get())
         .unwrap_or(1)
 }
 
-/// exec(command) - Execute shell command, returns exit code.
 fn native_exec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let command = get_string(vm, args[0], "sys.exec")?;
 
@@ -367,8 +331,6 @@ fn native_exec(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// exec_output(command) - Execute command and capture output.
-/// Returns stdout as string, or null on error.
 fn native_exec_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let command = get_string(vm, args[0], "sys.exec_output")?;
 
@@ -391,15 +353,10 @@ fn native_exec_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError
     }
 }
 
-/// exec_args(program, args_string) - Execute program with arguments directly (no shell).
-/// Arguments are passed as a newline-separated string.
-/// This is safer than exec() as it prevents shell injection attacks.
-/// Returns exit code.
 fn native_exec_args(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let program = get_string(vm, args[0], "sys.exec_args")?;
     let args_str = get_string(vm, args[1], "sys.exec_args")?;
 
-    // Split arguments by newline
     let cmd_args: Vec<&str> = args_str.lines().collect();
 
     let status = Command::new(program).args(&cmd_args).status();
@@ -413,15 +370,10 @@ fn native_exec_args(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
     }
 }
 
-/// exec_args_output(program, args_string) - Execute program with arguments and capture output.
-/// Arguments are passed as a newline-separated string.
-/// This is safer than exec_output() as it prevents shell injection attacks.
-/// Returns stdout as string.
 fn native_exec_args_output(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let program = get_string(vm, args[0], "sys.exec_args_output")?;
     let args_str = get_string(vm, args[1], "sys.exec_args_output")?;
 
-    // Split arguments by newline
     let cmd_args: Vec<&str> = args_str.lines().collect();
 
     let output = Command::new(program).args(&cmd_args).output();
@@ -439,13 +391,10 @@ fn native_exec_args_output(vm: &mut VM, args: &[Value]) -> Result<Value, Runtime
     }
 }
 
-/// random() - Get a random float between 0 and 1.
-// TODO: Imagine making prng3d and not using a proper PRNG here :)
 fn native_random(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::float(vm.random_f64()))
 }
 
-/// random_int(min, max) - Get a random integer in range [min, max].
 fn native_random_int(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let min = get_int(vm, args[0], "sys.random_int")?;
     let max = get_int(vm, args[1], "sys.random_int")?;

@@ -282,7 +282,7 @@ fn native_is_nan(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_nan()))
     } else if vm.is_int_value(args[0]) {
-        Ok(Value::bool(false)) // Integers are never NaN
+        Ok(Value::bool(false))
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
             operation: "is_nan",
@@ -296,7 +296,7 @@ fn native_is_inf(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_infinite()))
     } else if vm.is_int_value(args[0]) {
-        Ok(Value::bool(false)) // Integers are never infinite
+        Ok(Value::bool(false))
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
             operation: "is_inf",
@@ -306,12 +306,11 @@ fn native_is_inf(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// is_finite(x) - check if x is finite (not nan or infinite).
 fn native_is_finite(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(f) = args[0].as_float() {
         Ok(Value::bool(f.is_finite()))
     } else if vm.is_int_value(args[0]) {
-        Ok(Value::bool(true)) // Integers are always finite
+        Ok(Value::bool(true))
     } else {
         Err(vm.runtime_error(RuntimeErrorKind::TypeError {
             operation: "is_finite",

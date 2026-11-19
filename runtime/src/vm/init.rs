@@ -96,7 +96,6 @@ impl VM {
                 .insert(name.clone(), format!("string::{}", name));
         }
 
-        // io, math, convert, time: qualified + unqualified aliases
         type RegFn = fn(&mut VM) -> Result<crate::stdlib::StdModuleExports, RuntimeError>;
         let auto_modules: &[(&str, RegFn)] = &[
             ("io", crate::stdlib::io::register),

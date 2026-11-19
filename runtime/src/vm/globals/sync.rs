@@ -2,7 +2,6 @@ use super::super::{ObjectKind, VM};
 use std::sync::Arc;
 
 impl VM {
-    /// synchronize indexed globals back to the hash map.
     pub fn sync_globals_to_hashmap(&mut self, global_names: &[String]) {
         self.globals_by_index_dirty = false;
         for (idx, name) in global_names.iter().enumerate() {
@@ -21,7 +20,6 @@ impl VM {
         }
     }
 
-    /// sync the current function's globals_by_index to the globals hashmap.
     pub fn sync_current_function_globals(&mut self) {
         if !self.globals_by_index_dirty {
             return;

@@ -50,9 +50,6 @@ impl Compiler {
         body: &Stmt,
         span: Span,
     ) -> Result<()> {
-        // Try to figure out loop direction at compile time.
-        // If we can't (e.g., `for i in a..b` where a,b are variables), we emit
-        // runtime detection code which is slower but necessary.
         let compile_time_direction: Option<bool> = if let Some(step_expr) = step {
             if let ExprKind::Int(step_val) = &step_expr.kind {
                 Some(*step_val > 0)
@@ -68,8 +65,7 @@ impl Compiler {
 
         self.begin_scope();
 
-        // Allocate 3 consecutive registers for iter, end, step.
-        // ForLoopI requires these to be adjacent in the register window.
+        // ForLoopI reads iter, end and step from three adjacent registers
         let iter_reg = self.alloc_consecutive_registers(3, span)?;
         let end_reg = iter_reg + 1;
         let step_reg = iter_reg + 2;
@@ -96,9 +92,6 @@ impl Compiler {
             let step_val = if direction { 1i16 } else { -1i16 };
             self.emit_b(OpCode::LoadI, step_reg, step_val, span);
         } else {
-            // Runtime direction detection - only used when we can't determine
-            // direction at compile time. Costs a few extra instructions but
-            // beats having the user specify step explicitly.
             let temp_reg = self.alloc_register()?;
 
             // if start > end: step = -1, else step = 1

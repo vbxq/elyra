@@ -200,7 +200,6 @@ pub enum TypedExprKind {
     Try {
         operand: Box<TypedExpr>,
         conversion: Option<String>,
-        /// the error type the conversion produces, carried so the monomorphizer
         conversion_target: Option<InferType>,
     },
 
@@ -214,8 +213,8 @@ pub enum TypedExprKind {
     LambdaInner {
         params: Vec<TypedParam>,
         return_type: InferType,
-        body: Vec<TypedStmt>, // Changed to support multi-statement bodies
-        captures: Vec<(String, InferType)>, // NEW: captured variables
+        body: Vec<TypedStmt>,
+        captures: Vec<(String, InferType)>,
     },
 
     Member {
@@ -305,7 +304,6 @@ pub enum TypedExprKind {
         target: InferType,
     },
 
-    /// the monomorphizer replaces this node with the integer literal. it must
     AssociatedConst {
         param: String,
         trait_name: String,

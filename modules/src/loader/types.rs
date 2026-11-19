@@ -40,7 +40,7 @@ pub struct LoadedNativeInfo {
 }
 
 pub struct ModuleImports {
-    pub module_aliases: HashSet<String>, // "utils" from `needs utils`
+    pub module_aliases: HashSet<String>, // "utils" from `use utils`
     pub known_globals: HashSet<String>,  // wildcard/specific imports
     pub known_native_globals: HashSet<String>,
     pub symbol_origins: HashMap<String, String>,

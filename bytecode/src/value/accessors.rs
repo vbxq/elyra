@@ -38,7 +38,6 @@ impl Value {
         })
     }
 
-    /// Check if this is a nested function marker and return the index if so.
     pub fn as_nested_fn_marker(&self) -> Option<usize> {
         if (self.0 & (QNAN | TAG_MASK)) == (QNAN | TAG_NESTED_FN) {
             Some(

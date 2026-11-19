@@ -555,7 +555,6 @@ pub fn collect_infer_names(ty: &aelys_sema::InferType, out: &mut HashSet<String>
     }
 }
 
-/// where an impl's contract writes `name`, so a refusal underlines the leak and not the
 pub fn impl_contract_name_span(stmt: &Stmt, name: &str) -> Option<Span> {
     let StmtKind::ImplDecl {
         trait_path,

@@ -192,7 +192,6 @@ pub enum CompileErrorKind {
     },
 }
 
-/// who wrote the bytes, which decides who the refusal may blame
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectedBytecodeOrigin {
     Compiler,
@@ -222,7 +221,6 @@ pub struct PrivateFieldDetail {
     pub reason: String,
 }
 
-/// a selective `needs` has no `as` form, so only the whole-module clash is aliasable
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolConflictRepair {
     Alias,

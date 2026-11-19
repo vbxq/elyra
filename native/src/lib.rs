@@ -1,4 +1,4 @@
-// FFI types for native modules bump abi_version when changing struct layouts
+// bump abi_version when changing a struct layout
 
 pub use aelys_native_macros::{aelys_export, aelys_module};
 
@@ -113,7 +113,6 @@ pub unsafe fn alloc_int_from_context(
     if status == 0 { Ok(output) } else { Err(status) }
 }
 
-/// read a string value from the VM using the stored API. # safety `VM` must be a valid pointer to a live VM instance (clippy moment)
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn read_string_from_value(
     context: *mut NativeContext,

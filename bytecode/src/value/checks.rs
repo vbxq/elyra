@@ -4,8 +4,7 @@ use super::{
 };
 
 impl Value {
-    // floats are the only values that don't have QNAN set (except actual NaN which we canonicalize)
-    // Canonical NaN (TAG_NAN) is also a float. TAG_NESTED_FN is not a float.
+    // a float is any value without QNAN set, plus the canonical TAG_NAN; TAG_NESTED_FN is not a float
     pub fn is_float(&self) -> bool {
         if (self.0 & QNAN) != QNAN {
             return true;

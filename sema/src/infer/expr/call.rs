@@ -1851,7 +1851,6 @@ fn effective_argument_indices(args: &[TypedExpr]) -> Vec<usize> {
         .collect()
 }
 
-/// a call on a receiver, whose signature the member pass already substituted with
 fn is_method_callee(callee: &TypedExpr) -> bool {
     matches!(
         &callee.kind,

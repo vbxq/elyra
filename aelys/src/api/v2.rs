@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc)]
+
 use super::native_registry::{NativeModuleRegistration, invalid_module_reason};
 use crate::jit::provider::JitProvider;
 use aelys_backend::Compiler;
@@ -186,7 +188,6 @@ impl fmt::Display for StructuredCloneError {
 
 impl std::error::Error for StructuredCloneError {}
 
-/// `allocations` is a monotone count since the beginning of the run;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionReport {
     pub instructions: u64,
@@ -208,7 +209,6 @@ pub struct CompiledModule {
     avbc: Arc<[u8]>,
     module_id: u64,
     source: Arc<Source>,
-    /// set when the module imported other modules, whose globals live in that one isolate
     linked_isolate: Option<u64>,
 }
 
@@ -301,7 +301,6 @@ fn build_jit_provider(
     )))
 }
 
-/// the executor a host installs with `VM::configure_jit` when it runs a program through the driver rather than through an isolate
 pub fn new_jit_executor(
     jit_mode: JitMode,
     config: JitConfig,
@@ -365,8 +364,6 @@ impl Runtime {
         self.inner.standard_module_symbols()
     }
 
-    #[doc = "# Safety"]
-    #[doc = "the module must refer to a valid static abi descriptor."]
     pub unsafe fn register_native_module(
         &self,
         module: &'static AelysModuleDescriptor,
@@ -495,7 +492,6 @@ impl Runtime {
         })
     }
 
-    /// process-wide id and is therefore safe to execute through any isolate
     pub fn load_avbc(
         &self,
         avbc: &[u8],
@@ -601,7 +597,6 @@ const HOST_SEARCH_SURFACE: [&str; 3] = [
     "no module search root: use Isolate::compile_file or Isolate::compile_with_root to load modules from disk",
 ];
 
-/// a `needs` the runtime cannot satisfy from its own modules is an error, not a silent no-op.
 fn reject_unprovided_needs(
     statements: &[aelys_syntax::Stmt],
     module_aliases: &HashSet<String>,
@@ -734,7 +729,6 @@ impl Isolate {
         self.vm.invalidate_global_mapping();
     }
 
-    /// `aelys run` does. imported modules are linked into this isolate, so the result runs here
     pub fn compile_file(
         &mut self,
         entry_file: &Path,
@@ -1000,7 +994,6 @@ impl Isolate {
         self.call_with_options(function, args, RunOptions::default())
     }
 
-    /// bounded or reporting module load cannot silently affect every later
     pub fn call_with_options(
         &mut self,
         function: &CallableFunction,

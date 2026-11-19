@@ -6,7 +6,6 @@ use aelys_common::{Warning, WarningKind};
 use aelys_sema::{TypedExpr, TypedExprKind, TypedFunction, TypedProgram, TypedStmt, TypedStmtKind};
 use std::collections::{HashMap, HashSet};
 
-// TODO: we should make this somewhat configurable
 const BLOAT_BUDGET: f64 = 0.20;
 
 pub struct FunctionInliner {

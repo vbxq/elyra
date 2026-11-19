@@ -723,7 +723,7 @@ fn assembly_at(source: &str, level: OptimizationLevel) -> String {
     disassemble(&function)
 }
 
-// the bare compiler cannot resolve imports, so a program with `needs` goes through the runtime and is read back from its avbc
+// the bare compiler cannot resolve imports, so a program with `use` goes through the runtime and is read back from its avbc
 fn linked_assembly_at(source: &str, level: OptimizationLevel) -> String {
     let module = Runtime::with_jit_mode(JitMode::Off)
         .compile(

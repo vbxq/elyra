@@ -90,8 +90,6 @@ pub(crate) fn execute(
         }};
     }
 
-    // Bitwise operations: Shl(105), Shr(106), BitAnd(107), BitOr(108), BitXor(109),
-    // BitNot(110), ShlII(111)-XorII(115), NotI(116), ShlIImm(117)-XorIImm(121)
 
     let (a, b, c) = decode_abc(instr);
     let dest = base + a as usize;

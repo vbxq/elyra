@@ -1,4 +1,3 @@
-//! std.time
 
 use crate::stdlib::helpers::{get_handle, get_int, get_string, make_string};
 use crate::stdlib::{Resource, StdModuleExports, register_native};
@@ -82,19 +81,15 @@ fn native_now_us(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     int_of(vm, since_epoch().as_micros())
 }
 
-/// now_ns() - Get current timestamp in nanoseconds since Unix epoch.
 fn native_now_ns(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     int_of(vm, since_epoch().as_nanos())
 }
 
-/// timer() - Create a new timer.
-/// Returns a handle that can be used with elapsed().
 fn native_timer(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = vm.store_resource(Resource::Timer(Instant::now()));
     Ok(Value::int(handle as i64))
 }
 
-/// elapsed(handle) - Get elapsed time in seconds since timer creation.
 fn native_elapsed(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "time.elapsed")?;
 
@@ -111,7 +106,6 @@ fn native_elapsed(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// elapsed_ms(handle) - Get elapsed time in milliseconds.
 fn native_elapsed_ms(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "time.elapsed_ms")?;
 
@@ -127,7 +121,6 @@ fn native_elapsed_ms(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     }
 }
 
-/// elapsed_us(handle) - Get elapsed time in microseconds.
 fn native_elapsed_us(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "time.elapsed_us")?;
 
@@ -143,7 +136,6 @@ fn native_elapsed_us(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError>
     }
 }
 
-/// reset(handle) - Reset timer to current time.
 fn native_reset(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let handle = get_handle(vm, args[0], "time.reset")?;
 
@@ -159,7 +151,6 @@ fn native_reset(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-/// sleep(ms) - Sleep for given milliseconds.
 fn native_sleep(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let ms = get_int(vm, args[0], "time.sleep")?;
     if ms > 0 {
@@ -168,7 +159,6 @@ fn native_sleep(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::unit())
 }
 
-/// sleep_us(us) - Sleep for given microseconds.
 fn native_sleep_us(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let us = get_int(vm, args[0], "time.sleep_us")?;
     if us > 0 {
@@ -177,7 +167,6 @@ fn native_sleep_us(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::unit())
 }
 
-/// Get the current local time broken down into components.
 fn get_local_time() -> (i32, u32, u32, u32, u32, u32, u32, u32) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -186,10 +175,8 @@ fn get_local_time() -> (i32, u32, u32, u32, u32, u32, u32, u32) {
         .try_into()
         .unwrap_or(i64::MAX);
 
-    // Simple UTC->local conversion is complex, so we'll use UTC for now
-    // A real implementation would use the system's local timezone
+    // local time is reported in utc
 
-    // Calculate date components from Unix timestamp
     let days = secs / 86400;
     let time_of_day = secs % 86400;
 
@@ -197,17 +184,14 @@ fn get_local_time() -> (i32, u32, u32, u32, u32, u32, u32, u32) {
     let minute = u32::try_from((time_of_day % 3600) / 60).expect("minute is in range");
     let second = u32::try_from(time_of_day % 60).expect("second is in range");
 
-    // Calculate year, month, day from days since epoch (1970-01-01)
     let bounded_days = i32::try_from(days).unwrap_or(if days < 0 { i32::MIN } else { i32::MAX });
     let (year, month, day, yearday) = days_to_ymd(bounded_days);
 
-    // Calculate weekday (1970-01-01 was Thursday = 4)
     let weekday = u32::try_from((days % 7 + 4) % 7).expect("weekday is in range");
 
     (year, month, day, hour, minute, second, weekday, yearday)
 }
 
-/// Convert days since epoch to (year, month, day, yearday).
 fn days_to_ymd(mut days: i32) -> (i32, u32, u32, u32) {
     // Algorithm from Howard Hinnant
     days += 719468;
@@ -221,7 +205,6 @@ fn days_to_ymd(mut days: i32) -> (i32, u32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = y + if m <= 2 { 1 } else { 0 };
 
-    // Calculate day of year
     let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let days_before_month = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     let mut yearday = days_before_month[m as usize - 1] + d;
@@ -232,56 +215,46 @@ fn days_to_ymd(mut days: i32) -> (i32, u32, u32, u32) {
     (year, m, d, yearday)
 }
 
-/// year() - Get current year.
 fn native_year(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (year, _, _, _, _, _, _, _) = get_local_time();
     Ok(Value::int(year as i64))
 }
 
-/// month() - Get current month (1-12).
 fn native_month(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, month, _, _, _, _, _, _) = get_local_time();
     Ok(Value::int(month as i64))
 }
 
-/// day() - Get current day of month (1-31).
 fn native_day(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, day, _, _, _, _, _) = get_local_time();
     Ok(Value::int(day as i64))
 }
 
-/// hour() - Get current hour (0-23).
 fn native_hour(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, _, hour, _, _, _, _) = get_local_time();
     Ok(Value::int(hour as i64))
 }
 
-/// minute() - Get current minute (0-59).
 fn native_minute(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, _, _, minute, _, _, _) = get_local_time();
     Ok(Value::int(minute as i64))
 }
 
-/// second() - Get current second (0-59).
 fn native_second(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, _, _, _, second, _, _) = get_local_time();
     Ok(Value::int(second as i64))
 }
 
-/// weekday() - Get day of week (0=Sunday, 6=Saturday).
 fn native_weekday(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, _, _, _, _, weekday, _) = get_local_time();
     Ok(Value::int(weekday as i64))
 }
 
-/// yearday() - Get day of year (1-366).
 fn native_yearday(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, _, _, _, _, _, yearday) = get_local_time();
     Ok(Value::int(yearday as i64))
 }
 
-/// format(format_str) - Format current time.
-/// Supports: %Y (year), %m (month), %d (day), %H (hour), %M (minute), %S (second)
 fn native_format(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let format = get_string(vm, args[0], "time.format")?;
     let (year, month, day, hour, minute, second, weekday, yearday) = get_local_time();
@@ -308,7 +281,6 @@ fn native_format(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &result)
 }
 
-/// iso() - Get current time in ISO 8601 format.
 fn native_iso(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (year, month, day, hour, minute, second, _, _) = get_local_time();
     let s = format!(
@@ -318,14 +290,12 @@ fn native_iso(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     make_string(vm, &s)
 }
 
-/// date() - Get current date as "YYYY-MM-DD".
 fn native_date(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (year, month, day, _, _, _, _, _) = get_local_time();
     let s = format!("{:04}-{:02}-{:02}", year, month, day);
     make_string(vm, &s)
 }
 
-/// time_str() - Get current time as "HH:MM:SS".
 fn native_time_str(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
     let (_, _, _, hour, minute, second, _, _) = get_local_time();
     let s = format!("{:02}:{:02}:{:02}", hour, minute, second);

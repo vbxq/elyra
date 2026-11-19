@@ -56,7 +56,6 @@ impl Compiler {
         Ok(())
     }
 
-    // the standard library conversion is inlined, so the failure path never calls out to convert
     fn compile_try_string_to_error(&mut self, source_reg: u16, span: Span) -> Result<()> {
         let payload_reg = self.alloc_register()?;
         let error_reg = self.alloc_register()?;

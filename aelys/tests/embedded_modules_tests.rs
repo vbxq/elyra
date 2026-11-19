@@ -1,4 +1,3 @@
-//! the embedding api must compile a multi-module program, hand back an isolate the host can call
 
 use aelys::{CompileOptions, ExecutionOutcome, IsolateConfig, RunOptions, Runtime, Value};
 use aelys_common::error::{AelysError, CompileErrorKind};

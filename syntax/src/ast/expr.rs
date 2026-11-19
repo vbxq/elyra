@@ -6,7 +6,6 @@ pub enum ReferenceKind {
     Mutable,
 }
 
-/// to a value, which the type grammar cannot express.
 #[derive(Debug, Clone)]
 pub enum AssociatedBinding {
     Type(TypeAnnotation),
@@ -21,7 +20,6 @@ pub struct TypeAnnotation {
     pub fn_params: Option<Vec<TypeAnnotation>>,
     pub fn_ret: Option<Box<TypeAnnotation>>,
     pub array_length: Option<u64>,
-    /// `[t; bounds::limit]` a symbolic fixed-array length resolved from an
     pub array_length_path: Option<Vec<String>>,
     pub associated_bindings: Vec<(String, AssociatedBinding, Span)>,
     pub reference: Option<ReferenceKind>,
@@ -129,7 +127,7 @@ impl TypeAnnotation {
 pub struct Parameter {
     pub name: String,
     pub mutable: bool,
-    pub type_annotation: Option<TypeAnnotation>, // None = inferred
+    pub type_annotation: Option<TypeAnnotation>,
     pub reference: Option<ReferenceKind>,
     pub span: Span,
 }
@@ -278,7 +276,7 @@ pub enum ExprKind {
         elements: Vec<Expr>,
     },
     ArraySized {
-        element_type: Option<TypeAnnotation>, // Array<int>(10) or Array(10) or [; 10]
+        element_type: Option<TypeAnnotation>,
         size: Box<Expr>,
     },
     VecLiteral {

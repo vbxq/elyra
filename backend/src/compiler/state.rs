@@ -79,7 +79,7 @@ pub struct Compiler {
     pub module_aliases: Arc<HashSet<String>>,
     pub known_globals: Arc<HashSet<String>>,
     pub known_native_globals: Arc<HashSet<String>>,
-    pub symbol_origins: Arc<HashMap<String, String>>, // bare name -> qualified name
+    pub symbol_origins: Arc<HashMap<String, String>>,
     pub accessed_globals: HashSet<String>,
     pub function_depth: usize,
     pub current_return_type: Option<aelys_sema::InferType>,

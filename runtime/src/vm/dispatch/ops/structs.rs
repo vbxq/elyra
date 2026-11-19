@@ -356,7 +356,6 @@ impl VM {
         Ok(DispatchControl::Continue)
     }
 
-    /// one shared table per function object; the previous readers copied the whole schema table on every struct or enum instruction.
     fn function_schemas(&self, func_ref: GcRef) -> Result<Arc<FunctionSchemas>, RuntimeError> {
         let missing = |vm: &Self| {
             vm.runtime_error(RuntimeErrorKind::InvalidBytecode(

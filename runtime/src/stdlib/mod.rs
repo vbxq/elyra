@@ -75,7 +75,6 @@ pub fn is_std_module(path: &[String]) -> bool {
         return false;
     }
     if path.len() == 1 {
-        // Just "std" alone is not valid
         return false;
     }
     let full_path = path.join(".");

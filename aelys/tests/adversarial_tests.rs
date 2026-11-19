@@ -67,8 +67,6 @@ fn bytecode_negative_jump() {
     assert!(result.is_err());
 }
 
-// (path_traversal_dotdot → security_audit_tests::fs_join_rejects_parent_escape)
-
 #[test]
 fn path_traversal_url_encoded() {
     let code = r#"

@@ -2284,7 +2284,6 @@ pub(crate) fn projection_failure_for(
     }
 }
 
-/// a method's own parameters under names the receiver does not use
 pub(crate) fn own_params_apart(own: &[String], receiver: &InferType) -> HashMap<String, InferType> {
     own.iter()
         .map(|name| {
@@ -2306,7 +2305,6 @@ pub(crate) fn respelled_own(own: &[String], apart: &HashMap<String, InferType>) 
         .collect()
 }
 
-/// a turbofish on a method binds its own parameters in the order they first appear after the receiver, which is the order the trait's
 fn own_params_in_call_order(
     params: &[InferType],
     ret: &InferType,
@@ -2329,7 +2327,6 @@ fn own_params_in_call_order(
     names
 }
 
-/// one trait without parameters supplies the method, so its declaration types any call to it whichever impl runs
 pub(crate) fn typed_through_declaration(
     type_table: &crate::types::TypeTable,
     nominal: &str,

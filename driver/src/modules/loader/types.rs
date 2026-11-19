@@ -33,7 +33,7 @@ pub struct LoadedNativeInfo {
 }
 
 pub struct ModuleImports {
-    pub module_aliases: HashSet<String>, // "utils" from `needs utils`
+    pub module_aliases: HashSet<String>, // "utils" from `use utils`
     pub known_globals: HashSet<String>,  // direct imports
     pub known_native_globals: HashSet<String>, // native funcs for codegen opt
     pub native_signatures: HashMap<String, InferType>,

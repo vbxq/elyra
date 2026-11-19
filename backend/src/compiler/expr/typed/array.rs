@@ -377,7 +377,6 @@ impl Compiler {
         Ok(())
     }
 
-    /// an operand already in a local's register is read where it is
     pub(crate) fn operand_register(
         &mut self,
         expr: &TypedExpr,

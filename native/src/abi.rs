@@ -1,4 +1,3 @@
-// C ABI structs for native module descriptors
 
 use crate::{AELYS_ABI_VERSION, AelysValue};
 use core::ffi::{c_char, c_void};
@@ -47,7 +46,6 @@ pub struct AelysVmApi {
             out_len: *mut usize,
         ) -> i32,
     >,
-    /// hands back the memory of a byte buffer, so a whole image is read or written in one call
     pub borrow_bytes: Option<
         extern "C" fn(
             context: *mut NativeContext,
@@ -188,7 +186,6 @@ pub struct AelysModuleDescriptor {
 impl AelysModuleDescriptor {
     pub const ABI_VERSION: u32 = AELYS_ABI_VERSION;
 
-    /// construct a descriptor at an FFI boundary
     #[allow(clippy::missing_safety_doc)]
     #[allow(clippy::too_many_arguments)]
     pub const unsafe fn from_raw_parts(
