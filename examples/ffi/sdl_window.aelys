@@ -1,0 +1,91 @@
+// opens an SDL2 window through the C FFI, no wrapper module: aelys run sdl_window.aelys [frames] [hold_ms]
+use std::sys as sys
+
+extern "SDL2" {
+    fn SDL_Init(flags: u32) -> i32
+    fn SDL_GetError() -> cstr
+    fn SDL_CreateWindow(title: cstr, x: i32, y: i32, w: i32, h: i32, flags: u32) -> ptr
+    fn SDL_CreateRenderer(window: ptr, index: i32, flags: u32) -> ptr
+    fn SDL_CreateTexture(renderer: ptr, format: u32, access: i32, w: i32, h: i32) -> ptr
+    fn SDL_UpdateTexture(texture: ptr, rect: ptr, pixels: &[u8], pitch: i32) -> i32
+    fn SDL_RenderClear(renderer: ptr) -> i32
+    fn SDL_RenderCopy(renderer: ptr, texture: ptr, src: ptr, dst: ptr) -> i32
+    fn SDL_RenderPresent(renderer: ptr)
+    fn SDL_PollEvent(event: &mut [u8]) -> i32
+    fn SDL_Delay(ms: u32)
+    fn SDL_DestroyTexture(texture: ptr)
+    fn SDL_DestroyRenderer(renderer: ptr)
+    fn SDL_DestroyWindow(window: ptr)
+    fn SDL_Quit()
+}
+
+let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_PIXELFORMAT_ARGB8888: u32 = 0x16362004
+let SDL_TEXTUREACCESS_STREAMING = 1
+let SDL_RENDERER_SOFTWARE: u32 = 0x1
+let SDL_QUIT: u32 = 0x100
+let W = 256
+let H = 160
+let SCALE = 2
+
+fn arg_or(index: int, fallback: int) -> int {
+    match sys::arg(index) {
+        Some(text) => text.to_int().unwrap_or(fallback),
+        None => fallback,
+    }
+}
+
+fn fail(what: string) -> unit {
+    println("{what} failed: {SDL_GetError()}")
+    sys::exit(1)
+}
+
+fn paint(mut pixels: Vec<u8>, frame: int) {
+    let mut y = 0
+    while y < H {
+        let row = y * W * 4
+        let green = y * 255 / (H - 1)
+        let mut x = 0
+        while x < W {
+            let at = row + x * 4
+            pixels[at] = ((x + frame) % 256) as u8
+            pixels[at + 1] = green as u8
+            pixels[at + 2] = 128
+            pixels[at + 3] = 255
+            x += 1
+        }
+        y += 1
+    }
+}
+
+if SDL_Init(SDL_INIT_VIDEO) != 0 { fail("SDL_Init") }
+let window = SDL_CreateWindow("Elyra FFI", 100, 100, W * SCALE, H * SCALE, 0)
+if window.is_null() { fail("SDL_CreateWindow") }
+let renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE)
+if renderer.is_null() { fail("SDL_CreateRenderer") }
+let texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W, H)
+if texture.is_null() { fail("SDL_CreateTexture") }
+
+let frames = arg_or(0, 120)
+let hold_ms = arg_or(1, 0)
+let mut pixels: Vec<u8> = vec![0; W * H * 4]
+let mut event: Vec<u8> = vec![0; 64]
+let mut frame = 0
+let mut quit = false
+while frame < frames && !quit {
+    paint(pixels, frame)
+    if SDL_UpdateTexture(texture, ptr::null(), &pixels, W * 4) != 0 { fail("SDL_UpdateTexture") }
+    SDL_RenderClear(renderer)
+    SDL_RenderCopy(renderer, texture, ptr::null(), ptr::null())
+    SDL_RenderPresent(renderer)
+    while SDL_PollEvent(&mut event) != 0 {
+        if event.read_u32_le(0) == SDL_QUIT as int { quit = true }
+    }
+    frame += 1
+}
+println("presented {frame} frames")
+if hold_ms > 0 { SDL_Delay(hold_ms as u32) }
+SDL_DestroyTexture(texture)
+SDL_DestroyRenderer(renderer)
+SDL_DestroyWindow(window)
+SDL_Quit()
