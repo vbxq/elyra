@@ -587,7 +587,7 @@ fn a_missing_library_or_symbol_is_named_at_its_first_call() {
     assert_eq!(outcome.lines(), vec!["before"]);
     assert!(
         outcome.stderr.contains(
-            "cannot load C library 'aelys_no_such_library': tried libaelys_no_such_library.so"
+            "cannot load C library 'aelys_no_such_library' for C function 'f': tried libaelys_no_such_library.so"
         ),
         "{}",
         outcome.stderr
@@ -635,9 +635,9 @@ fn ptr_stays_opaque() {
         "invalid cast",
     );
     assert_refused(
-        "let p = ptr::null()\nprintln(p)\n",
+        "let v = vec![ptr::null()]\nprintln(v)\n",
         "E0338",
-        "trait 'Display' is not implemented for ptr",
+        "trait 'Display' is not implemented for Vec<ptr>",
     );
     assert_lines(
         "struct Handle { p: ptr }\nlet h = Handle { p: ptr::null() }\nlet v: Vec<ptr> = vec![h.p, ptr::from_addr(16)]\nlet o: Option<ptr> = Some(v[1])\nprintln(o.unwrap().addr())\nprintln(v[0] == h.p)\nprintln(v[0] != v[1])\n",
