@@ -40,12 +40,18 @@ impl Heap {
             super::MajorPhase::Sweep => position >= self.sweep_cursor,
         };
         let gray = self.phase == super::MajorPhase::Mark && Self::may_have_children(&obj.kind);
+        let pretenure = size >= Self::PRETENURE_BYTES && Self::holds_indexed_pointers(&obj);
         let slot = self.objects[position].as_mut();
         slot.object = Some(obj);
         slot.heap_generation = super::HeapGeneration::Young;
         slot.flags = 0;
         let reference = GcRef::from_parts(index, slot.generation);
-        self.young.push(index);
+        if pretenure {
+            slot.heap_generation = super::HeapGeneration::Old;
+            self.write_barrier_all_elements(reference);
+        } else {
+            self.young.push(index);
+        }
         if gray {
             self.gray.push((reference, 0));
         }

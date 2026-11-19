@@ -785,9 +785,9 @@ fn map_insert(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         vm.maybe_collect_for(predicted);
         vm.ensure_heap_capacity(growth(vm))?;
     }
-    let previous = write_map(vm, map, |inner| inner.insert(key, args[1], args[2]));
-    vm.heap.write_barrier_value(map, args[1]);
-    vm.heap.write_barrier_value(map, args[2]);
+    let (previous, position) = write_map(vm, map, |inner| inner.insert_at(key, args[1], args[2]));
+    vm.heap.write_barrier_element(map, position, args[1]);
+    vm.heap.write_barrier_element(map, position, args[2]);
     match previous {
         Some(previous) => some(vm, previous),
         None => Ok(Value::none()),
@@ -830,7 +830,15 @@ fn map_contains_key(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> 
 fn map_remove(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let map = map_ref(vm, args[0], "map remove")?;
     let key = key_of(vm, args[1], "map remove")?;
-    match write_map(vm, map, |inner| inner.remove(&key)) {
+    let (removed, compacted) = write_map(vm, map, |inner| {
+        let slots = inner.entry_slots().len();
+        let removed = inner.remove(&key);
+        (removed, inner.entry_slots().len() != slots)
+    });
+    if compacted {
+        vm.heap.write_barrier_all_elements(map);
+    }
+    match removed {
         Some(previous) => some(vm, previous),
         None => Ok(Value::none()),
     }

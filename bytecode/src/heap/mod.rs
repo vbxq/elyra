@@ -4,6 +4,7 @@ mod access;
 mod alloc;
 mod gc;
 mod ints;
+mod reclaim;
 mod strings;
 
 use crate::object::{GcObject, GcRef};
@@ -88,6 +89,7 @@ pub struct Heap {
     live_objects: usize,
     stress: bool,
     intern_table: HashMap<u64, GcRef>, // string interning
+    intern_keys: HashMap<GcRef, u64>,
     minor_collections: u64,
     major_collections: u64,
     allocation_count: u64,
@@ -110,6 +112,8 @@ impl Heap {
     const MAX_SLICE_WORK: usize = 1 << 20;
     const MARK_CHUNK: usize = 2048;
     const DEADLINE_STRIDE: usize = 512;
+    const RECLAIM_BYTES: usize = 64 * 1024;
+    pub const PRETENURE_BYTES: usize = 64 * 1024;
 
     pub fn new() -> Self {
         let mut heap = Self {
@@ -142,6 +146,7 @@ impl Heap {
             live_objects: 0,
             stress: false,
             intern_table: HashMap::new(),
+            intern_keys: HashMap::new(),
             minor_collections: 0,
             major_collections: 0,
             allocation_count: 0,
@@ -149,6 +154,7 @@ impl Heap {
             pause_work: 0,
         };
         heap.update_next_event();
+        reclaim::start();
         heap
     }
 

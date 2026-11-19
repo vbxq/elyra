@@ -96,7 +96,10 @@ impl Heap {
                 .object
                 .as_ref()
                 .is_some_and(|object| {
-                    matches!(object.kind, ObjectKind::Vec(_) | ObjectKind::Array(_))
+                    matches!(
+                        object.kind,
+                        ObjectKind::Vec(_) | ObjectKind::Array(_) | ObjectKind::Map(_)
+                    )
                 });
             if self.remembered.len() >= Self::REMEMBERED_LIMIT
                 || (indexed_owner && element == WHOLE_OBJECT)
@@ -108,6 +111,28 @@ impl Heap {
         }
         if self.phase == MajorPhase::Mark {
             self.shade(child);
+        }
+    }
+
+    pub fn write_barrier_all_elements(&mut self, owner: GcRef) {
+        if self.heap_generation(owner) != Some(HeapGeneration::Old)
+            && self.phase != MajorPhase::Mark
+        {
+            return;
+        }
+        let marking = self.phase == MajorPhase::Mark;
+        let mut pairs = Vec::new();
+        if let Some(object) = self.get(owner) {
+            Self::indexed_child_pairs(object, &mut pairs, |child| {
+                marking || self.heap_generation(child) == Some(HeapGeneration::Young)
+            });
+        }
+        for (element, child) in pairs {
+            let element = u32::try_from(element)
+                .ok()
+                .filter(|element| *element != WHOLE_OBJECT)
+                .unwrap_or(WHOLE_OBJECT);
+            self.write_barrier(owner, element, child);
         }
     }
 

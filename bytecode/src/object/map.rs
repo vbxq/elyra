@@ -96,16 +96,26 @@ impl AelysMap {
     }
 
     pub fn insert(&mut self, key: MapKey, key_value: Value, value: Value) -> Option<Value> {
+        self.insert_at(key, key_value, value).0
+    }
+
+    pub fn insert_at(
+        &mut self,
+        key: MapKey,
+        key_value: Value,
+        value: Value,
+    ) -> (Option<Value>, usize) {
         if let Some(&position) = self.index.get(&key) {
             let slot = self.entries[position]
                 .as_mut()
                 .expect("an indexed entry is live");
-            return Some(std::mem::replace(&mut slot.1, value));
+            return (Some(std::mem::replace(&mut slot.1, value)), position);
         }
         self.key_bytes += key.heap_bytes();
-        self.index.insert(key, self.entries.len());
+        let position = self.entries.len();
+        self.index.insert(key, position);
         self.entries.push(Some((key_value, value)));
-        None
+        (None, position)
     }
 
     pub fn remove(&mut self, key: &MapKey) -> Option<Value> {
@@ -132,6 +142,10 @@ impl AelysMap {
         let mut copy = self.clone();
         copy.accounted = copy.measure();
         copy
+    }
+
+    pub fn entry_slots(&self) -> &[Option<(Value, Value)>] {
+        &self.entries
     }
 
     pub fn positioned_values(&self) -> impl Iterator<Item = (usize, Value)> + '_ {

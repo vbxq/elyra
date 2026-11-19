@@ -65,7 +65,10 @@ impl VM {
             _ => return Ok(original),
         };
         let copy = self.alloc_object(GcObject::new(kind))?;
-        pins.push(HostRoot::new(&self.host_roots, copy, self.id));
+        // only the root copy is pinned: every other copy is stored into its reachable parent before the next allocation
+        if pins.is_empty() {
+            pins.push(HostRoot::new(&self.host_roots, copy, self.id));
+        }
         copies.insert(original, copy);
         pending.push(copy);
         Ok(copy)
@@ -114,7 +117,7 @@ impl VM {
         };
         if let ObjectKind::Map(map) = &mut object.kind {
             map.set_value_at(slot, replacement);
-            self.heap.write_barrier_value(shell, replacement);
+            self.heap.write_barrier_element(shell, slot, replacement);
             return Ok(());
         }
         let indexed = matches!(object.kind, ObjectKind::Array(_) | ObjectKind::Vec(_));

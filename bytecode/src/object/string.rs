@@ -130,6 +130,10 @@ impl AelysString {
         self.buffer.charged.set(self.buffer_capacity());
     }
 
+    pub(crate) fn take_unique_bytes(&mut self) -> Option<Vec<u8>> {
+        Rc::get_mut(&mut self.buffer).map(|shared| std::mem::take(shared.bytes.get_mut()))
+    }
+
     // the buffer outlives every view but the last one, so only the last view to die returns its bytes
     pub(crate) fn released_charge(&self) -> usize {
         if Rc::strong_count(&self.buffer) == 1 {

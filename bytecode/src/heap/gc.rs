@@ -36,18 +36,12 @@ impl Heap {
         let mut scanned = 0;
         if let Some(object) = self.get(reference) {
             let start = start as usize;
-            match Self::element_values(object) {
-                Some(values) => {
-                    let end = values.len().min(start.saturating_add(Self::MARK_CHUNK));
+            match Self::indexed_len(object) {
+                Some(len) => {
+                    let end = len.min(start.saturating_add(Self::MARK_CHUNK));
                     scanned = end.saturating_sub(start);
-                    if start < end {
-                        scratch.extend(
-                            values[start..end]
-                                .iter()
-                                .filter_map(|value| value.as_ptr().map(GcRef::new)),
-                        );
-                    }
-                    if end < values.len() {
+                    Self::indexed_children(object, start..end, &mut scratch);
+                    if end < len {
                         continuation = u32::try_from(end).ok();
                     }
                 }
@@ -80,6 +74,66 @@ impl Heap {
             ObjectKind::Vec(vector) => Some(vector.objects().unwrap_or(&[])),
             ObjectKind::Array(array) => Some(array.data.as_objects().unwrap_or(&[])),
             _ => None,
+        }
+    }
+
+    pub(super) fn indexed_len(object: &GcObject) -> Option<usize> {
+        match &object.kind {
+            ObjectKind::Vec(vector) => Some(vector.objects().map_or(0, <[Value]>::len)),
+            ObjectKind::Array(array) => Some(array.data.as_objects().map_or(0, <[Value]>::len)),
+            ObjectKind::Map(map) => Some(map.entry_slots().len()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn holds_indexed_pointers(object: &GcObject) -> bool {
+        match &object.kind {
+            ObjectKind::Vec(vector) => vector.objects().is_some(),
+            ObjectKind::Array(array) => array.data.as_objects().is_some(),
+            ObjectKind::Map(_) => true,
+            _ => false,
+        }
+    }
+
+    pub(super) fn indexed_children(
+        object: &GcObject,
+        range: std::ops::Range<usize>,
+        children: &mut Vec<GcRef>,
+    ) {
+        if let ObjectKind::Map(map) = &object.kind {
+            if let Some(slots) = map.entry_slots().get(range) {
+                for (key, value) in slots.iter().flatten() {
+                    children.extend(key.as_ptr().map(GcRef::new));
+                    children.extend(value.as_ptr().map(GcRef::new));
+                }
+            }
+            return;
+        }
+        if let Some(values) = Self::element_values(object).and_then(|values| values.get(range)) {
+            children.extend(
+                values
+                    .iter()
+                    .filter_map(|value| value.as_ptr().map(GcRef::new)),
+            );
+        }
+    }
+
+    pub(super) fn indexed_child_pairs(
+        object: &GcObject,
+        pairs: &mut Vec<(usize, GcRef)>,
+        keep: impl Fn(GcRef) -> bool,
+    ) {
+        let mut children = Vec::new();
+        let len = Self::indexed_len(object).unwrap_or(0);
+        for element in 0..len {
+            children.clear();
+            Self::indexed_children(object, element..element + 1, &mut children);
+            pairs.extend(
+                children
+                    .iter()
+                    .filter(|child| keep(**child))
+                    .map(|child| (element, *child)),
+            );
         }
     }
 
@@ -171,11 +225,15 @@ impl Heap {
                 continue;
             }
             children.clear();
-            match Self::element_values(object) {
-                Some(values) => {
-                    children.extend(values.iter().enumerate().filter_map(|(element, value)| {
-                        value.as_ptr().map(|raw| (Some(element), GcRef::new(raw)))
-                    }))
+            match Self::indexed_len(object) {
+                Some(_) => {
+                    let mut pairs = Vec::new();
+                    Self::indexed_child_pairs(object, &mut pairs, |_| true);
+                    children.extend(
+                        pairs
+                            .into_iter()
+                            .map(|(element, child)| (Some(element), child)),
+                    );
                 }
                 None => {
                     let mut refs = Vec::new();
@@ -229,13 +287,11 @@ impl Heap {
             let mut scanned = 0;
             if let Some(object) = self.live_old_owner(entry.owner) {
                 if entry.element == WHOLE_OBJECT {
-                    scanned = Self::element_values(object).map_or(0, <[Value]>::len);
+                    scanned = Self::indexed_len(object).unwrap_or(0);
                     Self::collect_children(object, &mut scratch);
-                } else if let Some(value) = Self::element_values(object)
-                    .and_then(|values| values.get(entry.element as usize))
-                    && let Some(pointer) = value.as_ptr()
-                {
-                    scratch.push(GcRef::new(pointer));
+                } else {
+                    let element = entry.element as usize;
+                    Self::indexed_children(object, element..element + 1, &mut scratch);
                 }
             }
             work += 1 + scratch.len().max(scanned) as u64;
@@ -247,7 +303,7 @@ impl Heap {
             scratch.clear();
             let mut scanned = 0;
             if let Some(object) = self.get(reference) {
-                scanned = Self::element_values(object).map_or(0, <[Value]>::len);
+                scanned = Self::indexed_len(object).unwrap_or(0);
                 Self::collect_children(object, &mut scratch);
             }
             work += 1 + scratch.len().max(scanned) as u64;
@@ -371,16 +427,17 @@ impl Heap {
             self.free_card_tables.push(table);
         }
         self.live_objects = self.live_objects.saturating_sub(1);
-        self.bytes_allocated = self
-            .bytes_allocated
-            .saturating_sub(Self::freed_object_size(&object));
+        let freed = Self::freed_object_size(&object);
+        self.bytes_allocated = self.bytes_allocated.saturating_sub(freed);
         if let ObjectKind::String(string) = &object.kind
             && string.is_interned()
+            && let Some(key) = self.intern_keys.remove(&reference)
+            && self.intern_table.get(&key) == Some(&reference)
         {
-            let key = Self::fnv1a_hash(string.as_bytes());
-            if self.intern_table.get(&key) == Some(&reference) {
-                self.intern_table.remove(&key);
-            }
+            self.intern_table.remove(&key);
+        }
+        if freed >= Self::RECLAIM_BYTES || matches!(object.kind, ObjectKind::Function(_)) {
+            super::reclaim::release(object);
         }
     }
 

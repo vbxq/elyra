@@ -50,6 +50,7 @@ impl Heap {
         string.mark_interned();
         let r = self.alloc(GcObject::new(ObjectKind::String(string)));
         self.intern_table.insert(hash, r);
+        self.intern_keys.insert(r, hash);
         r
     }
 
