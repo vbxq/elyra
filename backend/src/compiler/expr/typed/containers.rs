@@ -11,6 +11,9 @@ pub(super) enum Operand<'a> {
     Int(i16),
 }
 
+const NUMBER_ABS_INT: i16 = -1;
+const NUMBER_ABS_FLOAT: i16 = -2;
+
 fn byte_vec_native(member: &str, arity: usize) -> bool {
     match arity {
         0 => member == "to_utf8",
@@ -128,6 +131,16 @@ impl Compiler {
                     ) =>
             {
                 self.call_native(&format!("__char_{member}"), &operands, dest, span)?;
+                Ok(true)
+            }
+            receiver if (receiver.is_integer() || receiver.is_float()) && member == "abs" => {
+                let kind = match receiver.sized_int() {
+                    Some(sized) => sized as i16,
+                    None if receiver.is_float() => NUMBER_ABS_FLOAT,
+                    None => NUMBER_ABS_INT,
+                };
+                operands.push(Operand::Int(kind));
+                self.call_native("__number_abs", &operands, dest, span)?;
                 Ok(true)
             }
             receiver

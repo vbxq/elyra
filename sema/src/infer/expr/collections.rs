@@ -96,6 +96,7 @@ fn container_method_name(member: &str) -> bool {
                 | "to_binary"
                 | "to_octal"
                 | "to_radix"
+                | "abs"
         )
 }
 
@@ -259,8 +260,11 @@ impl TypeInference {
             }
             InferType::Map(key, value) => Some(map_shape(key, value, member, args.len())?),
             InferType::Char => char_shape(member, args.len()),
-            receiver if receiver.is_integer() => int_shape(member, args.len()),
-            InferType::Var(_) if int_shape(member, args.len()).is_some() => {
+            receiver if receiver.is_integer() => int_shape(member, args.len(), receiver),
+            receiver if receiver.is_float() && member == "abs" && args.is_empty() => {
+                Some(MethodShape::new(Vec::new(), receiver.clone(), false))
+            }
+            InferType::Var(_) if int_shape(member, args.len(), &receiver).is_some() => {
                 self.constraints.push(Constraint::one_of(
                     receiver.clone(),
                     InferType::all_integer_types(),
@@ -269,7 +273,7 @@ impl TypeInference {
                         method: member.clone(),
                     },
                 ));
-                int_shape(member, args.len())
+                int_shape(member, args.len(), &receiver)
             }
             InferType::String if member == "push" && args.len() == 1 => {
                 return Some(self.infer_string_push(typed_object, object, &args[0], callee.span));
@@ -695,8 +699,9 @@ fn char_shape(member: &str, arity: usize) -> Option<MethodShape> {
     }
 }
 
-fn int_shape(member: &str, arity: usize) -> Option<MethodShape> {
+fn int_shape(member: &str, arity: usize, receiver: &InferType) -> Option<MethodShape> {
     match (member, arity) {
+        ("abs", 0) => Some(MethodShape::new(Vec::new(), receiver.clone(), false)),
         ("to_hex" | "to_binary" | "to_octal", 0) => {
             Some(MethodShape::new(Vec::new(), InferType::String, false))
         }

@@ -1,5 +1,6 @@
 use crate::stdlib::helpers::{get_int, get_string, make_string, option_some};
 use crate::vm::{VM, Value};
+use aelys_bytecode::{SizedInt, wrapping_sized_neg};
 use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 
 type Native = fn(&mut VM, &[Value]) -> Result<Value, RuntimeError>;
@@ -16,7 +17,33 @@ pub(crate) const INT_FORMATTERS: &[(&str, u16, Native)] = &[
     ("__int_to_binary", 1, native_to_binary),
     ("__int_to_octal", 1, native_to_octal),
     ("__int_to_radix", 2, native_to_radix),
+    ("__number_abs", 2, native_number_abs),
 ];
+
+// the kind operand is a SizedInt code, -1 for the checked int, -2 for a float
+fn native_number_abs(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
+    let kind = args[1].as_int().unwrap_or(-1);
+    if kind == -2 {
+        let value = args[0].as_float().unwrap_or(f64::NAN);
+        return Ok(Value::float(value.abs()));
+    }
+    match u8::try_from(kind).ok().and_then(SizedInt::from_u8) {
+        Some(sized) if !sized.signed() => Ok(args[0]),
+        Some(sized) => {
+            let value = get_wide_int(vm, args[0], "abs")?;
+            let value = i64::try_from(value).unwrap_or(i64::MIN);
+            if value < 0 {
+                vm.make_int(wrapping_sized_neg(sized, value))
+            } else {
+                Ok(args[0])
+            }
+        }
+        None => match get_wide_int(vm, args[0], "abs")?.checked_abs() {
+            Some(abs) if abs <= i128::from(i64::MAX) => vm.make_wide_int(abs),
+            _ => Err(vm.runtime_error(RuntimeErrorKind::IntegerOverflow)),
+        },
+    }
+}
 
 fn convert_error(vm: &VM, op: &'static str, msg: String) -> RuntimeError {
     vm.runtime_error(RuntimeErrorKind::TypeError {
