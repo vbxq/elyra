@@ -23,6 +23,7 @@ pub enum ConstraintReason {
         var_name: String,
     },
     IfCondition,
+    MatchGuard,
     NotOperand,
     IfBranches,
     WhileCondition,
@@ -93,6 +94,7 @@ impl fmt::Display for ConstraintReason {
                 write!(f, "type annotation on variable '{}'", var_name)
             }
             ConstraintReason::IfCondition => write!(f, "if condition"),
+            ConstraintReason::MatchGuard => write!(f, "match guard"),
             ConstraintReason::NotOperand => write!(f, "operand of !"),
             ConstraintReason::IfBranches => write!(f, "if/else branches"),
             ConstraintReason::WhileCondition => write!(f, "while condition"),

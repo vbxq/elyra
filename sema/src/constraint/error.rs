@@ -583,6 +583,7 @@ pub enum TypeErrorKind {
         name: String,
         replacement: &'static str,
     },
+    RemovedStringBytes,
     FixedPointShiftOutOfRange {
         method: String,
         count: i64,
@@ -1680,6 +1681,10 @@ impl TypeError {
                 f,
                 "`bytes::{name}` no longer exists: std::bytes was removed and binary data is a `Vec<u8>`\n   = help: {replacement}"
             ),
+            TypeErrorKind::RemovedStringBytes => write!(
+                f,
+                "`bytes()` on a string was removed\n   = help: write `s.to_bytes()`, which returns the UTF-8 bytes as a packed `Vec<u8>`"
+            ),
             TypeErrorKind::MixedIntegerOperands {
                 op,
                 left,
@@ -2010,6 +2015,7 @@ impl TypeErrorKind {
             Self::IntegerLiteralOutOfRange { .. } => 209,
             Self::MixedIntegerOperands { .. } => 460,
             Self::RemovedBytesFunction { .. } => 481,
+            Self::RemovedStringBytes => 482,
             Self::FixedPointShiftOutOfRange { .. } => 462,
             Self::EnumLayoutTooLarge { .. } => 346,
             Self::UnreachablePattern { .. } => 356,
@@ -2085,6 +2091,7 @@ fn sum_wrapping_help(
         && matches!(
             reason,
             ConstraintReason::IfCondition
+                | ConstraintReason::MatchGuard
                 | ConstraintReason::WhileCondition
                 | ConstraintReason::NotOperand
         )

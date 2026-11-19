@@ -660,14 +660,16 @@ impl TypeInference {
         callee: &Expr,
     ) -> (TypedExprKind, InferType) {
         let typed_args: Vec<TypedExpr> = args.iter().map(|arg| self.infer_expr(arg)).collect();
-        self.errors.push(TypeError {
-            kind: TypeErrorKind::InvalidSumMethod {
-                method: member.to_string(),
-                receiver: typed_object.ty.clone(),
-            },
-            span: typed_object.span,
-            reason: ConstraintReason::Other("sum method receiver".to_string()),
-        });
+        if !matches!(typed_object.ty, InferType::Poison) {
+            self.errors.push(TypeError {
+                kind: TypeErrorKind::InvalidSumMethod {
+                    method: member.to_string(),
+                    receiver: typed_object.ty.clone(),
+                },
+                span: typed_object.span,
+                reason: ConstraintReason::Other("sum method receiver".to_string()),
+            });
+        }
         let typed_callee = TypedExpr::new(
             TypedExprKind::Member {
                 object: Box::new(typed_object),
@@ -675,8 +677,8 @@ impl TypeInference {
                 separator: aelys_syntax::MemberSeparator::Dot,
             },
             InferType::function(
-                vec![InferType::Dynamic; typed_args.len()],
-                InferType::Dynamic,
+                vec![InferType::Poison; typed_args.len()],
+                InferType::Poison,
             ),
             callee.span,
         );
@@ -685,7 +687,7 @@ impl TypeInference {
                 callee: Box::new(typed_callee),
                 args: typed_args,
             },
-            InferType::Dynamic,
+            InferType::Poison,
         )
     }
 
@@ -1483,18 +1485,18 @@ impl TypeInference {
                     &typed_guard.ty,
                     &InferType::Bool,
                     guard.span,
-                    ConstraintReason::IfCondition,
+                    ConstraintReason::MatchGuard,
                 ) && !self.reject_untyped_native(
                     &typed_guard.ty,
                     &InferType::Bool,
                     guard.span,
-                    ConstraintReason::IfCondition,
+                    ConstraintReason::MatchGuard,
                 ) {
                     self.constraints.push(Constraint::equal(
                         InferType::Bool,
                         typed_guard.ty.clone(),
                         guard.span,
-                        ConstraintReason::IfCondition,
+                        ConstraintReason::MatchGuard,
                     ));
                 }
                 typed_guard
