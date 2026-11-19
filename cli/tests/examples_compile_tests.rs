@@ -9,18 +9,6 @@ const KNOWN_FAILING: &[(&str, &str)] = &[
         "E0401: a library fragment, `use config` resolves next to the fragment and not to the server root",
     ),
     (
-        "examples/doom/game_sdl.aelys",
-        "E0401: needs the sdl native module, built out of tree per docs/native-modules.md",
-    ),
-    (
-        "examples/doom/gate_sdl.aelys",
-        "E0401: needs the sdl native module, built out of tree per docs/native-modules.md",
-    ),
-    (
-        "examples/doom/screen.aelys",
-        "E0401: needs the sdl native module, built out of tree per docs/native-modules.md",
-    ),
-    (
         "examples/native/opengl/cube.aelys",
         "E0406: the checked-in opengl native module is built against native ABI 2, the runtime wants 5",
     ),

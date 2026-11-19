@@ -293,6 +293,9 @@ cp modules/sdl/target/release/libaelys_sdl.so examples/sdl/sdl.so
 aelys run examples/sdl/gradient.aelys 120
 ```
 
+A Doom E1M1 engine written in Elyra and drawn through this module lives in the
+separate doom-elyra repository.
+
 Without network access, copy the workspace `Cargo.lock` to
 `modules/sdl/Cargo.lock` and add `--offline`.
 
