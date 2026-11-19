@@ -166,7 +166,7 @@ fn verify_rejects_invalid_opcode() {
 fn binary_deserialize_enforces_bytecode_limit() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"VBXQ");
-    bytes.extend_from_slice(&3u16.to_le_bytes());
+    bytes.extend_from_slice(&6u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
@@ -175,8 +175,8 @@ fn binary_deserialize_enforces_bytecode_limit() {
     bytes.extend_from_slice(&0u32.to_le_bytes()); // num_registers
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.push(0);
-    bytes.push(0);
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes()); // constants
     bytes.extend_from_slice(&(1_000_001u32).to_le_bytes()); // bytecode length
 
