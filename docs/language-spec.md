@@ -1985,7 +1985,8 @@ instantiation's element type breaks the rule.
 ### Maps
 
 `Map<K, V>` is a built-in hash map with reference semantics, like `Vec`. The key
-type is `int`, a sized integer, `string`, `char` or `bool`; any other key type,
+type is `int`, a sized integer, `string`, `char`, `bool` or `ptr` (compared by
+address); any other key type,
 written or inferred, is E0470. A generic `Map<K, V>` is checked on every
 instantiation of the generic code, so `mk(1.5, 2)` for a generic `mk` is E0470
 at compile time. A Map that would grow past `-ae.max-heap` fails with
@@ -3672,15 +3673,18 @@ println(len)                 // prints: 2
   function or a block). Its declarations are hoisted like functions and are
   private to the file: `pub` on the block or on an item is E0496. A name
   declared twice in one file, by two extern items or by an extern item and an
-  `fn` or a top-level `let`, is E0495.
+  `fn` or a top-level `let`, is E0495. The same name declared in another file,
+  or an `fn` or `let` of that name there, is a different binding: each file's
+  code, the bodies of its generic functions included, calls its own
+  declaration.
 - **Library.** The string names a library: a bare name (`"SDL2"`) is looked up
   through the script's manifest (`[library.SDL2] path = ...`), next to the
   declaring file and the script, then by the system loader (`lib<name>.so`,
   versioned `lib<name>.so.N`; `.dylib` and frameworks on macOS; `.dll` on
   Windows); a name with a path separator or a library suffix is a file. The
   library and the symbol are resolved at the first call of each declaration;
-  a missing library is a runtime error listing every file tried, a missing
-  symbol a runtime error naming it.
+  a missing library is a runtime error naming the function and listing every
+  file tried, a missing symbol a runtime error naming it.
 - **Types.** A parameter has one of `i8` `i16` `i32` `i64` `u8` `u16` `u32`
   `u64`, `int` (`int64_t`), `f32` (`float`), `float` or `f64` (`double`),
   `bool` (one byte), `ptr`, `cstr`, `&[u8]` or `&mut [u8]`; a result has one
@@ -3693,28 +3697,33 @@ println(len)                 // prints: 2
   literal outside it is E0301. Integer results keep their exact value in the
   declared Elyra type.
 - **Floats.** A float parameter accepts `float` or `f32`; `f32` rounds to
-  nearest.
+  nearest. An Elyra `f32` is stored as a double, so a C `f32` result holds the
+  single-precision value (`0.10000000149011612` for C's `0.1f`) and differs
+  from `0.1 as f32`.
 - **`ptr`.** An opaque address: `ptr::null()`, `p.is_null()`, `p.offset(n)`,
   `p.addr()` (a `u64`), `ptr::from_addr(n)`, `p.read_<t>(off)` and
   `p.write_<t>(off, x)` for `t` in the integer types, `int`, `f32`, `f64` and
   `ptr`, `ptr::alloc(n)` (zeroed C memory), `ptr::free(p)`, `ptr::to_string(p)`.
-  It supports `==` and `!=` and nothing else: no arithmetic, no `as`, no
-  `Display`. Access through the null pointer, an offset outside the address
-  space and a write of an integer outside the target type are runtime
-  errors.
+  It supports `==` and `!=`, and it is a valid `Map` key compared by address;
+  it has no arithmetic and no `as`. Printing it (`println(p)`, `"{p}"`,
+  `p.to_string()`) gives the address in hexadecimal, `0x1000`, and never reads
+  memory; a collection holding `ptr` values has no `Display` (E0338). Access
+  through the null pointer, an offset outside the address space and a write of
+  an integer outside the target type are runtime errors.
 - **`cstr`.** An argument is a NUL-terminated copy of the string valid for the
   call (a NUL byte inside is a runtime error); a result is copied into a new
   string and must be non-null valid UTF-8, otherwise the call is a runtime
   error. Declare `-> ptr` when C may return NULL.
 - **Byte slices.** `&[u8]` takes `&v` and `&mut [u8]` takes `&mut v` with `v` a
   `Vec<u8>`; C receives the Vec's packed storage for the call. The borrow
-  rules are those of native modules (E0415, E0416, E0417, E0419), checked again
-  at run time for a call through a function value.
+  rules are those of native modules (E0415, E0416, E0417, E0419). A call
+  through a function value passes the Vec itself (`f(v, n)`, never `&mut v`),
+  and two mutable loans of one Vec in that call are a runtime error.
 - **Variadics.** A parameter list ending in `...` declares a variadic function.
   Extra arguments are promoted as in C (small integers and `bool` to `int`,
   `u32` to `unsigned`, `int`/`i64`/`u64` to 64 bits, `f32` to `double`), a
-  `ptr` passes its address and a `string` a NUL-terminated copy; any other type
-  is E0494. A variadic function is only called by name (E0493 as a value).
+  `ptr` passes its address and a `string` a NUL-terminated copy; any other type,
+  or a borrow such as `&mut buf` (pass a `ptr` instead), is E0494. A variadic function is only called by name (E0493 as a value).
   Variadic calls are supported on x86-64 Linux and macOS and on 64-bit ARM
   Linux; elsewhere their first call is a runtime error.
 - **Values.** A non-variadic extern function is a value of its function type
@@ -3930,7 +3939,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0412 | PrivateFieldAccess | a private field is read or written outside its owner module |
 | E0413 | PrivateFieldConstruction | a private field is named in a literal or pattern outside its owner module |
 | E0414 | SharedLoanMutation | mutation through a shared loan is not allowed |
-| E0415 | MutableLoanOverlap | two mutable loans overlap |
+| E0415 | MutableLoanOverlap | two mutable loans overlap, or a mutable loan of an immutable binding |
 | E0416 | MutableLoanAccess | a read, move, or write overlaps a live mutable loan |
 | E0417 | BorrowEscapes | a call-scoped loan escapes through a binding, return, capture, or unsupported parameter |
 | E0418 | BorrowInvalidated | a mutation, move, or reallocation invalidates a live loan |
@@ -3972,6 +3981,6 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0491 | ExternCallback | a function-typed parameter in an extern signature: C cannot call back into Elyra |
 | E0492 | ExternNotTopLevel | an `extern` block inside a function or a block |
 | E0493 | VariadicExternValue | a variadic extern function used as a value instead of called |
-| E0494 | VariadicArgument | an argument after the fixed parameters of a variadic extern function with no C promotion |
+| E0494 | VariadicArgument | an argument after the fixed parameters of a variadic extern function with no C promotion, or a borrow there |
 | E0495 | DuplicateExtern | an extern function whose name another extern function, `fn` or top-level `let` of the file declares |
 | E0496 | ExternExport | `pub` on an extern block or extern function |

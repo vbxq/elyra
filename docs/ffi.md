@@ -44,6 +44,10 @@ extern "<library>" {
   `apply(abs, -3)` with `apply(h: fn(i32) -> i32, ...)`.
 - `pub` is refused (E0496): an extern function belongs to the file that
   declares it. A module that wraps a library exports `pub fn` wrappers.
+- The name is private to its file. Two modules, or a module and the main
+  script, may declare the same name, from the same library or from different
+  ones, and an `fn` or `let` of that name in another file never replaces it:
+  each file's code, its generic functions included, calls its own declaration.
 - Two declarations of one name, or an extern function and an `fn` or a
   top-level `let` of the same name in one file, are E0495.
 - `extern` is contextual: it starts a block only before a string literal.
@@ -83,11 +87,21 @@ integer result keeps every bit of the C value.
 `f32` arguments are rounded to the nearest single-precision value, as C does.
 A returned `f32` is the exact single-precision value, an Elyra `f32`.
 
+An Elyra `f32` is stored as a double and is not rounded when written in Elyra:
+`sqrtf(0.01)` prints `0.10000000149011612`, the single-precision value C
+returns, and compares unequal to `0.1 as f32`, which keeps every digit of the
+double `0.1`. Compare results of C single-precision functions with a
+tolerance.
+
 ### Pointers: `ptr`
 
-`ptr` is an opaque address. It has no arithmetic, no conversion with `as` and
-no `Display`; it can be compared with `==` and `!=`, stored in a variable, a
-struct field, a `Vec` or an `Option`, and passed back to C.
+`ptr` is an opaque address. It has no arithmetic and no conversion with `as`;
+it can be compared with `==` and `!=`, stored in a variable, a struct field, a
+`Vec` or an `Option`, used as a `Map` key (compared by address), and passed
+back to C. Printing a `ptr` shows its address in hexadecimal and never reads
+the memory it points to: `println(p)`, `"{p}"` and `p.to_string()` all give
+`0x1000` for `ptr::from_addr(4096)`. A collection holding `ptr` values has no
+`Display` (E0338): print its elements.
 
 | Operation | Result |
 |---|---|
@@ -95,12 +109,13 @@ struct field, a `Vec` or an `Option`, and passed back to C.
 | `p.is_null()` | `bool` |
 | `p.offset(n)` | `p` moved by `n` bytes (`n` of any integer type, negative included) |
 | `p.addr()` | the address as a `u64` |
+| `p.to_string()` | the address in hexadecimal, `"0x1000"` |
 | `ptr::from_addr(n)` | the pointer at address `n` (0 to `u64` max) |
 | `p.read_<t>(off)` | the value of type `t` at `p + off`, for `t` in `i8` `i16` `i32` `i64` `u8` `u16` `u32` `u64` `int` (a `float` for `f32` and `f64`, a `ptr` for `ptr`) |
 | `p.write_<t>(off, x)` | stores `x` at `p + off`; an integer outside the range of `t` is a runtime error |
 | `ptr::alloc(n)` | `n` zeroed bytes from the C allocator (`calloc`) |
 | `ptr::free(p)` | releases memory from `ptr::alloc` or from C's `malloc` |
-| `ptr::to_string(p)` | copies the NUL-terminated UTF-8 string at `p` into a `string` |
+| `ptr::to_string(p)` | copies the NUL-terminated UTF-8 string at `p` into a `string` (`p.to_string()` is the address, not this) |
 
 A read or write through the null pointer, and an offset that leaves the
 address space, are runtime errors. Reads and writes use the host byte order
@@ -119,6 +134,7 @@ println(p.read_i32(0))       // prints: -7
 println(p.read_f64(8))       // prints: 2.5
 println(p.offset(8).read_f64(0))   // prints: 2.5
 free(p)
+println(ptr::from_addr(4096))      // prints: 0x1000
 ```
 
 ### Strings: `cstr`
@@ -148,10 +164,12 @@ println(getenv("AELYS_UNSET_EXAMPLE_VARIABLE").is_null())        // prints: true
 A byte buffer parameter receives a pointer to the `Vec<u8>`'s own packed
 storage, for the duration of the call: nothing is copied, and C's writes
 through a `&mut [u8]` are visible to Elyra after the call. The borrow rules
-are those of native modules: `&mut v` needs a mutable `v`, cannot sit next to
-another borrow of `v` in the same call (checked by the compiler, and checked
-again at run time when the function is called through a value), and the
-length is not passed: give it to C yourself.
+are those of native modules: `&mut v` needs a mutable `v` (E0415) and cannot
+sit next to another borrow of `v` in the same call (E0415, E0416), and the
+length is not passed: give it to C yourself. Called through a function value
+(`let f = memset`), the function takes the `Vec<u8>` itself, `f(v, 0, 4)`, not
+`&mut v` (E0417); the compiler cannot see that call, so lending the same Vec
+mutably twice in it is a runtime error instead.
 
 ```rust
 extern "c" {
@@ -186,9 +204,18 @@ after the fixed parameters are passed with C's default promotions:
 | `ptr` | a pointer |
 | `string` | a NUL-terminated copy (`char *`) |
 
-Any other type is E0494. An `int` is 64 bits, so `printf`'s `%d` wants
-`x as i32` and `%lld` takes an `int` directly. A variadic function can only be
-called by name (E0493 when it is used as a value).
+Any other type is E0494, and so is a borrow such as `&mut buf`: a byte buffer
+crosses only as a declared `&[u8]` or `&mut [u8]` parameter, so for `sscanf`'s
+output arguments pass a `ptr` from `ptr::alloc(n)` and read it back with
+`read_i32` and the other `read_*` methods. An `int` is 64 bits, so `printf`'s
+`%d` wants `x as i32` and `%lld` takes an `int` directly. A variadic function
+can only be called by name (E0493 when it is used as a value).
+
+C's `printf` writes through the C library's own `stdout` buffer, which is
+separate from the one behind `println`. When the output is not a terminal, C
+flushes its buffer only when it is full or the process exits, so `printf` text
+can appear after later `println` lines. Declare `fn fflush(f: ptr) -> i32` and
+call `fflush(ptr::null())` after the C output to keep the order.
 
 ```rust
 extern "c" {
@@ -231,8 +258,9 @@ name is looked up in this order:
 The library is opened and the symbol looked up at the first call of each
 declared function, not when the program starts: a program can declare
 functions an older library lacks and only fail when it calls one. A missing
-library is a runtime error that lists every file tried,
-`cannot load C library 'SDL3': tried libSDL3.so; last error: ...`, and a
+library is a runtime error that names the function and lists every file tried,
+`cannot load C library 'SDL3' for C function 'SDL_Init': tried libSDL3.so; last
+error: ...`, and a
 missing symbol names the symbol and the file, `C library 'c' (/lib/libc.so.6)
 has no symbol 'SDL_Init'`. A loaded library stays loaded until the process
 exits.
@@ -261,6 +289,8 @@ the process:
   freeing memory the C library owns, or memory leaks: `ptr` is never tracked;
 - a length larger than the buffer handed to C (`memset(&mut v, 0, 100)` on a
   4-byte Vec writes past it);
+- `ptr::to_string(p)` on memory that holds no NUL byte: it reads on past the
+  end until it meets one;
 - C keeping a pointer to a `cstr` argument or a byte buffer after the call:
   both are valid only during the call, and a Vec may move when it grows;
 - C threads, signal handlers, `longjmp` across Elyra frames, `errno`
