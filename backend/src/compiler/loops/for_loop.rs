@@ -5,15 +5,40 @@ use aelys_syntax::Span;
 use aelys_syntax::ast::{Expr, ExprKind, Stmt};
 
 impl Compiler {
-    // Inspired by Lua's FORPREP/FORLOOP super-instructions
-    // The trick: subtract step BEFORE the loop starts, then ForLoopI always adds it back
-    // This way we don't need separate "first iteration" logic
-    //
-    // Structure:
-    //   1. iter = iter - step  (compensate for ForLoopI's increment)
-    //   2. Jump forward to ForLoopI
-    //   3. <body>
-    //   4. ForLoopI: iter += step, check condition, jump back to body if true
+    // the first value is tested in place: computing start - step overflows at the ends of the type
+    pub(crate) fn emit_for_entry_test(
+        &mut self,
+        iter_reg: u16,
+        inclusive: bool,
+        ascending: Option<bool>,
+        span: Span,
+    ) -> Result<usize> {
+        let end_reg = iter_reg + 1;
+        let step_reg = iter_reg + 2;
+        let (up, down) = if inclusive {
+            (OpCode::Le, OpCode::Ge)
+        } else {
+            (OpCode::Lt, OpCode::Gt)
+        };
+        let test = self.alloc_register()?;
+        match ascending {
+            Some(true) => self.emit_a(up, test, iter_reg, end_reg, span),
+            Some(false) => self.emit_a(down, test, iter_reg, end_reg, span),
+            None => {
+                self.emit_a(OpCode::GtImm, test, step_reg, 0, span);
+                let descending = self.emit_jump_if(OpCode::JumpIfNot, test, span);
+                self.emit_a(up, test, iter_reg, end_reg, span);
+                let tested = self.emit_jump(OpCode::Jump, span);
+                self.patch_jump(descending);
+                self.emit_a(down, test, iter_reg, end_reg, span);
+                self.patch_jump(tested);
+            }
+        }
+        let exit = self.emit_jump_if(OpCode::JumpIfNot, test, span);
+        self.free_register(test);
+        Ok(exit)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn compile_for(
         &mut self,
@@ -90,8 +115,8 @@ impl Compiler {
             self.free_register(temp_reg);
         }
 
-        self.emit_a(OpCode::Sub, iter_reg, iter_reg, step_reg, span);
-        let jump_to_forloop = self.emit_jump(OpCode::Jump, span);
+        let skip_loop =
+            self.emit_for_entry_test(iter_reg, inclusive, compile_time_direction, span)?;
 
         let body_start = self.current_offset();
 
@@ -102,8 +127,6 @@ impl Compiler {
 
         let forloop_pos = self.current_offset();
         self.close_captured_iteration_variable(iter_reg, span);
-
-        self.patch_jump(jump_to_forloop);
 
         if let Some(ctx) = self.loop_stack.last() {
             let continue_jumps = ctx.continue_jumps.clone();
@@ -123,6 +146,7 @@ impl Compiler {
             OpCode::ForLoopILong
         };
         self.emit_loop_back(loop_opcode, long_loop_opcode, iter_reg, body_start, span);
+        self.patch_jump(skip_loop);
 
         if let Some(loop_ctx) = self.loop_stack.pop() {
             for break_jump in loop_ctx.break_jumps {

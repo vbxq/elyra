@@ -90,10 +90,20 @@ impl Compiler {
 
         let hoisted = self.hoist_loop_literals(None, body)?;
 
-        // this ensures that for empty ranges (like 0..0), the loop body is never executed
-        self.emit_a(OpCode::Sub, iter_reg, iter_reg, step_reg, span);
-
-        let jump_to_forloop = self.emit_jump(OpCode::Jump, span);
+        let ascending = match step {
+            None => Some(true),
+            Some(aelys_sema::TypedExpr {
+                kind: aelys_sema::TypedExprKind::Int(value),
+                ty,
+                ..
+            }) => Some(if *ty == InferType::U64 {
+                *value != 0
+            } else {
+                *value > 0
+            }),
+            Some(_) => None,
+        };
+        let skip_loop = self.emit_for_entry_test(iter_reg, inclusive, ascending, span)?;
 
         let loop_start = self.current_offset();
 
@@ -113,14 +123,13 @@ impl Compiler {
         let continue_target = self.current_offset();
         self.close_captured_iteration_variable(iter_reg, span);
 
-        self.patch_jump(jump_to_forloop);
-
         let long_opcode = if inclusive {
             OpCode::ForLoopIIncLong
         } else {
             OpCode::ForLoopILong
         };
         self.emit_loop_back(opcode, long_opcode, iter_reg, loop_start, span);
+        self.patch_jump(skip_loop);
 
         let ctx = self.loop_stack.pop().ok_or_else(|| {
             CompileError::new(
