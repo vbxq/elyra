@@ -13,7 +13,9 @@ impl TypeInference {
         repeat: Option<&Expr>,
         _span: Span,
     ) -> (TypedExprKind, InferType) {
-        let typed_elements: Vec<TypedExpr> = elements.iter().map(|e| self.infer_expr(e)).collect();
+        let mut typed_elements: Vec<TypedExpr> =
+            elements.iter().map(|e| self.infer_expr(e)).collect();
+        self.unify_branch_literals(&mut typed_elements.iter_mut().collect::<Vec<_>>());
         let typed_repeat = repeat.map(|count| self.infer_repeat_count(count));
 
         let (elem_ty, resolved_elem) = if let Some(ann) = element_type {
@@ -167,7 +169,9 @@ impl TypeInference {
         repeat: Option<&Expr>,
         _span: Span,
     ) -> (TypedExprKind, InferType) {
-        let typed_elements: Vec<TypedExpr> = elements.iter().map(|e| self.infer_expr(e)).collect();
+        let mut typed_elements: Vec<TypedExpr> =
+            elements.iter().map(|e| self.infer_expr(e)).collect();
+        self.unify_branch_literals(&mut typed_elements.iter_mut().collect::<Vec<_>>());
         let typed_repeat = repeat.map(|count| self.infer_repeat_count(count));
 
         let (elem_ty, resolved_elem) = if let Some(ann) = element_type {
@@ -691,6 +695,7 @@ impl TypeInference {
         let typed_end = end.as_ref().map(|e| Box::new(self.infer_expr(e)));
 
         if let Some(ref s) = typed_start
+            && !s.ty.is_integer()
             && !self.reject_dynamic(&s.ty, &InferType::I64, s.span, ConstraintReason::RangeBound)
             && !self.reject_untyped_native(
                 &s.ty,
@@ -707,6 +712,7 @@ impl TypeInference {
             ));
         }
         if let Some(ref e) = typed_end
+            && !e.ty.is_integer()
             && !self.reject_dynamic(&e.ty, &InferType::I64, e.span, ConstraintReason::RangeBound)
             && !self.reject_untyped_native(
                 &e.ty,

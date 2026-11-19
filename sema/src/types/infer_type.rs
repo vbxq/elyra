@@ -604,15 +604,19 @@ impl InferType {
     }
 
     pub fn int_fits(value: i64, ty: &InferType) -> bool {
+        Self::wide_int_fits(i128::from(value), ty)
+    }
+
+    pub fn wide_int_fits(value: i128, ty: &InferType) -> bool {
         match ty {
             InferType::I8 => i8::try_from(value).is_ok(),
             InferType::I16 => i16::try_from(value).is_ok(),
             InferType::I32 => i32::try_from(value).is_ok(),
-            InferType::I64 | InferType::Int64 => true,
+            InferType::I64 | InferType::Int64 => i64::try_from(value).is_ok(),
             InferType::U8 => u8::try_from(value).is_ok(),
             InferType::U16 => u16::try_from(value).is_ok(),
             InferType::U32 => u32::try_from(value).is_ok(),
-            InferType::U64 => value >= 0,
+            InferType::U64 => u64::try_from(value).is_ok(),
             _ => false,
         }
     }

@@ -545,19 +545,19 @@ impl TypeInference {
                     &operand.ty,
                     &InferType::Bool,
                     span,
-                    ConstraintReason::IfCondition,
+                    ConstraintReason::NotOperand,
                 ) || self.reject_untyped_native(
                     &operand.ty,
                     &InferType::Bool,
                     span,
-                    ConstraintReason::IfCondition,
+                    ConstraintReason::NotOperand,
                 );
                 if !invalid {
                     self.constraints.push(Constraint::equal(
                         InferType::Bool,
                         operand.ty.clone(),
                         span,
-                        ConstraintReason::IfCondition,
+                        ConstraintReason::NotOperand,
                     ));
                 }
                 InferType::Bool

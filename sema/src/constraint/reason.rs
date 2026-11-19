@@ -23,6 +23,7 @@ pub enum ConstraintReason {
         var_name: String,
     },
     IfCondition,
+    NotOperand,
     IfBranches,
     WhileCondition,
     /// for loop bounds must be int
@@ -41,7 +42,7 @@ pub enum ConstraintReason {
         name: String,
     },
     IntLiteralOverflow {
-        value: i64,
+        value: i128,
         target: InferType,
     },
     Other(String),
@@ -94,6 +95,7 @@ impl fmt::Display for ConstraintReason {
                 write!(f, "type annotation on variable '{}'", var_name)
             }
             ConstraintReason::IfCondition => write!(f, "if condition"),
+            ConstraintReason::NotOperand => write!(f, "operand of !"),
             ConstraintReason::IfBranches => write!(f, "if/else branches"),
             ConstraintReason::WhileCondition => write!(f, "while condition"),
             ConstraintReason::ForBounds => write!(f, "for loop bounds"),

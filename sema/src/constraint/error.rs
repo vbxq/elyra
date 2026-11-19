@@ -702,11 +702,18 @@ impl TypeError {
                     let required = match method.as_str() {
                         "push" | "pop" | "capacity" | "reserve" => "a vector",
                         "len" | "is_empty" | "get" => "a string, array, or vector",
+                        "to_hex" | "to_binary" | "to_octal" | "to_radix" => "an integer",
+                        "mul_shr" | "shl_div" => "an int or i32",
                         _ => "an array or vector",
+                    };
+                    let family = if required.starts_with("an i") {
+                        "method"
+                    } else {
+                        "collection method"
                     };
                     return write!(
                         f,
-                        "collection method '{}' requires {}, found {}",
+                        "{family} '{}' requires {}, found {}",
                         method,
                         required,
                         ty.source_spelling()
@@ -2079,7 +2086,9 @@ fn sum_wrapping_help(
     if matches!(expected, InferType::Bool)
         && matches!(
             reason,
-            ConstraintReason::IfCondition | ConstraintReason::WhileCondition
+            ConstraintReason::IfCondition
+                | ConstraintReason::WhileCondition
+                | ConstraintReason::NotOperand
         )
     {
         match found {

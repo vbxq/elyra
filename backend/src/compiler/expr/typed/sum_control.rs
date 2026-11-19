@@ -205,7 +205,7 @@ impl Compiler {
             TypedPatternKind::Int(value) => {
                 let literal = self.alloc_register()?;
                 let condition = self.alloc_register()?;
-                self.compile_literal_int(*value, literal, pattern.span)?;
+                self.compile_pattern_int(*value, literal, pattern.span)?;
                 self.emit_a(OpCode::Eq, condition, source, literal, pattern.span);
                 failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
                 self.free_register(condition);
@@ -237,7 +237,7 @@ impl Compiler {
                     let Some(bound) = bound else { continue };
                     let literal = self.alloc_register()?;
                     let condition = self.alloc_register()?;
-                    self.compile_literal_int(*bound, literal, pattern.span)?;
+                    self.compile_pattern_int(*bound, literal, pattern.span)?;
                     self.emit_a(opcode, condition, source, literal, pattern.span);
                     failures.push(self.emit_jump_if(OpCode::JumpIfNot, condition, pattern.span));
                     self.free_register(condition);

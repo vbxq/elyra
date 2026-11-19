@@ -435,11 +435,12 @@ impl Parser {
                     },
                 }
             }
-            TokenKind::Int(value) => self.range_pattern_tail(value)?,
+            TokenKind::Int(value) => self.range_pattern_tail(i128::from(value))?,
+            TokenKind::UInt(value) => self.range_pattern_tail(i128::from(value))?,
             TokenKind::Minus => {
                 let value = match self.advance().kind {
-                    TokenKind::Int(value) => -value,
-                    TokenKind::UInt(value) if value == 1 << 63 => i64::MIN,
+                    TokenKind::Int(value) => -i128::from(value),
+                    TokenKind::UInt(value) => -i128::from(value),
                     _ => {
                         return Err(self.error(CompileErrorKind::ExpectedPattern));
                     }
@@ -479,7 +480,7 @@ impl Parser {
         })
     }
 
-    fn range_pattern_tail(&mut self, start: i64) -> Result<PatternKind> {
+    fn range_pattern_tail(&mut self, start: i128) -> Result<PatternKind> {
         let inclusive = if self.match_token(&TokenKind::DotDotEq) {
             true
         } else if self.match_token(&TokenKind::DotDot) {
@@ -517,7 +518,11 @@ impl Parser {
                 self.advance();
                 Some(end)
             }
-            TokenKind::Int(_) | TokenKind::Minus | TokenKind::String(_) | TokenKind::Float(_) => {
+            TokenKind::Int(_)
+            | TokenKind::UInt(_)
+            | TokenKind::Minus
+            | TokenKind::String(_)
+            | TokenKind::Float(_) => {
                 return Err(self.error(CompileErrorKind::InvalidPattern {
                     reason: "both bounds of a char range pattern must be char literals".to_string(),
                 }));
@@ -535,11 +540,12 @@ impl Parser {
             .map_err(|reason| self.error(CompileErrorKind::InvalidPattern { reason }))
     }
 
-    fn range_pattern_bound(&mut self) -> Result<i64> {
+    fn range_pattern_bound(&mut self) -> Result<i128> {
         let negative = self.match_token(&TokenKind::Minus);
+        let sign = if negative { -1 } else { 1 };
         match self.advance().kind {
-            TokenKind::Int(value) => Ok(if negative { -value } else { value }),
-            TokenKind::UInt(value) if negative && value == 1 << 63 => Ok(i64::MIN),
+            TokenKind::Int(value) => Ok(sign * i128::from(value)),
+            TokenKind::UInt(value) => Ok(sign * i128::from(value)),
             _ => Err(self.error(CompileErrorKind::InvalidPattern {
                 reason: "a range pattern bound must be an integer literal".to_string(),
             })),
@@ -1031,8 +1037,8 @@ impl Parser {
 }
 
 fn range_pattern(
-    start: Option<i64>,
-    end: Option<i64>,
+    start: Option<i128>,
+    end: Option<i128>,
     inclusive: bool,
 ) -> std::result::Result<PatternKind, String> {
     if let (Some(start), Some(end)) = (start, end) {

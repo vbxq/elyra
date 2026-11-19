@@ -319,7 +319,7 @@ impl TypeInference {
                                 },
                                 span,
                                 reason: ConstraintReason::IntLiteralOverflow {
-                                    value,
+                                    value: i128::from(value),
                                     target: ty.clone(),
                                 },
                             });
@@ -395,7 +395,7 @@ impl TypeInference {
                         },
                         span: expr.span,
                         reason: ConstraintReason::IntLiteralOverflow {
-                            value: *value,
+                            value: i128::from(*value),
                             target: target.clone(),
                         },
                     });

@@ -344,7 +344,7 @@ impl TypeInference {
         }
     }
 
-    fn constant_leaf_type(&self, expr: &Expr) -> Option<InferType> {
+    pub(crate) fn constant_leaf_type(&self, expr: &Expr) -> Option<InferType> {
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };

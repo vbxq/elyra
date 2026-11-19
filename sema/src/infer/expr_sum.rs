@@ -1673,7 +1673,13 @@ impl TypeInference {
             PatternKind::Binding(name) => {
                 let leaf = Expr::new(ExprKind::Identifier(name.clone()), pattern.span);
                 match self.constant_leaf(&leaf) {
-                    Some(super::constants::ConstValue::Int(value)) => PatternKind::Int(value),
+                    Some(super::constants::ConstValue::Int(value)) => {
+                        if self.constant_leaf_type(&leaf) == Some(InferType::U64) {
+                            PatternKind::Int(i128::from(value as u64))
+                        } else {
+                            PatternKind::Int(i128::from(value))
+                        }
+                    }
                     Some(super::constants::ConstValue::Bool(value)) => PatternKind::Bool(value),
                     Some(super::constants::ConstValue::Str(value)) => PatternKind::String(value),
                     Some(super::constants::ConstValue::Float(_)) => {
@@ -1728,12 +1734,12 @@ impl TypeInference {
         }
     }
 
-    fn constrain_integer_pattern(&mut self, ty: &InferType, bounds: &[Option<i64>], span: Span) {
+    fn constrain_integer_pattern(&mut self, ty: &InferType, bounds: &[Option<i128>], span: Span) {
         if ty.is_integer() {
             if let Some(value) = bounds
                 .iter()
                 .flatten()
-                .find(|value| !InferType::int_fits(**value, ty))
+                .find(|value| !InferType::wide_int_fits(**value, ty))
             {
                 self.errors.push(TypeError {
                     kind: TypeErrorKind::Mismatch {
@@ -1749,9 +1755,18 @@ impl TypeInference {
             }
             return;
         }
+        let literal = if bounds
+            .iter()
+            .flatten()
+            .all(|value| i64::try_from(*value).is_ok())
+        {
+            InferType::I64
+        } else {
+            InferType::U64
+        };
         self.constraints.push(Constraint::equal(
             ty.clone(),
-            InferType::I64,
+            literal,
             span,
             ConstraintReason::Comparison,
         ));

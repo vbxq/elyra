@@ -346,7 +346,7 @@ pub struct TypedPattern {
 pub enum TypedPatternKind {
     Wildcard,
     Binding(String),
-    Int(i64),
+    Int(i128),
     Char(char),
     String(String),
     Bool(bool),
@@ -365,8 +365,8 @@ pub enum TypedPatternKind {
     },
     Or(Vec<TypedPattern>),
     Range {
-        start: Option<i64>,
-        end: Option<i64>,
+        start: Option<i128>,
+        end: Option<i128>,
     },
     CharRange {
         start: Option<char>,

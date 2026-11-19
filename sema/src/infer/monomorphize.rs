@@ -3101,11 +3101,15 @@ fn resolve_deferred_expr(
                 }
             }
         }
-        resolve_deferred_expr(callee, type_table, hidden, errors);
+        if matches!(callee.kind, TypedExprKind::Member { .. }) {
+            resolve_deferred_member(callee, type_table, hidden, errors, true);
+        } else {
+            resolve_deferred_expr(callee, type_table, hidden, errors);
+        }
         resolve_deferred_call_type(expr);
         return;
     }
-    resolve_deferred_member(expr, type_table, hidden, errors);
+    resolve_deferred_member(expr, type_table, hidden, errors, false);
 }
 
 fn resolve_deferred_field_assign(
@@ -3265,7 +3269,7 @@ fn resolve_specialized_to_string(
     if !resolve_to_string_member(callee, type_table, errors, true)
         && matches!(&callee.kind, TypedExprKind::Member { member, .. } if member == "to_string")
     {
-        resolve_deferred_member(callee, type_table, &|_| false, errors);
+        resolve_deferred_member(callee, type_table, &|_| false, errors, true);
     }
 }
 
@@ -3274,6 +3278,7 @@ fn resolve_deferred_member(
     type_table: &crate::types::TypeTable,
     hidden: &dyn Fn(&str) -> bool,
     errors: &mut Vec<TypeError>,
+    callee: bool,
 ) {
     if !matches!(
         expr.kind,
@@ -3299,7 +3304,7 @@ fn resolve_deferred_member(
         )
     {
         let reported = errors.len();
-        resolve_deferred_member(object, type_table, hidden, errors);
+        resolve_deferred_member(object, type_table, hidden, errors, false);
         if matches!(object.kind, TypedExprKind::Member { .. }) {
             errors.truncate(reported);
         }
@@ -3315,8 +3320,17 @@ fn resolve_deferred_member(
     else {
         return;
     };
+    let method_named = callee
+        && (type_table
+            .method(&name, member)
+            .is_some_and(|method| method.has_self)
+            || type_table
+                .trait_methods(&name, member)
+                .iter()
+                .any(|candidate| candidate.has_self));
     if let Some(definition) = type_table.get_struct(&name)
         && let Some(field) = definition.fields.iter().find(|field| field.name == *member)
+        && !method_named
     {
         let field_ty = field.ty.substitute_params(&substitutions);
         // what the site did type must be the field's type, even where it is not wholly known

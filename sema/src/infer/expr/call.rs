@@ -401,8 +401,19 @@ impl TypeInference {
         }
         let typed_object = self.infer_receiver(object);
         let receiver = typed_object.ty.clone();
-        if !matches!(receiver, InferType::I32 | InferType::I64) {
+        let open = matches!(receiver, InferType::Var(_));
+        if !open && !matches!(receiver, InferType::I32 | InferType::I64) {
             return None;
+        }
+        if open {
+            self.constraints.push(Constraint::one_of(
+                receiver.clone(),
+                vec![InferType::I64, InferType::I32],
+                object.span,
+                ConstraintReason::CollectionMethodReceiver {
+                    method: member.clone(),
+                },
+            ));
         }
         let mut typed_args: Vec<TypedExpr> = args.iter().map(|arg| self.infer_expr(arg)).collect();
         if typed_args.len() != 2 {
@@ -430,7 +441,11 @@ impl TypeInference {
                 InferType::Poison,
             ));
         }
-        self.fit_int_literal(&mut typed_args[0], &receiver);
+        if open && super::literal_shaped(&typed_args[0]) {
+            self.defer_int_literal(&mut typed_args[0], receiver.clone());
+        } else {
+            self.fit_int_literal(&mut typed_args[0], &receiver);
+        }
         if let Some(count) = constant_int(&typed_args[1])
             && !(0..=63).contains(&count)
         {

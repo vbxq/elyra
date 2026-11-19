@@ -269,7 +269,7 @@ impl<'a> Checker<'a> {
                 Pat::Ctor(Ctor::Int(low, high), Vec::new())
             }
             PatternKind::Int(value) => {
-                let value = i128::from(*value);
+                let value = *value;
                 Pat::Ctor(Ctor::Int(value, value), Vec::new())
             }
             PatternKind::Range {
@@ -281,9 +281,9 @@ impl<'a> Checker<'a> {
                     Shape::Int(min, max) => (min, max),
                     _ => (INT_MIN, INT_MAX),
                 };
-                let low = start.map(i128::from).unwrap_or(min).max(min);
+                let low = start.unwrap_or(min).max(min);
                 let high = end
-                    .map(|end| i128::from(end) - i128::from(!*inclusive))
+                    .map(|end| end - i128::from(!*inclusive))
                     .unwrap_or(max)
                     .min(max);
                 if low > high {

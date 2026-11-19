@@ -814,6 +814,17 @@ impl TypeInference {
                 .type_table
                 .get_struct(&name)
                 .is_some_and(|def| def.fields.iter().any(|field| field.name == member));
+            // call syntax names the method when a field shares its name
+            let has_field = has_field
+                && !(callee_position
+                    && (self
+                        .type_table
+                        .method(&name, member)
+                        .is_some_and(|method| method.has_self)
+                        || self
+                            .visible_trait_methods(&name, member)
+                            .iter()
+                            .any(|candidate| candidate.has_self)));
             let inherent = (!has_field)
                 .then(|| self.type_table.method(&name, member).cloned())
                 .flatten()

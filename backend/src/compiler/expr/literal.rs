@@ -34,6 +34,13 @@ impl Compiler {
         self.compile_literal_int(n, dest, span)
     }
 
+    pub fn compile_pattern_int(&mut self, n: i128, dest: u16, span: Span) -> Result<()> {
+        match i64::try_from(n) {
+            Ok(n) => self.compile_literal_int(n, dest, span),
+            Err(_) => self.compile_wide_literal(n, dest, span),
+        }
+    }
+
     fn compile_wide_literal(&mut self, value: i128, dest: u16, span: Span) -> Result<()> {
         let constant = Constant::integer(value).ok_or_else(|| {
             CompileError::new(

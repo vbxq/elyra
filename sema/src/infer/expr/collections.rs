@@ -221,6 +221,17 @@ impl TypeInference {
             InferType::Map(key, value) => Some(map_shape(key, value, member, args.len())?),
             InferType::Char => char_shape(member, args.len()),
             receiver if receiver.is_integer() => int_shape(member, args.len()),
+            InferType::Var(_) if int_shape(member, args.len()).is_some() => {
+                self.constraints.push(Constraint::one_of(
+                    receiver.clone(),
+                    InferType::all_integer_types(),
+                    object.span,
+                    ConstraintReason::CollectionMethodReceiver {
+                        method: member.clone(),
+                    },
+                ));
+                int_shape(member, args.len())
+            }
             InferType::String if member == "push" && args.len() == 1 => {
                 return Some(self.infer_string_push(typed_object, object, &args[0], callee.span));
             }
