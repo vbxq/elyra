@@ -6,7 +6,7 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
     let mut program_args = Vec::new();
     let mut max_instructions = None;
     let mut timeout_ms = None;
-    let mut jit = false;
+    let mut jit = None;
     let mut jit_sync = false;
 
     for arg in args {
@@ -39,6 +39,15 @@ pub fn parse_vm_args(args: &[String]) -> Result<VmArgsParsed, VmArgsError> {
 
     config.validate().map_err(VmArgsError::InvalidConfig)?;
 
+    if jit_sync && jit == Some(false) {
+        return Err(VmArgsError::InvalidValue {
+            arg: "-ae.jit-sync".to_string(),
+            value: "on".to_string(),
+            reason: "synchronous compilation needs the jit, which -ae.jit=off turns off".to_string(),
+        });
+    }
+    let jit = jit.unwrap_or(jit_sync);
+
     Ok(VmArgsParsed {
         config,
         program_args,
@@ -55,7 +64,7 @@ fn apply_vm_arg(
     config: &mut VmConfig,
     max_instructions: &mut Option<u64>,
     timeout_ms: &mut Option<u64>,
-    jit: &mut bool,
+    jit: &mut Option<bool>,
     jit_sync: &mut bool,
 ) -> Result<(), VmArgsError> {
     let (key, raw_value) = value
@@ -101,7 +110,7 @@ fn apply_vm_arg(
             Ok(())
         }
         "jit" => {
-            *jit = parse_switch(raw_value, raw_arg)?;
+            *jit = Some(parse_switch(raw_value, raw_arg)?);
             Ok(())
         }
         "jit-sync" => {
