@@ -78,7 +78,7 @@ println(v[{n} - 1])
 println(v[{n} / 2])
 let w = v.map(fn(q: int) -> int {{ q % 1000 }})
 println(w.fold(0, fn(a: int, b: int) -> int {{ a + b }}))
-println(v.index_of({L(s + st * (n // 3 + 1))}).unwrap_or(-1))'''
+println(v.index_of({L(max(I64MIN, min(I64MAX, s + st * (n // 3 + 1))))}).unwrap_or(-1))'''
     v = []; x = s
     for i in range(n):
         x += st
@@ -184,7 +184,7 @@ println(total)'''
 
 @kernel('for_range')
 def _(s, st, n):
-    e = s + n
+    e = max(I64MIN, min(I64MAX, s + n))
     code = f'''let mut cnt = 0
 let mut last = 0
 let mut xs = 0
@@ -199,12 +199,11 @@ println(xs)
 let mut c2 = 0
 for j in {L(s)}..={L(e)} step {max(1, abs(st) % 7 + 1)} {{ c2 += 1 }}
 println(c2)'''
-    if not (I64MIN <= e <= I64MAX): return code, None
     xs = 0
     for i in range(s, e): xs ^= i
     stp = max(1, abs(st) % 7 + 1)
     c2 = len(range(s, e + 1, stp))
-    return code, f'{n}\n{e - 1}\n{xs}\n{c2}\n'
+    return code, f'{e - s}\n{e - 1 if e > s else 0}\n{xs}\n{c2}\n'
 
 
 @kernel('match_range')
