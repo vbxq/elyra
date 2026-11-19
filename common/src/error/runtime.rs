@@ -123,6 +123,7 @@ pub enum RuntimeErrorKind {
     },
     FfiLibraryNotFound {
         library: String,
+        function: String,
         tried: Vec<String>,
         reason: String,
     },
@@ -299,10 +300,11 @@ impl RuntimeErrorKind {
             } => format!("{operation}: value {value} does not fit in {target}"),
             Self::FfiLibraryNotFound {
                 library,
+                function,
                 tried,
                 reason,
             } => format!(
-                "cannot load C library '{library}': tried {}; last error: {reason}",
+                "cannot load C library '{library}' for C function '{function}': tried {}; last error: {reason}",
                 tried.join(", ")
             ),
             Self::FfiSymbolNotFound {

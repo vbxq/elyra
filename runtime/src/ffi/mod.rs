@@ -145,6 +145,7 @@ fn resolve(vm: &VM, function: &FfiFunction) -> Result<Resolved, RuntimeError> {
     .map_err(|missing| {
         vm.runtime_error(RuntimeErrorKind::FfiLibraryNotFound {
             library: function.library.clone(),
+            function: function.symbol.clone(),
             tried: missing.tried,
             reason: missing.reason,
         })
@@ -369,8 +370,10 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
     unsafe {
         (resolved.trampoline)(resolved.entry as *const u8, slots.as_ptr(), &mut out);
     }
+    // a returned cstr may point into an argument copy (strchr, strstr), so it is read before the copies are freed
+    let result = convert_result(vm, function, out);
     drop(strings);
-    convert_result(vm, function, out)
+    result
 }
 
 fn convert_result(vm: &mut VM, function: &FfiFunction, out: u64) -> Result<Value, RuntimeError> {
