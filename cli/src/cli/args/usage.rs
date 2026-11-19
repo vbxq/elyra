@@ -25,7 +25,7 @@ Warning flags:
   -Wno-<category>            Disable specific category
 
 Examples:
-  aelys main.aelys -O2 '-ae.trusted=true'  (quote in PowerShell)
+  aelys main.aelys -O2 '-ae.max-heap=256M'  (quote in PowerShell)
   aelys run -O3 main.aelys arg1 arg2
   aelys repl -ae.max-heap=1G
   aelys asm main.aelys --stdout
