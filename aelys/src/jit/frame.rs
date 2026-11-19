@@ -1770,7 +1770,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         self.set(inst.a, boxed);
     }
 
-    // the only copy of the interpreter's shift rule: count masked to 63, a left shift that leaves the 48-bit range traps
+    // the only copy of the interpreter's shift rule: count masked to 63, a left shift whose exact result leaves the int range traps
     fn shift(&mut self, left: ClifValue, count: ClifValue, op: OpCode) -> ClifValue {
         let count = self.builder.ins().band_imm_s(count, 63);
         let left = self.unbox_int(left);

@@ -1488,7 +1488,7 @@ pub unsafe extern "C" fn aelys_frame_vec_push(
     u64::from(vm.frame_vec_push(GcRef::new(pointer), Value::from_raw(value)))
 }
 
-// (left << shift) / right exactly, 0 where the interpreter traps on a zero divisor or a result outside the 48-bit range
+// (left << shift) / right exactly, 0 leaves to the interpreter a zero divisor or a result outside the inline int range
 pub unsafe extern "C" fn aelys_frame_shl_div(
     context: *mut FrameJitContext,
     left: i64,
