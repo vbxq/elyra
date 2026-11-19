@@ -220,12 +220,14 @@ pub(crate) fn address(vm: &VM, value: Value) -> Option<u64> {
 }
 
 pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, RuntimeError> {
-    let Some(function) = vm.ffi_functions.get(index as usize).cloned() else {
+    let Some(function) = vm.ffi_functions.get(index as usize).map(Arc::as_ptr) else {
         return Err(vm.runtime_error(RuntimeErrorKind::InvalidBytecode(
             "unknown extern function".to_string(),
         )));
     };
-    let resolved = resolve(vm, &function)?;
+    // entries are never removed and each lives in its own allocation, so it outlives every use of the vm below
+    let function: &FfiFunction = unsafe { &*function };
+    let resolved = resolve(vm, function)?;
     let signature = &function.signature;
     if args.len() != signature.params.len() {
         return Err(vm.runtime_error(RuntimeErrorKind::ArityMismatch {
@@ -373,7 +375,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
         (resolved.trampoline)(resolved.entry as *const u8, slots.as_ptr(), &mut out);
     }
     drop(strings);
-    convert_result(vm, &function, out)
+    convert_result(vm, function, out)
 }
 
 fn convert_result(vm: &mut VM, function: &FfiFunction, out: u64) -> Result<Value, RuntimeError> {

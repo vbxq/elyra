@@ -751,3 +751,45 @@ fn an_extern_block_in_a_module_serves_that_module() {
     assert_eq!(outcome.code, Some(0), "stderr: {}", outcome.stderr);
     assert_eq!(outcome.lines(), vec!["<-77>", "11"]);
 }
+
+fn run_example(name: &str, args: &[&str], env: &[(&str, &str)]) -> Outcome {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples/ffi")
+        .join(name);
+    let mut command = Command::new(cli_binary());
+    command.arg("run").arg(&example).args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("aelys-cli should run");
+    Outcome {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.status.code(),
+    }
+}
+
+#[test]
+fn the_sdl_window_example_presents_frames_without_a_wrapper_module() {
+    let outcome = run_example("sdl_window.aelys", &["3"], &[("SDL_VIDEODRIVER", "dummy")]);
+    if outcome.stderr.contains("cannot load C library 'SDL2'") {
+        eprintln!("SKIPPED: libSDL2 is not installed");
+        return;
+    }
+    assert_eq!(outcome.code, Some(0), "stderr: {}", outcome.stderr);
+    assert_eq!(outcome.lines(), vec!["presented 3 frames"]);
+}
+
+// opens a real window, so it runs only on the display a caller names, such as a virtual Xvfb one
+#[test]
+fn the_gl_example_clears_through_mesa() {
+    let Ok(display) = std::env::var("AELYS_FFI_DISPLAY") else {
+        eprintln!("SKIPPED: set AELYS_FFI_DISPLAY to a (virtual) X display to run the GL example");
+        return;
+    };
+    let outcome = run_example("gl_clear.aelys", &["10"], &[("DISPLAY", &display)]);
+    assert_eq!(outcome.code, Some(0), "stderr: {}", outcome.stderr);
+    let lines = outcome.lines();
+    assert!(lines[0].starts_with("renderer: "), "{lines:?}");
+    assert_eq!(lines[1], "last clear rgba 64 230 191 255");
+}

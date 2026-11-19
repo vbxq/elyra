@@ -1733,7 +1733,7 @@ impl TypeError {
             ),
             TypeErrorKind::DuplicateExtern { name } => write!(
                 f,
-                "`{name}` is declared twice: an extern function needs a name no other function or extern function of the file uses"
+                "`{name}` is declared twice: an extern function needs a name no other function, extern function or global of the file uses"
             ),
             TypeErrorKind::ExternExport { name } => write!(
                 f,

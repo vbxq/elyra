@@ -234,6 +234,7 @@ impl TypeInference {
             .iter()
             .filter_map(|stmt| match &stmt.kind {
                 StmtKind::Function(function) => Some(function.name.as_str()),
+                StmtKind::Let { name, .. } => Some(name.as_str()),
                 _ => None,
             })
             .collect();
@@ -474,7 +475,7 @@ impl TypeInference {
                     &mut typed,
                     reason,
                 );
-            } else {
+            } else if decl.signature.variadic {
                 match variadic_class(&typed.ty) {
                     Some(class) => extras.push(class),
                     None => {
