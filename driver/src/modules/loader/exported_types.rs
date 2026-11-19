@@ -267,7 +267,7 @@ fn not_exportable(
     AelysError::Compile(CompileError::new(
         CompileErrorKind::TypeNotExportable {
             module: module_path.to_string(),
-            name: name.to_string(),
+            name: name.split('@').next().unwrap_or(name).to_string(),
             reason: reason.to_string(),
         },
         span,

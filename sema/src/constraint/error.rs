@@ -1170,8 +1170,8 @@ impl TypeError {
                 operation,
             } => write!(
                 f,
-                "private field '{}.{}' cannot be {}: owner module '{}', current module '{}'; {}\n   = help: declare the field `pub` or access it from the owner module or a descendant",
-                structure, field, operation, owner, current, self.reason
+                "private field '{}.{}' cannot be {}: owner module '{}', current module '{}'\n   = help: declare the field `pub` or access it from the owner module or a descendant",
+                structure, field, operation, owner, current
             ),
             TypeErrorKind::PrivateFieldConstruction {
                 structure,
@@ -1181,8 +1181,8 @@ impl TypeError {
                 operation,
             } => write!(
                 f,
-                "private field '{}.{}' cannot be used in {}: owner module '{}', current module '{}'; {}\n   = help: declare the field `pub`, use a public constructor, or omit it with a rest pattern",
-                structure, field, operation, owner, current, self.reason
+                "private field '{}.{}' cannot be used in {}: owner module '{}', current module '{}'\n   = help: declare the field `pub`, use a public constructor, or omit it with a rest pattern",
+                structure, field, operation, owner, current
             ),
             TypeErrorKind::ImmutableStructMethod { method } => {
                 write!(
