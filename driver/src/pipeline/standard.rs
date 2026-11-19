@@ -38,7 +38,6 @@ pub fn compilation_pipeline_with_opt(opt_level: OptimizationLevel) -> Pipeline {
     pipeline
 }
 
-// for programs with `needs` statements
 pub fn compilation_pipeline_with_modules(
     opt_level: OptimizationLevel,
     module_aliases: HashSet<String>,
