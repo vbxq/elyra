@@ -13,6 +13,31 @@ Elyra is the runtime Aelys originally ran on. When Aelys moved to an LLVM backen
 Since the split, Elyra has become its own language. The design goal here is a runtime that is pleasant to build things on.
 
 Note : the migration isn't completely finished; Aelys is still mentioned internally in many places, which is normal.
+
+## Quick start
+
+```bash
+cargo build --release
+./target/release/aelys-cli examples/hello.aelys
+```
+
+```rust
+fn greet(name: string) -> string {
+    "Hello, {name}!"
+}
+
+println(greet("Elyra"))  // prints: Hello, Elyra!
+```
+
+## Documentation
+
+- [Installation](docs/installation.md): building, the command line, VM options
+- [Getting started](docs/getting-started.md): a first tour of the language
+- [Language specification](docs/language-spec.md): the complete reference, with every diagnostic code
+- [Standard library](docs/standard-library.md): `std::io`, `std::math`, `std::string`, `std::time`, `std::fs`, `std::net`, `std::sys` and binary data in `Vec<u8>`
+- [Native modules](docs/native-modules.md): extending Elyra with Rust shared libraries
+- [Performance](docs/performance-benchmarks.md) and [FAQ](docs/faq.md)
+
 # Notice
 
 This is a personal project. I build it for fun, and I use it to make other things I find fun : [Raizen](https://github.com/vbxq/raizen_core), a bullet hell engine, a [CHIP-8 emulator](https://github.com/vbxq/chip8-aelys), that sort of thing.

@@ -16,7 +16,7 @@ Run it:
 aelys hello.aelys
 ```
 
-That's your first program ! The safe standard modules (`std.io`, `std.math`, `std.string`, `std.time`) are auto-registered at startup, so you don't need to import them. The `use` statement is still required for privileged modules like `std.fs`, `std.net`, `std.sys`, and `std.bytes`.
+That's your first program ! The safe standard modules (`std::io`, `std::math`, `std::string`, `std::time`) are auto-registered at startup, so you don't need to import them. The other modules (`std::fs`, `std::net`, `std::sys`) need a `use` line, such as `use std::fs`.
 
 You don't need a `main` function, top-level code just runs.
 
@@ -34,7 +34,7 @@ Variables are immutable by default. If you need to change a value, use `mut`:
 let mut counter = 0
 counter++
 counter++
-println(counter)  // 2
+println(counter)  // prints: 2
 ```
 
 ## Type Annotations
@@ -52,7 +52,7 @@ Available types include `int`, `float`, `string`, `bool`, `Option<T>`,
 `Result<T, E>`, fixed arrays `[T; N]`, and growable `Vec<T>`. Absence uses
 `Option<T>`; there is no `null` value in the surface language.
 
-The type system uses Hindley-Milner inference with gradual typing. In practice, this means you get type checking where you add annotations, and flexibility where you don't. If inference fails somewhere, you'll get a warning (not an error) and the value becomes dynamic.
+The type system uses Hindley-Milner inference: every value has a static type, whether you write it or the compiler works it out. When nothing in the program pins a type down, compilation stops with an error asking for an annotation (E0353); there is no dynamic fallback.
 
 ## Functions
 
@@ -83,9 +83,11 @@ You can omit types entirely if you prefer:
 fn add(a, b) {
     return a + b
 }
+
+println(add(2, 3))  // prints: 5
 ```
 
-This works, but you lose some type safety. I recommend adding types at the function signature !
+The parameter types then come from the call sites, so a function like this that is never called is an error (E0353). I recommend adding types at the function signature !
 
 ## Control Flow
 
@@ -132,7 +134,7 @@ for i in 1..=10 {
 
 // with step
 for i in 0..100 step 10 {
-    println(i)  // 0, 10, 20, ...
+    println(i)  // 0, 10, 20, ..., 90
 }
 ```
 
@@ -182,6 +184,10 @@ for c in name {
 They are `&&`, `||` and `!`, and `&&` and `||` short-circuit (the words `and`, `or` and `not` are not operators):
 
 ```rust
+let x = 3
+let y = 4
+let valid = x < y
+
 if x > 0 && y > 0 {
     println("both positive")
 }
@@ -204,8 +210,8 @@ You can access individual characters with `[]`:
 
 ```rust
 let s = "hello"
-println(s[0])  // h
-println(s[4])  // o
+println(s[0])  // prints: h
+println(s[4])  // prints: o
 ```
 
 Each index returns a `char`, the same type a for-each over a string yields. Indexing is Unicode-aware (it counts characters, not bytes).
@@ -213,15 +219,17 @@ Each index returns a `char`, the same type a for-each over a string yields. Inde
 Concatenation uses `+`:
 
 ```rust
+let name = "Marisa"
 let greeting = "Hello, " + name + "!"
+println(greeting)  // prints: Hello, Marisa!
 ```
 
 Or use interpolation with `{expression}`:
 
 ```rust
 let name = "Quar"
-println("Hello, {name}!")        // Hello, Quar!
-println("2500 + 2500 = {2500 + 2500}")       // 2500 + 2500 = 5000
+println("Hello, {name}!")        // prints: Hello, Quar!
+println("2500 + 2500 = {2500 + 2500}")       // prints: 2500 + 2500 = 5000
 ```
 
 Double braces for literal braces: `"{{key}}"` gives `{key}`
@@ -234,9 +242,9 @@ Arrays hold multiple values of the same type:
 
 ```rust
 let numbers = [10, 20, 30, 40, 50]
-println(numbers[0])  // 10
-println(numbers[2])  // 30
-println("{numbers.len()}")  // 5
+println(numbers[0])  // prints: 10
+println(numbers[2])  // prints: 30
+println("{numbers.len()}")  // prints: 5
 ```
 
 Modify elements like this:
@@ -244,14 +252,14 @@ Modify elements like this:
 ```rust
 let mut scores = [95, 87, 92]
 scores[1] = 90
-println(scores[1])  // 90
+println(scores[1])  // prints: 90
 ```
 
 You can add type annotations if you want to be explicit:
 
 ```rust
-let ints = [1, 2, 3]
-let floats = [1.5, 2.7, 3.9]
+let ints: [int; 3] = [1, 2, 3]
+let floats: Vec<float> = vec![1.5, 2.7, 3.9]
 ```
 
 Empty arrays need a type:
@@ -275,11 +283,13 @@ Vectors can grow after you create them:
 let mut v = vec![1, 2, 3]
 v.push(4)
 v.push(5)
-println("{v.len()}")  // 5
+println("{v.len()}")  // prints: 5
 
 let last = v.pop()
-println("{last}")  // 5
+println("{last}")  // prints: Some(5)
 ```
+
+`pop` returns an `Option`: `Some(value)`, or `None` when the vector is empty.
 
 Good for building lists on the fly:
 
@@ -293,8 +303,25 @@ let mut sum = 0
 for i in 0..scores.len() {
     sum += scores[i]
 }
-println("{sum / scores.len()}")  // average
+println("{sum / scores.len()}")  // prints: 91
 ```
+
+### Sharing and copying
+
+Arrays, vectors, maps and structs are shared by reference: `let b = a` gives a second name to the same array, and a change through one name shows through the other. `clone()` makes an independent copy:
+
+```rust
+let mut a = [1, 2, 3]
+let mut b = a          // b and a are the same array
+b[0] = 10
+println(a[0])          // prints: 10
+
+let mut c = a.clone()  // an independent copy
+c[0] = 99
+println(a[0])          // prints: 10
+```
+
+Sharing a mutable name for a value that an immutable `let` holds is refused (error E0323): write `let mut b = a.clone()` for a copy, or declare `a` with `let mut` to share it.
 
 ### When to use which
 

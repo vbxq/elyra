@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- **Rust 1.70 or later** - I use some newer language features
+- **Rust 1.85 or later** - the workspace uses the 2024 edition
 - **Cargo** - comes with Rust
 
 ## Pre-built Binaries
@@ -19,7 +19,7 @@ cd aelys_lang
 cargo build --release
 ```
 
-This takes around 20 seconds on a modern machine. The binary lands in `target/release/aelys-cli`.
+The first build also compiles Cranelift, the JIT backend, so it takes a while. The binary lands in `target/release/aelys-cli`.
 
 Add it to your PATH for convenience:
 
@@ -37,7 +37,7 @@ For Windows, you can add it manually to your PATH via System Properties, or copy
 
 ```bash
 aelys-cli version
-# Aelys v0.17.9-a
+# Aelys v0.22.0
 ```
 
 Run the hello world example:
@@ -45,7 +45,7 @@ Run the hello world example:
 ```bash
 aelys-cli examples/hello.aelys
 # Hello, World!
-# Welcome to Aelys v0.17.9-a!
+# Welcome to Aelys v0.22.0!
 # Platform: linux (x86_64)
 ```
 
@@ -98,16 +98,30 @@ aelys-cli -ae.max-heap=128M program.aelys
 | `gc-stats=on` | Print collection counts, pause maximum, p99, total and histogram, allocations and bytes when the program exits |
 | `gc-stress=on` | Collect after almost every allocation (testing only) |
 | `gc-verify=on` | Before each minor collection, check that every old-to-young pointer was recorded by a write barrier, and panic otherwise (testing only, walks the whole heap) |
-| `jit=on` | Enable the Cranelift JIT (Linux x86_64), compiled on a background thread |
-| `jit-sync=on` | With `jit=on`, compile on the calling thread at the exact call or back-edge that crossed the threshold (deterministic, for tests) |
+| `jit=on` | Enable the Cranelift JIT (Linux x86_64), compiled on a background thread; off by default |
+| `jit-sync=on` | Turn the JIT on and compile on the calling thread at the exact call or back-edge that crossed the threshold (deterministic, for tests and benchmarks); `-ae.jit=off` together with `-ae.jit-sync=on` is refused |
 
 Sizes accept the suffixes `K`, `M` and `G`.
 
-**Development**
+**Limits**
 
-| Flag | Description                                                   |
-|------|---------------------------------------------------------------|
-| `--dev` | Enable development mode (for example experimental hot reload) |
+| Flag | Description |
+|------|-------------|
+| `--max-instructions <n>` | Stop with an error after `n` bytecode instructions |
+| `--timeout-ms <n>` | Stop with an error after `n` milliseconds |
+
+Under either limit the program runs in the interpreter's general loop only, without the JIT.
+
+**Warnings**
+
+| Flag | Description |
+|------|-------------|
+| `-Wall` | Enable all warnings |
+| `-Werror` | Treat warnings as errors |
+| `-W<category>` | Enable one category (`inline`, `unused`, `deprecated`, `shadow`, `type`) |
+| `-Wno-<category>` | Disable one category |
+
+See Compiler Warnings in the [language specification](language-spec.md#compiler-warnings).
 
 ### Examples
 
@@ -159,6 +173,7 @@ my_project/
 
 Modules are imported relative to the file that imports them. From `main.aelys`:
 
+<!-- doctest: ignore (needs the project files shown above) -->
 ```rust
 use config
 use lib::utils
@@ -173,14 +188,12 @@ Soon :tm:
 
 ## Troubleshooting
 
-### "cannot find module 'foo'"
+### "module not found: 'foo'"
 
-Module resolution is relative to the importing file. Check:
+Module resolution is relative to the importing file; the note under the error lists every path that was tried. Check:
 - Is the file path correct?
 - Did you spell the module name right?
-- For `std.*` modules, make sure you're using the exact name (`std.io`, not `std.IO`)
-
-You're trying to use file system operations without permission. Add `--allow-caps=fs` to your command.
+- For standard modules, use the exact path with `::` (`use std::fs`, not `use std.fs` or `use std::FS`)
 
 ### "error: expected X, found Y"
 
@@ -217,4 +230,23 @@ If you want to verify the build:
 cargo test
 ```
 
-This runs the full test suite, there's 596 of them at the time of writing this (0.17.9-a).
+`cargo xtask ci` runs the formatting, Clippy and workspace test gate that CI runs.
+
+## Documentation examples
+
+The Aelys code blocks of `README.md` and `docs/*.md` are run by a test:
+
+```bash
+python3 tools/doctest.py --aelys target/release/aelys-cli
+```
+
+`cargo test -p aelys-cli --test doc_examples_tests` runs the same check against the freshly built binary. Every ```` ```rust ```` block must compile and run successfully, and a line comment `// prints: TEXT` declares an expected line of output, checked in order. A block that is not meant to run says so in its fence:
+
+| Fence | Meaning |
+|-------|---------|
+| ```` ```rust,ignore ```` | not checked: a fragment, pseudo-code, or Rust code |
+| ```` ```rust,no_run ```` | compiled but not run (network, endless loop, stdin) |
+| ```` ```rust,compile_fail ```` | must be rejected by the compiler; `rust,compile_fail,E0323` also requires that code |
+| ```` ```rust,should_panic ```` | must compile and then stop with a runtime error |
+
+The same flags can be written in an HTML comment on the line before the fence, with a reason: `<!-- doctest: ignore (needs a WAD file) -->`. `<!-- doctest: file shapes.aelys -->` before a block saves it as that module for the later blocks of the same page instead of running it. `python3 tools/doctest.py --help` describes every option.

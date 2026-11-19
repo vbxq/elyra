@@ -27,7 +27,7 @@ aelys-native = { path = "<elyra checkout>/native" }
 [workspace]
 ```
 
-```rust
+```rust,ignore
 use aelys_native::aelys_module;
 
 #[aelys_module(name = "pixels", version = "0.1.0")]
@@ -92,7 +92,8 @@ spelling and rules, checked by the compiler before the call runs:
   `v` in the same call (`pixels::copy_into(&mut v, &v)`) is refused at compile
   time.
 
-```elyra
+<!-- doctest: ignore (needs the pixels native module built from the code above) -->
+```rust
 use pixels
 let mut frame: Vec<u8> = vec![0; 64000]
 pixels::clear(&mut frame, 7)
@@ -139,7 +140,7 @@ in a `static`, or that asks for `CallContext<'static>`, does not compile.
 
 A function can take the raw ABI arguments itself:
 
-```rust
+```rust,ignore
 use aelys_native::{AelysValue, NativeContext, with_call_context};
 
 #[aelys_export(params = [Int, Bytes], result = Int)]

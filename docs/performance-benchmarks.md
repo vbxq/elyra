@@ -1,18 +1,18 @@
 # Performance Benchmarks
 
-These benchmarks were run on Linux x86_64. Results vary by hardware. The Fibonacci and cross-language figures below are historical interpreter measurements; use the repository's Criterion suite for current comparisons.
+Measurements on this page were taken on Linux x86_64; results vary by hardware.
 
 ## Interpreter and JIT
 
-Run `cargo bench -p aelys --bench criterion_runtime` to compare the interpreter and the JIT locally.
+Run `cargo bench -p aelys --bench criterion_runtime` to compare the interpreter and the JIT locally (`--bench iai_runtime` counts instructions instead of time).
 
-## Interpreter hot path (2026-11)
+## Interpreter hot path
 
 The interpreter runs the current frame in a dedicated hot loop. It covers register moves and loads, integer and float arithmetic (the wrapping `i8` to `u32` operations included), comparisons, branches and counted loops, `Vec` and array element loads and scalar stores, lengths, reads of initialised globals, scalar struct field loads and stores (`char` fields included), `Option` tests and payloads, reads and scalar writes of captured variables, and calls and returns between functions and closures. Every other instruction, and every edge case of a covered one (a non-integer operand, an overflow, a division by zero, an index out of bounds, an object store that needs a write barrier), leaves the hot loop before any effect and runs through the general loop. A runtime error reports the line of the instruction that raised it, the same in the hot loop, the general loop and the JIT. With `--max-instructions`, `--timeout-ms`, an interrupt handle or execution statistics enabled, only the general loop runs.
 
 The compiler side writes a discarded assignment's value straight into its variable, uses immediate operands for `+ - >> & | ^` with a literal from 0 to 255, reads locals in place for field accesses and `if` conditions, and loads up to four wider literal operands of a loop once before the loop.
 
-User-space machine instructions (`perf stat -e instructions:u`) per run of the suite in `elyra-runs/bench`, release build, interpreter, before (`198257d`) and after:
+User-space machine instructions (`perf stat -e instructions:u`) per run of a set of micro-benchmarks kept outside the repository, release build, interpreter, before the hot loop existed (commit `198257d`) and with it:
 
 | bench | before | after | ratio |
 |---|---|---|---|
@@ -29,104 +29,34 @@ User-space machine instructions (`perf stat -e instructions:u`) per run of the s
 
 With `-ae.jit=on`, functions the JIT refuses and loops it no longer enters stay on the interpreter's hot path.
 
-## Recursive Fibonacci
+## Startup
 
-Computing `fib(35)` with naive recursive implementation (no memoization)  
-I think it's a good benchmark for interpreters since it stresses function call overhead and recursion depth.
-
-```rust
-fn fib(n: int) -> int {
-    if n <= 1 { return n }
-    return fib(n - 1) + fib(n - 2)
-}
-```
-
-### Results
-
-| Implementation | Time  | Notes |
-|----------------|-------|-------|
-| **Aelys (typed)** | 873ms | With type annotations |
-| **Aelys (untyped)** | 995ms | Without type annotations |
-| Python 3.11 | 982ms | Similar performance |
-| Lua 5.4 | 616ms | Faster |
-| Node.js | 86ms  | V8's JIT is hard to beat |
-
-Aelys is roughly on par with Python for this workload, not great, not terrible. Node.js with V8's JIT compiler is in a different league entierely.
-
-Type annotations give a small speedup because the VM can skip some runtime type checks.
-
-## Startup Time
-
-Time from launching the binary to executing the first instruction:
+Running a file parses, type-checks and compiles it before the first instruction runs; `aelys compile` stores the result as `.avbc` bytecode so a later run skips that work. Measure a startup with:
 
 ```bash
 time aelys-cli examples/hello.aelys
 ```
 
-**Result: <1ms**
-
-Startup is essentially instantaneous. The binary loads fast, and parsing + compilation of a small file takes microseconds.
-
-For larger programs, a few thousand lines still compiles in under 50ms.
-
-## Memory Usage
-
-The VM starts with a small heap and grows as needed. Typical memory usage:
-
-| Program | RSS |
-|---------|-----|
-| Hello world | ~2 MB |
-| HTTP server (idle) | ~4 MB |
-| Mandelbrot demo | ~3 MB |
-
-Memory usage is dominated by the Rust runtime and stdlib. Aelys's own data structures are pretty compact.
-
-
 ## Tiering and remaining fallbacks
 
 - **Portable targets**: unsupported JIT targets execute the AVBC v3 interpreter.
-- **Unsupported machine-code shapes**: closures, native/resource operations, and dynamic shapes fall back to the interpreter.
+- **Unsupported machine-code shapes**: closures, native/resource operations, and other operations the JIT does not compile fall back to the interpreter.
 - **Cold code**: tiering deliberately avoids compilation before the hotness thresholds.
 - **Allocation-heavy code**: the generational GC bounds incremental old-generation slices, but allocation and collection costs still need workload-specific measurement.
 
-## What's Fast
+## Array and Vec storage
 
-- **Startup**: Near-instant
-- **Compilation**: Very fast
-- **Simple loops**: Superinstructions help
-- **Native stdlib calls**: Optimized with inline caching
+The VM uses specialized storage for each element type:
+- `[int; N]`, `Vec<int>` and the other integer arrays and Vecs (all but `Vec<u8>`) → 8 bytes per element, no boxing
+- `[float; N]`, `Vec<float>` → 8 bytes per element
+- `[bool; N]`, `Vec<bool>` → 1 byte per element
+- `Vec<u8>` → 1 byte per element (binary data)
 
-## Array and Vec Performance
-
-Arrays and vectors got some work to make them competitive with Python. Here's the results:
-
-### Benchmarks vs Python
-
-| Operation | Aelys | Python | Winner |
-|-----------|-------|--------|--------|
-| Vec Push (1M ops) | 40ms | 64ms | **Aelys (1.6x)** |
-| Vec Pop (1M ops) | 32ms | 77ms | **Aelys (2.4x)** |
-| Matrix Multiply 100x100 | 66ms | 84ms | **Aelys (1.3x)** |
-| Bubble Sort (5K elements) | 1673ms | 2260ms | **Aelys (1.35x)** |
-| Array Sum (1M elements) | 37ms | 26ms | Python (1.4x) |
-
-Aelys wins on mutations (push/pop) and compute-heavy loops. Python wins on simple iteration because CPython has decades of micro-optimizations for patterns like `for x in list`.
-
-### Why it's fast
-
-The VM uses specialized storage for each type:
-- `[int; N]` and `Vec<int>` → specialized storage (8 bytes/element, no boxing overhead)
-- `[float; N]` → specialized storage (8 bytes/element)
-- `[bool; N]` → specialized storage (1 byte/element, 8x more compact than boxing each bool)
-
-The compiler emits type-specific opcodes too. `arr[i]` compiles to `ArrayLoadI` for Int, `ArrayLoadF` for Float, etc. No runtime type checking.
+The compiler emits type-specific opcodes too: `arr[i]` compiles to `ArrayLoadI` for an `int` element, `ArrayLoadF` for a `float` one, and so on, with no runtime type test.
 
 ### Vec growth
 
-Vecs double in capacity when they run out of space:
-- Start at 1
-- Growth: 1 → 2 → 4 → 8 → ...
-- Use `reserve(n)` to pre-allocate if you know the final size
+A Vec doubles its capacity when it runs out of space, so `push` is amortised O(1). Use `reserve(n)` to allocate once if you know the final size:
 
 ```rust
 let mut v = vec![]
@@ -140,17 +70,22 @@ for i in 0..1000 {
 
 1. **Pre-allocate when you know the size**
    ```rust
-   let mut v = vec![]
+   let mut v: Vec<int> = vec![]
    v.reserve(10000)
    ```
 
 2. **Use Array for fixed-size data**
    ```rust
+   let x = 1.0
+   let y = 2.0
+   let z = 3.0
    let coords = [x, y, z]  // simpler than Vec
    ```
 
 3. **Batch operations**
    ```rust
+   let mut arr = [1, 2, 3, 4]
+
    // One loop
    for i in 0..arr.len() {
        arr[i] = arr[i] * 2 + 1
@@ -161,18 +96,20 @@ for i in 0..1000 {
    for i in 0..arr.len() { arr[i] = arr[i] + 1 }
    ```
 
-Run the benchmarks:
+`examples/benchmark` holds small array, Vec, sort and matrix programs, most with a Python twin, to compare on your machine:
+
 ```bash
-./examples/benchmark/run_array_benchmarks.sh
+aelys-cli examples/benchmark/array_sum.aelys
+python3 examples/benchmark/array_sum.py
 ```
 
 ## Improving Performance
 
 If your Aelys code is too slow:
 
-1. **Add type annotations** - small speedup from fewer runtime checks
-2. **Pre-allocate arrays/vecs** - avoid reallocation overhead
-3. **Precompile to bytecode** - skip parse/compile on each run
-4. **Profile first** - make sure you're optimizing the right thing
+1. **Profile first** - make sure you're optimizing the right thing
+2. **Turn the JIT on** - `-ae.jit=on` on Linux x86_64 for long-running numeric loops
+3. **Pre-allocate arrays/vecs** - avoid reallocation overhead
+4. **Precompile to bytecode** - skip parse/compile on each run
 
-For truly performance-critical code, consider writing a native module in Rust and calling it from Aelys. That's what the native FFI is for.
+For truly performance-critical code, consider writing a native module in Rust and calling it from Aelys; see [Native modules](native-modules.md). Keep the loop itself in Aelys and hand the native a whole buffer: a native call costs far more than an interpreted instruction.

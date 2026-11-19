@@ -18,8 +18,10 @@ You can still write `use` with an alias if you want a shorter name:
 
 ```rust
 use std::math as m
+println(m::sqrt(16.0))   // prints: 4.0
 ```
 
+The other modules, `std::fs`, `std::net` and `std::sys`, need a `use` line:
 
 ```rust
 use std::fs
@@ -44,10 +46,10 @@ Console input/output. Auto-registered -- no `use` required.
 | `eflush()` | Flush stderr buffer |
 
 ```rust
-println("Hello")         // Hello\n
+println("Hello")         // prints: Hello
 print("Loading")         // Loading (no newline)
 print(".")               // .
-println("")              // newline
+println("")              // prints: Loading.
 ```
 
 ### Input Functions
@@ -59,9 +61,13 @@ println("")              // newline
 | `input(prompt)` | Print prompt and read an `Option<string>` |
 
 ```rust
-let name = input("What's your name? ")
-println("Hello, {name}")
+match input("What's your name? ") {
+    Some(name) => println("Hello, {name}"),
+    None => println("no input"),
+}
 ```
+
+At the end of the input, `readline`, `read_char` and `input` return `None`.
 
 ### Terminal Control
 
@@ -114,12 +120,15 @@ Math functions and constants. Auto-registered -- no `use` required.
 `math::randint`, `sys::random`, and `sys::random_int` consume the same VM-local sequence.
 
 ```rust
-math::abs(-5)        // 5
-math::sqrt(16.0)     // 4.0
-math::pow(2, 10)     // 1024
-math::clamp(15, 0, 10)  // 10
-math::randint(1, 6)  // random int from 1 to 6 (dice roll)
+println(math::abs(-5))          // prints: 5
+println(math::sqrt(16.0))       // prints: 4.0
+println(math::pow(2, 10))       // prints: 1024.0
+println(math::clamp(15, 0, 10)) // prints: 10
+let roll = math::randint(1, 6)  // random int from 1 to 6 (dice roll)
 ```
+
+The trigonometric, exponential and logarithmic functions, `sqrt`, `cbrt`, `pow`,
+`hypot`, `fmod` and `atan2` return a `float`; they accept `int` arguments too.
 
 ### Trigonometry
 
@@ -205,8 +214,8 @@ let up = string::to_upper("hello")
 | `s.char_len()` | Length in Unicode characters |
 
 ```rust
-"café".len()       // 5 (bytes)
-"café".char_len()  // 4 (characters)
+println("café".len())       // prints: 5
+println("café".char_len())  // prints: 4
 ```
 
 This distinction matters for non-ASCII text.
@@ -219,21 +228,21 @@ This distinction matters for non-ASCII text.
 | `s.byte_at(i)` | Byte at index (-1 if out of bounds) |
 | `s.substr(start, len)` | Extract substring by character position |
 | `s.chars()` | `Vec<char>` of the characters |
-| `s.bytes()` | `Vec<int>` of the UTF-8 bytes |
 | `s.to_bytes()` | `Vec<u8>` of the UTF-8 bytes, the input of the binary methods of [`Vec<u8>`](#binary-data-vecu8) |
 | `string::from_char(c)` | One-character string from a `char` |
 | `s.push(c)` | Append a `char` to a string variable or place with a mutable root (`p.name.push(c)`) |
 
 ```rust
-"hello".char_at(0)    // "h"
-"hello".char_at(10)   // "" (out of bounds)
-"hello".substr(1, 3)  // "ell"
-"héllo".chars()       // vec!['h', 'é', 'l', 'l', 'o']
-"Aé".bytes()          // vec![65, 195, 169]
+println("hello".char_at(0))    // prints: h
+println("hello".char_at(10))   // "" (out of bounds)
+println("hello".substr(1, 3))  // prints: ell
+println("héllo".chars())       // prints: ['h', 'é', 'l', 'l', 'o']
+println("Aé".to_bytes())       // prints: [65, 195, 169]
 ```
 
 `s[i]` and a for-each over a string yield `char` values; `char_at` keeps
-returning a one-character string.
+returning a one-character string. The UTF-8 bytes of a string are `s.to_bytes()`, a `Vec<u8>`;
+there is no `s.bytes()`.
 
 ### Case Conversion
 
@@ -251,7 +260,7 @@ returning a one-character string.
 | `s.starts_with(prefix)` | Check prefix |
 | `s.ends_with(suffix)` | Check suffix |
 | `s.find(needle)` | First occurrence index (-1 if not found) |
-| `s.rfind(needle)` | Last occurrence index |
+| `s.rfind(needle)` | Last occurrence index (-1 if not found) |
 | `s.count(needle)` | Count occurrences |
 
 Note: `find` and `rfind` return byte positions, not character positions. This can be surprising with Unicode - I might change this in a future version.
@@ -284,10 +293,10 @@ is a clean `out of memory` error before anything is allocated, and so is
 `v.resize(n, x)` growing past it.
 
 ```rust
-"  hello  ".trim()        // "hello"
-"42".pad_left(5, "0")     // "00042"
-"42".pad_right(5, "ab")   // "42aaa"
-"4242".pad_left(2, "0")   // "4242"
+println("  hello  ".trim())        // prints: hello
+println("42".pad_left(5, "0"))     // prints: 00042
+println("42".pad_right(5, "ab"))   // prints: 42aaa
+println("4242".pad_left(2, "0"))   // prints: 4242
 ```
 
 ### Splitting
@@ -301,9 +310,10 @@ is a clean `out of memory` error before anything is allocated, and so is
 | `s.line_count()` | Count lines |
 
 ```rust
-let parts = "a,b,,c".split(",")      // vec!["a", "b", "", "c"]
-parts.join("-")                      // "a-b--c"
-"".split(",").len()                  // 1
+let parts = "a,b,,c".split(",")
+println(parts)                       // prints: ["a", "b", "", "c"]
+println(parts.join("-"))             // prints: a-b--c
+println("".split(",").len())         // prints: 1
 ```
 
 ### Comparison and building
@@ -354,10 +364,15 @@ outside the `int` range (-9223372036854775808 to 9223372036854775807) all give
 prefix; a radix outside 2-36 is a runtime error.
 
 ```rust
-match "42".to_int() {
+let n = match "42".to_int() {
     Some(value) => value,
     None => 0,
 }
+println(n)                          // prints: 42
+println("0x1F".to_int())            // prints: Some(31)
+println("3.9".to_int())             // prints: None
+println("ff".to_int_radix(16))      // prints: Some(255)
+println("yes".to_bool())            // prints: Some(true)
 ```
 
 ### Numbers
@@ -375,10 +390,10 @@ otherwise its `Display` impl, otherwise it is E0338. Inside a generic body (`fn 
 with, so `t.to_string()` never prints a raw struct:
 
 ```rust
-(42).to_string()      // "42"
-true.to_string()      // "true"
-(3.14).to_string()    // "3.14"
-vec!["a"].to_string() // "[\"a\"]"
+println((42).to_string())      // prints: 42
+println(true.to_string())      // prints: true
+println((3.14).to_string())    // prints: 3.14
+println(vec!["a"].to_string()) // prints: ["a"]
 ```
 
 ### Numeric Formatting
@@ -394,9 +409,25 @@ Digits are lowercase and a negative value keeps its sign (`(-255).to_hex()` is
 `"-ff"`). These methods exist on every integer type.
 
 ```rust
-255.to_hex()      // "ff"
-10.to_binary()    // "1010"
-100.to_radix(7)   // "202"
+println(255.to_hex())       // prints: ff
+println(10.to_binary())     // prints: 1010
+println(100.to_radix(7))    // prints: 202
+println((-255).to_hex())    // prints: -ff
+```
+
+### Absolute Value
+
+`x.abs()` returns a value of the receiver's own type. On `int` it is checked: the
+absolute value of the smallest `int` overflows and traps, like `-x`. On a signed
+sized type it wraps (`(-128 as i8).abs()` is `-128`, as in two's complement), on
+an unsigned type it returns the value unchanged, and on `float` and `f32` it clears
+the sign. `math::abs(x)` is the same operation as a function on `int` or `float`.
+
+```rust
+println((-3).abs())       // prints: 3
+let b: i8 = -128
+println(b.abs())          // prints: -128
+println((-2.5).abs())     // prints: 2.5
 ```
 
 ### Characters
@@ -407,9 +438,9 @@ Digits are lowercase and a negative value keeps its sign (`(-255).to_hex()` is
 | `n as char` | Code point to character; a value outside `0..=0x10FFFF` or a surrogate is a runtime error |
 
 ```rust
-'A' as int                     // 65
-(65 as char).to_string()       // "A"
-(0x1F600 as char).to_string()  // "😀"
+println('A' as int)                     // prints: 65
+println((65 as char).to_string())       // prints: A
+println((0x1F600 as char).to_string())  // prints: 😀
 ```
 
 Values have static types, so there is no `type_of`, no `is_int`-style predicate and
@@ -524,34 +555,41 @@ Modes: `"r"` (read), `"w"` (write), `"a"` (append), `"rw"` (read+write).
 `read`, `read_line` and `read_chunk` share one buffered reader per handle, so they can be mixed: each continues where the previous one stopped.
 
 ```rust
-let content = match fs::read_text("config.txt") {
-    Ok(value) => value,
-    Err(error) => return error,
+use std::fs
+
+fn show(path: string) -> Result<unit, string> {
+    let content = fs::read_text(path)?
+    println("{content.len()} bytes")
+
+    // handle-based way
+    let f = fs::open(path, "r")?
+    while true {
+        match fs::read_line(f)? {
+            Some(line) => println(line),
+            None => break,
+        }
+    }
+    fs::close(f)
 }
 
-// Handle-based way
-let f = match fs::open("data.txt", "r") {
-    Ok(handle) => handle,
-    Err(error) => return error,
+let _ = fs::write_text("data.txt", "first\nsecond\n")
+match show("data.txt") {
+    Ok(_) => {}
+    Err(error) => eprintln(error),
 }
-while true {
-    match fs::read_line(f) {
-        Ok(Some(line)) => println(line),
-        Ok(None) => break,
-        Err(error) => return error,
-    }
-}
-let _ = fs::close(f)
+// prints: 13 bytes
+// prints: first
+// prints: second
 ```
 
 ### Writing Files
 
 | Function | Description |
 |----------|-------------|
-| `write_text(path, content)` | Write string to file (overwrite) |
-| `append_text(path, content)` | Append string to file |
-| `write(handle, data)` | Write a string to a handle |
-| `write_line(handle, line)` | Write with newline |
+| `write_text(path, content)` | Write string to file (overwrite), as `Result<int, string>` (bytes written) |
+| `append_text(path, content)` | Append string to file, as `Result<int, string>` |
+| `write(handle, data)` | Write a string to a handle, as `Result<int, string>` |
+| `write_line(handle, line)` | Write with newline, as `Result<int, string>` |
 | `write_bytes(path, &v)` | Write the bytes of a `Vec<u8>` to `path` (overwrite) as `Result<unit, string>` |
 | `write_chunk(handle, &v)` | Write the bytes of a `Vec<u8>` to a handle as `Result<int, string>` (bytes written) |
 
@@ -567,6 +605,7 @@ let back = fs::read_bytes("out.bin").unwrap()
 ```
 
 ```rust
+use std::fs
 let _ = fs::write_text("output.txt", "Hello, file!")
 let _ = fs::append_text("log.txt", "New entry\n")
 ```
@@ -575,27 +614,27 @@ let _ = fs::append_text("log.txt", "New entry\n")
 
 | Function | Description |
 |----------|-------------|
-| `exists(path)` | Check if path exists |
-| `is_file(path)` | Check if regular file |
-| `is_dir(path)` | Check if directory |
+| `exists(path)` | Check if path exists (`bool`) |
+| `is_file(path)` | Check if regular file (`bool`) |
+| `is_dir(path)` | Check if directory (`bool`) |
 | `size(path)` | File size in bytes as `Result<int, string>` |
 
 ### Directory Operations
 
 | Function | Description |
 |----------|-------------|
-| `mkdir(path)` | Create directory |
-| `mkdir_all(path)` | Create directory and parents |
-| `rmdir(path)` | Remove empty directory |
-| `readdir(path)` | List directory (newline-separated) |
+| `mkdir(path)` | Create directory, as `Result<bool, string>` |
+| `mkdir_all(path)` | Create directory and parents, as `Result<bool, string>` |
+| `rmdir(path)` | Remove empty directory, as `Result<bool, string>` |
+| `readdir(path)` | List directory as `Result<string, string>`, one name per line |
 
 ### File Management
 
 | Function | Description |
 |----------|-------------|
-| `delete(path)` | Delete file |
-| `rename(from, to)` | Rename or move |
-| `copy(from, to)` | Copy file |
+| `delete(path)` | Delete file, as `Result<bool, string>` |
+| `rename(from, to)` | Rename or move, as `Result<bool, string>` |
+| `copy(from, to)` | Copy file, as `Result<int, string>` (bytes copied) |
 
 ### Path Utilities
 
@@ -604,13 +643,15 @@ let _ = fs::append_text("log.txt", "New entry\n")
 | `basename(path)` | Get file name |
 | `dirname(path)` | Get directory part |
 | `extension(path)` | Get file extension |
-| `join(base, path)` | Join paths safely |
-| `absolute(path)` | Convert to absolute path |
+| `join(base, path)` | Join paths safely, as `Result<string, string>` |
+| `absolute(path)` | Convert to absolute path, as `Result<string, string>` |
 
-`join` is secure against path traversal - it won't let `..` escape the base directory.
+`join` is secure against path traversal: a path that would escape the base directory with `..`, or an absolute path, is an `Err`.
 
 ```rust
-fs::join("/home/user", "../../etc/passwd")  // stays within /home/user
+use std::fs
+println(fs::join("/home/user", "docs/a.txt"))        // prints: Ok("/home/user/docs/a.txt")
+println(fs::join("/home/user", "../../etc/passwd"))  // prints: Err("fs.join: path escapes base")
 ```
 
 ---
@@ -627,37 +668,50 @@ use std::net
 
 | Function | Description |
 |----------|-------------|
-| `connect(host, port)` | Connect to server (30s timeout), returns handle |
-| `connect_timeout(host, port, ms)` | Connect with custom timeout in milliseconds, returns handle |
-| `send(handle, data)` | Send data |
-| `recv(handle)` | Receive available data |
-| `recv_bytes(handle, max)` | Receive up to max bytes |
-| `recv_line(handle)` | Receive one line |
-| `close(handle)` | Close connection |
+| `connect(host, port)` | Connect to server (30s timeout), as `Option<int>` (the handle) |
+| `connect_timeout(host, port, ms)` | Connect with custom timeout in milliseconds, as `Option<int>` |
+| `send(handle, data)` | Send a string, as `Option<int>` (bytes sent) |
+| `recv(handle)` | Receive available data as `Option<string>` |
+| `recv_bytes(handle, max)` | Receive up to max bytes as `Option<string>` |
+| `recv_line(handle)` | Receive one line as `Option<string>` |
+| `close(handle)` | Close connection, as `Result<unit, string>` |
 
+The functions that return an `Option` give `None` when the operation fails.
+
+<!-- doctest: no_run (opens a network connection) -->
 ```rust
-let sock = net::connect("example.com", 80)
-let response = net::recv(sock)
-println(response)
-let _ = net::close(sock)
+use std::net
+
+match net::connect("example.com", 80) {
+    Some(sock) => {
+        let _ = net::send(sock, "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
+        if let Some(response) = net::recv(sock) { println(response) }
+        let _ = net::close(sock)
+    }
+    None => println("cannot connect"),
+}
 ```
 
 ### TCP Server
 
 | Function | Description |
 |----------|-------------|
-| `listen(host, port)` | Start listening, returns handle |
-| `accept(handle)` | Accept connection, returns new handle |
+| `listen(host, port)` | Start listening, as `Option<int>` (the handle) |
+| `accept(handle)` | Accept connection, as `Option<int>` (a new handle) |
 
+<!-- doctest: no_run (serves forever) -->
 ```rust
-let server = net::listen("0.0.0.0", 8080)
+use std::net
+
+let server = net::listen("127.0.0.1", 8080).expect("cannot listen on port 8080")
 println("Listening on port 8080")
 
 while true {
-    let client = net::accept(server)
-    let request = net::recv_line(client)
-    let _ = net::send(client, "HTTP/1.0 200 OK\r\n\r\nHello!")
-    let _ = net::close(client)
+    if let Some(client) = net::accept(server) {
+        let _ = net::recv_line(client)
+        let _ = net::send(client, "HTTP/1.0 200 OK\r\n\r\nHello!")
+        let _ = net::close(client)
+    }
 }
 ```
 
@@ -665,27 +719,32 @@ while true {
 
 | Function | Description |
 |----------|-------------|
-| `udp_bind(host, port)` | Bind a UDP socket, returns handle |
-| `udp_send_to(handle, data, addr)` | Send datagram to `"host:port"` |
-| `udp_recv_from(handle, max)` | Receive datagram (up to max bytes) |
-| `udp_connect(handle, host, port)` | Connect UDP socket to fixed remote |
-| `udp_send(handle, data)` | Send on connected UDP socket |
-| `udp_recv(handle, max)` | Receive on connected UDP socket |
-| `udp_set_broadcast(handle, enabled)` | Enable/disable broadcast |
+| `udp_bind(host, port)` | Bind a UDP socket, as `Option<int>` (the handle) |
+| `udp_send_to(handle, data, addr)` | Send datagram to `"host:port"`, as `Option<int>` (bytes sent) |
+| `udp_recv_from(handle, max)` | Receive datagram (up to max bytes) as `Option<string>` |
+| `udp_connect(handle, host, port)` | Connect UDP socket to fixed remote, as `Result<unit, string>` |
+| `udp_send(handle, data)` | Send on connected UDP socket, as `Option<int>` |
+| `udp_recv(handle, max)` | Receive on connected UDP socket as `Option<string>` |
+| `udp_set_broadcast(handle, enabled)` | Enable/disable broadcast, as `Result<unit, string>` |
 
+<!-- doctest: no_run (waits for a datagram) -->
 ```rust
-// Connectionless (send_to / recv_from)
-let sock = net::udp_bind("0.0.0.0", 0)
+use std::net
+
+// connectionless (send_to / recv_from)
+let sock = net::udp_bind("0.0.0.0", 0).unwrap()
 let _ = net::udp_send_to(sock, "hello", "127.0.0.1:9000")
 let data = net::udp_recv_from(sock, 1024)
+println(data)
 let _ = net::close(sock)
 
-// Connected mode
-let sock = net::udp_bind("0.0.0.0", 0)
-let _ = net::udp_connect(sock, "127.0.0.1", 9000)
-let _ = net::udp_send(sock, "hello")
-let data = net::udp_recv(sock, 1024)
-let _ = net::close(sock)
+// connected mode
+let conn = net::udp_bind("0.0.0.0", 0).unwrap()
+let _ = net::udp_connect(conn, "127.0.0.1", 9000)
+let _ = net::udp_send(conn, "hello")
+let reply = net::udp_recv(conn, 1024)
+println(reply)
+let _ = net::close(conn)
 ```
 
 `close`, `set_timeout`, and `local_addr` also work with UDP handles.
@@ -694,11 +753,11 @@ let _ = net::close(sock)
 
 | Function | Description |
 |----------|-------------|
-| `set_timeout(handle, ms)` | Set read/write timeout (0 to disable) |
-| `set_nodelay(handle, bool)` | Enable/disable Nagle's algorithm |
-| `shutdown(handle, how)` | Partial shutdown ("read", "write", "both") |
-| `local_addr(handle)` | Get local address |
-| `peer_addr(handle)` | Get peer address |
+| `set_timeout(handle, ms)` | Set read/write timeout (0 to disable), as `Result<unit, string>` |
+| `set_nodelay(handle, bool)` | Enable/disable Nagle's algorithm, as `Result<unit, string>` |
+| `shutdown(handle, how)` | Partial shutdown ("read", "write", "both"), as `Result<unit, string>` |
+| `local_addr(handle)` | Local address as `Option<string>` |
+| `peer_addr(handle)` | Peer address as `Option<string>` |
 
 ---
 
@@ -715,8 +774,18 @@ use std::sys
 | `arg_count()` | Number of program arguments, as `int` |
 | `arg(index)` | Program argument `index` (0-based) as `Option<string>`; `None` when `index` is negative or past the end |
 | `args()` | Every program argument joined with `"\n"`, as one `string` (`""` when there is none) |
+| `script_path()`, `script_dir()` | Path of the running script, or its directory, as `Option<string>` |
+| `env(name)` | Environment variable as `Option<string>` |
+| `set_env(name, value)`, `unset_env(name)` | Set or remove an environment variable |
+| `env_vars()` | Every environment variable as `NAME=VALUE` lines, one `string` |
+| `exit(code)` | Stop the program with that exit status (type `never`) |
+| `pid()` | Process id |
+| `home()` | Home directory as `Option<string>` |
 | `platform()` | OS name ("linux", "macos", "windows") |
 | `arch()` | CPU architecture ("x86_64", "aarch64", etc.) |
+| `os()` | OS name, more detailed than `platform()` |
+| `hostname()` | Host name |
+| `cpu_count()` | Number of CPUs |
 | `cwd()` | Current directory as `Result<string, string>` |
 | `set_cwd(path)` | Change directory, returning `Result<unit, string>` |
 | `exec(command)` | Run a shell command, returning `Result<int, string>` |
@@ -766,8 +835,9 @@ system operation cannot be started or completed. A nonzero child exit status is
 an `Ok(status)` value, not a runtime exception.
 
 ```rust
+use std::sys
 println("Running on {sys::platform()} {sys::arch()}")
-// "Running on linux x86_64"
+// Running on linux x86_64
 ```
 
 ---
@@ -782,9 +852,14 @@ needs a mutable receiver (E0318). `use std::bytes` is E0480 and a `bytes::name`
 call is E0481; both name the replacement.
 
 ```rust
+use std::fs
+
 let mut v: Vec<u8> = vec![0; 16]
 let header = "PWAD".to_bytes()
-let file = fs::read_bytes("doom.wad").unwrap()
+match fs::read_bytes("doom.wad") {
+    Ok(file) => println("{file.len()} bytes"),
+    Err(error) => println("cannot read doom.wad: {error}"),
+}
 ```
 
 | Method | Result | Meaning |
@@ -833,6 +908,8 @@ packet.write_u16_le(4, 1024)
 packet.write_i16_be(6, -100)
 let name = "Meow".to_bytes()
 for i in 0..4 { packet[8 + i] = name[i] }
+println(parse_header(packet))   // prints: 3735928559 1024 Meow
+println(packet.read_i16_be(6))  // prints: -100
 ```
 
 A `Vec<u8>` is handed to a native function as `&v`, or `&mut v` when the native

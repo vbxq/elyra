@@ -216,11 +216,11 @@ array or a `Vec` (`int64` and `uint64` are other spellings of `i64` and `u64`):
 ```rust
 let a: u32 = 0xFFFFFFFF
 let one: u32 = 1
-println(a + one)          // 0
+println(a + one)          // prints: 0
 let b: i32 = 0x7FFFFFFF
-println(b + 1)            // -2147483648
+println(b + 1)            // prints: -2147483648
 let c: u8 = 200
-println(c + c)            // 144
+println(c + c)            // prints: 144
 ```
 
 - `+ - * & | ^ ~` and unary `-` wrap to the width.
@@ -314,14 +314,18 @@ digits with a leading `-` for a negative value (`(-255).to_hex()` is `"-ff"`);
 below, also apply to a value whose integer type inference fixes later, such as the result
 of a generic call (`gid(255).to_hex()` is `"ff"`); a receiver that turns out not to be an
 integer is E0301 `method 'to_hex' requires an integer, found string`.
+`x.abs()` exists on every integer type and on floats and returns the receiver's type:
+checked on `int` (the smallest `int` traps), wrapping on signed sized types, the identity
+on unsigned ones.
 
 ```rust
 let n = "0x1F".to_int().unwrap_or(0)    // 31
 let f = " 2.5 ".to_float()               // Some(2.5)
-println(n.to_binary())                   // 11111
-println(255.to_radix(36))                // 73
-println('A' as int)                      // 65
-println(97 as char)                      // a
+println(f)                               // prints: Some(2.5)
+println(n.to_binary())                   // prints: 11111
+println(255.to_radix(36))                // prints: 73
+println('A' as int)                      // prints: 65
+println(97 as char)                      // prints: a
 ```
 
 There is no `std::convert` module: `use std::convert` is E0449, and so is a
@@ -347,8 +351,9 @@ known at compile time, so there is no runtime type inspection.
 ```rust
 fn fixed_mul(a: i32, b: i32) -> i32 { a.mul_shr(b, 16) }
 fn fixed_div(a: i32, b: i32) -> i32 { a.shl_div(b, 16) }
-println(fixed_mul(0x7FFF0000, 0x20000))   // -131072
-println(fixed_div(10 << 16, 4 << 16))     // 163840, 2.5 in 16.16
+println(fixed_mul(0x7FFF0000, 0x20000))   // prints: -131072
+println(fixed_div(10 << 16, 4 << 16))     // prints: 163840
+// 163840 is 2.5 in 16.16
 ```
 
 Each sized operator, and each of these two methods, is a single VM instruction. Machine
@@ -435,9 +440,9 @@ Inner scopes can also shadow:
 let x = 1
 if true {
     let x = 2    // different x
-    println(x)  // 2
+    println(x)  // prints: 2
 }
-println(x)      // 1
+println(x)      // prints: 1
 ```
 
 ### Scope
@@ -515,7 +520,7 @@ call site it is E0353; see [Type Annotations](#type-annotations).
 
 By default, function parameters are immutable. If you try to reassign one, the compiler will complain:
 
-```rust
+```rust,compile_fail,E0203
 fn process(buffer: string) -> string {
     buffer += "-"  // ✗ error: buffer is immutable
     return buffer
@@ -558,14 +563,14 @@ let b = try_modify(a)  // b = 101
 a                       // still 1
 ```
 
-Aggregates (structs, enums, arrays and `Vec`) are passed by reference, so a
+Aggregates (structs, enums, arrays, `Vec` and `Map`) are passed by reference, so a
 `mut` parameter of aggregate type mutates the caller's value. That is only
 allowed when the argument is reachable from a mutable root: passing `a`, `a.f`
 or `a[i]` to a `mut` parameter when `a` is immutable is E0323. Pass
 `a.clone()` to give the function its own copy. The same rule applies to a
 `mut self` receiver (E0331). See [Structs](#structs).
 
-```rust
+```rust,compile_fail,E0323
 fn grow(mut v: Vec<int>) { v.push(0) }
 
 let mut shared = vec![1]
@@ -594,7 +599,11 @@ be a clone, and the other positions accept any argument. This holds for a
 function-typed parameter or field, a `let` or `let mut` binding, an element of a
 `Vec` or array, a captured value and the result of a call.
 
-```rust
+```rust,compile_fail,E0301
+fn grow(mut v: Vec<int>) { v.push(0) }
+let mut shared = vec![1]
+let fixed = vec![1]
+
 fn show(v: Vec<int>) { println(v.len()) }
 fn apply(f: fn(Vec<int>) -> unit, v: Vec<int>) { f(v) }                 // ✓ no mut position
 apply(show, fixed)                                                     // ✓
@@ -653,7 +662,7 @@ An unannotated function that returns a value with `return v` takes the type of
 `v`, so every path must yield a value: ending on a trailing assignment (or any
 other statement) after such a `return` is E0215.
 
-```rust
+```rust,compile_fail,E0215
 let mut g = 0
 fn f(c: bool) {
     if c { return 7 }
@@ -668,7 +677,7 @@ a function that reads a global whose `let` has not run yet stops the program wit
 the runtime error ``global `b` read before its initialiser ran``, pointing at the
 reading line. The value is never read as a default.
 
-```rust
+```rust,should_panic
 let a = f()        // runtime error: global `b` read before its initialiser ran
 let b = 10
 fn f() -> int { b + 1 }
@@ -694,7 +703,7 @@ last expression of a function body, a block or a match arm and is returned from 
 fn adder(n: int) -> fn(int) -> int {
     fn(x: int) -> int { x + n }
 }
-println(adder(2)(5))   // 7
+println(adder(2)(5))   // prints: 7
 ```
 
 ### Closures
@@ -736,7 +745,7 @@ for i in 0..3 {
 }
 let mut t = 0
 for f in fs { t = t * 100 + f() }
-println(t)   // 11121
+println(t)   // prints: 11121
 ```
 
 ### Higher-Order Functions
@@ -847,23 +856,23 @@ carry the same variant and every payload slot pair is equal. `Option` and
 struct Point { x: int, y: string }
 enum Shape { Dot(int), Box { side: int } }
 
-println([1, 2] == [1, 2])                                     // true
-println([1, 2] == [1, 3])                                     // false
-println(vec![1] == vec![1])                                   // true
-println(Some(1) == Some(1))                                   // true
-println(Point { x: 1, y: "a" } == Point { x: 1, y: "a" })     // true
-println(Point { x: 1, y: "a" } == Point { x: 1, y: "b" })     // false
-println(Shape::Dot(1) == Shape::Dot(1))                       // true
-println(Shape::Dot(1) == Shape::Box { side: 1 })              // false
+println([1, 2] == [1, 2])                                     // prints: true
+println([1, 2] == [1, 3])                                     // prints: false
+println(vec![1] == vec![1])                                   // prints: true
+println(Some(1) == Some(1))                                   // prints: true
+println(Point { x: 1, y: "a" } == Point { x: 1, y: "a" })     // prints: true
+println(Point { x: 1, y: "a" } == Point { x: 1, y: "b" })     // prints: false
+println(Shape::Dot(1) == Shape::Dot(1))                       // prints: true
+println(Shape::Dot(1) == Shape::Box { side: 1 })              // prints: false
 ```
 
 Nesting composes, so an aggregate inside an aggregate is still compared by value:
 
 ```rust
 struct Bag { items: Vec<int> }
-println(Bag { items: vec![1, 2] } == Bag { items: vec![1, 2] })  // true
-println(Some(vec![[1, 2]]) == Some(vec![[1, 2]]))                // true
-println([vec![1]] != [vec![2]])                                  // true
+println(Bag { items: vec![1, 2] } == Bag { items: vec![1, 2] })  // prints: true
+println(Some(vec![[1, 2]]) == Some(vec![[1, 2]]))                // prints: true
+println([vec![1]] != [vec![2]])                                  // prints: true
 ```
 
 A `Result` written with a bare `Ok` or `Err` still needs its type to be known, so
@@ -872,7 +881,7 @@ annotate the binding when nothing else pins the error type:
 ```rust
 let a: Result<int, Error> = Ok(1)
 let b: Result<int, Error> = Ok(1)
-println(a == b)   // true
+println(a == b)   // prints: true
 ```
 
 ### Logical
@@ -961,7 +970,7 @@ starting a struct or enum construction. This keeps `if flag { ... }` unambiguous
 without requiring parentheses around ordinary conditions, and it means a
 construction written directly in a header is a syntax error:
 
-```rust
+```rust,compile_fail,E0101
 struct Point { x: int }
 if Point { x: 1 }.x > 0 { println("yes") }   // ✗ error: expected semicolon or newline, found :
 ```
@@ -1020,7 +1029,7 @@ let bonus = if grade(85) == 3 {
     let extra = 1
     10 + extra
 } else if grade(85) == 4 { 20 } else { 0 }
-println(bonus)   // 11
+println(bonus)   // prints: 11
 ```
 
 All branches must have the same type. When one branch has a known type and the
@@ -1052,7 +1061,7 @@ let area = {
     let width = x * 2
     width * x
 }
-println(area + x)   // 201
+println(area + x)   // prints: 201
 ```
 
 ### if let
@@ -1070,7 +1079,7 @@ let found: Option<int> = Some(7)
 if let Some(v) = found { println(v) } else { println("none") }
 
 let doubled = if let Some(v) = found { v * 2 } else { 0 }
-println(doubled)   // 14
+println(doubled)   // prints: 14
 ```
 
 ### while
@@ -1080,7 +1089,7 @@ let mut n = 0
 while n < 3 {
     n++
 }
-println(n)   // 3
+println(n)   // prints: 3
 ```
 
 ### while let
@@ -1095,7 +1104,7 @@ let mut sum = 0
 while let Some(top) = stack.pop() {
     sum += top
 }
-println(sum)   // 6
+println(sum)   // prints: 6
 ```
 
 ### loop
@@ -1111,7 +1120,7 @@ let first_square_above_50 = loop {
     i += 1
     if i * i > 50 { break i }
 }
-println(first_square_above_50)   // 8
+println(first_square_above_50)   // prints: 8
 ```
 
 `break value` is only allowed for `loop`; on a `while`, `while let` or `for` it is
@@ -1212,8 +1221,11 @@ You can use `break` and `continue` inside for-each loops:
 ```rust
 for c in "abcdefgh" {
     if c == 'd' { break }
-    println(c)    // prints a, b, c
+    println(c)
 }
+// prints: a
+// prints: b
+// prints: c
 ```
 
 ### break and continue
@@ -1247,7 +1259,7 @@ let mut pairs = 0
         pairs += 1
     }
 }
-println(pairs)   // 15
+println(pairs)   // prints: 15
 
 let hit = 'search: loop {
     for a in 1..20 {
@@ -1257,7 +1269,7 @@ let hit = 'search: loop {
     }
     break 0
 }
-println(hit)   // 713
+println(hit)   // prints: 713
 ```
 
 ## Tuples
@@ -1270,12 +1282,12 @@ in declaration order. `(x)` is just a parenthesised `x`.
 fn divmod(a: int, b: int) -> (int, int) { (a / b, a % b) }
 
 let t = divmod(17, 5)
-println(t.0)   // 3
-println(t.1)   // 2
+println(t.0)   // prints: 3
+println(t.1)   // prints: 2
 
 let pair: (int, string) = (1, "one")
 let nested = ((1, 2), 3)
-println(nested.0.1)   // 2
+println(nested.0.1)   // prints: 2
 ```
 
 Tuples are immutable: writing an element, `t.0 = 1` or `t.0 += 1`, is E0393. They
@@ -1301,6 +1313,7 @@ is a tuple of 2 elements`, in `let` and in `match`.
 
 ```rust
 struct Point { x: int, y: int }
+fn divmod(a: int, b: int) -> (int, int) { (a / b, a % b) }
 
 let (q, r) = divmod(23, 4)
 let (_, middle, _) = (7, 8, 9)
@@ -1317,6 +1330,7 @@ println(q + r + middle + a + b + x + y)
 
 The `use` keyword imports modules:
 
+<!-- doctest: ignore (the paths name modules of a project that is not shown) -->
 ```rust
 use std::fs                     // whole module
 use std::math as m              // aliased
@@ -1401,6 +1415,7 @@ project/
 ```
 
 From `main.aelys`:
+<!-- doctest: ignore (needs the project files shown above) -->
 ```rust
 use utils              // imports utils.aelys
 use lib::helper        // imports lib/helper.aelys
@@ -1495,10 +1510,11 @@ be used from another module. A type is imported by name with the selective form
 of `use`, not reached through a module path: `module::Name` does not name a
 type. Given `shapes.aelys`:
 
+<!-- doctest: file shapes.aelys -->
 ```rust
 pub enum Kind { Round, Sharp }
 
-pub struct Point { x: int, y: int }
+pub struct Point { pub x: int, pub y: int }
 
 pub trait Scorable { fn score(self) -> int; }
 
@@ -1589,12 +1605,19 @@ A public nominal type may cross a module boundary, including when some of its
 fields are private. A private nominal type in a public signature is still rejected
 at the point of declaration with E0407:
 
+<!-- doctest: file shapes.aelys -->
 ```rust
 pub struct Point { pub x: int, y: int }
 
 pub fn make() -> Point { Point { x: 1, y: 2 } }
 // ✓ the public nominal type is exportable; `y` remains private
+```
 
+Adding a private type to a public signature of that module makes every file
+that imports it fail:
+
+<!-- doctest: ignore (an entry file exports nothing; the error is reported when another file imports the module) -->
+```rust
 struct Hidden { value: int }
 pub fn leak() -> Hidden { Hidden { value: 1 } }
 // ✗ error[E0407]: 'Hidden' cannot be exported from module 'shapes'
@@ -1608,7 +1631,7 @@ cannot read or write it; attempting either is E0412. Naming a private field in a
 literal or pattern is E0413. A rest pattern may omit private fields without
 revealing them, but it may not name them:
 
-```rust
+```rust,compile_fail,E0412
 use shapes
 let point = shapes::make()
 point.x                              // ✓ public field
@@ -1771,6 +1794,8 @@ even inside parentheses or brackets, so a multi-line block, `if`, `match` or
 closure body works as an argument, a `vec!` element or a tuple element:
 
 ```rust
+fn apply(f: fn(int) -> int) -> int { f(20) }
+
 let total = apply(fn(a: int) -> int {
     let doubled = a * 2
     doubled + 1
@@ -1805,6 +1830,8 @@ slot. An aggregate element (a struct, enum, `Option`/`Result`, array, `Vec` or
 object, including when the element is an existing binding:
 
 ```rust
+struct Mobj { x: int, y: int }
+
 let zeros = [0; 10]
 let repeated = [7; 3]
 let mut buffer = vec![0; 4]
@@ -1964,10 +1991,13 @@ let mut ages: Map<string, int> = Map::new()
 ages["reimu"] = 17
 ages["marisa"] = 16
 ages["reimu"] += 1
-let seen = ages.contains_key("sakuya")      // false
-let marisa = ages.get("marisa")             // Some(16)
+let seen = ages.contains_key("sakuya")
+println(seen)                               // prints: false
+let marisa = ages.get("marisa")
+println(marisa)                             // prints: Some(16)
 let _ = ages.insert("youmu", 15)            // None: the key was new
 for name in ages.keys() { println(name) }   // reimu, marisa, youmu
+println(ages["reimu"])                      // prints: 18
 ```
 
 | Operation | Result | Meaning |
@@ -2111,7 +2141,7 @@ unqualified variant, so it is E0392 `pattern 'Blu' is not a variant`, with
 `did you mean Color::Blue?` when a variant is close. Write the variant with its
 enum path, or bind with a lowercase name.
 
-```rust
+```rust,compile_fail,E0392
 enum Color { Red, Green, Blue }
 fn f(c: Color) -> int { match c { Color::Red => 1, Color::Green => 2, Blu => 3 } }
 // ✗ error[E0392]: pattern `Blu` is not a variant: a bare name binds a new variable that matches every value
@@ -2167,7 +2197,7 @@ like a function without a declared return type. When some branch ends in a value
 the script keeps the `if` or `match` value, and a branch ending in an assignment then gives
 the assigned value: `match a { 1 => 9, _ => { a = 2 } }` gives 9 when `a == 1` and 2
 otherwise. The CLI prints a script's value after it runs only when that value
-is neither unit nor null, so such a script prints nothing extra; the REPL follows the
+is not unit, so such a script prints nothing extra; the REPL follows the
 same rule for each line.
 A variable that is read anywhere in a loop (its condition included) and assigned
 later in the same loop body counts as used: the next iteration reads it, so
@@ -2191,7 +2221,7 @@ hides the constant, and then the name binds as usual.
 const LIMIT = 10
 fn at_limit(x: int) -> int { match x { LIMIT => 1, _ => 0 } }
 fn hit(x: int) -> int { if let LIMIT = x { 1 } else { 0 } }
-println(at_limit(10) + hit(10) + at_limit(3))   // 2
+println(at_limit(10) + hit(10) + at_limit(3))   // prints: 2
 ```
 
 ### Unreachable patterns
@@ -2202,7 +2232,7 @@ line `remove the arm or move it above the arm that covers it`. Two shapes trigge
 it: an arm placed after an unguarded wildcard, and a constructor repeated after an
 earlier unguarded arm for the same constructor.
 
-```rust
+```rust,compile_fail,E0356
 enum Kind { A, B }
 fn after_wildcard(k: Kind) -> int { match k { _ => 0, Kind::A => 1 } }
 // ✗ error[E0356]: unreachable pattern: Kind::A is already covered by an earlier arm
@@ -2229,8 +2259,8 @@ fn classify(k: Kind) -> int {
     }
 }
 
-println(classify(Kind::A(5)))    // 1
-println(classify(Kind::A(-5)))   // 2
+println(classify(Kind::A(5)))    // prints: 1
+println(classify(Kind::A(-5)))   // prints: 2
 ```
 
 ### Range patterns
@@ -2269,7 +2299,7 @@ fn class(n: int) -> int {
 }
 
 fn half(b: u8) -> int { match b { 0..=127 => 0, 128..=255 => 1 } }
-println(class(42) + half(200))   // 4
+println(class(42) + half(200))   // prints: 4
 
 fn kind(c: char) -> int {
     match c {
@@ -2278,7 +2308,7 @@ fn kind(c: char) -> int {
         _ => 0,
     }
 }
-println(kind('7') + kind('q'))   // 3
+println(kind('7') + kind('q'))   // prints: 3
 ```
 
 Enum values are heap objects traced through every payload slot. A malformed
@@ -2312,8 +2342,8 @@ generic one alike; a function-typed field shadowed by a method is called as `(s.
 struct Gate { ready: bool }
 impl Gate { fn ready(self) -> bool { !self.ready } }
 let g = Gate { ready: true }
-println(g.ready())   // false
-println(g.ready)     // true
+println(g.ready())   // prints: false
+println(g.ready)     // prints: true
 ```
 
 A field initialiser written as a bare name is shorthand for `name: name`: `P { x, y }`
@@ -2330,13 +2360,13 @@ struct P { x: int, y: int }
 fn mk(x: int, y: int) -> P { P { x, y } }
 let x = 3
 let p = P { x, y: 4 }
-println(match p { P { x, y } => x * 10 + y })   // 34
+println(match p { P { x, y } => x * 10 + y })   // prints: 34
 ```
 
 ### Reference semantics
 
-Structs, enums, arrays and `Vec` are reference types, like classes in C# or
-Java: a binding, a parameter, a field and a collection slot hold a reference to
+Structs, enums (payloads included), arrays, `Vec` and `Map` are reference types,
+like classes in C# or Java: a binding, a parameter, a field and a collection slot hold a reference to
 one shared object. `let b = a`, passing `a` to a function, `v.push(a)`,
 `S { inner: a }` and `Some(a)` do not copy `a`; they share it. Strings,
 closures and scalars are values or immutable, so sharing them is unobservable.
@@ -2366,6 +2396,8 @@ binding, a `mut` parameter, or `self` in a `mut self` method. Every write form
 works through any such place:
 
 ```rust
+struct P { x: int, y: int }
+impl P { fn shift(mut self, dx: int) { self.x += dx } }
 struct World { ps: Vec<P>, ids: [int; 4] }
 
 let mut w = World { ps: vec![P { x: 0, y: 0 }], ids: [0; 4] }
@@ -2397,13 +2429,17 @@ checked at exactly these points:
   of a `match` or `if let` pattern, and the root of the iterated or matched place is
   immutable.
 
-```rust
+```rust,compile_fail,E0323
+struct P { x: int, y: int }
+struct World { ps: Vec<P>, ids: [int; 4] }
+
 let a = P { x: 1, y: 2 }
 let mut b = a                  // ✗ error[E0323]: cannot bind `a` mutably
 let mut c = a.clone()          // ✓
 let h = World { ps: vec![], ids: [0; 4] }
 let mut ps = h.ps              // ✗ error[E0323]
-let mut b = if c { a } else { P { x: 0, y: 0 } }   // ✗ error[E0323]
+let flag = true
+let mut e = if flag { a } else { P { x: 0, y: 0 } }   // ✗ error[E0323]
 let mut d = P { x: 0, y: 0 }
 d = a                          // ✗ error[E0323]: cannot assign `a` to the mutable binding `d`
 fn bump(mut p: P) { p.x += 1 }
@@ -2430,13 +2466,16 @@ Through any of these routes a mutable reference can change an object that an
 immutable binding still names:
 
 ```rust
+struct P { x: int, y: int }
+
 let a = P { x: 1, y: 2 }
 let mut c = vec![a]
 c[0].x = 9
-println(a.x)                   // 9: `a` and `c[0]` are the same object
+println(a.x)                   // prints: 9
+// `a` and `c[0]` are the same object
 let mut d = vec![a.clone()]    // copy first when the container must be independent
 d[0].x = 4
-println(a.x)                   // still 9
+println(a.x)                   // prints: 9
 ```
 A call through a function value applies the same rule at the `mut` positions
 of the function's type (`fn(mut P) -> R`), see
@@ -2468,14 +2507,50 @@ point.shift(3)
 ```
 
 An associated function has no `self` parameter and is reached with `Type::name`.
-A method has `self` or `mut self` as its first parameter and is reached with
-`value.name(...)`. Struct field access remains `value.field`; module members
+A method has `self`, `mut self`, `&self` or `&mut self` as its first parameter
+and is reached with `value.name(...)`. Struct field access remains `value.field`; module members
 and associated items use `::`.
 
 Inside an impl body, `Self::name(...)` calls the associated function that
 `Type::name(...)` calls, and inside a trait default body it calls the one of the
 impl the body is serving. A method that takes `self` is not reachable through
 either receiver: `Self::shift(point)` and `Point::shift(point)` are both E0362.
+
+### Borrowed parameters and receivers
+
+A method may take its receiver as `&self` or `&mut self`, and a function parameter
+may have the type `&T` or `&mut T`, which the caller passes as `&x` or `&mut x`. The
+borrow lasts for the call:
+
+```rust
+struct Counter { n: int }
+
+impl Counter {
+    fn get(&self) -> int { self.n }
+    fn bump(&mut self) { self.n += 1 }
+}
+
+fn total(a: &Counter, b: &Counter) -> int { a.n + b.n }
+fn reset(c: &mut Counter) { c.n = 0 }
+
+let mut c = Counter { n: 1 }
+c.bump()
+println(c.get())          // prints: 2
+println(total(&c, &c))    // prints: 4
+reset(&mut c)
+println(c.n)              // prints: 0
+```
+
+- A write through `&self` or a `&T` parameter is E0414.
+- `&mut self`, like `mut self`, needs a receiver whose root is mutable (E0331).
+- A reference parameter takes a borrow: passing `c` where `&c` is expected, or
+  writing `&c` anywhere but in a call argument (`let r = &c`), is E0417.
+- Several `&` borrows of one value may share a call, but a `&mut` borrow next to any
+  other borrow of the same value is refused: E0415 for two mutable borrows, E0416
+  for a read of a value borrowed mutably.
+- The target of a borrow must be a named place: borrowing a temporary, such as the
+  result of a call, is E0419 (`make().get()` with `fn get(&self)`); bind the value to
+  a local first.
 
 Struct patterns bind fields and compose with the exhaustive `match` rules:
 
@@ -2637,7 +2712,7 @@ impl Source<int> for Ints { fn first(self) -> int { self.v[0] } }
 
 fn head<S: Source<T>, T>(s: S) -> T { s.first() }
 
-println(head(Ints { v: vec![5, 6] }))   // 5
+println(head(Ints { v: vec![5, 6] }))   // prints: 5
 ```
 
 A trait cannot be implemented for a built-in type (`int`, `float`, `bool`,
@@ -2702,11 +2777,11 @@ impl Display for Point {
 }
 
 let p = Point { x: 1, y: 2 }
-println(p)                        // (1, 2)
-println(p.to_string())    // (1, 2)
-println(__tostring(p))            // (1, 2)
-println("point is {p}")           // point is (1, 2)
-println(p.to_display())           // (1, 2)
+println(p)                        // prints: (1, 2)
+println(p.to_string())    // prints: (1, 2)
+println(__tostring(p))            // prints: (1, 2)
+println("point is {p}")           // prints: point is (1, 2)
+println(p.to_display())           // prints: (1, 2)
 ```
 
 An enum is the same:
@@ -2718,8 +2793,8 @@ impl Display for Color {
     fn to_display(self) -> string { match self { Color::Red => "red", Color::Blue => "blue" } }
 }
 
-println(Color::Red)      // red
-println("{Color::Blue}") // blue
+println(Color::Red)      // prints: red
+println("{Color::Blue}") // prints: blue
 ```
 
 Rendering a struct or an enum that has no `Display` impl is E0338 `trait
@@ -2752,10 +2827,10 @@ aggregates of them, so render each element`, in every position listed above.
 
 ```rust
 let arr = [1, 2, 3]
-println("arr = {arr}")              // arr = [1, 2, 3]
-println(vec!["a", "b"])             // ["a", "b"]
-println((1, 'c'))                   // (1, 'c')
-println(Some(vec![1]))              // Some([1])
+println("arr = {arr}")              // prints: arr = [1, 2, 3]
+println(vec!["a", "b"])             // prints: ["a", "b"]
+println((1, 'c'))                   // prints: (1, 'c')
+println(Some(vec![1]))              // prints: Some([1])
 ```
 
 ## Associated Types and Constants
@@ -2796,6 +2871,12 @@ An impl of the trait defines each item once, repeating the constant's declared
 type and supplying a value:
 
 ```rust
+trait Source {
+    type Item
+    const LIMIT: int
+    fn next(self) -> Self::Item;
+}
+
 struct Counter { value: int }
 
 impl Source for Counter {
@@ -3077,7 +3158,7 @@ checked against the impl selected at the call site, and four things go wrong:
   literal, `LIMIT = 1 / 0` being E0101, so only the impl's side can reach it.
 
 The object form of a binding, `dyn Source<Item = int>`, is not available: `dyn`
-is E0113, deferred, as [Stage 3 boundary diagnostics](#stage-3-boundary-diagnostics)
+is E0113, deferred, as [Deferred constructs](#deferred-constructs)
 records.
 
 ### Inherited associated items
@@ -3415,8 +3496,8 @@ fn doubled(text: string) -> Result<int, Error> {
     Ok(value * 2)
 }
 
-println(match doubled("21") { Ok(value) => value, Err(error) => 0 })   // 42
-println(match doubled("x") { Ok(value) => value, Err(error) => -1 })   // -1
+println(match doubled("21") { Ok(value) => value, Err(error) => 0 })   // prints: 42
+println(match doubled("x") { Ok(value) => value, Err(error) => -1 })   // prints: -1
 ```
 
 `?` follows the residual, not the wish. `s.to_int()` returns
@@ -3430,8 +3511,8 @@ fn parse(text: string) -> Option<int> {
     Some(value + 1)
 }
 
-println(match parse("41") { Some(value) => value, None => 0 })    // 42
-println(match parse("nope") { Some(value) => value, None => 0 })  // 0
+println(match parse("41") { Some(value) => value, None => 0 })    // prints: 42
+println(match parse("nope") { Some(value) => value, None => 0 })  // prints: 0
 ```
 
 The type of `expr?` is the payload type of `expr` as soon as that is known: after
@@ -3539,11 +3620,8 @@ fn run() -> Result<int, AppErr> {
 ```
 
 `from` is an ordinary associated function, so it can also be called by name
-outside any `?`. `from` is not a keyword:
-
-```rust
-let converted = AppErr::from(ParseErr { line: 3 })
-```
+outside any `?`, as in `AppErr::from(ParseErr { line: 3 })`. `from` is not a
+keyword.
 
 For `Result<T, E>?` in a function returning `Result<U, F>`, the operand must be a
 `Result`, the expression has type `T` with no relation required between `T` and
@@ -3581,31 +3659,21 @@ These features are outside the delivered language surface:
 Negative impls (`impl !Trait for Type`) and specialization (`default fn`) are
 **delivered**, with their diagnostics E0431 to E0433 and E0441 to E0444 below.
 
-### Stage 3 boundary diagnostics
+### Deferred constructs
 
-Five constructs parse but are refused with a diagnostic that names them as
-deferred rather than as unknown syntax, so that a program written against a later
-stage fails with a clear reason instead of a parse error.
+Trait objects parse but are refused with a diagnostic that names them as not yet
+supported rather than as unknown syntax. `dyn Trait` in a type position is E0113,
+whose help line gives the current repair, a generic parameter bound by the trait:
 
-| Code | Construct | Message |
-|------|-----------|---------|
-| E0111 | `&self`, `&mut self` | borrowing receiver '&self' is deferred to Stage 3 |
-| E0113 | `dyn Trait` | trait object 'dyn T' is deferred to Stage 3 |
-
-Each carries the repair for the current stage. A method takes its receiver by
-value, so write `self`; a trait or impl body holds only `fn` items; a trait object
-becomes a generic parameter bound by that trait; a negative impl has no Stage 2
-spelling; and specialization becomes one plain `fn` per impl.
-
-```rust
-struct Point { x: int }
-impl Point { fn get(&self) -> int { self.x } }
-// ✗ error[E0111]: borrowing receiver '&self' is deferred to Stage 3
-//   help: Stage 2 methods take the receiver by value; write 'self'
+```rust,compile_fail,E0113
+trait Shape { fn area(self) -> int; }
+fn total(s: dyn Shape) -> int { 1 }
+// ✗ error[E0113]: trait object 'dyn Shape' is deferred to Stage 3
+//   = help: take a generic type parameter bound by Shape instead
 ```
 
-Note that `dyn` is contextual: it is a trait object marker in a type position and
-an ordinary identifier everywhere else.
+`dyn` is contextual: it is a trait object marker in a type position and an
+ordinary identifier everywhere else.
 
 ## Diagnostic Codes
 
@@ -3647,7 +3715,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
 | E0109 | UnknownVariant | no such variant on that type |
 | E0110 | MatchArmValueRequired | a match arm whose block ends without a value, in a match whose other arms produce a non-`unit` value |
-| E0111 | BorrowingReceiverDeferred | `&self` and `&mut self` are Stage 3 |
+| E0111 | BorrowingReceiverDeferred | no longer reported: `&self` and `&mut self` receivers are accepted (see [Borrowed parameters and receivers](#borrowed-parameters-and-receivers)) |
 | E0112 | PrimitiveImplUnsupported | a trait impl for a built-in type such as `int` or `string` |
 | E0113 | TraitObjectDeferred | `dyn Trait` is Stage 3 |
 | E0114 | ReservedIdentifier | a declared name starts with `__`, which is reserved for the compiler and its builtins |
@@ -3822,3 +3890,4 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0471 | UnorderedSortElement | `sort` on elements with no built-in order |
 | E0480 | RemovedStdModule | `use std::bytes`: the module was removed, binary data is a `Vec<u8>` |
 | E0481 | RemovedBytesFunction | a `bytes::name` call; the message names the `Vec<u8>` replacement |
+| E0482 | RemovedStringBytes | `s.bytes()` on a string; the help names `s.to_bytes()` |
