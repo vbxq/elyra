@@ -7,6 +7,7 @@ mod cast;
 mod containers;
 mod control;
 mod dispatch;
+mod ffi;
 mod fmt_string;
 mod lambda;
 mod lambda_stmts;

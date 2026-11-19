@@ -121,6 +121,24 @@ pub enum RuntimeErrorKind {
         value: String,
         target: &'static str,
     },
+    FfiLibraryNotFound {
+        library: String,
+        tried: Vec<String>,
+        reason: String,
+    },
+    FfiSymbolNotFound {
+        library: String,
+        path: String,
+        symbol: String,
+    },
+    FfiCall {
+        function: String,
+        message: String,
+    },
+    PointerAccess {
+        operation: String,
+        message: String,
+    },
 }
 
 pub const PANIC_EXIT_CODE: i32 = 101;
@@ -279,6 +297,21 @@ impl RuntimeErrorKind {
                 value,
                 target,
             } => format!("{operation}: value {value} does not fit in {target}"),
+            Self::FfiLibraryNotFound {
+                library,
+                tried,
+                reason,
+            } => format!(
+                "cannot load C library '{library}': tried {}; last error: {reason}",
+                tried.join(", ")
+            ),
+            Self::FfiSymbolNotFound {
+                library,
+                path,
+                symbol,
+            } => format!("C library '{library}' ({path}) has no symbol '{symbol}'"),
+            Self::FfiCall { function, message } => format!("C function '{function}': {message}"),
+            Self::PointerAccess { operation, message } => format!("{operation}: {message}"),
         }
     }
 }

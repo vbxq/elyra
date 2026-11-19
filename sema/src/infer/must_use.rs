@@ -304,6 +304,7 @@ impl Analyzer {
             }
             TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
+            | TypedStmtKind::Extern(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::EnumDecl { .. }
             | TypedStmtKind::TraitDecl { .. } => {}

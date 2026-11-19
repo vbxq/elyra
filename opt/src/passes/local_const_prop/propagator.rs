@@ -160,6 +160,7 @@ impl LocalConstantPropagator {
             | TypedStmtKind::Break { value: None, .. }
             | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
+            | TypedStmtKind::Extern(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
             | TypedStmtKind::EnumDecl { .. } => {}
@@ -611,7 +612,8 @@ impl OptimizationPass for LocalConstantPropagator {
                 | TypedStmtKind::StructDecl { .. }
                 | TypedStmtKind::TraitDecl { .. }
                 | TypedStmtKind::EnumDecl { .. }
-                | TypedStmtKind::Needs(_) => {}
+                | TypedStmtKind::Needs(_)
+                | TypedStmtKind::Extern(_) => {}
                 _ => code_ran = true,
             }
         }

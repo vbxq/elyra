@@ -165,6 +165,16 @@ impl Compiler {
                         }
                     }
                 }
+                TypedStmtKind::Extern(functions) => {
+                    for function in functions {
+                        self.globals.insert(function.name.clone(), false);
+                        if !self.global_indices.contains_key(&function.name) {
+                            let idx = self.next_global_index;
+                            self.global_indices.insert(function.name.clone(), idx);
+                            self.next_global_index += 1;
+                        }
+                    }
+                }
                 TypedStmtKind::Let { name, mutable, .. } => {
                     self.globals.insert(name.clone(), *mutable);
                     if !self.global_indices.contains_key(name) {
@@ -183,11 +193,19 @@ impl Compiler {
                 TypedStmtKind::Function(_) | TypedStmtKind::ImplDecl { .. }
             )
         };
+        let is_extern =
+            |stmt: &&aelys_sema::TypedStmt| matches!(stmt.kind, TypedStmtKind::Extern(_));
         let ordered: Vec<&aelys_sema::TypedStmt> = program
             .stmts
             .iter()
-            .filter(is_hoisted)
-            .chain(program.stmts.iter().filter(|stmt| !is_hoisted(stmt)))
+            .filter(is_extern)
+            .chain(program.stmts.iter().filter(is_hoisted))
+            .chain(
+                program
+                    .stmts
+                    .iter()
+                    .filter(|stmt| !is_hoisted(stmt) && !is_extern(stmt)),
+            )
             .collect();
 
         if ordered.is_empty() {
@@ -354,7 +372,7 @@ fn type_descriptor_bounded(
         InferType::U8 => TypeDescriptor::Int(IntWidth::U8),
         InferType::U16 => TypeDescriptor::Int(IntWidth::U16),
         InferType::U32 => TypeDescriptor::Int(IntWidth::U32),
-        InferType::U64 => TypeDescriptor::Int(IntWidth::U64),
+        InferType::U64 | InferType::Ptr => TypeDescriptor::Int(IntWidth::U64),
         InferType::F32 => TypeDescriptor::Float(FloatWidth::F32),
         InferType::F64 => TypeDescriptor::Float(FloatWidth::F64),
         InferType::Bool => TypeDescriptor::Bool,

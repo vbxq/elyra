@@ -151,6 +151,7 @@ pub fn unify(t1: &InferType, t2: &InferType, subst: &mut Substitution) -> UnifyR
         ) if item1 == item2 => unify(self1, self2, subst),
 
         (InferType::Range, InferType::Range) => Ok(()),
+        (InferType::Ptr, InferType::Ptr) => Ok(()),
 
         (InferType::Tuple(elems1), InferType::Tuple(elems2)) => {
             if elems1.len() != elems2.len() {

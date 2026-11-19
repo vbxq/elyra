@@ -137,7 +137,8 @@ fn collect_declared_type_params(stmt: &TypedStmt, declared: &mut HashSet<String>
         | TypedStmtKind::Return(_)
         | TypedStmtKind::Break { .. }
         | TypedStmtKind::Continue { .. }
-        | TypedStmtKind::Needs(_) => {}
+        | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_) => {}
     }
 }
 

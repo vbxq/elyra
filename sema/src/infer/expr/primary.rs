@@ -29,6 +29,13 @@ impl TypeInference {
             return (TypedExprKind::Identifier(resolved), ty);
         }
 
+        if self.variadic_extern_value(name, span) {
+            return (
+                TypedExprKind::Identifier(name.to_string()),
+                InferType::Poison,
+            );
+        }
+
         if self.env.is_namespace(name) {
             self.errors.push(TypeError {
                 kind: TypeErrorKind::NamespaceIsNotAValue {

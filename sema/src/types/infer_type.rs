@@ -40,6 +40,7 @@ pub enum InferType {
     Map(Box<InferType>, Box<InferType>),
     Tuple(Vec<InferType>),
     Range,
+    Ptr,
 
     Struct(std::string::String),
 
@@ -463,7 +464,8 @@ impl InferType {
             | InferType::Never
             | InferType::Numeric
             | InferType::Struct(_)
-            | InferType::Range => true,
+            | InferType::Range
+            | InferType::Ptr => true,
         }
     }
 
@@ -499,6 +501,7 @@ impl InferType {
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
+            "ptr" => InferType::Ptr,
             "string" => InferType::String,
             "unit" | "void" => InferType::Unit,
             "dynamic" => InferType::Dynamic,
@@ -575,6 +578,7 @@ impl InferType {
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
+            "ptr" => InferType::Ptr,
             "string" => InferType::String,
             "unit" | "void" => InferType::Unit,
             "dynamic" => InferType::Dynamic,
@@ -694,6 +698,7 @@ impl fmt::Display for InferType {
                 write!(f, ")")
             }
             InferType::Range => write!(f, "range"),
+            InferType::Ptr => write!(f, "ptr"),
             InferType::Struct(name) => write!(f, "{}", name),
             InferType::Applied { name, args } if aelys_syntax::tuple_arity(name).is_some() => {
                 write!(f, "(")?;
@@ -812,6 +817,7 @@ impl InferType {
             | InferType::Numeric
             | InferType::UntypedNative(_)
             | InferType::Range
+            | InferType::Ptr
             | InferType::Struct(_)
             | InferType::Param(_)
             | InferType::Var(_)

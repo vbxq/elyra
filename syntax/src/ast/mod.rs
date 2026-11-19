@@ -8,6 +8,6 @@ pub use expr::{
 };
 pub use stmt::{
     AssociatedConstDecl, AssociatedConstDef, AssociatedTypeDecl, AssociatedTypeDef, Decorator,
-    EnumVariantDecl, EnumVariantFields, Function, ImplPolarity, ImportKind, NeedsStmt, Stmt,
-    StmtKind, StructFieldDecl, TraitMethod, WhereClause,
+    EnumVariantDecl, EnumVariantFields, ExternBlock, ExternFunction, ExternParam, Function,
+    ImplPolarity, ImportKind, NeedsStmt, Stmt, StmtKind, StructFieldDecl, TraitMethod, WhereClause,
 };

@@ -505,6 +505,7 @@ impl TypeInference {
                 .is_some_and(|value| self.is_explicit_dynamic_expr(value)),
             TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
+            | TypedStmtKind::Extern(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
             | TypedStmtKind::EnumDecl { .. } => false,

@@ -121,6 +121,32 @@ pub enum StmtKind {
         variants: Vec<EnumVariantDecl>,
         is_pub: bool,
     },
+
+    Extern(ExternBlock),
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternBlock {
+    pub library: String,
+    pub functions: Vec<ExternFunction>,
+    pub is_pub: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFunction {
+    pub name: String,
+    pub params: Vec<ExternParam>,
+    pub variadic: bool,
+    pub return_type: Option<TypeAnnotation>,
+    pub is_pub: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternParam {
+    pub name: String,
+    pub type_annotation: TypeAnnotation,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

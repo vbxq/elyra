@@ -110,6 +110,7 @@ impl Compiler {
                 Ok(())
             }
             TypedStmtKind::Needs(_needs) => Ok(()),
+            TypedStmtKind::Extern(functions) => self.compile_typed_extern(functions, stmt.span),
             TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
             | TypedStmtKind::EnumDecl { .. } => Ok(()),

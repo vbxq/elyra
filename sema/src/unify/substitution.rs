@@ -130,6 +130,7 @@ impl Substitution {
             | InferType::Numeric
             | InferType::UntypedNative(_)
             | InferType::Range
+            | InferType::Ptr
             | InferType::Struct(_)
             | InferType::Dynamic
             | InferType::Poison => ty.clone(),

@@ -37,6 +37,7 @@ pub enum ResolvedType {
     Map(Box<ResolvedType>, Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     Range,
+    Ptr,
 
     Struct(std::string::String),
 
@@ -168,6 +169,7 @@ impl ResolvedType {
                 ResolvedType::Tuple(elems.iter().map(ResolvedType::from_infer_type).collect())
             }
             InferType::Range => ResolvedType::Range,
+            InferType::Ptr => ResolvedType::Ptr,
             InferType::Struct(name) => ResolvedType::Struct(name.clone()),
             InferType::Applied { name, args } => ResolvedType::Applied {
                 name: name.clone(),
@@ -231,6 +233,7 @@ impl fmt::Display for ResolvedType {
                 write!(f, ")")
             }
             ResolvedType::Range => write!(f, "range"),
+            ResolvedType::Ptr => write!(f, "ptr"),
             ResolvedType::Struct(name) => write!(f, "{}", name),
             ResolvedType::Applied { name, args } => {
                 write!(f, "{name}<")?;

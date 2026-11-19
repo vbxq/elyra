@@ -157,6 +157,7 @@ impl Rewriter<'_> {
             | StmtKind::Break { value: None, .. }
             | StmtKind::Continue { .. }
             | StmtKind::Needs(_)
+            | StmtKind::Extern(_)
             | StmtKind::StructDecl { .. }
             | StmtKind::EnumDecl { .. } => {}
         }

@@ -1,3 +1,4 @@
+pub(crate) mod ffi;
 pub mod jit;
 pub mod native;
 pub mod stdlib;

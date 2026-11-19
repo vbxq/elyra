@@ -106,6 +106,16 @@ pub enum TypedStmtKind {
         type_params: Vec<String>,
         variants: Vec<EnumVariantDef>,
     },
+
+    Extern(Vec<TypedExternFunction>),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedExternFunction {
+    pub name: String,
+    pub library: String,
+    pub symbol: String,
+    pub signature: aelys_common::ffi::FfiSignature,
 }
 
 #[derive(Debug, Clone)]

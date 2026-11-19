@@ -98,6 +98,10 @@ impl Compiler {
             separator,
         } = &callee.kind
         {
+            if self.compile_ptr_call(object, member, *separator, args, dest, span)? {
+                return Ok(());
+            }
+
             if self.compile_typed_sum_method_call(object, member, args, dest, span)? {
                 return Ok(());
             }

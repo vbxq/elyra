@@ -257,6 +257,7 @@ impl GlobalConstantPropagator {
             | TypedStmtKind::Break { value: None, .. }
             | TypedStmtKind::Continue { .. }
             | TypedStmtKind::Needs(_)
+            | TypedStmtKind::Extern(_)
             | TypedStmtKind::StructDecl { .. }
             | TypedStmtKind::TraitDecl { .. }
             | TypedStmtKind::EnumDecl { .. } => {}

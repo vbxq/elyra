@@ -584,6 +584,30 @@ pub enum TypeErrorKind {
         replacement: &'static str,
     },
     RemovedStringBytes,
+    ExternUnsupportedType {
+        function: String,
+        position: String,
+        written: String,
+        help: String,
+    },
+    ExternCallback {
+        function: String,
+        param: String,
+    },
+    ExternNotTopLevel,
+    VariadicExternValue {
+        name: String,
+    },
+    VariadicArgument {
+        function: String,
+        found: InferType,
+    },
+    DuplicateExtern {
+        name: String,
+    },
+    ExternExport {
+        name: String,
+    },
     FixedPointShiftOutOfRange {
         method: String,
         count: i64,
@@ -1681,6 +1705,40 @@ impl TypeError {
                 f,
                 "`bytes::{name}` no longer exists: std::bytes was removed and binary data is a `Vec<u8>`\n   = help: {replacement}"
             ),
+            TypeErrorKind::ExternUnsupportedType {
+                function,
+                position,
+                written,
+                help,
+            } => write!(
+                f,
+                "type `{written}` cannot cross the C boundary ({position} of `{function}`)\n   = help: {help}"
+            ),
+            TypeErrorKind::ExternCallback { function, param } => write!(
+                f,
+                "parameter `{param}` of `{function}` is a function: C callbacks into Elyra are not supported\n   = help: pass a `ptr` to a C function obtained from C (dlsym, a getter), or keep the callback logic in C"
+            ),
+            TypeErrorKind::ExternNotTopLevel => write!(
+                f,
+                "an `extern` block is only allowed at the top level of a file\n   = help: move the block out of the function or block that contains it"
+            ),
+            TypeErrorKind::VariadicExternValue { name } => write!(
+                f,
+                "variadic C function `{name}` can only be called directly, not used as a value\n   = help: call it, or wrap the call in an Elyra function with a fixed parameter list"
+            ),
+            TypeErrorKind::VariadicArgument { function, found } => write!(
+                f,
+                "a value of type {} cannot be passed in the `...` part of `{function}`\n   = help: variadic arguments take an integer, `float`, `f32`, `bool`, `ptr` or `string` (passed as a `cstr`)",
+                found.source_spelling()
+            ),
+            TypeErrorKind::DuplicateExtern { name } => write!(
+                f,
+                "`{name}` is declared twice: an extern function needs a name no other function or extern function of the file uses"
+            ),
+            TypeErrorKind::ExternExport { name } => write!(
+                f,
+                "extern function `{name}` cannot be `pub`: C functions are not exported from a module\n   = help: declare the extern block in the module that calls it, or export a `pub fn` that calls `{name}`"
+            ),
             TypeErrorKind::RemovedStringBytes => write!(
                 f,
                 "`bytes()` on a string was removed\n   = help: write `s.to_bytes()`, which returns the UTF-8 bytes as a packed `Vec<u8>`"
@@ -2039,6 +2097,13 @@ impl TypeErrorKind {
             Self::NotANamespace { .. } => 370,
             Self::NoSuchMember { .. } => 371,
             Self::UnknownTypeName { .. } => 372,
+            Self::ExternUnsupportedType { .. } => 490,
+            Self::ExternCallback { .. } => 491,
+            Self::ExternNotTopLevel => 492,
+            Self::VariadicExternValue { .. } => 493,
+            Self::VariadicArgument { .. } => 494,
+            Self::DuplicateExtern { .. } => 495,
+            Self::ExternExport { .. } => 496,
             Self::TypeNotImported { .. } => 378,
             // the same refusal e0403 states at the module boundary, reached from the type checker
             Self::PrivateNominalNotExported { .. } => 403,

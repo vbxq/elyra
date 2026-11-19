@@ -5,6 +5,7 @@ use aelys_syntax::{Stmt, TokenKind};
 
 mod decorators;
 mod enum_decl;
+mod extern_decl;
 mod function;
 mod impl_decl;
 mod let_decl;
@@ -24,6 +25,10 @@ impl Parser {
 
         let decorators = self.decorators()?;
         let is_pub = self.match_token(&TokenKind::Pub);
+
+        if self.starts_extern_block() && decorators.is_empty() {
+            return self.extern_block(is_pub);
+        }
 
         if self.check(&TokenKind::Struct) {
             if !decorators.is_empty() {

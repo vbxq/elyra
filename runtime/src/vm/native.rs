@@ -208,6 +208,7 @@ pub enum NativeFunctionImpl {
         result: ForeignReturnKind,
         bytes: ByteParams,
     },
+    Ffi(u32),
 }
 
 impl NativeFunctionImpl {
@@ -221,6 +222,7 @@ impl NativeFunctionImpl {
                     name: String::new(),
                 })
             })?,
+            NativeFunctionImpl::Ffi(index) => crate::ffi::call(vm, index, args),
             NativeFunctionImpl::Foreign {
                 function,
                 result,
@@ -498,6 +500,12 @@ impl VM {
             native.slot
         };
         self.native_impls.get(usize::try_from(slot).ok()?).copied()
+    }
+
+    pub(crate) fn register_ffi_impl(&mut self, function: NativeFunctionImpl) -> u32 {
+        let slot = u32::try_from(self.native_impls.len()).expect("native function count fits u32");
+        self.native_impls.push(function);
+        slot
     }
 
     pub(crate) fn register_native_impl(&mut self, name: &str, function: NativeFunctionImpl) -> u32 {

@@ -105,6 +105,7 @@ impl TypeInference {
             TypedStmtKind::Function(_) => {}
             TypedStmtKind::ImplDecl { .. } => {}
             TypedStmtKind::Needs(_) => {}
+            TypedStmtKind::Extern(_) => {}
             TypedStmtKind::StructDecl { .. } => {}
             TypedStmtKind::EnumDecl { .. } => {}
             TypedStmtKind::TraitDecl { .. } => {}

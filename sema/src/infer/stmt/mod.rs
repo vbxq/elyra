@@ -143,6 +143,7 @@ impl TypeInference {
                 let typed_func = self.infer_function(func);
                 TypedStmtKind::Function(typed_func)
             }
+            StmtKind::Extern(block) => self.infer_extern_stmt(block, stmt.span),
             StmtKind::ImplDecl {
                 type_params,
                 polarity,

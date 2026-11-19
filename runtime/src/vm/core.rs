@@ -65,6 +65,7 @@ pub struct VM {
     pub(crate) native_modules: HashMap<String, NativeModule>,
     pub(crate) native_registry: HashMap<String, u32>,
     pub(crate) native_impls: Vec<NativeFunctionImpl>,
+    pub(crate) ffi_functions: Vec<std::sync::Arc<crate::ffi::FfiFunction>>,
     pub(crate) random_state: u64,
     pub(crate) random_seed: u64,
     pub(crate) execution_control: ExecutionControl,

@@ -37,6 +37,7 @@ pub(super) fn occurs_check(var: TypeVarId, ty: &InferType) -> bool {
         | InferType::Numeric
         | InferType::UntypedNative(_)
         | InferType::Range
+        | InferType::Ptr
         | InferType::Struct(_)
         | InferType::Param(_)
         | InferType::Dynamic

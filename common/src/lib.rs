@@ -1,4 +1,5 @@
 pub mod error;
+pub mod ffi;
 pub mod naming;
 pub mod result;
 pub mod stack;

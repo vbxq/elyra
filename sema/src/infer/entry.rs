@@ -90,6 +90,10 @@ impl Default for TypeInference {
             scope_own_globals: false,
             known_native_globals: HashSet::new(),
             known_native_signatures: HashMap::new(),
+            ffi_functions: HashMap::new(),
+            ffi_variadic_instances: Vec::new(),
+            ffi_instance_names: HashSet::new(),
+            top_level_externs: HashSet::new(),
             current_module: ModuleId::new("<unknown>"),
             collection_iter_allowed: false,
             receiver_memo: None,
@@ -436,6 +440,7 @@ impl TypeInference {
             "float" | "f64" | "float64" => InferType::F64,
             "f32" | "float32" => InferType::F32,
             "bool" => InferType::Bool,
+            "ptr" => InferType::Ptr,
             "string" => InferType::String,
             "char" => InferType::Char,
             "map" => {
@@ -1668,11 +1673,15 @@ impl TypeInference {
         inf.resolve_nominal_bodies(&stmts, declared_nominals);
         inf.validate_nominal_inhabitation(&stmts);
         inf.collect_function_signatures(&stmts, "");
+        inf.collect_extern_declarations(&stmts);
         inf.validate_associated_type_cycles();
         inf.collect_global_bindings(&stmts);
         inf.predeclare_constants(&stmts, true);
 
-        let typed_stmts = inf.infer_program_stmts(&stmts);
+        let mut typed_stmts = inf.infer_program_stmts(&stmts);
+        if let Some(instances) = inf.take_variadic_extern_stmt() {
+            typed_stmts.insert(0, instances);
+        }
 
         let generic_templates = inf.open_nominal_templates();
         let mut subst = inf.solve_constraints();

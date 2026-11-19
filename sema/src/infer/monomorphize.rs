@@ -169,6 +169,7 @@ fn encode_type_key(ty: &InferType, result: &mut String) {
         InferType::Never => push_len_prefixed(result, "never"),
         InferType::Numeric => push_len_prefixed(result, "numeric"),
         InferType::Range => push_len_prefixed(result, "range"),
+        InferType::Ptr => push_len_prefixed(result, "ptr"),
         InferType::Dynamic => push_len_prefixed(result, "dynamic"),
         InferType::Poison => push_len_prefixed(result, "poison"),
         InferType::UntypedNative(name) => {
@@ -372,7 +373,8 @@ fn collect_nominal_applications(
         | InferType::Var(_)
         | InferType::Dynamic
         | InferType::Poison
-        | InferType::Range => {}
+        | InferType::Range
+        | InferType::Ptr => {}
     }
 }
 
@@ -555,6 +557,7 @@ fn rewrite_nominal_stmt(
         }
         TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::TraitDecl { .. } => {}
     }
 }
@@ -940,7 +943,8 @@ pub(super) fn collect_stmt_types(stmt: &TypedStmt, types: &mut Vec<(InferType, S
         }
         TypedStmtKind::Continue { .. }
         | TypedStmtKind::TraitDecl { .. }
-        | TypedStmtKind::Needs(_) => {}
+        | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_) => {}
     }
 }
 
@@ -2448,6 +2452,7 @@ fn collect_impl_calls_stmt(stmt: &TypedStmt, calls: &mut Vec<ImplCallSite>) {
         }
         TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::EnumDecl { .. } => {}
@@ -2672,6 +2677,7 @@ pub(super) fn visit_exprs_stmt(stmt: &mut TypedStmt, visit: &mut dyn FnMut(&mut 
         }
         TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::EnumDecl { .. } => {}
@@ -3791,6 +3797,7 @@ fn resolve_deferred_statement_types(stmt: &mut TypedStmt) {
         | TypedStmtKind::Break { .. }
         | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::EnumDecl { .. }
@@ -4111,6 +4118,7 @@ fn rewrite_stmt(
         }
         TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::EnumDecl { .. } => {}

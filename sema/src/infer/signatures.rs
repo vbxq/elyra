@@ -155,6 +155,7 @@ fn is_foreign_impl_target(ty: &InferType, type_table: &crate::types::TypeTable) 
         | InferType::UntypedNative(_)
         | InferType::Poison
         | InferType::Range
+        | InferType::Ptr
         | InferType::Projection { .. } => true,
     }
 }

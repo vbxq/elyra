@@ -16,8 +16,9 @@ pub use infer::{
     is_mangled_symbol, is_module_scoped_global, module_scoped_global, unscoped_global_name,
 };
 pub use typed_ast::{
-    TypedExpr, TypedExprKind, TypedFmtStringPart, TypedFunction, TypedMatchArm, TypedMatchArmBody,
-    TypedParam, TypedPattern, TypedPatternKind, TypedProgram, TypedStmt, TypedStmtKind,
+    TypedExpr, TypedExprKind, TypedExternFunction, TypedFmtStringPart, TypedFunction,
+    TypedMatchArm, TypedMatchArmBody, TypedParam, TypedPattern, TypedPatternKind, TypedProgram,
+    TypedStmt, TypedStmtKind,
 };
 pub use types::{
     EnumDef, EnumVariantDef, EnumVariantFieldsDef, InferType, ResolvedType, StructDef, StructField,

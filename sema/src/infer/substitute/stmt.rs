@@ -119,6 +119,7 @@ impl TypeInference {
                     .collect(),
             },
             TypedStmtKind::Needs(needs) => TypedStmtKind::Needs(needs.clone()),
+            TypedStmtKind::Extern(functions) => TypedStmtKind::Extern(functions.clone()),
             TypedStmtKind::StructDecl {
                 name,
                 type_params,

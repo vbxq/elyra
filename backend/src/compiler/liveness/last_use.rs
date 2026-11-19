@@ -88,6 +88,7 @@ fn collect_all_uses_in_stmt(stmt: &TypedStmt, uses: &mut HashSet<String>) {
         | TypedStmtKind::Break { value: None, .. }
         | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::EnumDecl { .. } => {}

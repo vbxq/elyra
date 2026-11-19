@@ -78,6 +78,11 @@ impl Compiler {
             StmtKind::Function(func) => self.compile_function(func),
             StmtKind::ImplDecl { .. } => Ok(()),
             StmtKind::Needs(needs) => self.compile_needs(needs, stmt.span),
+            StmtKind::Extern(_) => Err(untyped_unsupported(
+                "an `extern` block",
+                stmt.span,
+                &self.source,
+            )),
             StmtKind::StructDecl { .. }
             | StmtKind::TraitDecl { .. }
             | StmtKind::EnumDecl { .. } => Ok(()),

@@ -172,6 +172,14 @@ impl TypeInference {
         );
 
         if !dot_on_namespace {
+            if let Some(result) = self.infer_extern_call(callee, args) {
+                return result;
+            }
+
+            if let Some(result) = self.infer_ptr_call(callee, args) {
+                return result;
+            }
+
             if let Some(result) = self.infer_sum_constructor_call(callee, args) {
                 return result;
             }

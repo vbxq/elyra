@@ -15,6 +15,8 @@ pub fn register_builtins(vm: &mut VM) -> Result<(), RuntimeError> {
         .iter()
         .chain(crate::stdlib::scalar::INT_FORMATTERS)
         .chain(super::byte_vec::BYTE_VEC_NATIVES)
+        .chain(crate::ffi::POINTER_NATIVES)
+        .chain(&[("__ffi_bind", 4, crate::ffi::bind as super::NativeFn)])
     {
         let native = vm.alloc_native(name, arity, function)?;
         vm.set_global(name.to_string(), Value::ptr(native.index()));

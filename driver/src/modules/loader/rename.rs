@@ -513,7 +513,7 @@ fn rename_stmt(stmt: &mut Stmt, renames: &BTreeMap<String, String>) {
                 rename_expr(value, renames);
             }
         }
-        StmtKind::Continue { .. } | StmtKind::Needs(_) => {}
+        StmtKind::Continue { .. } | StmtKind::Needs(_) | StmtKind::Extern(_) => {}
     }
 }
 

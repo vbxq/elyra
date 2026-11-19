@@ -6,6 +6,7 @@ pub mod entry;
 mod exhaustive;
 mod expr;
 mod expr_sum;
+mod ffi;
 mod finalize;
 mod functions;
 pub mod imports;
@@ -164,7 +165,7 @@ impl ConstEvalState {
 const KNOWN_TYPE_NAMES: &[&str] = &[
     "int", "i8", "i16", "i32", "i64", "int8", "int16", "int32", "int64", "u8", "u16", "u32", "u64",
     "uint8", "uint16", "uint32", "uint64", "float", "f32", "f64", "float32", "float64", "bool",
-    "string", "char", "void", "unit", "dynamic", "array", "vec", "map", "option", "result",
+    "string", "char", "ptr", "void", "unit", "dynamic", "array", "vec", "map", "option", "result",
     "error",
 ];
 
@@ -227,6 +228,10 @@ pub struct TypeInference {
     globals_without_signature: HashSet<String>,
     known_native_globals: HashSet<String>,
     known_native_signatures: HashMap<String, InferType>,
+    ffi_functions: HashMap<String, ffi::FfiDecl>,
+    ffi_variadic_instances: Vec<crate::typed_ast::TypedExternFunction>,
+    ffi_instance_names: HashSet<String>,
+    top_level_externs: HashSet<(usize, usize)>,
     pub(crate) current_module: ModuleId,
     collection_iter_allowed: bool,
     receiver_memo: Option<ReceiverMemo>,

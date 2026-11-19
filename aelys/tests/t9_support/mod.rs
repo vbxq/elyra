@@ -18,7 +18,7 @@ impl Outcome {
 }
 
 // a stale binary would prove nothing; T9_AELYS_CLI swaps in another binary, e.g. a frozen baseline
-fn cli_binary() -> PathBuf {
+pub fn cli_binary() -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY
         .get_or_init(|| {

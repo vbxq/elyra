@@ -102,6 +102,7 @@ fn collect_def_use_stmt(
         | TypedStmtKind::Break { value: None, .. }
         | TypedStmtKind::Continue { .. }
         | TypedStmtKind::Needs(_)
+        | TypedStmtKind::Extern(_)
         | TypedStmtKind::StructDecl { .. }
         | TypedStmtKind::TraitDecl { .. }
         | TypedStmtKind::EnumDecl { .. } => {}

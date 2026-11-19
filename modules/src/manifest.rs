@@ -10,6 +10,13 @@ pub struct Manifest {
     pub module: HashMap<String, ModulePolicy>,
     #[serde(default)]
     pub build: BuildPolicy,
+    #[serde(default)]
+    pub library: HashMap<String, LibraryPolicy>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LibraryPolicy {
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

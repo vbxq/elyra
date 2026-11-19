@@ -67,6 +67,7 @@ impl VM {
             native_modules: HashMap::new(),
             native_registry: HashMap::new(),
             native_impls: Vec::new(),
+            ffi_functions: Vec::new(),
             random_state: random_seed,
             random_seed,
             execution_control: super::ExecutionControl::default(),

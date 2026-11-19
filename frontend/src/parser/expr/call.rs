@@ -67,7 +67,13 @@ impl Parser {
                     span,
                 );
             } else if self.match_token(&TokenKind::ColonColon) {
-                let member = self.consume_identifier("path segment")?;
+                let member = if matches!(&expr.kind, ExprKind::Identifier(head) if head == "ptr")
+                    && self.match_token(&TokenKind::Null)
+                {
+                    "null".to_string()
+                } else {
+                    self.consume_identifier("path segment")?
+                };
                 if !matches!(
                     &expr.kind,
                     ExprKind::Identifier(_)
