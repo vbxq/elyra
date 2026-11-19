@@ -246,7 +246,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 None => {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "expected a bool".into(),
                     ));
@@ -260,7 +260,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 let Some(integer) = integer else {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "expected an integer".into(),
                     ));
@@ -268,7 +268,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 let Some(bits) = integer_bits(ty, integer) else {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         format!("{integer} does not fit in {ty}"),
                     ));
@@ -279,7 +279,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 let Some(float) = value.as_float() else {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "expected a float".into(),
                     ));
@@ -293,19 +293,14 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
             FfiType::Ptr => match address(vm, value) {
                 Some(address) => store(slot, address.to_ne_bytes()),
                 None => {
-                    return Err(argument_error(
-                        vm,
-                        &function,
-                        index,
-                        "expected a ptr".into(),
-                    ));
+                    return Err(argument_error(vm, function, index, "expected a ptr".into()));
                 }
             },
             FfiType::CStr => {
                 let Some(text) = string_arg(vm, value) else {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "expected a string".into(),
                     ));
@@ -315,7 +310,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                     Err(error) => {
                         return Err(argument_error(
                             vm,
-                            &function,
+                            function,
                             index,
                             format!(
                                 "the string holds a NUL byte at offset {}, which a cstr cannot carry",
@@ -332,7 +327,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 let Some(object) = value.as_ptr() else {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "expected a Vec<u8>".into(),
                     ));
@@ -343,7 +338,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "byte buffer borrowed mutably while another borrow of it is live in the same call"
                             .into(),
@@ -352,7 +347,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
                 let Some((data, _)) = crate::vm::byte_vec::lend_bytes(vm, value, exclusive) else {
                     return Err(argument_error(
                         vm,
-                        &function,
+                        function,
                         index,
                         "expected a Vec<u8>".into(),
                     ));
@@ -363,7 +358,7 @@ pub(crate) fn call(vm: &mut VM, index: u32, args: &[Value]) -> Result<Value, Run
             _ => {
                 return Err(argument_error(
                     vm,
-                    &function,
+                    function,
                     index,
                     format!("cannot pass {ty}"),
                 ));
