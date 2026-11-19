@@ -355,6 +355,7 @@ impl TypeInference {
                 ret: Box::new(ret.clone()),
             };
 
+            let settled = settled_call_result(&typed_callee.ty, &expected_fn_type);
             self.constraints.push(Constraint::equal(
                 typed_callee.ty.clone(),
                 expected_fn_type,
@@ -362,7 +363,7 @@ impl TypeInference {
                 ConstraintReason::Other("function call".to_string()),
             ));
 
-            ret
+            settled.unwrap_or(ret)
         };
 
         let callee_ty = typed_callee.ty.clone();
@@ -1623,6 +1624,32 @@ impl TypeInference {
             InferType::Poison,
         )
     }
+}
+
+// a method on the call's result needs its type before the constraints are solved
+fn settled_call_result(callee: &InferType, call: &InferType) -> Option<InferType> {
+    let (
+        InferType::Function { params, ret, .. },
+        InferType::Function {
+            params: args,
+            ret: call_ret,
+            ..
+        },
+    ) = (callee, call)
+    else {
+        return None;
+    };
+    if !matches!(call_ret.as_ref(), InferType::Var(_)) || params.len() != args.len() {
+        return None;
+    }
+    let mut subst = crate::unify::Substitution::new();
+    for (param, arg) in params.iter().zip(args) {
+        if arg.is_concrete() && !matches!(arg, InferType::Never) {
+            crate::unify::unify(param, arg, &mut subst).ok()?;
+        }
+    }
+    let settled = subst.apply(ret);
+    settled.is_concrete().then_some(settled)
 }
 
 fn generic_callee_name(expr: &Expr) -> String {
