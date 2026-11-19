@@ -412,6 +412,17 @@ fn median(mut values: Vec<Duration>) -> Duration {
     values[values.len() / 2]
 }
 
+fn thread_cpu_time() -> Duration {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes one timespec through a valid pointer
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
+    assert_eq!(status, 0, "the thread cpu clock is unavailable");
+    Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+}
+
 fn minor_pause_with_old_heap(live: usize) -> Duration {
     let mut heap = Heap::new();
     let mut values = Vec::with_capacity(live);
@@ -430,10 +441,10 @@ fn minor_pause_with_old_heap(live: usize) -> Duration {
         for index in 0..2_000 {
             heap.alloc_string(&format!("garbage {index}"));
         }
-        let started = Instant::now();
+        let started = thread_cpu_time();
         heap.mark_young([holder]);
         heap.sweep_young();
-        pauses.push(started.elapsed());
+        pauses.push(thread_cpu_time() - started);
     }
     assert_eq!(heap.object_count(), live + 1);
     median(pauses)
@@ -479,18 +490,61 @@ fn every_major_slice_stays_near_its_budget_on_a_large_heap() {
     assert_eq!(heap.heap_generation(garbage), Some(HeapGeneration::Old));
 
     assert!(heap.begin_major_collection(vec![holder]));
-    let mut slices = Vec::new();
-    while heap.major_collection_active() {
-        let started = Instant::now();
-        heap.major_collection_slice(Duration::from_micros(500));
-        slices.push(started.elapsed());
+    // one step may overrun its budget by at most one scanned chunk of a vec plus its owner
+    const STEP_BUDGET: usize = 1_000;
+    const OVERRUN: usize = 2_049;
+    let mut steps = 0usize;
+    loop {
+        let mut units = STEP_BUDGET;
+        let step = heap.major_step(&mut units, None);
+        let spent = STEP_BUDGET - units;
+        assert!(
+            spent <= STEP_BUDGET + OVERRUN,
+            "a major step did {spent} units of work against a budget of {STEP_BUDGET}"
+        );
+        steps += 1;
+        match step {
+            MajorStep::BudgetExhausted => {}
+            MajorStep::NeedsRoots => heap.finish_marking(),
+            MajorStep::Complete { .. } | MajorStep::Idle => break,
+        }
     }
-    let worst = slices.iter().max().copied().unwrap_or_default();
-    let typical = median(slices.clone());
-    assert!(slices.len() > 3);
-    assert!(
-        worst < typical * 10 + Duration::from_millis(15),
-        "a major slice took {worst:?} while the median slice took {typical:?}"
-    );
+    assert!(steps > 400, "the collection ran in only {steps} steps");
+    assert_eq!(heap.object_count(), 300_001);
+}
+
+#[test]
+fn a_major_slice_stops_soon_after_its_deadline_on_a_large_heap() {
+    let mut heap = Heap::new();
+    let values = (0..300_000)
+        .map(|index| Value::ptr(heap.alloc_string(&format!("{index}")).index()))
+        .collect();
+    let holder = heap.alloc(GcObject::new(ObjectKind::Vec(AelysVec::from_objects(
+        values,
+    ))));
+    for _ in 0..2 {
+        heap.mark_young([holder]);
+        heap.sweep_young();
+    }
+    assert!(heap.begin_major_collection(vec![holder]));
+    // the deadline is read every 512 units, and one unit can be a scanned chunk of 2048 elements
+    const AFTER_DEADLINE: usize = 512 + 2_049;
+    let mut slices = 0usize;
+    loop {
+        let mut units = usize::MAX;
+        let step = heap.major_step(&mut units, Some(Instant::now()));
+        let spent = usize::MAX - units;
+        assert!(
+            spent <= AFTER_DEADLINE,
+            "a slice whose deadline had passed did {spent} units of work"
+        );
+        slices += 1;
+        match step {
+            MajorStep::BudgetExhausted => {}
+            MajorStep::NeedsRoots => heap.finish_marking(),
+            MajorStep::Complete { .. } | MajorStep::Idle => break,
+        }
+    }
+    assert!(slices > 100, "the collection ran in only {slices} slices");
     assert_eq!(heap.object_count(), 300_001);
 }
