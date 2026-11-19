@@ -574,23 +574,35 @@ fn integer_registers(
         .collect::<Vec<_>>();
     let mut candidate = Live::all(analysis.registers);
     let mut wanted = Live::default();
-    let mut counters = Live::default();
-    let mut entry = Live::default();
-    for ip in &region.entries {
-        if let Some(live) = region.live_in.get(ip) {
-            entry.union(live);
+    let mut loops: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    for inst in &insts {
+        let registers = match inst.op {
+            ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
+                vec![inst.a, inst.a + 1, inst.a + 2]
+            }
+            WhileLoopLt => vec![inst.a, inst.a + 1],
+            VecForLoop | VecForLoopLong | ArrayForLoop | ArrayForLoopLong => vec![inst.a + 1],
+            _ => continue,
+        };
+        if let Some(target) = inst.target
+            && target <= inst.ip
+        {
+            loops.push((target, inst.ip, registers));
         }
     }
-    for inst in &insts {
-        let loop_registers: &[usize] = match inst.op {
-            ForLoopI | ForLoopIInc | ForLoopILong | ForLoopIIncLong => {
-                &[inst.a, inst.a + 1, inst.a + 2]
-            }
-            WhileLoopLt => &[inst.a, inst.a + 1],
-            _ => &[],
+    // a register live at an osr entry is unboxed there only when that entry lies inside a loop that holds its int in it
+    let mut entering = Live::all(analysis.registers);
+    for ip in &region.entries {
+        let Some(live) = region.live_in.get(ip) else {
+            continue;
         };
-        for register in loop_registers {
-            counters.insert(*register);
+        for register in live.registers(analysis.registers) {
+            let inside = loops.iter().any(|(header, end, registers)| {
+                *header <= *ip && *ip <= *end && registers.contains(&register)
+            });
+            if !inside {
+                entering.remove(register);
+            }
         }
     }
     for inst in &insts {
@@ -668,7 +680,7 @@ fn integer_registers(
                             Move => {
                                 candidate.contains(inst.b)
                                     && wanted.contains(inst.b)
-                                    && (!entry.contains(inst.b) || counters.contains(inst.b))
+                                    && entering.contains(inst.b)
                             }
                             _ => false,
                         };
@@ -689,9 +701,7 @@ fn integer_registers(
     }
     let mut ints = Live::default();
     for register in 0..analysis.registers {
-        if candidate.contains(register)
-            && wanted.contains(register)
-            && (!entry.contains(register) || counters.contains(register))
+        if candidate.contains(register) && wanted.contains(register) && entering.contains(register)
         {
             ints.insert(register);
         }
@@ -740,10 +750,11 @@ fn dirty_registers(
             if !region.effects.contains_key(&successor) {
                 continue;
             }
+            let first_visit = !dirty.contains_key(&successor);
             let entry = dirty.entry(successor).or_default();
             let mut merged = *entry;
             merged.union(&out);
-            if merged != *entry {
+            if first_visit || merged != *entry {
                 *entry = merged;
                 work.push(successor);
             }
@@ -957,6 +968,7 @@ struct CacheVars {
     owner: Variable,
     pointer: Variable,
     length: Variable,
+    bytes: Variable,
 }
 
 const NO_OWNER: i64 = -1;
@@ -1033,6 +1045,7 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                     (target.owner, origin.owner),
                     (target.pointer, origin.pointer),
                     (target.length, origin.length),
+                    (target.bytes, origin.bytes),
                 ] {
                     let copied = self.builder.use_var(from);
                     self.builder.def_var(to, copied);
@@ -1596,14 +1609,22 @@ impl<'a, 'b> Lowerer<'a, 'b> {
             self.context,
             FrameJitContext::SCRATCH1,
         );
+        let bytes = self.builder.ins().icmp_imm_s(
+            IntCC::Equal,
+            status,
+            i64::try_from(aelys_runtime::FRAME_STORAGE_BYTES).unwrap_or(2),
+        );
+        let bytes = self.builder.ins().uextend(types::I64, bytes);
         self.builder.def_var(pointer, new_pointer);
         self.builder.def_var(length, new_length);
+        self.builder.def_var(cache.bytes, bytes);
         self.builder.def_var(cache.owner, value);
         if let Some(origin) = self.origins.get(&register).copied()
             && let Some(origin_cache) = self.caches.get(&(origin, kind)).copied()
         {
             self.builder.def_var(origin_cache.pointer, new_pointer);
             self.builder.def_var(origin_cache.length, new_length);
+            self.builder.def_var(origin_cache.bytes, bytes);
             self.builder.def_var(origin_cache.owner, value);
         }
         self.builder.ins().jump(have, &[]);
@@ -1612,6 +1633,13 @@ impl<'a, 'b> Lowerer<'a, 'b> {
         let pointer = self.builder.use_var(pointer);
         let length = self.builder.use_var(length);
         (pointer, length)
+    }
+
+    // only after resolve: nonzero when the vec keeps its int elements one byte each
+    fn storage_bytes(&mut self, register: usize) -> ClifValue {
+        let kind = CacheKind::Collection(FrameCollectionKind::VecInts as u64);
+        let cache = self.caches[&(register, kind)];
+        self.builder.use_var(cache.bytes)
     }
 
     fn index_in_bounds(&mut self, register: usize, length: ClifValue, exit: Block) -> ClifValue {
@@ -2165,6 +2193,34 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                     self.resolve(inst.b, CacheKind::Collection(kind as u64), exit);
                 let index = self.index_in_bounds(inst.c, length, exit);
                 let value = match kind {
+                    FrameCollectionKind::VecInts => {
+                        let bytes = self.storage_bytes(inst.b);
+                        let narrow = self.builder.create_block();
+                        let wide = self.builder.create_block();
+                        let join = self.builder.create_block();
+                        let raw = self.builder.append_block_param(join, types::I64);
+                        self.builder.ins().brif(bytes, narrow, &[], wide, &[]);
+                        self.builder.seal_block(narrow);
+                        self.builder.seal_block(wide);
+                        self.builder.switch_to_block(narrow);
+                        let address = self.builder.ins().iadd(pointer, index);
+                        let byte =
+                            self.builder
+                                .ins()
+                                .uload8(types::I64, Self::trusted(), address, 0);
+                        self.builder.ins().jump(join, &[BlockArg::from(byte)]);
+                        self.builder.switch_to_block(wide);
+                        let offset = self.builder.ins().ishl_imm_s(index, 3);
+                        let address = self.builder.ins().iadd(pointer, offset);
+                        let word = self
+                            .builder
+                            .ins()
+                            .load(types::I64, Self::trusted(), address, 0);
+                        self.builder.ins().jump(join, &[BlockArg::from(word)]);
+                        self.builder.seal_block(join);
+                        self.builder.switch_to_block(join);
+                        self.box_int_in_range(raw)
+                    }
                     FrameCollectionKind::ArrayBools | FrameCollectionKind::VecBools => {
                         let address = self.builder.ins().iadd(pointer, index);
                         let byte =
@@ -2215,13 +2271,47 @@ impl<'a, 'b> Lowerer<'a, 'b> {
                         let offset = self.builder.ins().ishl_imm_s(index, 3);
                         let address = self.builder.ins().iadd(pointer, offset);
                         match kind {
-                            FrameCollectionKind::ArrayInts | FrameCollectionKind::VecInts => {
+                            FrameCollectionKind::ArrayInts => {
                                 let is_int = self.is_int(value);
                                 self.guard(is_int, exit);
                                 let number = self.unbox_int(value);
                                 self.builder
                                     .ins()
                                     .store(Self::trusted(), number, address, 0);
+                            }
+                            FrameCollectionKind::VecInts => {
+                                let is_int = self.is_int(value);
+                                self.guard(is_int, exit);
+                                let number = self.unbox_int(value);
+                                let bytes = self.storage_bytes(inst.a);
+                                let narrow = self.builder.create_block();
+                                let wide = self.builder.create_block();
+                                let done = self.builder.create_block();
+                                self.builder.ins().brif(bytes, narrow, &[], wide, &[]);
+                                self.builder.seal_block(narrow);
+                                self.builder.seal_block(wide);
+                                self.builder.switch_to_block(narrow);
+                                let fits = self.builder.ins().icmp_imm_s(
+                                    IntCC::UnsignedLessThanOrEqual,
+                                    number,
+                                    255,
+                                );
+                                self.guard(fits, exit);
+                                let byte_address = self.builder.ins().iadd(pointer, index);
+                                self.builder.ins().istore8(
+                                    Self::trusted(),
+                                    number,
+                                    byte_address,
+                                    0,
+                                );
+                                self.builder.ins().jump(done, &[]);
+                                self.builder.switch_to_block(wide);
+                                self.builder
+                                    .ins()
+                                    .store(Self::trusted(), number, address, 0);
+                                self.builder.ins().jump(done, &[]);
+                                self.builder.seal_block(done);
+                                self.builder.switch_to_block(done);
                             }
                             FrameCollectionKind::ArrayFloats | FrameCollectionKind::VecFloats => {
                                 let is_float = self.is_float(value);
@@ -3180,12 +3270,14 @@ pub(crate) fn compile_frame(
                 owner: builder.declare_var(types::I64),
                 pointer: builder.declare_var(types::I64),
                 length: builder.declare_var(types::I64),
+                bytes: builder.declare_var(types::I64),
             };
             let zero = builder.ins().iconst(types::I64, 0);
             let none = builder.ins().iconst(types::I64, NO_OWNER);
             builder.def_var(cache.owner, none);
             builder.def_var(cache.pointer, zero);
             builder.def_var(cache.length, zero);
+            builder.def_var(cache.bytes, zero);
             caches.insert((register, *kind), cache);
         }
     }

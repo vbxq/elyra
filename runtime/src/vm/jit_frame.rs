@@ -1217,6 +1217,7 @@ pub unsafe extern "C" fn aelys_frame_collection(
     let Some(object) = vm.heap.get(GcRef::new(pointer)) else {
         return 0;
     };
+    let mut storage = 1;
     // writes go through these addresses from machine code while no rust borrow of the storage is live
     let (address, length) = match (kind, &object.kind) {
         (FrameCollectionKind::ArrayInts, ObjectKind::Array(array)) => match array.data.as_ints() {
@@ -1241,10 +1242,16 @@ pub unsafe extern "C" fn aelys_frame_collection(
                 None => return 0,
             }
         }
-        (FrameCollectionKind::VecInts, ObjectKind::Vec(vector)) => match vector.data.as_ints() {
-            Some(values) => (values.as_ptr() as u64, values.len()),
-            None => return 0,
-        },
+        (FrameCollectionKind::VecInts, ObjectKind::Vec(vector)) => {
+            match (vector.data.as_ints(), vector.data.as_bytes()) {
+                (Some(values), _) => (values.as_ptr() as u64, values.len()),
+                (None, Some(values)) => {
+                    storage = FRAME_STORAGE_BYTES;
+                    (values.as_ptr() as u64, values.len())
+                }
+                (None, None) => return 0,
+            }
+        }
         (FrameCollectionKind::VecFloats, ObjectKind::Vec(vector)) => {
             match vector.data.as_floats() {
                 Some(values) => (values.as_ptr() as u64, values.len()),
@@ -1270,7 +1277,7 @@ pub unsafe extern "C" fn aelys_frame_collection(
     }
     context.scratch0 = address;
     context.scratch1 = length as u64;
-    1
+    storage
 }
 
 pub unsafe extern "C" fn aelys_frame_struct(
@@ -1310,6 +1317,8 @@ pub unsafe extern "C" fn aelys_frame_struct(
 }
 
 pub const FRAME_ENUM_INVALID: u64 = u64::MAX;
+// what aelys_frame_collection returns for int elements kept one byte each
+pub const FRAME_STORAGE_BYTES: u64 = 2;
 
 // returns the variant id plus one for an enum of this schema, 0 for any other value, FRAME_ENUM_INVALID where the interpreter reports a malformed object
 pub unsafe extern "C" fn aelys_frame_enum(
