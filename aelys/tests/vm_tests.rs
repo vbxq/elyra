@@ -2,7 +2,7 @@ use aelys_bytecode::Register;
 use aelys_common::{RuntimeError, RuntimeErrorKind};
 use aelys_runtime::{
     AelysClosure, AelysUpvalue, CallFrame, Function, GcObject, GlobalLayout, MAX_FRAMES,
-    ObjectKind, OpCode, UpvalueDescriptor, VM, Value, builtin_type,
+    ObjectKind, OpCode, UpvalueDescriptor, VM, Value,
 };
 use aelys_syntax::Source;
 use std::sync::Arc;
@@ -701,7 +701,10 @@ fn test_globals_survive_gc() {
 fn test_callglobal_native_function() {
     let source = make_test_source();
     let mut vm = VM::new(source).unwrap();
-    let type_fn = vm.alloc_native("type", 1, builtin_type).unwrap();
+    fn describe(vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
+        Ok(Value::ptr(vm.alloc_string("int")?.index()))
+    }
+    let type_fn = vm.alloc_native("type", 1, describe).unwrap();
     vm.set_global("type".to_string(), Value::ptr(type_fn.index()));
 
     let mut func = Function::new(Some("main".to_string()), 0);

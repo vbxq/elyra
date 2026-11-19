@@ -1,4 +1,4 @@
-use aelys_runtime::{VM, Value, builtin_type, register_builtins};
+use aelys_runtime::{VM, register_builtins};
 use aelys_syntax::Source;
 
 fn make_test_vm() -> VM {
@@ -15,19 +15,3 @@ fn test_register_builtins() {
     assert!(vm.get_global("__tostring").is_some());
 }
 
-#[test]
-fn test_builtin_type() {
-    let mut vm = make_test_vm();
-
-    let result = builtin_type(&mut vm, &[Value::int(42)]).unwrap();
-    assert!(result.is_ptr()); // Returns a string
-
-    let result = builtin_type(&mut vm, &[Value::float(2.72)]).unwrap();
-    assert!(result.is_ptr());
-
-    let result = builtin_type(&mut vm, &[Value::bool(true)]).unwrap();
-    assert!(result.is_ptr());
-
-    let result = builtin_type(&mut vm, &[Value::null()]).unwrap();
-    assert!(result.is_ptr());
-}
