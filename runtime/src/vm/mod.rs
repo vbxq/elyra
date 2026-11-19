@@ -51,7 +51,7 @@ pub use config::{VmConfig, VmConfigError};
 pub use control::{ExecutionControl, ExecutionStats, InterruptHandle};
 pub use core::{MAX_FRAMES, MAX_REGISTERS, PreludeScope, StepResult, VM};
 pub use frame::CallFrame;
-pub use gc::GcPauseStats;
+pub use gc::{GcKindStats, GcPauseKind, GcPauseStats};
 pub use jit_frame::{
     FRAME_ENUM_INVALID, FRAME_STORAGE_BYTES, aelys_frame_call, aelys_frame_collection,
     aelys_frame_element, aelys_frame_enum, aelys_frame_fmod, aelys_frame_promote_loop,

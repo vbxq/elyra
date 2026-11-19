@@ -33,11 +33,13 @@ impl Heap {
         let mut scratch = std::mem::take(&mut self.scratch);
         scratch.clear();
         let mut continuation = None;
+        let mut scanned = 0;
         if let Some(object) = self.get(reference) {
             let start = start as usize;
             match Self::element_values(object) {
                 Some(values) => {
                     let end = values.len().min(start.saturating_add(Self::MARK_CHUNK));
+                    scanned = end.saturating_sub(start);
                     if start < end {
                         scratch.extend(
                             values[start..end]
@@ -55,7 +57,7 @@ impl Heap {
         if let Some(end) = continuation {
             self.gray.push((reference, end));
         }
-        let work = scratch.len() + 1;
+        let work = scratch.len().max(scanned) + 1;
         for child in scratch.iter().copied() {
             self.shade(child);
         }
@@ -215,15 +217,19 @@ impl Heap {
         {
             panic!("{message}");
         }
+        let mut work = 0u64;
         for root in roots {
+            work += 1;
             self.young_shade(root);
         }
         let mut scratch = std::mem::take(&mut self.scratch);
         for position in 0..self.remembered.len() {
             let entry = self.remembered[position];
             scratch.clear();
+            let mut scanned = 0;
             if let Some(object) = self.live_old_owner(entry.owner) {
                 if entry.element == WHOLE_OBJECT {
+                    scanned = Self::element_values(object).map_or(0, <[Value]>::len);
                     Self::collect_children(object, &mut scratch);
                 } else if let Some(value) = Self::element_values(object)
                     .and_then(|values| values.get(entry.element as usize))
@@ -232,25 +238,33 @@ impl Heap {
                     scratch.push(GcRef::new(pointer));
                 }
             }
+            work += 1 + scratch.len().max(scanned) as u64;
             for child in scratch.iter().copied() {
                 self.young_shade(child);
             }
         }
         while let Some(reference) = self.young_stack.pop() {
             scratch.clear();
+            let mut scanned = 0;
             if let Some(object) = self.get(reference) {
+                scanned = Self::element_values(object).map_or(0, <[Value]>::len);
                 Self::collect_children(object, &mut scratch);
             }
+            work += 1 + scratch.len().max(scanned) as u64;
             for child in scratch.iter().copied() {
                 self.young_shade(child);
             }
         }
         self.scratch = scratch;
+        self.pause_work = self.pause_work.saturating_add(work);
     }
 
     pub fn sweep_young(&mut self) -> usize {
         let mut freed = 0;
         let mut young = std::mem::take(&mut self.young);
+        self.pause_work = self
+            .pause_work
+            .saturating_add((young.len() + self.remembered.len()) as u64);
         for index in young.iter().copied() {
             let position = index as usize;
             let slot = self.objects[position].as_mut();
@@ -299,6 +313,7 @@ impl Heap {
 
     pub fn sweep(&mut self) -> usize {
         let mut freed = 0;
+        self.pause_work = self.pause_work.saturating_add(self.objects.len() as u64);
         for index in 0..self.objects.len() {
             let slot = self.objects[index].as_mut();
             let Some(object) = slot.object.as_mut() else {

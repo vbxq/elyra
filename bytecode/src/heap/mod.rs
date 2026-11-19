@@ -92,6 +92,7 @@ pub struct Heap {
     major_collections: u64,
     allocation_count: u64,
     boxed_ints: bool,
+    pause_work: u64,
 }
 
 impl Heap {
@@ -145,6 +146,7 @@ impl Heap {
             major_collections: 0,
             allocation_count: 0,
             boxed_ints: false,
+            pause_work: 0,
         };
         heap.update_next_event();
         heap
@@ -279,6 +281,7 @@ impl Heap {
         self.slice_at = self.alloc_clock;
         self.update_next_event();
         for root in roots {
+            self.pause_work += 1;
             self.shade(root);
         }
         true
@@ -290,9 +293,14 @@ impl Heap {
         }
         let before = self.gray.len();
         for root in roots {
+            self.pause_work += 1;
             self.shade(root);
         }
         self.gray.len() > before
+    }
+
+    pub fn take_pause_work(&mut self) -> u64 {
+        std::mem::take(&mut self.pause_work)
     }
 
     pub fn major_worklist_len(&self) -> usize {
@@ -311,6 +319,9 @@ impl Heap {
         let mut spent = 0usize;
         let mut next_check = Self::DEADLINE_STRIDE;
         let result = self.major_step_inner(*budget, deadline, &mut spent, &mut next_check);
+        self.pause_work = self
+            .pause_work
+            .saturating_add(u64::try_from(spent).unwrap_or(u64::MAX));
         *budget = budget.saturating_sub(spent);
         result
     }

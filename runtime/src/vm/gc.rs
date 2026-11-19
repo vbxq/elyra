@@ -78,22 +78,72 @@ impl PauseHistogram {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GcPauseKind {
+    Minor,
+    MajorSlice,
+    MajorFinish,
+    Full,
+}
+
+impl GcPauseKind {
+    pub const ALL: [GcPauseKind; 4] = [
+        GcPauseKind::Minor,
+        GcPauseKind::MajorSlice,
+        GcPauseKind::MajorFinish,
+        GcPauseKind::Full,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            GcPauseKind::Minor => "minor",
+            GcPauseKind::MajorSlice => "major_slice",
+            GcPauseKind::MajorFinish => "major_finish",
+            GcPauseKind::Full => "full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GcKindStats {
+    pub count: u64,
+    pub max_nanos: u64,
+    pub max_cpu_nanos: u64,
+    pub max_work: u64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GcPauseStats {
     count: u64,
     total_nanos: u64,
     window_max_nanos: u64,
+    max_work: u64,
     wall: PauseHistogram,
     cpu: PauseHistogram,
+    kinds: [GcKindStats; 4],
 }
 
 impl GcPauseStats {
-    fn record(&mut self, nanos: u64, cpu_nanos: u64) {
+    fn record(&mut self, kind: GcPauseKind, nanos: u64, cpu_nanos: u64, work: u64) {
         self.count = self.count.saturating_add(1);
         self.total_nanos = self.total_nanos.saturating_add(nanos);
         self.window_max_nanos = self.window_max_nanos.max(nanos);
+        self.max_work = self.max_work.max(work);
         self.wall.record(nanos);
         self.cpu.record(cpu_nanos);
+        let stats = &mut self.kinds[kind as usize];
+        stats.count = stats.count.saturating_add(1);
+        stats.max_nanos = stats.max_nanos.max(nanos);
+        stats.max_cpu_nanos = stats.max_cpu_nanos.max(cpu_nanos);
+        stats.max_work = stats.max_work.max(work);
+    }
+
+    pub fn kind(&self, kind: GcPauseKind) -> GcKindStats {
+        self.kinds[kind as usize]
+    }
+
+    pub fn max_work(&self) -> u64 {
+        self.max_work
     }
 
     pub fn count(&self) -> u64 {
@@ -197,6 +247,7 @@ impl VM {
     #[inline(never)]
     fn run_due_gc_work(&mut self) {
         let started = PauseClock::start();
+        let mut kind = GcPauseKind::Minor;
         if self.heap.minor_due() {
             self.minor_collection();
             if self.heap.major_due() {
@@ -204,21 +255,27 @@ impl VM {
                 self.heap.begin_major_collection(roots);
             }
         } else if self.heap.major_slice_due() {
+            let majors = self.heap.major_collection_count();
             let mut budget = self.heap.slice_work_budget();
             self.major_work(
                 &mut budget,
                 started.wall.checked_add(Self::GC_SLICE_DEADLINE),
             );
             self.heap.note_major_slice(budget == 0);
+            kind = if self.heap.major_collection_count() != majors {
+                GcPauseKind::MajorFinish
+            } else {
+                GcPauseKind::MajorSlice
+            };
         }
-        self.record_gc_pause(started);
+        self.record_gc_pause(started, kind);
     }
 
     pub fn collect(&mut self) {
         let started = PauseClock::start();
         self.minor_collection();
         self.finish_major();
-        self.record_gc_pause(started);
+        self.record_gc_pause(started, GcPauseKind::Full);
     }
 
     #[cold]
@@ -233,7 +290,9 @@ impl VM {
                 <= vm.config.max_heap_bytes
         };
         self.minor_collection();
+        let mut kind = GcPauseKind::Minor;
         if !fits(self, self.heap.nursery_bytes()) {
+            kind = GcPauseKind::Full;
             self.execution_stats.forced_collections =
                 self.execution_stats.forced_collections.saturating_add(1);
             let was_active = self.heap.major_collection_active();
@@ -242,7 +301,7 @@ impl VM {
                 self.finish_major();
             }
         }
-        self.record_gc_pause(started);
+        self.record_gc_pause(started, kind);
     }
 
     fn finish_major(&mut self) {
@@ -259,7 +318,7 @@ impl VM {
     pub fn collect_minor(&mut self) {
         let started = PauseClock::start();
         self.minor_collection();
-        self.record_gc_pause(started);
+        self.record_gc_pause(started, GcPauseKind::Minor);
     }
 
     fn minor_collection(&mut self) {
@@ -340,9 +399,10 @@ impl VM {
         roots
     }
 
-    fn record_gc_pause(&mut self, started: PauseClock) {
+    fn record_gc_pause(&mut self, started: PauseClock, kind: GcPauseKind) {
         let nanos = u64::try_from(started.wall.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let cpu_nanos = thread_cpu_nanos().saturating_sub(started.cpu);
+        let work = self.heap.take_pause_work();
         let micros = nanos / 1000;
         self.execution_stats.gc_pause_micros =
             self.execution_stats.gc_pause_micros.saturating_add(micros);
@@ -352,7 +412,7 @@ impl VM {
             self.execution_stats.gc_pause_nanos.saturating_add(nanos);
         self.execution_stats.gc_max_pause_nanos =
             self.execution_stats.gc_max_pause_nanos.max(nanos);
-        self.gc_pauses.record(nanos, cpu_nanos);
+        self.gc_pauses.record(kind, nanos, cpu_nanos, work);
     }
 
     pub fn gc_pause_stats(&self) -> &GcPauseStats {
@@ -384,6 +444,20 @@ impl VM {
             self.heap.peak_bytes(),
             self.heap.object_count(),
         );
+        let _ = write!(report, " max_pause_work={}", pauses.max_work());
+        report.push_str("\ngc-stats: pauses by kind");
+        for kind in GcPauseKind::ALL {
+            let stats = pauses.kind(kind);
+            let _ = write!(
+                report,
+                " {}={}/{}/{}/{}",
+                kind.name(),
+                stats.count,
+                stats.max_cpu_nanos / 1000,
+                stats.max_nanos / 1000,
+                stats.max_work
+            );
+        }
         report.push_str("\ngc-stats: pause histogram (us)");
         for (label, count) in pauses.histogram() {
             let _ = write!(report, " {label}={count}");
