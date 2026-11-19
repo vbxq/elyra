@@ -86,7 +86,7 @@ fn fnv1a_64_matches_the_reference_hash() {
     let mut source = String::from(
         "fn fnv1a(s: string) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325
-    for b in s.bytes() {
+    for b in s.to_bytes() {
         h = h ^ (b as u64)
         h = h * 0x100000001b3
     }

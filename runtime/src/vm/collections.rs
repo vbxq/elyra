@@ -938,15 +938,6 @@ pub(crate) fn string_chars(vm: &mut VM, args: &[Value]) -> Result<Value, Runtime
     Ok(Value::ptr(reference.index()))
 }
 
-pub(crate) fn string_bytes(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    let bytes: Vec<i64> = string_arg(vm, args[0], "string bytes")?
-        .bytes()
-        .map(i64::from)
-        .collect();
-    let reference = vm.alloc_vec(AelysVec::from_ints(bytes))?;
-    Ok(Value::ptr(reference.index()))
-}
-
 pub(crate) fn string_split(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let text = string_arg(vm, args[0], "string split")?;
     let separator = string_arg(vm, args[1], "string split")?;

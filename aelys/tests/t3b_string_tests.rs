@@ -20,7 +20,7 @@ fn lines_and_bytes() {
     assert_aelys_str(
         r#"
 let ls = "one\ntwo\r\nthree\n".lines()
-let bs = "Aé".bytes()
+let bs = "Aé".to_bytes()
 "{ls.len()} " + ls.join(",") + " {bs.len()} {bs[0]} {bs[1]} {bs[2]}"
 "#,
         "3 one,two,three 3 65 195 169",

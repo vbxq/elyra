@@ -324,10 +324,6 @@ pub fn function_signature(path: &str) -> Option<InferType> {
             vec![InferType::String],
             InferType::Vec(Box::new(InferType::Char)),
         ),
-        ("string", "bytes") => function_with(
-            vec![InferType::String],
-            InferType::Vec(Box::new(InferType::I64)),
-        ),
         ("string", "to_int") => function_with(vec![InferType::String], option(InferType::I64)),
         ("string", "to_int_radix") => function_with(
             vec![InferType::String, InferType::I64],

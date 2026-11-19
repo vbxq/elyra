@@ -115,6 +115,7 @@ impl TypeInference {
                 param: param.clone(),
                 method: member.to_string(),
             },
+            InferType::String if member == "bytes" => TypeErrorKind::RemovedStringBytes,
             receiver => TypeErrorKind::NoSuchMember {
                 receiver: receiver.clone(),
                 member: member.to_string(),

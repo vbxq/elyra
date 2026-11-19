@@ -18,7 +18,6 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     reg_fn!("len", 1, native_len);
     reg_fn!("char_len", 1, native_char_len);
     reg_fn!("chars", 1, crate::vm::collections::string_chars);
-    reg_fn!("bytes", 1, crate::vm::collections::string_bytes);
     reg_fn!("to_bytes", 1, crate::vm::byte_vec::string_to_bytes);
     reg_fn!("from_char", 1, crate::vm::collections::string_from_char);
     reg_fn!("char_at", 2, native_char_at);

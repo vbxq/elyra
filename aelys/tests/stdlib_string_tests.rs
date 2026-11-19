@@ -513,12 +513,12 @@ fn string_line_count_empty() {
 }
 
 #[test]
-fn string_bytes_basic() {
+fn string_to_bytes_basic() {
     let code = r#"
-let b = "AB".bytes()
-42
+let b = "AB".to_bytes()
+b.len() as int * 100 + b[1] as int
 "#;
-    assert_aelys_int(code, 42);
+    assert_aelys_int(code, 266);
 }
 
 #[test]
