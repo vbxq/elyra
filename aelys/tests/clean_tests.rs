@@ -248,3 +248,30 @@ fn the_runtime_api_honours_every_use_form_of_the_standard_library() {
         "abab"
     );
 }
+
+#[test]
+fn a_closed_stdout_pipe_ends_the_program_quietly() {
+    use std::io::{BufRead, BufReader, Write};
+    let mut file = tempfile::Builder::new()
+        .suffix(".aelys")
+        .tempfile()
+        .expect("temporary source file");
+    file.write_all(b"let mut i = 0\nwhile true {\n    println(\"line {i}\")\n    print(\"\")\n    i += 1\n}\n")
+        .expect("write source");
+    let mut child = std::process::Command::new(s1_support::cli_binary())
+        .arg("run")
+        .arg(file.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("aelys-cli should start");
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().expect("piped stdout"))
+        .read_line(&mut first)
+        .expect("read the first line");
+    assert_eq!(first, "line 0\n");
+    let output = child.wait_with_output().expect("the program ends");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(output.status.code(), Some(141), "{stderr}");
+}

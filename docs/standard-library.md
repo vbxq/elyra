@@ -52,6 +52,10 @@ print(".")               // .
 println("")              // prints: Loading.
 ```
 
+When the reader of standard output has gone away (`aelys-cli run app.aelys | head -1`),
+the next `print` or `println` ends the program with exit status 141, as SIGPIPE ends a
+shell tool, without an error message.
+
 ### Input Functions
 
 | Function | Description |

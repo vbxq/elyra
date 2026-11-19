@@ -1,7 +1,7 @@
 use crate::stdlib::helpers::{make_string, option_some};
 use crate::stdlib::{StdModuleExports, register_native};
 use crate::vm::{VM, Value};
-use aelys_common::error::RuntimeError;
+use aelys_common::error::{RuntimeError, RuntimeErrorKind};
 use std::io::{self, BufRead, Read, Write};
 
 pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
@@ -41,15 +41,28 @@ pub fn register(vm: &mut VM) -> Result<StdModuleExports, RuntimeError> {
     })
 }
 
+// a reader that closed the pipe ends the program the way SIGPIPE ends a shell tool
+fn write_stdout(vm: &VM, text: &str, newline: bool) -> Result<Value, RuntimeError> {
+    let mut out = io::stdout().lock();
+    let written = out
+        .write_all(text.as_bytes())
+        .and_then(|()| if newline { out.write_all(b"\n") } else { out.flush() });
+    match written {
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+            Err(vm.runtime_error(RuntimeErrorKind::Exit(141)))
+        }
+        _ => Ok(Value::unit()),
+    }
+}
+
 fn native_print(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    print!("{}", vm.value_to_string(args[0]));
-    let _ = io::stdout().flush();
-    Ok(Value::unit())
+    let text = vm.value_to_string(args[0]);
+    write_stdout(vm, &text, false)
 }
 
 fn native_println(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    println!("{}", vm.value_to_string(args[0]));
-    Ok(Value::unit())
+    let text = vm.value_to_string(args[0]);
+    write_stdout(vm, &text, true)
 }
 
 fn native_eprint(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -145,9 +158,8 @@ fn native_eflush(_vm: &mut VM, _args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn native_print_inline(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
-    print!("{}", vm.value_to_string(args[0]));
-    let _ = io::stdout().flush();
-    Ok(Value::unit())
+    let text = vm.value_to_string(args[0]);
+    write_stdout(vm, &text, false)
 }
 
 // prompt + readline combo, python-style

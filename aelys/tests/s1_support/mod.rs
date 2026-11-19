@@ -18,7 +18,7 @@ impl Outcome {
 }
 
 // S1_AELYS_CLI swaps in another binary, e.g. the frozen baseline the witnesses must fail on
-fn cli_binary() -> PathBuf {
+pub fn cli_binary() -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY
         .get_or_init(|| {
