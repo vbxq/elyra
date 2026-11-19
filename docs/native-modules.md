@@ -5,9 +5,11 @@ the aelys-native ABI, usually in Rust with the `aelys-native` crate. Elyra
 loads it with `use`, type-checks every call against the signatures the
 module declares, and calls it on the VM thread.
 
-There is no generic C FFI: Elyra cannot `dlopen` an arbitrary library and call
-a C symbol. To use a C library (SDL2, an audio API, a compressor), write a small
-native module that wraps it. `modules/sdl` is the reference example.
+To call a plain C library (SDL2, OpenGL, zlib, libc) no module is needed:
+declare its functions in an `extern` block, see [Calling C libraries](ffi.md).
+A native module is for a typed Rust API: results such as `Option` and
+`Result`, strings handed back without a C allocation, state kept across calls.
+`modules/sdl` is the reference example.
 
 ## Writing a module
 

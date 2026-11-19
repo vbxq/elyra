@@ -56,6 +56,9 @@ before `for`, `while` or `loop` and after `break` or `continue`. A quote, one
 character and a closing quote (`'a'`) is a char literal, not a label, and a quote,
 a longer name and a closing quote (`'ab'`) is an invalid char literal.
 
+`extern` is contextual too: it opens an [extern block](#c-ffi) only at the start
+of a top-level item followed by a string literal.
+
 `where`, `dyn`, `self` and `const` are contextual. They carry meaning in a
 generic bound, a type position, a method receiver and a constant declaration
 (`const NAME = ...`) respectively, and they are still ordinary identifiers
@@ -195,6 +198,7 @@ with a diagnostic that names these replacements.
 | `Vec<T>` | Growable vector | heap allocated |
 | `Map<K, V>` | Insertion-ordered hash map | heap allocated |
 | `(A, B, ...)` | Immutable tuple of 2 to 8 elements | heap allocated |
+| `ptr` | Opaque C address, see [C FFI](#c-ffi) | immediate |
 
 ### Integer types
 
@@ -3648,6 +3652,78 @@ and `map_err` as the repair. Every `(From, T, T)` header is reserved for the
 compiler rule, so a user impl that unifies with it is rejected with `E0375` and can
 never shadow or duplicate the identity conversion.
 
+## C FFI
+
+An `extern` block declares functions of a C shared library, which Elyra code
+then calls directly. [Calling C libraries](ffi.md) is the guide; this section
+states the rules.
+
+```rust
+extern "c" {
+    fn abs(x: i32) -> i32
+    fn snprintf(buf: &mut [u8], n: u64, fmt: cstr, ...) -> i32
+}
+let mut buf: Vec<u8> = vec![0; 16]
+let len = snprintf(&mut buf, 16, "%lld", abs(-12) as int)
+println(len)                 // prints: 2
+```
+
+- **Placement.** An extern block is a top-level item of a file (E0492 inside a
+  function or a block). Its declarations are hoisted like functions and are
+  private to the file: `pub` on the block or on an item is E0496. A name
+  declared twice in one file, by two extern items or by an extern item and an
+  `fn` or a top-level `let`, is E0495.
+- **Library.** The string names a library: a bare name (`"SDL2"`) is looked up
+  through the script's manifest (`[library.SDL2] path = ...`), next to the
+  declaring file and the script, then by the system loader (`lib<name>.so`,
+  versioned `lib<name>.so.N`; `.dylib` and frameworks on macOS; `.dll` on
+  Windows); a name with a path separator or a library suffix is a file. The
+  library and the symbol are resolved at the first call of each declaration;
+  a missing library is a runtime error listing every file tried, a missing
+  symbol a runtime error naming it.
+- **Types.** A parameter has one of `i8` `i16` `i32` `i64` `u8` `u16` `u32`
+  `u64`, `int` (`int64_t`), `f32` (`float`), `float` or `f64` (`double`),
+  `bool` (one byte), `ptr`, `cstr`, `&[u8]` or `&mut [u8]`; a result has one
+  of these but the byte slices, or is omitted for `void`. Any other type is
+  E0490, a structure with the help line to pass a pointer to its bytes; a
+  function type is E0491, since C cannot call back into Elyra.
+- **Integers.** An integer parameter accepts an argument of any integer type
+  and converts it exactly; a value outside the C type's range is a runtime
+  error (`C function 'abs': argument 1: 3000000000 does not fit in i32`), a
+  literal outside it is E0301. Integer results keep their exact value in the
+  declared Elyra type.
+- **Floats.** A float parameter accepts `float` or `f32`; `f32` rounds to
+  nearest.
+- **`ptr`.** An opaque address: `ptr::null()`, `p.is_null()`, `p.offset(n)`,
+  `p.addr()` (a `u64`), `ptr::from_addr(n)`, `p.read_<t>(off)` and
+  `p.write_<t>(off, x)` for `t` in the integer types, `int`, `f32`, `f64` and
+  `ptr`, `ptr::alloc(n)` (zeroed C memory), `ptr::free(p)`, `ptr::to_string(p)`.
+  It supports `==` and `!=` and nothing else: no arithmetic, no `as`, no
+  `Display`. Access through the null pointer, an offset outside the address
+  space and a write of an integer outside the target type are runtime
+  errors.
+- **`cstr`.** An argument is a NUL-terminated copy of the string valid for the
+  call (a NUL byte inside is a runtime error); a result is copied into a new
+  string and must be non-null valid UTF-8, otherwise the call is a runtime
+  error. Declare `-> ptr` when C may return NULL.
+- **Byte slices.** `&[u8]` takes `&v` and `&mut [u8]` takes `&mut v` with `v` a
+  `Vec<u8>`; C receives the Vec's packed storage for the call. The borrow
+  rules are those of native modules (E0415, E0416, E0417, E0419), checked again
+  at run time for a call through a function value.
+- **Variadics.** A parameter list ending in `...` declares a variadic function.
+  Extra arguments are promoted as in C (small integers and `bool` to `int`,
+  `u32` to `unsigned`, `int`/`i64`/`u64` to 64 bits, `f32` to `double`), a
+  `ptr` passes its address and a `string` a NUL-terminated copy; any other type
+  is E0494. A variadic function is only called by name (E0493 as a value).
+  Variadic calls are supported on x86-64 Linux and macOS and on 64-bit ARM
+  Linux; elsewhere their first call is a runtime error.
+- **Values.** A non-variadic extern function is a value of its function type
+  (`let f = abs`, of type `fn(i32) -> i32`).
+
+The FFI is unsafe by nature: Elyra checks the Elyra side of each call, never
+that a declaration matches the C prototype, that a pointer is live, or that a
+length fits its buffer; such mistakes are undefined behaviour in C.
+
 ## Future Plans
 
 These features are outside the delivered language surface:
@@ -3892,3 +3968,10 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0480 | RemovedStdModule | `use std::bytes`: the module was removed, binary data is a `Vec<u8>` |
 | E0481 | RemovedBytesFunction | a `bytes::name` call; the message names the `Vec<u8>` replacement |
 | E0482 | RemovedStringBytes | `s.bytes()` on a string; the help names `s.to_bytes()` |
+| E0490 | ExternUnsupportedType | a type in an extern signature that cannot cross the C boundary (a structure by value, `string` for `cstr`, a collection) |
+| E0491 | ExternCallback | a function-typed parameter in an extern signature: C cannot call back into Elyra |
+| E0492 | ExternNotTopLevel | an `extern` block inside a function or a block |
+| E0493 | VariadicExternValue | a variadic extern function used as a value instead of called |
+| E0494 | VariadicArgument | an argument after the fixed parameters of a variadic extern function with no C promotion |
+| E0495 | DuplicateExtern | an extern function whose name another extern function, `fn` or top-level `let` of the file declares |
+| E0496 | ExternExport | `pub` on an extern block or extern function |
