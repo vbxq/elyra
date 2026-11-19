@@ -505,3 +505,105 @@ fn a_counter_register_holding_a_reference_at_an_earlier_loop_does_not_refuse_tha
         }
     }
 }
+
+// a Vec<u8> keeps one byte per element: compiled loads zero-extend and compiled stores write one byte
+const BYTE_LOOPS: &str = r#"
+fn copy_sum(src: Vec<u8>, mut dst: Vec<u8>, rounds: int) -> int {
+    let mut s = 0
+    for r in 0..rounds {
+        for i in 0..src.len() {
+            dst[i] = src[(i + r) % src.len()]
+            s = s + (dst[i] as int)
+        }
+    }
+    return s
+}
+let mut src: Vec<u8> = vec![0; 1000]
+for i in 0..1000 { src[i] = ((i * 37) & 255) as u8 }
+src[3] = 255 as u8
+src[4] = 0 as u8
+let mut dst: Vec<u8> = vec![0; 1000]
+let total = copy_sum(src, dst, 300)
+total * 1000000 + (dst[0] as int) * 1000 + (dst[999] as int)
+"#;
+
+fn byte_loops_reference() -> i64 {
+    let mut src: Vec<i64> = (0..1000).map(|i| (i * 37) & 255).collect();
+    src[3] = 255;
+    src[4] = 0;
+    let mut dst = vec![0i64; 1000];
+    let mut s = 0;
+    for r in 0..300 {
+        for i in 0..1000 {
+            dst[i] = src[(i + r) % 1000];
+            s += dst[i];
+        }
+    }
+    s * 1_000_000 + dst[0] * 1000 + dst[999]
+}
+
+#[test]
+fn vec_u8_element_loads_and_stores_stay_in_machine_code() {
+    for mode in [Mode::Off, Mode::Sync, Mode::Async] {
+        for level in [OptimizationLevel::None, OptimizationLevel::Standard] {
+            let runtime = runtime(mode);
+            let value = execute(&runtime, BYTE_LOOPS, level);
+            assert_eq!(
+                value,
+                Value::int(byte_loops_reference()),
+                "{mode:?} {level:?}"
+            );
+            if JIT_TARGET && matches!(mode, Mode::Sync) {
+                assert!(
+                    runtime.jit_deoptimizations() < 8,
+                    "{level:?}: {} exits",
+                    runtime.jit_deoptimizations()
+                );
+            }
+        }
+    }
+}
+
+// the doom setup shape: a vec repeat loop entered by osr, then a for-each over structs whose loop calls a function that stays interpreted
+const STRUCT_AFTER_REPEAT: &str = r#"
+struct S { a: int, b: int }
+fn helper(x: int) -> int {
+    let f = x as float
+    return (f * 2.0) as int
+}
+fn setup(n: int, items: Vec<S>) -> int {
+    let mut stamp: Vec<u8> = vec![0; n]
+    let mut t = 0
+    for s in items {
+        let p = helper(s.a)
+        t = t + p + s.b
+    }
+    return t + stamp.len()
+}
+let mut items: Vec<S> = vec![]
+for i in 0..200 { items.push(S { a: i, b: 3 }) }
+setup(30000, items)
+"#;
+
+#[test]
+fn struct_elements_read_after_an_osr_entered_vec_repeat_loop() {
+    let want: i64 = (0..200).map(|i| 2 * i + 3).sum::<i64>() + 30_000;
+    for mode in [Mode::Off, Mode::Sync] {
+        for level in [OptimizationLevel::None, OptimizationLevel::Standard] {
+            let jit = runtime(mode);
+            let source = STRUCT_AFTER_REPEAT.to_string();
+            assert_eq!(
+                execute(&jit, &source, level),
+                Value::int(want),
+                "{mode:?} {level:?}"
+            );
+            let source = source.replace("Vec<u8> = vec![0; n]", "Vec<int> = vec![0; n]");
+            let jit = runtime(mode);
+            assert_eq!(
+                execute(&jit, &source, level),
+                Value::int(want),
+                "Vec<int> stamp, {mode:?} {level:?}"
+            );
+        }
+    }
+}
