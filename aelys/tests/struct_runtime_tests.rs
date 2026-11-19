@@ -870,7 +870,7 @@ fn enum_descriptor_rejects_unknown_schema_id() {
 
 #[test]
 fn schema_function_rejects_a_nonzero_reserved_byte() {
-    let mut function = Function::new(None, 0);
+    let function = Function::new(None, 0);
     let mut bytes = serialize(&function).expect("function should serialize");
     bytes[26] = 1;
     let error = deserialize(&bytes).expect_err("reserved schema metadata must be zero");

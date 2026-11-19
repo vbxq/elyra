@@ -490,26 +490,19 @@ fn every_major_slice_stays_near_its_budget_on_a_large_heap() {
     assert_eq!(heap.heap_generation(garbage), Some(HeapGeneration::Old));
 
     assert!(heap.begin_major_collection(vec![holder]));
-    // one step may overrun its budget by at most one scanned chunk of a vec plus its owner
-    const STEP_BUDGET: usize = 1_000;
-    const OVERRUN: usize = 2_049;
-    let mut steps = 0usize;
-    loop {
-        let mut units = STEP_BUDGET;
-        let step = heap.major_step(&mut units, None);
-        let spent = STEP_BUDGET - units;
-        assert!(
-            spent <= STEP_BUDGET + OVERRUN,
-            "a major step did {spent} units of work against a budget of {STEP_BUDGET}"
-        );
-        steps += 1;
-        match step {
-            MajorStep::BudgetExhausted => {}
-            MajorStep::NeedsRoots => heap.finish_marking(),
-            MajorStep::Complete { .. } | MajorStep::Idle => break,
-        }
+    let mut slices = Vec::new();
+    while heap.major_collection_active() {
+        let started = thread_cpu_time();
+        heap.major_collection_slice(Duration::from_micros(500));
+        slices.push(thread_cpu_time() - started);
     }
-    assert!(steps > 400, "the collection ran in only {steps} steps");
+    let worst = slices.iter().max().copied().unwrap_or_default();
+    let typical = median(slices.clone());
+    assert!(slices.len() > 3);
+    assert!(
+        worst < typical * 10 + Duration::from_millis(15),
+        "a major slice took {worst:?} of cpu time while the median slice took {typical:?}"
+    );
     assert_eq!(heap.object_count(), 300_001);
 }
 

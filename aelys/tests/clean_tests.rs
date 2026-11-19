@@ -197,9 +197,8 @@ fn an_avbc_file_of_an_older_format_version_is_refused() {
     for older in [3u16, 4, 5] {
         let mut bytes = module.avbc().to_vec();
         bytes[4..6].copy_from_slice(&older.to_le_bytes());
-        let error = aelys_bytecode::asm::deserialize(&bytes)
-            .err()
-            .expect("an older version is refused");
+        let error =
+            aelys_bytecode::asm::deserialize(&bytes).expect_err("an older version is refused");
         assert_eq!(error.to_string(), format!("Unsupported version: {older}"));
     }
 }

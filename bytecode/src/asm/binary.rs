@@ -1826,7 +1826,7 @@ mod tests {
     fn header_up_to_constant_count(const_count: u32) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&LEGACY_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&VERSION.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&1u32.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
@@ -1835,8 +1835,8 @@ mod tests {
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
-        bytes.push(0);
-        bytes.push(0);
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&const_count.to_le_bytes());
         bytes
     }
@@ -1901,7 +1901,7 @@ mod tests {
     fn struct_schema_count_beyond_remaining_input_is_rejected() {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&LEGACY_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&VERSION.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&1u32.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
