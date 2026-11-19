@@ -3723,7 +3723,8 @@ println(len)                 // prints: 2
   Extra arguments are promoted as in C (small integers and `bool` to `int`,
   `u32` to `unsigned`, `int`/`i64`/`u64` to 64 bits, `f32` to `double`), a
   `ptr` passes its address and a `string` a NUL-terminated copy; any other type,
-  or a borrow such as `&mut buf` (pass a `ptr` instead), is E0494. A variadic function is only called by name (E0493 as a value).
+  or a borrow such as `&mut buf` (pass a `ptr` instead), is E0494. A variadic
+  function is only called by name (E0493 as a value).
   Variadic calls are supported on x86-64 Linux and macOS and on 64-bit ARM
   Linux; elsewhere their first call is a runtime error.
 - **Values.** A non-variadic extern function is a value of its function type
