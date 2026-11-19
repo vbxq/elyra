@@ -1138,14 +1138,14 @@ for i in start..end step 2 {   // with step
 }
 ```
 
-The loop variable is immutable within the body. A positive step counts up and any
-other step counts down; the body runs for each value from the start that has not passed
-the end in that direction, so a range that starts past its end runs zero times. A loop
-never computes a value outside the type of its bounds: a range may start or end at either
-limit of any integer type (`for i in 18446744073709551610..=18446744073709551615 step 2`
-on `u64`, a range starting at the `int` minimum, `for i in m + 4..=m step -2` down to it),
-and the step that would leave the type after the last value ends the loop instead of
-overflowing.
+The loop variable is immutable within the body. The step is 1 when none is written. A
+positive step counts up and any other step counts down; the body runs for each value from
+the start that has not passed the end in that direction, so a range that starts past its
+end runs zero times. A loop never computes a value outside the type of its bounds: a range
+may start or end at either limit of any integer type (`for i in
+18446744073709551610..=18446744073709551615 step 2` on `u64`, a range starting at the
+`int` minimum, `for i in m + 4..=m step -2` down to it), and the step that would leave the
+type after the last value ends the loop instead of overflowing.
 
 ### for-each
 
