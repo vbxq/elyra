@@ -119,6 +119,13 @@ impl VecData {
     }
 }
 
+fn element_size(tag: TypeTag) -> usize {
+    match tag {
+        TypeTag::Int | TypeTag::Float | TypeTag::Object => 8,
+        TypeTag::Bool | TypeTag::Byte => 1,
+    }
+}
+
 fn byte_of(value: Value) -> Option<u8> {
     value.as_int().and_then(|int| u8::try_from(int).ok())
 }
@@ -126,18 +133,21 @@ fn byte_of(value: Value) -> Option<u8> {
 #[derive(Debug, Clone)]
 pub struct AelysVec {
     pub data: VecData,
-    accounted_capacity: usize,
-    accounted_tag: TypeTag,
+    accounted_bytes: usize,
 }
 
 impl AelysVec {
     fn accounted(data: VecData, accounted_capacity: usize) -> Self {
-        let accounted_tag = data.type_tag();
+        let accounted_bytes = accounted_capacity.saturating_mul(element_size(data.type_tag()));
         Self {
             data,
-            accounted_capacity,
-            accounted_tag,
+            accounted_bytes,
         }
+    }
+
+    fn account(&mut self, capacity: usize) {
+        let bytes = capacity.saturating_mul(element_size(self.type_tag()));
+        self.accounted_bytes = self.accounted_bytes.max(bytes);
     }
 
     pub fn new_ints() -> Self {
@@ -276,8 +286,8 @@ impl AelysVec {
         };
         match packed {
             Some(bytes) => {
+                self.accounted_bytes = bytes.capacity();
                 self.data = VecData::Bytes(bytes);
-                self.accounted_tag = TypeTag::Byte;
                 true
             }
             None => false,
@@ -387,7 +397,7 @@ impl AelysVec {
             },
         };
         if pushed {
-            self.accounted_capacity = self.accounted_capacity.max(self.len());
+            self.account(self.len());
         }
         pushed
     }
@@ -452,8 +462,7 @@ impl AelysVec {
             VecData::Bytes(v) => v.try_reserve(additional).is_ok(),
         };
         if reserved && let Some(target) = target {
-            self.accounted_capacity = self.accounted_capacity.max(target);
-            self.accounted_tag = self.type_tag();
+            self.account(target);
         }
         reserved
     }
@@ -470,8 +479,7 @@ impl AelysVec {
             VecData::Bytes(v) => v.try_reserve_exact(additional).is_ok(),
         };
         if reserved {
-            self.accounted_capacity = self.accounted_capacity.max(target);
-            self.accounted_tag = self.type_tag();
+            self.account(target);
         }
         reserved
     }
@@ -494,8 +502,9 @@ impl AelysVec {
             VecData::Objects(v) => v.shrink_to_fit(),
             VecData::Bytes(v) => v.shrink_to_fit(),
         }
-        self.accounted_capacity = self.capacity();
-        self.accounted_tag = self.type_tag();
+        self.accounted_bytes = self
+            .capacity()
+            .saturating_mul(element_size(self.type_tag()));
     }
 
     pub fn to_array(&self) -> AelysArray {
@@ -518,15 +527,11 @@ impl AelysVec {
     }
 
     pub fn size_bytes_for(type_tag: TypeTag, capacity: usize) -> Option<usize> {
-        let element_size = match type_tag {
-            TypeTag::Int | TypeTag::Float | TypeTag::Object => 8,
-            TypeTag::Bool | TypeTag::Byte => 1,
-        };
-        std::mem::size_of::<Self>().checked_add(capacity.checked_mul(element_size)?)
+        std::mem::size_of::<Self>().checked_add(capacity.checked_mul(element_size(type_tag))?)
     }
 
     pub fn try_size_bytes(&self) -> Option<usize> {
-        Self::size_bytes_for(self.accounted_tag, self.accounted_capacity)
+        std::mem::size_of::<Self>().checked_add(self.accounted_bytes)
     }
 
     pub fn size_bytes(&self) -> usize {
