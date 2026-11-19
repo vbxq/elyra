@@ -332,7 +332,7 @@ fn two_mutable_loans_conflict_e0415() {
         r#"
 struct Point { x: int }
 fn clash(a: &mut Point, b: &mut Point) -> int { a.x + b.x }
-let point = Point { x: 1 }
+let mut point = Point { x: 1 }
 clash(&mut point, &mut point)
 "#,
         "E0415",

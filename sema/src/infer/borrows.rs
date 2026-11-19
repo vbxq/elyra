@@ -87,8 +87,9 @@ impl TypeInference {
         };
         if mutable && !self.env.is_mutable(&root) {
             self.push_borrow_error(
-                TypeErrorKind::MutableLoanOfImmutable {
+                TypeErrorKind::MutableLoanOverlap {
                     place: root.clone(),
+                    immutable_root: true,
                 },
                 span,
             );
@@ -124,8 +125,9 @@ impl TypeInference {
         };
         if kind == ReferenceKind::Mutable && !self.env.is_mutable(&root) {
             self.push_borrow_error(
-                TypeErrorKind::MutableLoanOfImmutable {
+                TypeErrorKind::MutableLoanOverlap {
                     place: root.clone(),
+                    immutable_root: true,
                 },
                 span,
             );
@@ -342,6 +344,7 @@ impl TypeInference {
             self.push_borrow_error(
                 TypeErrorKind::MutableLoanOverlap {
                     place: place_label(operand),
+                    immutable_root: false,
                 },
                 arg.span,
             );
@@ -384,9 +387,13 @@ impl TypeInference {
             return;
         };
         match (existing, expected) {
-            (ReferenceKind::Shared, ReferenceKind::Mutable) => {
-                self.push_borrow_error(TypeErrorKind::MutableLoanOverlap { place: root }, arg.span)
-            }
+            (ReferenceKind::Shared, ReferenceKind::Mutable) => self.push_borrow_error(
+                TypeErrorKind::MutableLoanOverlap {
+                    place: root,
+                    immutable_root: false,
+                },
+                arg.span,
+            ),
             (ReferenceKind::Mutable, ReferenceKind::Shared) => {
                 self.forwarded_mutable_borrows.insert(root.clone());
             }
@@ -430,6 +437,7 @@ impl TypeInference {
             },
             (ReferenceKind::Mutable, _) => TypeErrorKind::MutableLoanOverlap {
                 place: root.to_string(),
+                immutable_root: false,
             },
             _ => return,
         };

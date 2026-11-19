@@ -377,9 +377,7 @@ pub enum TypeErrorKind {
     },
     MutableLoanOverlap {
         place: String,
-    },
-    MutableLoanOfImmutable {
-        place: String,
+        immutable_root: bool,
     },
     MutableLoanAccess {
         place: String,
@@ -1224,14 +1222,17 @@ impl TypeError {
                 "cannot mutate '{}': shared loan is read-only\n   = help: use '&mut {}' and a mutable root when mutation is required",
                 place, place
             ),
-            TypeErrorKind::MutableLoanOverlap { place } => write!(
+            TypeErrorKind::MutableLoanOverlap {
+                place,
+                immutable_root: true,
+            } => write!(
+                f,
+                "cannot borrow '{place}' as mutable: the binding '{place}' is immutable\n   = help: declare it with `let mut`, or receive it as a `mut` parameter"
+            ),
+            TypeErrorKind::MutableLoanOverlap { place, .. } => write!(
                 f,
                 "borrow of '{}' would overlap an existing mutable loan\n   = help: end the first borrow before taking another mutable loan",
                 place
-            ),
-            TypeErrorKind::MutableLoanOfImmutable { place } => write!(
-                f,
-                "cannot borrow '{place}' as mutable: the binding '{place}' is immutable\n   = help: declare it with `let mut`, or receive it as a `mut` parameter"
             ),
             TypeErrorKind::MutableLoanAccess { place, access } => write!(
                 f,
@@ -2041,7 +2042,7 @@ impl TypeErrorKind {
             Self::ImmutableStructField { .. } => 330,
             Self::ImmutableStructMethod { .. } => 331,
             Self::SharedLoanMutation { .. } => 414,
-            Self::MutableLoanOverlap { .. } | Self::MutableLoanOfImmutable { .. } => 415,
+            Self::MutableLoanOverlap { .. } => 415,
             Self::MutableLoanAccess { .. } => 416,
             Self::BorrowEscapes { .. } => 417,
             Self::BorrowInvalidated { .. } => 418,
