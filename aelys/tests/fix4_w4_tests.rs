@@ -361,8 +361,8 @@ println(gid(255).to_hex().len())
     );
     assert_refused(
         "fn gid<T>(x: T) -> T { x }\nprintln(gid(\"x\").to_hex())\n",
-        "E0301",
-        "method 'to_hex' requires an integer, found string",
+        "E0371",
+        "no field or method 'to_hex' on a value of type string",
     );
 }
 

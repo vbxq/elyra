@@ -298,7 +298,7 @@ fn non_boolean_match_guard_is_a_compile_error() {
     let message =
         compile_message("match Some(1) { Some(value) if 1 => value, Some(_) => 0, None => 0 }");
     assert!(message.contains("type mismatch"), "{message}");
-    assert!(message.contains("if condition"), "{message}");
+    assert!(message.contains("match guard"), "{message}");
 }
 
 #[test]

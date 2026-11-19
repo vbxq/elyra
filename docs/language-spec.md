@@ -313,7 +313,8 @@ digits with a leading `-` for a negative value (`(-255).to_hex()` is `"-ff"`);
 `to_radix` traps on a radix outside 2..=36. These methods, and `mul_shr` and `shl_div`
 below, also apply to a value whose integer type inference fixes later, such as the result
 of a generic call (`gid(255).to_hex()` is `"ff"`); a receiver that turns out not to be an
-integer is E0301 `method 'to_hex' requires an integer, found string`.
+integer is refused, as `gid("x").to_hex()` is E0371 `no field or method 'to_hex' on a value
+of type string`.
 `x.abs()` exists on every integer type and on floats and returns the receiver's type:
 checked on `int` (the smallest `int` traps), wrapping on signed sized types, the identity
 on unsigned ones.
