@@ -298,8 +298,19 @@ fn vec_resize(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let length = int_arg(vm, args[1], "vec resize")?;
     let current = sequence_len(vm, vector, "vec resize")?;
     let target = usize::try_from(length).map_err(|_| out_of_bounds(vm, length, current))?;
+    let packed = matches!(
+        vm.heap.get(vector).map(|object| &object.kind),
+        Some(ObjectKind::Vec(inner)) if inner.data.as_bytes().is_some()
+    );
     if target <= current {
         with_vec(vm, vector, "vec resize", |inner| inner.truncate(target))?;
+    } else if packed && let Some(byte) = byte_value(&args[2]) {
+        vm.reserve_vec(vector, target - current)?;
+        with_vec(vm, vector, "vec resize", |inner| {
+            if let Some(bytes) = inner.data.as_bytes_mut() {
+                bytes.resize(target, byte);
+            }
+        })?;
     } else if is_fresh_per_slot(vm, args[2])? {
         vm.reserve_vec(vector, target - current)?;
         for _ in current..target {
@@ -633,6 +644,14 @@ fn seq_set(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn seq_fill(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
     let sequence = object(vm, args[0], "fill")?;
+    if let Some(byte) = byte_value(&args[1])
+        && let Some(ObjectKind::Vec(vector)) =
+            vm.heap.get_mut(sequence).map(|object| &mut object.kind)
+        && let Some(bytes) = vector.data.as_bytes_mut()
+    {
+        bytes.fill(byte);
+        return Ok(Value::unit());
+    }
     let length = sequence_len(vm, sequence, "fill")?;
     if is_fresh_per_slot(vm, args[1])? {
         for index in 0..length {
@@ -845,7 +864,15 @@ fn typed_vec(tag: TypeTag, values: Vec<Value>) -> AelysVec {
         }
         TypeTag::Bool => AelysVec::from_bools(values.iter().filter_map(Value::as_bool).collect()),
         TypeTag::Object => AelysVec::from_objects(values),
+        TypeTag::Byte => match values.iter().map(byte_value).collect() {
+            Some(bytes) => AelysVec::from_bytes(bytes),
+            None => typed_vec(TypeTag::Int, values),
+        },
     }
+}
+
+fn byte_value(value: &Value) -> Option<u8> {
+    value.as_int().and_then(|int| u8::try_from(int).ok())
 }
 
 fn element_tag(vm: &VM, value: Value) -> Result<TypeTag, RuntimeError> {

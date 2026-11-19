@@ -355,7 +355,7 @@ match fs::join("/app/data", "../../../etc/passwd") { Ok(_) => 0, Err(_) => 1 }
 }
 
 #[test]
-fn fs_read_bytes_rejects_huge_buffer() {
+fn fs_read_chunk_rejects_huge_buffer() {
     let dir = tempfile::tempdir().unwrap();
     let test_file = dir.path().join("test.bin");
     std::fs::write(&test_file, "test content").unwrap();
@@ -364,7 +364,7 @@ fn fs_read_bytes_rejects_huge_buffer() {
         r#"
 use std::fs
 let f = fs::open("{}", "r").unwrap()
-let result = match fs::read_bytes(f, 999999999999) {{ Ok(_) => 0, Err(_) => 1 }}
+let result = match fs::read_chunk(f, 999999999999) {{ Ok(_) => 0, Err(_) => 1 }}
 let _ = fs::close(f)
 result
 "#,

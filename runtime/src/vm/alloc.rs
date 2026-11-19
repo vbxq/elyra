@@ -374,6 +374,7 @@ impl VM {
             NativeFunctionImpl::Foreign {
                 function: func,
                 result: super::ForeignReturnKind::Raw,
+                bytes: super::ByteParams::UNTYPED,
             },
         );
         let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(
@@ -382,18 +383,21 @@ impl VM {
         self.alloc_object(obj)
     }
 
-    pub fn alloc_foreign_with_result(
+    pub fn alloc_foreign_with_signature(
         &mut self,
         name: &str,
         arity: u16,
         func: AelysNativeFn,
-        result_type: Option<AelysNativeType>,
+        signature: Option<(&[AelysNativeType], AelysNativeType)>,
     ) -> Result<GcRef, RuntimeError> {
         let slot = self.register_native_impl(
             name,
             NativeFunctionImpl::Foreign {
                 function: func,
-                result: super::ForeignReturnKind::from_native_type(result_type),
+                result: super::ForeignReturnKind::from_native_type(
+                    signature.map(|(_, result)| result),
+                ),
+                bytes: super::ByteParams::from_params(signature.map(|(params, _)| params)),
             },
         );
         let obj = GcObject::new(ObjectKind::Native(NativeFunction::with_slot(

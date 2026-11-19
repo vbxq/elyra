@@ -428,10 +428,10 @@ impl Compiler {
 
     fn string_method_arity(method: &str) -> Option<usize> {
         match method {
-            "len" | "char_len" | "chars" | "bytes" | "to_upper" | "to_lower" | "capitalize"
-            | "trim" | "trim_start" | "trim_end" | "is_empty" | "is_whitespace" | "is_numeric"
-            | "is_alphabetic" | "is_alphanumeric" | "reverse" | "lines" | "line_count"
-            | "to_int" | "to_float" | "to_bool" => Some(0),
+            "len" | "char_len" | "chars" | "bytes" | "to_bytes" | "to_upper" | "to_lower"
+            | "capitalize" | "trim" | "trim_start" | "trim_end" | "is_empty" | "is_whitespace"
+            | "is_numeric" | "is_alphabetic" | "is_alphanumeric" | "reverse" | "lines"
+            | "line_count" | "to_int" | "to_float" | "to_bool" => Some(0),
             "char_at" | "byte_at" | "contains" | "starts_with" | "ends_with" | "find" | "rfind"
             | "count" | "split" | "repeat" | "concat" | "to_int_radix" => Some(1),
             "substr" | "replace" | "replace_first" | "pad_left" | "pad_right" => Some(2),

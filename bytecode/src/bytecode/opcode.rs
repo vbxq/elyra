@@ -1,3 +1,6 @@
+// the c operand of VecNewI selecting one byte per element, for Vec<u8>
+pub const VEC_NEW_BYTES: u8 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum OpCode {

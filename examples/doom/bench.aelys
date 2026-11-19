@@ -1,5 +1,4 @@
 use std::sys
-use std::bytes
 use wad
 use map
 use gfx

@@ -665,7 +665,9 @@ fn wide_integer_fits(width: IntWidth, value: i128) -> bool {
 fn tag_admits(tag: TypeTag, length: usize, element: &TypeDescriptor) -> bool {
     length == 0
         || match tag {
-            TypeTag::Int => matches!(element, TypeDescriptor::Int(_) | TypeDescriptor::Any),
+            TypeTag::Int | TypeTag::Byte => {
+                matches!(element, TypeDescriptor::Int(_) | TypeDescriptor::Any)
+            }
             TypeTag::Float => matches!(element, TypeDescriptor::Float(_) | TypeDescriptor::Any),
             TypeTag::Bool => matches!(element, TypeDescriptor::Bool | TypeDescriptor::Any),
             TypeTag::Object => true,

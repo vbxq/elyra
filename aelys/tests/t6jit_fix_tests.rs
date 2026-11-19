@@ -338,15 +338,14 @@ for i in 0..40000 {
 #[test]
 fn a_native_error_in_machine_code_reports_the_interpreter_stack() {
     let source = r#"
-use std::bytes
-fn read_at(buf: int, i: int) -> int { return bytes::read_u8(buf, i) }
-fn sum(buf: int, n: int) -> int {
+fn read_at(buf: Vec<u8>, i: int) -> int { return buf.read_u8(i) }
+fn sum(buf: Vec<u8>, n: int) -> int {
     let mut s = 0
     for i in 0..n { s = s + read_at(buf, i & 15) }
     s = s + read_at(buf, 99)
     return s
 }
-let buf = bytes::alloc(16)
+let buf: Vec<u8> = vec![0; 16]
 println("{sum(buf, 50000)}")
 "#;
     let outcome = parity(source);

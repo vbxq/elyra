@@ -1,4 +1,5 @@
 use super::super::Compiler;
+use super::array::vec_storage_operand;
 use aelys_bytecode::OpCode;
 use aelys_common::Result;
 use aelys_common::error::{CompileError, CompileErrorKind};
@@ -55,7 +56,13 @@ impl Compiler {
     ) -> Result<()> {
         let source_reg = self.alloc_register()?;
         self.compile_typed_expr(object, source_reg)?;
-        self.emit_a(select_vec_new(output_inner), dest, 0, 0, span);
+        self.emit_a(
+            select_vec_new(output_inner),
+            dest,
+            0,
+            vec_storage_operand(output_inner),
+            span,
+        );
 
         let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;
@@ -86,7 +93,13 @@ impl Compiler {
     ) -> Result<()> {
         let source_reg = self.alloc_register()?;
         self.compile_typed_expr(object, source_reg)?;
-        self.emit_a(select_vec_new(output_inner), dest, 0, 0, span);
+        self.emit_a(
+            select_vec_new(output_inner),
+            dest,
+            0,
+            vec_storage_operand(output_inner),
+            span,
+        );
 
         let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;
@@ -133,7 +146,13 @@ impl Compiler {
     ) -> Result<()> {
         let source_reg = self.alloc_register()?;
         self.compile_typed_expr(object, source_reg)?;
-        self.emit_a(select_vec_new(output_inner), dest, 0, 0, span);
+        self.emit_a(
+            select_vec_new(output_inner),
+            dest,
+            0,
+            vec_storage_operand(output_inner),
+            span,
+        );
 
         let loop_base = self.alloc_consecutive_registers(3, span)?;
         self.alloc_consecutive_from(loop_base, 3)?;

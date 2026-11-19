@@ -246,7 +246,7 @@ fn a_selective_import_clash_never_suggests_an_alias() {
         ("nested.aelys", "use nm\n1\n"),
         (
             "std.aelys",
-            "use std::bytes::{size}\nuse std::fs::{size}\n1\n",
+            "use std::net::{close}\nuse std::fs::{close}\n1\n",
         ),
     ] {
         let error = run_err(&dir, file, source);

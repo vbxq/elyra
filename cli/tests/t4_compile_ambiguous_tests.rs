@@ -19,27 +19,27 @@ fn compile_reports_e0445_for_a_bare_name_two_whole_modules_export() {
     for (case, main, name, owners) in [
         (
             "top",
-            "use std::fs\nuse std::bytes\nlet b = bytes::alloc(7)\nprintln(\"{size(b)}\")\n",
-            "size",
-            ["fs", "bytes"],
+            "use std::fs\nuse std::net\nlet h = 7\nprintln(\"{close(h)}\")\n",
+            "close",
+            ["fs", "net"],
         ),
         (
             "rev",
-            "use std::bytes\nuse std::fs\nlet b = bytes::alloc(7)\nlet n = size(b)\n",
-            "size",
-            ["bytes", "fs"],
+            "use std::net\nuse std::fs\nlet h = 7\nlet n = close(h)\n",
+            "close",
+            ["net", "fs"],
         ),
         (
             "fn",
-            "use std::fs\nuse std::bytes\nfn f(b: int) -> int {\n    copy(b, 0, b, 0, 1)\n    return 1\n}\nf(1)\n",
-            "copy",
-            ["fs", "bytes"],
+            "use std::fs\nuse std::string\nfn f(a: string) -> int {\n    let _ = join(a, a)\n    return 1\n}\nf(\"x\")\n",
+            "join",
+            ["fs", "string"],
         ),
         (
             "value",
-            "use std::fs\nuse std::bytes\nlet s = size\n",
-            "size",
-            ["fs", "bytes"],
+            "use std::fs\nuse std::net\nlet s = close\n",
+            "close",
+            ["fs", "net"],
         ),
     ] {
         let error = compile_error(case, &[], main);

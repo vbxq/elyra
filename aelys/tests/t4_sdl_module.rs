@@ -160,23 +160,27 @@ fn the_gradient_example_presents_frames_headless() {
     );
 }
 
-const SIZE_CHECKS: &str = r#"use std::bytes
-use sdl
+const SIZE_CHECKS: &str = r#"use sdl
 match sdl::open("sizes", 16, 48, 1) { Ok(_) => (), Err(e) => println("open failed {e}") }
-let px = bytes::alloc(768)
+let mut px: Vec<u8> = vec![0; 768]
 let mut i = 0
 while i < 768 {
-    bytes::write_u8(px, i, i % 256)
+    px.write_u8(i, i % 256)
     i += 1
 }
-let same = match sdl::present_indexed(px, px) { Ok(_) => "ok", Err(e) => "err" }
+let b769: Vec<u8> = vec![0; 769]
+let b767: Vec<u8> = vec![0; 767]
+let b3076: Vec<u8> = vec![0; 3076]
+let b3068: Vec<u8> = vec![0; 3068]
+let b3072: Vec<u8> = vec![0; 3072]
+let same = match sdl::present_indexed(&px, &px) { Ok(_) => "ok", Err(e) => "err" }
 let pixel = match sdl::read_pixel(5, 0) { Ok(p) => p, Err(e) => -1 }
-let long_px = match sdl::present_indexed(bytes::alloc(769), px) { Ok(_) => "ok", Err(e) => "err" }
-let short_px = match sdl::present_indexed(bytes::alloc(767), px) { Ok(_) => "ok", Err(e) => "err" }
-let long_pal = match sdl::present_indexed(px, bytes::alloc(769)) { Ok(_) => "ok", Err(e) => "err" }
-let long_argb = match sdl::present_argb(bytes::alloc(3076)) { Ok(_) => "ok", Err(e) => "err" }
-let short_argb = match sdl::present_argb(bytes::alloc(3068)) { Ok(_) => "ok", Err(e) => "err" }
-let exact_argb = match sdl::present_argb(bytes::alloc(3072)) { Ok(_) => "ok", Err(e) => "err" }
+let long_px = match sdl::present_indexed(&b769, &px) { Ok(_) => "ok", Err(e) => "err" }
+let short_px = match sdl::present_indexed(&b767, &px) { Ok(_) => "ok", Err(e) => "err" }
+let long_pal = match sdl::present_indexed(&px, &b769) { Ok(_) => "ok", Err(e) => "err" }
+let long_argb = match sdl::present_argb(&b3076) { Ok(_) => "ok", Err(e) => "err" }
+let short_argb = match sdl::present_argb(&b3068) { Ok(_) => "ok", Err(e) => "err" }
+let exact_argb = match sdl::present_argb(&b3072) { Ok(_) => "ok", Err(e) => "err" }
 println("same={same} pixel={pixel} long_px={long_px} short_px={short_px} long_pal={long_pal} long_argb={long_argb} short_argb={short_argb} exact_argb={exact_argb}")
 sdl::close()
 "#;
