@@ -211,17 +211,19 @@ fn sys_exit_is_an_execution_outcome() {
 }
 
 #[test]
-fn compiled_modules_are_avbc_v3_and_v1_is_rejected() {
+fn compiled_modules_use_the_current_avbc_version_and_older_ones_are_rejected() {
     let runtime = Runtime::new();
     let module = runtime.compile("42", CompileOptions::default()).unwrap();
-    assert_eq!(&module.avbc()[4..6], &3u16.to_le_bytes());
+    assert_eq!(&module.avbc()[4..6], &6u16.to_le_bytes());
 
-    let mut legacy = module.avbc().to_vec();
-    legacy[4..6].copy_from_slice(&1u16.to_le_bytes());
-    assert!(matches!(
-        aelys_bytecode::asm::deserialize(&legacy),
-        Err(aelys_bytecode::asm::BinaryError::UnsupportedVersion(1))
-    ));
+    for older in [1u16, 3, 4, 5] {
+        let mut legacy = module.avbc().to_vec();
+        legacy[4..6].copy_from_slice(&older.to_le_bytes());
+        assert!(matches!(
+            aelys_bytecode::asm::deserialize(&legacy),
+            Err(aelys_bytecode::asm::BinaryError::UnsupportedVersion(v)) if v == older
+        ));
+    }
 }
 
 #[test]

@@ -14,7 +14,6 @@ const BAD_SCHEMA_INDEX: &str = r#".version 3
       0: "a" "int:I64"
       1: "b" "int:I64"
 
-  .jit_unsupported_struct true
 
   .code
     0000: LoadI     r1, 3
@@ -47,7 +46,6 @@ const BAD_SCHEMA_INDEX_BELOW_ENTRY: &str = r#".version 3
       0: "a" "int:I64"
       1: "b" "int:I64"
 
-  .jit_unsupported_struct true
 
   .code
     0000: LoadI     r1, 3

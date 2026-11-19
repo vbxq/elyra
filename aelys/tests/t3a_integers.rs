@@ -950,13 +950,13 @@ fn sized_instructions_survive_the_binary_format_and_its_verifier() {
         .compile(ENCODED, CompileOptions::default())
         .expect("compile");
     let bytes = module.avbc().to_vec();
-    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 5);
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 6);
     assert_eq!(run_avbc(&bytes), Ok(ENCODED_VALUE));
 
-    let mut legacy = bytes.clone();
-    legacy[4..6].copy_from_slice(&4u16.to_le_bytes());
-    let refused = run_avbc(&legacy).expect_err("a version 4 file cannot carry sized instructions");
-    assert!(refused.contains("sized integer"), "{refused}");
+    let mut older = bytes.clone();
+    older[4..6].copy_from_slice(&5u16.to_le_bytes());
+    let refused = run_avbc(&older).expect_err("a file of an older format version is refused");
+    assert!(refused.contains("Unsupported version: 5"), "{refused}");
 
     let text = aelys_bytecode::asm::disassemble(&compile_function(ENCODED));
     assert!(text.contains("MulWI32") && text.contains("MulShr") && text.contains("NegW"));
@@ -987,12 +987,12 @@ fn the_verifier_refuses_a_malformed_sized_instruction() {
 }
 
 #[test]
-fn a_program_without_sized_instructions_keeps_its_old_format_version() {
+fn every_program_is_written_in_the_current_format_version() {
     let runtime = Runtime::with_jit_mode(JitMode::Off);
     let module = runtime
         .compile("let a = 1\na + 2", CompileOptions::default())
         .expect("compile");
-    assert_eq!(u16::from_le_bytes([module.avbc()[4], module.avbc()[5]]), 3);
+    assert_eq!(u16::from_le_bytes([module.avbc()[4], module.avbc()[5]]), 6);
 }
 
 #[test]

@@ -164,7 +164,7 @@ let x = a["x"]
 
 #[test]
 fn the_runtime_sort_traps_on_elements_without_an_order() {
-    let text = ".version 3\n.function 0\n  .arity 0\n  .registers 4\n  .globals\n    0: \"__vec_sort\"\n  .schemas\n    0: \"t::P\" 0 0 1\n      0: \"k\" \"int:I64\"\n  .jit_unsupported_struct true\n  .code\n    0000: LoadI     r3, 2\n    0001: StructNew  0, r1, r3, 1, 0\n    0004: LoadI     r3, 1\n    0005: StructNew  0, r2, r3, 1, 0\n    0008: VecLit    r0, r1, 2\n    0009: Move      r2, r0\n    0010: CallGlobal r1, 0, 1\n    0011: Return    r1\n";
+    let text = ".version 3\n.function 0\n  .arity 0\n  .registers 4\n  .globals\n    0: \"__vec_sort\"\n  .schemas\n    0: \"t::P\" 0 0 1\n      0: \"k\" \"int:I64\"\n  .code\n    0000: LoadI     r3, 2\n    0001: StructNew  0, r1, r3, 1, 0\n    0004: LoadI     r3, 1\n    0005: StructNew  0, r2, r3, 1, 0\n    0008: VecLit    r0, r1, 2\n    0009: Move      r2, r0\n    0010: CallGlobal r1, 0, 1\n    0011: Return    r1\n";
     let function = aelys_bytecode::asm::assemble(text)
         .expect("the assembly is well formed")
         .into_iter()

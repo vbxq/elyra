@@ -161,7 +161,6 @@ impl<'a> AasmParser<'a> {
         let mut upvalue_descriptors = Vec::new();
         let mut struct_schemas = Vec::new();
         let mut enum_schemas = Vec::new();
-        let mut jit_unsupported_struct = false;
         let mut labels: HashMap<String, usize> = HashMap::new();
         let mut label_refs: Vec<(usize, String, bool, u8)> = Vec::new(); // (offset, label, is_conditional, offset_word)
 
@@ -216,20 +215,6 @@ impl<'a> AasmParser<'a> {
                         self.advance()?;
                         self.skip_newlines()?;
                         enum_schemas = self.parse_enum_schemas()?;
-                    }
-                    "jit_unsupported_struct" => {
-                        self.advance()?;
-                        jit_unsupported_struct = match self.advance()? {
-                            Token::Bool(value) => value,
-                            Token::Ident(value) if value == "true" => true,
-                            Token::Ident(value) if value == "false" => false,
-                            token => {
-                                return Err(AssemblerError::Expected {
-                                    expected: "boolean".to_string(),
-                                    got: format!("{token:?}"),
-                                });
-                            }
-                        };
                     }
                     "code" => {
                         self.advance()?;
@@ -306,7 +291,6 @@ impl<'a> AasmParser<'a> {
         func.upvalue_descriptors = upvalue_descriptors;
         func.struct_schemas = struct_schemas;
         func.enum_schemas = enum_schemas;
-        func.jit_unsupported_struct = jit_unsupported_struct;
         func.compute_global_layout_hash();
 
         Ok(func)

@@ -303,7 +303,7 @@ fn the_binary_format_carries_chars_maps_and_sized_instructions_together() {
         .compile(source, CompileOptions::default())
         .expect("compile");
     let bytes = module.avbc().to_vec();
-    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 5);
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 6);
     assert_eq!(run_avbc(&bytes), 233 * 1000 + 200);
 
     let plain =
@@ -312,7 +312,7 @@ fn the_binary_format_carries_chars_maps_and_sized_instructions_together() {
         .compile(plain, CompileOptions::default())
         .expect("compile");
     let bytes = module.avbc().to_vec();
-    assert!(u16::from_le_bytes([bytes[4], bytes[5]]) < 5);
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 6);
     assert_eq!(run_avbc(&bytes), 233);
 }
 

@@ -281,7 +281,6 @@ fn struct_op_function(name: &str, op: OpCode, a: u16, b: u16, c: u16) -> BcFunct
             ty: TypeDescriptor::Int(IntWidth::I64),
         }],
     )];
-    function.jit_unsupported_struct = true;
     function.emit_struct(op, 0, a, b, c, 1);
     function.emit_a(OpCode::Return, 0, 0, 0, 1);
     function.finalize_bytecode();
@@ -304,7 +303,6 @@ fn enum_op_function(name: &str, op: OpCode, a: u16, b: u16, c: u16, d: u16) -> B
             .into_boxed_slice(),
         }],
     )];
-    function.jit_unsupported_struct = true;
     function.emit_enum(op, 0, a, b, c, d, 1);
     function.emit_a(OpCode::Return, 0, 0, 0, 1);
     function.finalize_bytecode();

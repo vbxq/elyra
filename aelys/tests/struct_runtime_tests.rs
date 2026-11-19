@@ -608,17 +608,15 @@ fn schema_table_roundtrips_the_descriptor_grammar() {
     ];
     let mut function = Function::new(Some("schema".to_string()), 0);
     function.struct_schemas = vec![StructSchema::new("Record".to_string(), fields)];
-    function.jit_unsupported_struct = true;
 
     let bytes = serialize(&function).expect("schema function should serialize");
-    assert_eq!(&bytes[4..6], &4u16.to_le_bytes());
+    assert_eq!(&bytes[4..6], &6u16.to_le_bytes());
     let loaded = deserialize(&bytes).expect("schema function should deserialize");
     assert_eq!(loaded.struct_schemas, function.struct_schemas);
-    assert!(loaded.jit_unsupported_struct);
 }
 
 #[test]
-fn enum_schema_table_roundtrips_avbc_v4() {
+fn enum_schema_table_roundtrips_avbc() {
     let mut function = Function::new(Some("enum_schema".to_string()), 0);
     function.enum_schemas = vec![EnumSchema::new(
         "Shape".to_string(),
@@ -647,46 +645,11 @@ fn enum_schema_table_roundtrips_avbc_v4() {
             },
         ],
     )];
-    function.jit_unsupported_struct = true;
 
     let bytes = serialize(&function).expect("enum schema function should serialize");
-    assert_eq!(&bytes[4..6], &4u16.to_le_bytes());
+    assert_eq!(&bytes[4..6], &6u16.to_le_bytes());
     let loaded = deserialize(&bytes).expect("enum schema function should deserialize");
     assert_eq!(loaded.enum_schemas, function.enum_schemas);
-    assert!(loaded.jit_unsupported_struct);
-}
-
-#[test]
-fn avbc_v3_rejects_enum_opcodes_without_a_stage2_table() {
-    let mut bytes = b"VBXQ".to_vec();
-    bytes.extend_from_slice(&3u16.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&0u8.to_le_bytes());
-    bytes.extend_from_slice(&0u8.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    bytes.extend_from_slice(&4u32.to_le_bytes());
-    bytes.extend_from_slice(&(u32::from(u8::from(OpCode::EnumTest)) << 24).to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    bytes.extend_from_slice(&(u32::from(u8::from(OpCode::Return)) << 24).to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
-    let error = deserialize(&bytes).expect_err("version 3 cannot carry enum opcodes");
-    assert!(
-        error
-            .to_string()
-            .contains("version 3 cannot contain enum opcode"),
-        "{error}"
-    );
 }
 
 #[test]
@@ -816,7 +779,6 @@ fn enum_load_reports_named_invalid_enum_field_boundary() {
             },
         ],
     )];
-    function.jit_unsupported_struct = true;
     function.emit_enum(OpCode::EnumLoad, 0, 1, 0, 0, 0, 1);
     function.emit_a(OpCode::Return, 0, 0, 0, 1);
     function.finalize_bytecode();
@@ -865,7 +827,7 @@ fn nested_enum_field_type_is_checked_before_construction() {
 }
 
 #[test]
-fn nested_enum_descriptor_selects_avbc_v4() {
+fn nested_enum_descriptor_roundtrips_avbc() {
     let mut function = Function::new(Some("nested_enum_schema".to_string()), 0);
     function.enum_schemas = vec![EnumSchema::new(
         "test::Shape".to_string(),
@@ -885,7 +847,7 @@ fn nested_enum_descriptor_selects_avbc_v4() {
     )];
 
     let bytes = serialize(&function).expect("nested enum schema should serialize");
-    assert_eq!(&bytes[4..6], &4u16.to_le_bytes());
+    assert_eq!(&bytes[4..6], &6u16.to_le_bytes());
     let loaded = deserialize(&bytes).expect("nested enum schema should deserialize");
     assert_eq!(loaded.struct_schemas, function.struct_schemas);
 }
@@ -909,9 +871,8 @@ fn enum_descriptor_rejects_unknown_schema_id() {
 #[test]
 fn schema_function_rejects_a_nonzero_reserved_byte() {
     let mut function = Function::new(None, 0);
-    function.jit_unsupported_struct = false;
     let mut bytes = serialize(&function).expect("function should serialize");
-    bytes[29] = 1;
+    bytes[26] = 1;
     let error = deserialize(&bytes).expect_err("reserved schema metadata must be zero");
     assert!(
         error.to_string().contains("Invalid constant type"),
@@ -930,12 +891,10 @@ fn aasm_roundtrips_struct_schema_metadata() {
             ty: TypeDescriptor::Int(IntWidth::I64),
         }],
     )];
-    function.jit_unsupported_struct = true;
 
     let assembly = disassemble(&function);
     let assembled = assemble(&assembly).expect("struct schema assembly should round-trip");
     assert_eq!(assembled[0].struct_schemas, function.struct_schemas);
-    assert!(assembled[0].jit_unsupported_struct);
 }
 
 #[test]
@@ -955,7 +914,6 @@ fn aasm_roundtrips_data_enum_schema_and_executes() {
             .into_boxed_slice(),
         }],
     )];
-    function.jit_unsupported_struct = true;
     function.emit_b(OpCode::LoadI, 0, 7, 1);
     function.emit_b(OpCode::LoadI, 2, 99, 1);
     function.emit_enum(OpCode::EnumNew, 0, 1, 0, 0, 1, 1);
@@ -989,7 +947,6 @@ fn malformed_struct_field_value_is_rejected_before_allocation() {
             ty: TypeDescriptor::String,
         }],
     )];
-    function.jit_unsupported_struct = true;
     function.emit_b(OpCode::LoadI, 0, 7, 1);
     function.emit_struct(OpCode::StructNew, 0, 1, 0, 1, 1);
     function.emit_a(OpCode::Return, 1, 0, 0, 1);
@@ -1020,7 +977,6 @@ fn verifier_rejects_struct_field_offset_before_dispatch() {
             ty: TypeDescriptor::Int(IntWidth::I64),
         }],
     )];
-    function.jit_unsupported_struct = true;
     function.emit_struct(OpCode::StructLoad, 0, 0, 0, 1, 1);
     function.finalize_bytecode();
 

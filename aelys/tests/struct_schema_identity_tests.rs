@@ -7,8 +7,7 @@ use aelys_bytecode::{
 use aelys_runtime::{VM, Value};
 use aelys_syntax::Source;
 
-const AVBC_V3: u16 = 3;
-const AVBC_V4: u16 = 4;
+const AVBC_VERSION: u16 = 6;
 
 fn string_u16(text: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -75,11 +74,7 @@ fn program(version: u16, struct_table: &[u8], enum_table: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(struct_table);
-    if version >= AVBC_V4 {
-        bytes.extend_from_slice(enum_table);
-    }
-    bytes.push(0);
-    bytes.push(0);
+    bytes.extend_from_slice(enum_table);
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
@@ -108,7 +103,7 @@ fn field(offset: u16, name: &str, descriptor: Vec<u8>) -> (u16, &str, Vec<u8>) {
 }
 
 #[test]
-fn struct_schema_round_trips_through_avbc_v4_with_identity_and_offsets() {
+fn struct_schema_round_trips_through_avbc_with_identity_and_offsets() {
     let schema = StructSchema::with_identity(
         0,
         DefId::from_display_name("pkg::inner::Pair", 3),
@@ -130,7 +125,7 @@ fn struct_schema_round_trips_through_avbc_v4_with_identity_and_offsets() {
     function.struct_schemas = vec![schema.clone()];
 
     let bytes = serialize(&function).expect("concrete struct schema should serialize");
-    assert_eq!(&bytes[4..6], &AVBC_V4.to_le_bytes());
+    assert_eq!(&bytes[4..6], &AVBC_VERSION.to_le_bytes());
     let loaded = deserialize(&bytes).expect("concrete struct schema should deserialize");
     assert_eq!(
         loaded.struct_schemas.len(),
@@ -217,7 +212,6 @@ fn producer(ctor: DefId) -> Function {
         Vec::new(),
         point_fields(),
     )];
-    function.jit_unsupported_struct = true;
     function.emit_b(OpCode::LoadI, 0, 7, 1);
     function.emit_struct(OpCode::StructNew, 0, 1, 0, 1, 1);
     function.emit_a(OpCode::Return, 1, 0, 0, 1);
@@ -234,7 +228,6 @@ fn reader(ctor: DefId) -> Function {
         Vec::new(),
         point_fields(),
     )];
-    function.jit_unsupported_struct = true;
     function.emit_struct(OpCode::StructLoad, 0, 1, 0, 0, 1);
     function.emit_a(OpCode::Return, 1, 0, 0, 1);
     function.finalize_bytecode();
@@ -275,7 +268,7 @@ fn structurally_identical_structs_with_different_constructors_do_not_merge() {
 fn reader_rejects_a_duplicate_struct_schema_id() {
     let record = struct_record(0, "pkg", &["a", "Point"], 0, &[], &[field(0, "x", int64())]);
     let other = struct_record(0, "pkg", &["a", "Other"], 1, &[], &[field(0, "x", int64())]);
-    let bytes = program(AVBC_V4, &table(&[record, other]), &empty_enum_table());
+    let bytes = program(AVBC_VERSION, &table(&[record, other]), &empty_enum_table());
     let error = deserialize(&bytes).expect_err("duplicate struct schema ids must be rejected");
     assert!(error.to_string().contains("struct schema ids"), "{error}");
 }
@@ -284,7 +277,7 @@ fn reader_rejects_a_duplicate_struct_schema_id() {
 fn reader_rejects_a_duplicate_struct_instance_key() {
     let first = struct_record(0, "pkg", &["a", "Point"], 0, &[], &[field(0, "x", int64())]);
     let second = struct_record(1, "pkg", &["a", "Point"], 0, &[], &[field(0, "x", int64())]);
-    let bytes = program(AVBC_V4, &table(&[first, second]), &empty_enum_table());
+    let bytes = program(AVBC_VERSION, &table(&[first, second]), &empty_enum_table());
     let error = deserialize(&bytes).expect_err("duplicate struct instance keys must be rejected");
     assert!(
         error.to_string().contains("struct definition paths"),
@@ -302,7 +295,7 @@ fn reader_rejects_a_struct_field_offset_that_is_not_its_ordinal() {
         &[],
         &[field(0, "x", int64()), field(0, "y", int64())],
     );
-    let bytes = program(AVBC_V4, &table(&[record]), &empty_enum_table());
+    let bytes = program(AVBC_VERSION, &table(&[record]), &empty_enum_table());
     let error = deserialize(&bytes).expect_err("a field offset must equal its ordinal");
     assert!(
         error.to_string().contains("unordered field offsets"),
@@ -320,7 +313,7 @@ fn reader_rejects_a_duplicate_struct_field_name() {
         &[],
         &[field(0, "x", int64()), field(1, "x", int64())],
     );
-    let bytes = program(AVBC_V4, &table(&[record]), &empty_enum_table());
+    let bytes = program(AVBC_VERSION, &table(&[record]), &empty_enum_table());
     let error = deserialize(&bytes).expect_err("duplicate field names must be rejected");
     assert!(
         error.to_string().contains("duplicate or empty field name"),
@@ -338,7 +331,7 @@ fn struct_descriptor_id_outside_the_struct_table_is_rejected() {
         &[],
         &[field(0, "next", struct_descriptor(4))],
     );
-    let bytes = program(AVBC_V4, &table(&[record]), &empty_enum_table());
+    let bytes = program(AVBC_VERSION, &table(&[record]), &empty_enum_table());
     let error = deserialize(&bytes).expect_err("an out of range struct id must be rejected");
     assert!(
         error.to_string().contains("unknown struct schema id 4"),
@@ -405,30 +398,6 @@ fn an_enum_id_used_where_a_struct_id_is_expected_is_rejected() {
 }
 
 #[test]
-fn avbc_v3_struct_records_read_as_zero_argument_legacy_shapes() {
-    let mut record = string_u16("legacy::Point");
-    record.extend_from_slice(&1u16.to_le_bytes());
-    record.extend_from_slice(&0u16.to_le_bytes());
-    record.extend_from_slice(&string_u16("x"));
-    record.extend_from_slice(&int64());
-
-    let mut legacy_table = 1u16.to_le_bytes().to_vec();
-    legacy_table.extend_from_slice(&0u16.to_le_bytes());
-    legacy_table.extend_from_slice(&record);
-
-    let bytes = program(AVBC_V3, &legacy_table, &[]);
-    let loaded = deserialize(&bytes).expect("a version 3 struct table stays readable");
-    assert_eq!(loaded.struct_schemas.len(), 1);
-    let schema = &loaded.struct_schemas[0];
-    assert_eq!(schema.schema_id, 0);
-    assert!(schema.type_args.is_empty());
-    assert_eq!(schema.ctor.package, "legacy");
-    assert_eq!(schema.ctor.module.as_ref(), ["Point".to_string()]);
-    assert_eq!(schema.fields[0].offset, 0);
-    assert_eq!(schema.fields[0].name, "x");
-}
-
-#[test]
 fn aasm_round_trips_a_generic_struct_instance_schema() {
     let schema = StructSchema::with_identity(
         0,
@@ -452,7 +421,6 @@ fn producer_of(schema: StructSchema) -> Function {
     let mut function = Function::new(Some("make".to_string()), 0);
     function.num_registers = 2;
     function.struct_schemas = vec![schema];
-    function.jit_unsupported_struct = true;
     function.emit_b(OpCode::LoadI, 0, 7, 1);
     function.emit_struct(OpCode::StructNew, 0, 1, 0, 1, 1);
     function.emit_a(OpCode::Return, 1, 0, 0, 1);
@@ -464,7 +432,6 @@ fn reader_of(schema: StructSchema) -> Function {
     let mut function = Function::new(Some("read".to_string()), 1);
     function.num_registers = 2;
     function.struct_schemas = vec![schema];
-    function.jit_unsupported_struct = true;
     function.emit_struct(OpCode::StructLoad, 0, 1, 0, 0, 1);
     function.emit_a(OpCode::Return, 1, 0, 0, 1);
     function.finalize_bytecode();

@@ -1,17 +1,15 @@
 use crate::bytecode::{
-    CastTarget, Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth,
+    Constant, DefId, EnumFieldSchema, EnumSchema, EnumVariantSchema, FloatWidth,
     Function, GlobalLayout, IntWidth, OpCode, StructFieldSchema, StructSchema, TypeDescriptor,
     UpvalueDescriptor,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::{self, Cursor, Read};
 use thiserror::Error;
 
 pub const MAGIC: &[u8; 4] = b"VBXQ";
 
-pub const VERSION: u16 = 4;
-const LEGACY_VERSION: u16 = 3;
-pub const SIZED_INT_VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 
 const MAX_BYTECODE_LEN: usize = 1_000_000;
 const MAX_CONSTANTS: usize = 1_000_000;
@@ -86,9 +84,6 @@ pub enum BinaryError {
     #[error("Invalid enum schema: {0}")]
     InvalidEnumSchema(String),
 
-    #[error("version {0} cannot contain sized integer instructions")]
-    SizedIntBeforeVersion5(u16),
-
     #[error("Invalid struct schema: {0}")]
     InvalidStructSchema(String),
 
@@ -106,8 +101,6 @@ pub enum BinaryError {
 }
 
 pub type Result<T> = std::result::Result<T, BinaryError>;
-
-type LegacyStructRecord = (String, Vec<StructFieldSchema>);
 
 pub fn serialize(func: &Function) -> Result<Vec<u8>> {
     let mut writer = BinaryWriter::new();
@@ -175,15 +168,14 @@ impl BinaryWriter {
 
     fn write_program(&mut self, func: &Function) -> Result<()> {
         self.write_bytes(MAGIC);
-        let version = format_version(func);
-        self.write_u16(version);
+        self.write_u16(VERSION);
         self.write_u16(0); // Flags (reserved)
 
         let func_count = count_functions(func)?;
         self.write_u32(func_count);
         self.write_u32(0); // Reserved
 
-        self.write_function(func, 0, version)
+        self.write_function(func, 0)
     }
 
     fn write_section(&mut self, tag: u32, data: &[u8]) -> Result<()> {
@@ -199,7 +191,7 @@ impl BinaryWriter {
         Ok(())
     }
 
-    fn write_function(&mut self, func: &Function, depth: usize, version: u16) -> Result<()> {
+    fn write_function(&mut self, func: &Function, depth: usize) -> Result<()> {
         ensure_len(depth, MAX_NESTING_DEPTH, "function nesting depth")?;
         if let Some(name) = &func.name {
             ensure_len(name.len(), usize::from(u16::MAX), "function name length")?;
@@ -223,26 +215,16 @@ impl BinaryWriter {
         }
         self.write_u32(func.num_registers);
 
-        if version >= VERSION {
-            validate_enum_schemas(&func.enum_schemas)?;
-            validate_struct_schemas(&func.struct_schemas)?;
-            validate_schema_descriptors(&func.struct_schemas, &func.enum_schemas)?;
-            if bytecode_has_enum_opcode(func.bytecode.as_slice()) && func.enum_schemas.is_empty() {
-                return Err(BinaryError::InvalidEnumSchema(
-                    "enum opcode requires an enum schema table".to_string(),
-                ));
-            }
-        } else if !func.struct_schemas.is_empty() {
-            return Err(BinaryError::InvalidStructSchema(
-                "a struct schema table requires version 4".to_string(),
+        validate_enum_schemas(&func.enum_schemas)?;
+        validate_struct_schemas(&func.struct_schemas)?;
+        validate_schema_descriptors(&func.struct_schemas, &func.enum_schemas)?;
+        if bytecode_has_enum_opcode(func.bytecode.as_slice()) && func.enum_schemas.is_empty() {
+            return Err(BinaryError::InvalidEnumSchema(
+                "enum opcode requires an enum schema table".to_string(),
             ));
         }
         self.write_schema_table(&func.struct_schemas)?;
-        if version >= VERSION {
-            self.write_enum_schema_table(&func.enum_schemas)?;
-        }
-        self.write_u8(u8::from(func.jit_unsupported_struct));
-        self.write_u8(0);
+        self.write_enum_schema_table(&func.enum_schemas)?;
 
         ensure_len(func.constants.len(), MAX_CONSTANTS, "constant count")?;
         self.write_u32(u32::try_from(func.constants.len()).map_err(|_| {
@@ -278,7 +260,7 @@ impl BinaryWriter {
             }
         })?);
         for nested in &func.nested_functions {
-            self.write_function(nested, depth.saturating_add(1), version)?;
+            self.write_function(nested, depth.saturating_add(1))?;
         }
 
         ensure_len(
@@ -620,52 +602,6 @@ impl BinaryWriter {
     }
 }
 
-fn format_version(func: &Function) -> u16 {
-    if requires_v5(func) {
-        SIZED_INT_VERSION
-    } else if requires_v4(func) {
-        VERSION
-    } else {
-        LEGACY_VERSION
-    }
-}
-
-fn requires_v4(func: &Function) -> bool {
-    !func.enum_schemas.is_empty()
-        || !func.struct_schemas.is_empty()
-        || bytecode_has_enum_opcode(func.bytecode.as_slice())
-        || func.nested_functions.iter().any(requires_v4)
-}
-
-fn requires_v5(func: &Function) -> bool {
-    bytecode_has_sized_opcode(func.bytecode.as_slice())
-        || func.nested_functions.iter().any(requires_v5)
-}
-
-fn bytecode_has_sized_opcode(bytecode: &[u32]) -> bool {
-    let mut ip = 0;
-    while let Some(&instruction) = bytecode.get(ip) {
-        let opcode = OpCode::from_u8((instruction >> 24) as u8);
-        let inner = if opcode == Some(OpCode::Wide) {
-            OpCode::from_u8(((instruction >> 16) & 0xff) as u8)
-        } else {
-            opcode
-        };
-        let sized_cast = match (opcode, inner) {
-            (Some(OpCode::Cast), _) => instruction & 0xff > u32::from(CastTarget::Bool as u8),
-            (Some(OpCode::Wide), Some(OpCode::Cast)) => bytecode
-                .get(ip + 2)
-                .is_some_and(|word| word >> 16 > u32::from(CastTarget::Bool as u8)),
-            _ => false,
-        };
-        if sized_cast || inner.is_some_and(|op| op as u8 >= OpCode::AddWI8 as u8) {
-            return true;
-        }
-        ip = ip.saturating_add(1 + opcode.map_or(0, OpCode::extension_words));
-    }
-    false
-}
-
 fn bytecode_has_enum_opcode(bytecode: &[u32]) -> bool {
     let mut ip = 0;
     while let Some(&instruction) = bytecode.get(ip) {
@@ -929,7 +865,7 @@ impl<'a> BinaryReader<'a> {
         }
 
         let version = self.read_u16()?;
-        if version != LEGACY_VERSION && version != VERSION && version != SIZED_INT_VERSION {
+        if version != VERSION {
             return Err(BinaryError::UnsupportedVersion(version));
         }
 
@@ -937,7 +873,7 @@ impl<'a> BinaryReader<'a> {
         let _func_count = self.read_u32()?;
         let _reserved = self.read_u32()?;
 
-        let func = self.read_function(0, version)?;
+        let func = self.read_function(0)?;
         self.read_sections()?;
 
         Ok(func)
@@ -951,7 +887,7 @@ impl<'a> BinaryReader<'a> {
         }
 
         let version = self.read_u16()?;
-        if version != LEGACY_VERSION && version != VERSION && version != SIZED_INT_VERSION {
+        if version != VERSION {
             return Err(BinaryError::UnsupportedVersion(version));
         }
 
@@ -959,7 +895,7 @@ impl<'a> BinaryReader<'a> {
         let _func_count = self.read_u32()?;
         let _reserved = self.read_u32()?;
 
-        let func = self.read_function(0, version)?;
+        let func = self.read_function(0)?;
         let (manifest, bundles, requires) = self.read_sections()?;
 
         Ok(ProgramSections {
@@ -970,7 +906,7 @@ impl<'a> BinaryReader<'a> {
         })
     }
 
-    fn read_function(&mut self, depth: usize, version: u16) -> Result<Function> {
+    fn read_function(&mut self, depth: usize) -> Result<Function> {
         if depth > MAX_NESTING_DEPTH {
             return Err(BinaryError::LimitExceeded {
                 what: "function nesting depth",
@@ -1001,26 +937,11 @@ impl<'a> BinaryReader<'a> {
                 limit: MAX_REGISTERS as usize,
             });
         }
-        let struct_schemas = if version >= VERSION {
-            self.read_schema_table()?
-        } else {
-            self.read_legacy_schema_table()?
-        };
-        let enum_schemas = if version >= VERSION {
-            self.read_enum_schema_table()?
-        } else {
-            Vec::new()
-        };
+        let struct_schemas = self.read_schema_table()?;
+        let enum_schemas = self.read_enum_schema_table()?;
         validate_struct_schemas(&struct_schemas)?;
-        if version >= VERSION {
-            validate_enum_schemas(&enum_schemas)?;
-        }
+        validate_enum_schemas(&enum_schemas)?;
         validate_schema_descriptors(&struct_schemas, &enum_schemas)?;
-        let jit_unsupported_struct = self.read_u8()? != 0;
-        let reserved = self.read_u8()?;
-        if reserved != 0 {
-            return Err(BinaryError::InvalidConstantType(reserved));
-        }
 
         let const_count = self.read_u32()? as usize;
         if const_count > MAX_CONSTANTS {
@@ -1048,14 +969,6 @@ impl<'a> BinaryReader<'a> {
         for _ in 0..bc_len {
             bytecode.push(self.read_u32()?);
         }
-        if version < VERSION && bytecode_has_enum_opcode(&bytecode) {
-            return Err(BinaryError::InvalidEnumSchema(
-                "version 3 cannot contain enum opcode".to_string(),
-            ));
-        }
-        if version < SIZED_INT_VERSION && bytecode_has_sized_opcode(&bytecode) {
-            return Err(BinaryError::SizedIntBeforeVersion5(version));
-        }
 
         let nested_count = self.read_u16()? as usize;
         if nested_count > MAX_NESTED_FUNCTIONS {
@@ -1070,7 +983,7 @@ impl<'a> BinaryReader<'a> {
         self.ensure_records(nested_count, 30, "nested functions")?;
         let mut nested_functions = Vec::with_capacity(nested_count);
         for _ in 0..nested_count {
-            nested_functions.push(self.read_function(depth + 1, version)?);
+            nested_functions.push(self.read_function(depth + 1)?);
         }
 
         let upvalue_count = self.read_u16()? as usize;
@@ -1146,7 +1059,6 @@ impl<'a> BinaryReader<'a> {
         func.global_layout = GlobalLayout::new(global_names);
         func.struct_schemas = struct_schemas;
         func.enum_schemas = enum_schemas;
-        func.jit_unsupported_struct = jit_unsupported_struct;
         func.compute_global_layout_hash();
 
         Ok(func)
@@ -1280,92 +1192,6 @@ impl<'a> BinaryReader<'a> {
             "struct schema table",
         )?;
         Ok(schemas)
-    }
-
-    fn read_legacy_schema_table(&mut self) -> Result<Vec<StructSchema>> {
-        let count = usize::from(self.read_u16()?);
-        let reserved = self.read_u16()?;
-        if reserved != 0 {
-            return Err(BinaryError::InvalidConstantType(reserved as u8));
-        }
-        if count > MAX_STRUCT_SCHEMAS {
-            return Err(BinaryError::LimitExceeded {
-                what: "struct schema count",
-                limit: MAX_STRUCT_SCHEMAS,
-            });
-        }
-        // the smallest legacy struct schema record is a u16 name length plus a u16 field count and reserved pair
-        self.ensure_records(count, 6, "struct schema count")?;
-        let start = self.cursor.position();
-        let names = self.read_legacy_records(count, None)?;
-        let mut resolved = HashMap::with_capacity(names.len());
-        for (index, (name, _)) in names.iter().enumerate() {
-            let id = u32::try_from(index).unwrap_or(u32::MAX);
-            if resolved.insert(name.clone(), id).is_some() {
-                return Err(BinaryError::InvalidStructSchema(format!(
-                    "version 3 struct schema name {name} is duplicated"
-                )));
-            }
-        }
-        self.cursor.set_position(start);
-        let records = self.read_legacy_records(count, Some(&resolved))?;
-        Ok(records
-            .into_iter()
-            .enumerate()
-            .map(|(index, (name, fields))| {
-                StructSchema::with_identity(
-                    u32::try_from(index).unwrap_or(u32::MAX),
-                    DefId::from_display_name(&name, u32::try_from(index).unwrap_or(u32::MAX)),
-                    Vec::new(),
-                    fields,
-                )
-            })
-            .collect())
-    }
-
-    fn read_legacy_records(
-        &mut self,
-        count: usize,
-        names: Option<&HashMap<String, u32>>,
-    ) -> Result<Vec<LegacyStructRecord>> {
-        let start = self.cursor.position() as usize;
-        let mut records = Vec::with_capacity(count);
-        for _ in 0..count {
-            let name = self.read_string_u16("struct schema name")?;
-            let field_count = usize::from(self.read_u16()?);
-            let field_reserved = self.read_u16()?;
-            if field_reserved != 0 {
-                return Err(BinaryError::InvalidConstantType(field_reserved as u8));
-            }
-            if field_count > MAX_STRUCT_FIELDS {
-                return Err(BinaryError::LimitExceeded {
-                    what: "struct field count",
-                    limit: MAX_STRUCT_FIELDS,
-                });
-            }
-            self.ensure_records(field_count, 3, "struct field count")?;
-            let mut fields = Vec::with_capacity(field_count);
-            for offset in 0..field_count {
-                let field_name = self.read_string_u16("struct field name")?;
-                fields.push(StructFieldSchema {
-                    offset: u16::try_from(offset).unwrap_or(u16::MAX),
-                    name: field_name,
-                    ty: self.read_legacy_descriptor(0, names)?,
-                });
-                ensure_len(
-                    (self.cursor.position() as usize).saturating_sub(start),
-                    MAX_SCHEMA_TABLE_BYTES,
-                    "struct schema table",
-                )?;
-            }
-            records.push((name, fields));
-        }
-        ensure_len(
-            (self.cursor.position() as usize).saturating_sub(start),
-            MAX_SCHEMA_TABLE_BYTES,
-            "struct schema table",
-        )?;
-        Ok(records)
     }
 
     fn read_enum_schema_table(&mut self) -> Result<Vec<EnumSchema>> {
@@ -1563,61 +1389,6 @@ impl<'a> BinaryReader<'a> {
                     ret: Box::new(self.read_descriptor(depth + 1)?),
                 }
             }
-            tag => return Err(BinaryError::InvalidConstantType(tag)),
-        })
-    }
-
-    fn read_legacy_descriptor(
-        &mut self,
-        depth: usize,
-        names: Option<&HashMap<String, u32>>,
-    ) -> Result<TypeDescriptor> {
-        if depth > MAX_NESTING_DEPTH {
-            return Err(BinaryError::LimitExceeded {
-                what: "struct descriptor depth",
-                limit: MAX_NESTING_DEPTH,
-            });
-        }
-        Ok(match self.read_u8()? {
-            0 => TypeDescriptor::Unit,
-            1 => TypeDescriptor::Bool,
-            2 => TypeDescriptor::Int(
-                IntWidth::from_u8(self.read_u8()?).ok_or(BinaryError::InvalidConstantType(2))?,
-            ),
-            3 => TypeDescriptor::Float(
-                FloatWidth::from_u8(self.read_u8()?).ok_or(BinaryError::InvalidConstantType(3))?,
-            ),
-            4 => TypeDescriptor::String,
-            5 => TypeDescriptor::Option(Box::new(self.read_legacy_descriptor(depth + 1, names)?)),
-            6 => TypeDescriptor::Result(
-                Box::new(self.read_legacy_descriptor(depth + 1, names)?),
-                Box::new(self.read_legacy_descriptor(depth + 1, names)?),
-            ),
-            7 => TypeDescriptor::Array(Box::new(self.read_legacy_descriptor(depth + 1, names)?)),
-            8 => {
-                let len = self.read_u32()?;
-                TypeDescriptor::FixedArray(
-                    Box::new(self.read_legacy_descriptor(depth + 1, names)?),
-                    len,
-                )
-            }
-            9 => TypeDescriptor::Vec(Box::new(self.read_legacy_descriptor(depth + 1, names)?)),
-            10 => {
-                let name = self.read_string_u16("struct descriptor name")?;
-                match names {
-                    Some(resolved) => {
-                        TypeDescriptor::Struct(resolved.get(&name).copied().ok_or_else(|| {
-                            BinaryError::InvalidStructSchema(format!(
-                                "version 3 struct descriptor names unknown schema {name}"
-                            ))
-                        })?)
-                    }
-                    None => TypeDescriptor::Struct(0),
-                }
-            }
-            11 => TypeDescriptor::Any,
-            12 => TypeDescriptor::Error,
-            13 => TypeDescriptor::Never,
             tag => return Err(BinaryError::InvalidConstantType(tag)),
         })
     }

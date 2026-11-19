@@ -34,21 +34,6 @@ impl CompilerOperand for i32 {
 }
 
 impl Compiler {
-    pub(super) fn update_jit_eligibility(&mut self) {
-        self.current.jit_unsupported_struct = self.current.bytecode.as_slice().iter().any(|word| {
-            matches!(
-                OpCode::from_u8((word >> 24) as u8),
-                Some(
-                    OpCode::StructNew
-                        | OpCode::StructLoad
-                        | OpCode::StructStore
-                        | OpCode::EnumNew
-                        | OpCode::EnumTest
-                        | OpCode::EnumLoad
-                )
-            )
-        });
-    }
 
     #[inline]
     pub fn current_line(&self, span: Span) -> u32 {

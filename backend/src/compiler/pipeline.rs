@@ -222,7 +222,6 @@ impl Compiler {
         self.current.compute_global_layout_hash();
         unify_global_layouts(&mut self.current);
         self.current.finalize_bytecode();
-        self.update_jit_eligibility();
 
         if self.current.wide_operand_error().is_some() {
             return Err(CompileError::new(

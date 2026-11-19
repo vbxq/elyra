@@ -198,11 +198,6 @@ impl<'a> DisasmContext<'a> {
             writeln_ignore!(output);
         }
 
-        if func.jit_unsupported_struct {
-            writeln_ignore!(output, "  .jit_unsupported_struct true");
-            writeln_ignore!(output);
-        }
-
         if func.bytecode.is_empty() {
             writeln_ignore!(output, "  .code");
             writeln_ignore!(output, "    ; (empty)");
