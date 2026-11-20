@@ -12,13 +12,13 @@ Elyra is the runtime Aelys originally ran on. When Aelys moved to an LLVM backen
 
 Since the split, Elyra has become its own language. The design goal here is a runtime that is pleasant to build things on.
 
-Note : the migration isn't completely finished; Aelys is still mentioned internally in many places, which is normal.
+The executable is `elyra` and source files use `.elyra`. Internal Rust crate names and the native ABI still use Aelys.
 
 ## Quick start
 
 ```bash
 cargo build --release
-./target/release/aelys-cli examples/hello.aelys
+./target/release/elyra examples/hello.elyra
 ```
 
 ```rust
