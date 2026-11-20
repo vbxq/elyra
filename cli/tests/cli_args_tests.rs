@@ -7,7 +7,7 @@ fn parse_execution_limits() {
     let args = [
         "aelys",
         "run",
-        "main.aelys",
+        "main.elyra",
         "--max-instructions",
         "123",
         "--timeout-ms=45",
@@ -27,7 +27,7 @@ fn parse_run_with_flags_anywhere() {
         "-O3",
         "-ae.trusted=true",
         "run",
-        "main.aelys",
+        "main.elyra",
         "arg1",
         "-x",
     ]
@@ -41,7 +41,7 @@ fn parse_run_with_flags_anywhere() {
         parsed,
         ParsedArgs {
             command: Command::Run {
-                path: "main.aelys".to_string(),
+                path: "main.elyra".to_string(),
                 program_args: vec!["arg1".to_string(), "-x".to_string()],
             },
             vm_args: vec!["-ae.trusted=true".to_string()],
@@ -53,7 +53,7 @@ fn parse_run_with_flags_anywhere() {
 
 #[test]
 fn parse_implicit_run_path_first() {
-    let args = vec!["aelys", "main.aelys", "-O1"]
+    let args = vec!["aelys", "main.elyra", "-O1"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -64,7 +64,7 @@ fn parse_implicit_run_path_first() {
         parsed,
         ParsedArgs {
             command: Command::Run {
-                path: "main.aelys".to_string(),
+                path: "main.elyra".to_string(),
                 program_args: Vec::new(),
             },
             vm_args: Vec::new(),
@@ -107,7 +107,7 @@ fn parse_unknown_flag_errors_before_path() {
 
 #[test]
 fn parse_compile_output_flag() {
-    let args = vec!["aelys", "compile", "-o", "out.avbc", "main.aelys"]
+    let args = vec!["aelys", "compile", "-o", "out.avbc", "main.elyra"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -118,7 +118,7 @@ fn parse_compile_output_flag() {
         parsed,
         ParsedArgs {
             command: Command::Compile {
-                path: "main.aelys".to_string(),
+                path: "main.elyra".to_string(),
                 output: Some("out.avbc".to_string()),
             },
             vm_args: Vec::new(),
@@ -130,7 +130,7 @@ fn parse_compile_output_flag() {
 
 #[test]
 fn parse_asm_stdout_flag() {
-    let args = vec!["aelys", "asm", "--stdout", "main.aelys"]
+    let args = vec!["aelys", "asm", "--stdout", "main.elyra"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -141,7 +141,7 @@ fn parse_asm_stdout_flag() {
         parsed,
         ParsedArgs {
             command: Command::Asm {
-                path: "main.aelys".to_string(),
+                path: "main.elyra".to_string(),
                 output: None,
                 stdout: true,
             },
@@ -175,7 +175,7 @@ fn parse_version_command() {
 #[test]
 
 fn parse_warning_flags() {
-    let args = vec!["aelys", "-Wall", "-Werror", "-Wno-inline", "main.aelys"]
+    let args = vec!["aelys", "-Wall", "-Werror", "-Wno-inline", "main.elyra"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -187,7 +187,7 @@ fn parse_warning_flags() {
 
 #[test]
 fn parse_warn_equals_syntax() {
-    let args = vec!["aelys", "--warn=error", "main.aelys"]
+    let args = vec!["aelys", "--warn=error", "main.elyra"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -200,7 +200,7 @@ fn parse_warn_equals_syntax() {
 #[test]
 fn parse_powershell_split_ae_dot() {
     // PowerShell splits "-ae.trusted=true" into ["-ae", ".trusted=true"]
-    let args = vec!["aelys", "main.aelys", "-ae", ".trusted=true"]
+    let args = vec!["aelys", "main.elyra", "-ae", ".trusted=true"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -212,7 +212,7 @@ fn parse_powershell_split_ae_dot() {
 
 #[test]
 fn parse_powershell_split_ae_dot_before_path() {
-    let args = vec!["aelys", "-ae", ".trusted=true", "main.aelys"]
+    let args = vec!["aelys", "-ae", ".trusted=true", "main.elyra"]
         .into_iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -223,7 +223,7 @@ fn parse_powershell_split_ae_dot_before_path() {
     assert_eq!(
         parsed.command,
         Command::Run {
-            path: "main.aelys".to_string(),
+            path: "main.elyra".to_string(),
             program_args: Vec::new(),
         }
     );

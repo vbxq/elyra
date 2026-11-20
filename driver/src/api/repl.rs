@@ -233,7 +233,7 @@ fn run_parsed(
 
     let main_stmts = if has_needs {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let repl_path = cwd.join("repl.aelys");
+        let repl_path = cwd.join("repl.elyra");
 
         let imports = load_modules_for_program(&stmts, &repl_path, src.clone(), vm)?;
 

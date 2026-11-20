@@ -7,10 +7,10 @@ fn compile_includes_manifest_when_present() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(&src_path, "let x = 1\n").unwrap();
 
-    let manifest_path = dir.join("main.aelys.toml");
+    let manifest_path = dir.join("main.elyra.toml");
     std::fs::write(&manifest_path, "[build]\nbundle_native_modules = true\n").unwrap();
 
     let output = compile_to_avbc(&src_path, OptimizationLevel::None).unwrap();

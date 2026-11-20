@@ -40,7 +40,7 @@ fn fresh_dir(name: &str) -> PathBuf {
 }
 
 fn run_cli(target: &Path) -> (String, String, Option<i32>) {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(target)
         .output()

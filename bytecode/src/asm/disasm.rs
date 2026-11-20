@@ -20,7 +20,7 @@ pub fn disassemble_with_options(func: &Function, options: &DisassemblerOptions) 
     let mut output = String::new();
     let mut ctx = DisasmContext::new(options);
 
-    writeln_ignore!(output, "; Aelys Assembly (.aasm)");
+    writeln_ignore!(output, "; Elyra Assembly (.aasm)");
     writeln_ignore!(output, "; Disassembled from bytecode");
     writeln_ignore!(output);
     writeln_ignore!(output, ".version 3");

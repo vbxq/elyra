@@ -141,7 +141,7 @@ fn compile_refuses_to_write_bytecode_its_own_verifier_rejects() {
     );
 
     // the gate is only worth having if it refuses what the runtime refuses and
-    let run = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&witness)
         .output()
@@ -173,7 +173,7 @@ fn compile_still_accepts_a_program_the_verifier_accepts() {
     .expect("an equivalent free function must still compile");
     assert!(result.output_path.is_file());
 
-    let run = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&output)
         .output()
@@ -223,7 +223,7 @@ fn compiling_assembly_cannot_launder_bytecode_the_verifier_rejects() {
     let source = write_source(&dir, "witness", STRUCT_PROGRAM);
 
     let assembly = dir.join("witness.aasm");
-    let asm = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let asm = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("asm")
         .arg(&source)
         .arg("-o")
@@ -297,7 +297,9 @@ fn collect_sources(dir: &Path, found: &mut Vec<PathBuf>) {
                 continue;
             }
             collect_sources(&path, found);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("aelys") {
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("aelys")
+            || path.extension().and_then(|ext| ext.to_str()) == Some("elyra")
+        {
             found.push(path);
         }
     }
@@ -430,7 +432,7 @@ fn a_compile_that_exits_nonzero_leaves_no_artifact() {
     let source = write_source(&dir, "warned", INLINE_RECURSIVE);
     let output = dir.join("warned.avbc");
 
-    let cli = env!("CARGO_BIN_EXE_aelys-cli");
+    let cli = env!("CARGO_BIN_EXE_elyra");
     let accepted = std::process::Command::new(cli)
         .args(["compile", &source.display().to_string(), "-o"])
         .arg(&output)

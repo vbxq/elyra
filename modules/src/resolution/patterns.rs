@@ -4,8 +4,8 @@ use super::ModuleKind;
 use std::path::{Path, PathBuf};
 
 pub enum ExtensionPattern {
-    Direct { ext: &'static str, kind: ModuleKind }, // foo.aelys
-    ModFile { ext: &'static str, kind: ModuleKind }, // foo/mod.aelys
+    Direct { ext: &'static str, kind: ModuleKind }, // foo.elyra
+    ModFile { ext: &'static str, kind: ModuleKind }, // foo/mod.elyra
     DylibDirect { kind: ModuleKind },               // foo.so
     DylibModFile { kind: ModuleKind },              // foo/mod.so
     LibPrefixDylib { kind: ModuleKind },            // libfoo.so
@@ -46,6 +46,14 @@ pub fn full_search_patterns() -> &'static [ExtensionPattern] {
     use ExtensionPattern::*;
     use ModuleKind::*;
     &[
+        Direct {
+            ext: "elyra",
+            kind: Script,
+        },
+        ModFile {
+            ext: "elyra",
+            kind: Script,
+        },
         Direct {
             ext: "aelys",
             kind: Script,

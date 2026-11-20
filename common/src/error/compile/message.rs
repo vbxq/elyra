@@ -21,7 +21,7 @@ impl CompileErrorKind {
             Self::ExpectedIdentifier => "expected identifier".to_string(),
             Self::InvalidAssignmentTarget => "invalid assignment target".to_string(),
             Self::NullIsNotInSurface => {
-                "null is not part of Aelys; use Option for absence or Result for failure"
+                "null is not part of Elyra; use Option for absence or Result for failure"
                     .to_string()
             }
             Self::ExpectedPattern => "expected a match pattern".to_string(),
@@ -123,7 +123,7 @@ impl CompileErrorKind {
                 format!("circular dependency detected: {}", chain.join(" -> "))
             }
             Self::SymbolNotPublic { symbol, module } => format!(
-                "'{}' is not public in module '{}'\n   = help: add 'pub' before the declaration in {}.aelys",
+                "'{}' is not public in module '{}'\n   = help: add 'pub' before the declaration in {}.elyra",
                 symbol, module, module
             ),
             Self::StdlibNotAvailable { module } => format!(
@@ -253,7 +253,7 @@ impl CompileErrorKind {
                 "cannot infer the type carried by {constructor}\n   = help: add an Option<T> or Result<T, E> annotation"
             ),
             Self::UntypedSumValue { name } => format!(
-                "cannot use untyped native value '{name}' as Option or Result\n   = help: wrap it in a typed Aelys function"
+                "cannot use untyped native value '{name}' as Option or Result\n   = help: wrap it in a typed Elyra function"
             ),
             Self::InvalidSumMethod { method, receiver } => {
                 format!("method '{method}' is not available on {receiver}")
@@ -272,7 +272,7 @@ impl CompileErrorKind {
                 let verdict = match (origin, stage) {
                     (RejectedBytecodeOrigin::Compiler, RejectedBytecodeStage::Verifier) => {
                         format!(
-                            "the compiler emitted bytecode the Aelys verifier refuses: {reason}"
+                            "the compiler emitted bytecode the Elyra verifier refuses: {reason}"
                         )
                     }
                     (RejectedBytecodeOrigin::Compiler, RejectedBytecodeStage::Reader) => {
@@ -282,7 +282,7 @@ impl CompileErrorKind {
                         format!("the compiler emitted bytecode that cannot be loaded: {reason}")
                     }
                     (RejectedBytecodeOrigin::Assembly, RejectedBytecodeStage::Verifier) => {
-                        format!("the Aelys verifier refuses the assembled bytecode: {reason}")
+                        format!("the Elyra verifier refuses the assembled bytecode: {reason}")
                     }
                     (RejectedBytecodeOrigin::Assembly, RejectedBytecodeStage::Reader) => {
                         format!("the assembled bytecode cannot be read back: {reason}")
@@ -305,7 +305,7 @@ impl CompileErrorKind {
                          = help: report the program that produced this message"
                     }
                     RejectedBytecodeOrigin::Assembly => {
-                        "   = help: fix the assembly, or produce it with 'aelys-cli asm'"
+                        "   = help: fix the assembly, or produce it with 'elyra asm'"
                     }
                 };
                 format!("{verdict}\n{artifact}\n{blame}")

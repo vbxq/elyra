@@ -5,19 +5,19 @@ use std::path::{Path, PathBuf};
 // residue tracked by separate increments and must shrink, never grow
 const KNOWN_FAILING: &[(&str, &str)] = &[
     (
-        "examples/aelys-http-server/lib/router.aelys",
+        "examples/aelys-http-server/lib/router.elyra",
         "E0401: a library fragment, `use config` resolves next to the fragment and not to the server root",
     ),
     (
-        "examples/native/opengl/cube.aelys",
+        "examples/native/opengl/cube.elyra",
         "E0406: the checked-in opengl native module is built against native ABI 2, the runtime wants 5",
     ),
     (
-        "examples/native/opengl/use_opengl.aelys",
+        "examples/native/opengl/use_opengl.elyra",
         "E0406: the checked-in opengl native module is built against native ABI 2, the runtime wants 5",
     ),
     (
-        "examples/sdl/gradient.aelys",
+        "examples/sdl/gradient.elyra",
         "E0401: needs the sdl native module, built out of tree per docs/native-modules.md",
     ),
 ];
@@ -37,7 +37,9 @@ fn collect_sources(dir: &Path, found: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_sources(&path, found);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("aelys") {
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("aelys")
+            || path.extension().and_then(|ext| ext.to_str()) == Some("elyra")
+        {
             found.push(path);
         }
     }
@@ -47,7 +49,7 @@ fn shipped_sources(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     collect_sources(&root.join("examples"), &mut found);
     collect_sources(&root.join("modules"), &mut found);
-    let main = root.join("main.aelys");
+    let main = root.join("main.elyra");
     if main.is_file() {
         found.push(main);
     }

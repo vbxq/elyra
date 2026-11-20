@@ -12,8 +12,8 @@ fn source_and_artifact(name: &str, files: &[(&str, &str)]) -> (String, String) {
         std::fs::write(path, content).unwrap();
     }
 
-    let src_path = dir.join("main.aelys");
-    let from_source = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let src_path = dir.join("main.elyra");
+    let from_source = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&src_path)
         .output()
@@ -29,7 +29,7 @@ fn source_and_artifact(name: &str, files: &[(&str, &str)]) -> (String, String) {
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::None)
             .unwrap_or_else(|err| panic!("{name} did not compile: {err}"));
 
-    let from_artifact = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let from_artifact = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&bytecode_path)
         .output()
@@ -64,7 +64,7 @@ fn an_unqualified_module_function_survives_its_own_bytecode() {
         &[
             ("holder.aelys", "pub fn from_module() -> int { return 5 }\n"),
             (
-                "main.aelys",
+                "main.elyra",
                 "use holder\nfn probe() -> int { return from_module() + 1 }\nprintln(probe())\n",
             ),
         ],
@@ -79,7 +79,7 @@ fn an_unqualified_module_global_survives_its_own_bytecode() {
         &[
             ("holder.aelys", "pub let SEED: int = 7\n"),
             (
-                "main.aelys",
+                "main.elyra",
                 "use holder\nfn probe() -> int { return SEED + 1 }\nprintln(probe())\n",
             ),
         ],
@@ -94,7 +94,7 @@ fn an_aliased_module_survives_its_own_bytecode() {
         &[
             ("holder.aelys", "pub fn from_module() -> int { return 5 }\n"),
             (
-                "main.aelys",
+                "main.elyra",
                 "use holder as h\nprintln(h::from_module() + 1)\n",
             ),
         ],
@@ -108,7 +108,7 @@ fn a_nested_module_path_survives_its_own_bytecode() {
         "nested_path",
         &[
             ("lib/helper.aelys", "pub fn help() -> int { return 9 }\n"),
-            ("main.aelys", "use lib::helper\nprintln(help())\n"),
+            ("main.elyra", "use lib::helper\nprintln(help())\n"),
         ],
         "9",
     );
@@ -121,7 +121,7 @@ fn a_selective_import_survives_its_own_bytecode() {
         &[
             ("holder.aelys", "pub fn from_module() -> int { return 5 }\n"),
             (
-                "main.aelys",
+                "main.elyra",
                 "use holder::{from_module}\nprintln(from_module() + 1)\n",
             ),
         ],
@@ -139,7 +139,7 @@ fn a_transitive_module_survives_its_own_bytecode() {
                 "mid.aelys",
                 "use deep\npub fn mid_val() -> int { return deep_val() + 1 }\n",
             ),
-            ("main.aelys", "use mid\nprintln(mid_val())\n"),
+            ("main.elyra", "use mid\nprintln(mid_val())\n"),
         ],
         "4",
     );
@@ -149,7 +149,7 @@ fn a_transitive_module_survives_its_own_bytecode() {
 fn an_aliased_stdlib_module_survives_its_own_bytecode() {
     assert_agrees(
         "aliased_std",
-        &[("main.aelys", "use std::math as m\nprintln(m::abs(-4))\n")],
+        &[("main.elyra", "use std::math as m\nprintln(m::abs(-4))\n")],
         "4",
     );
 }
@@ -162,7 +162,7 @@ fn an_artifact_records_the_imports_the_entry_declares() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("holder.aelys"), "pub fn v() -> int { return 1 }\n").unwrap();
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(
         &src_path,
         "use holder as h\nuse std::math\nprintln(h::v())\n",
@@ -198,7 +198,7 @@ fn a_program_with_no_import_records_no_section() {
     let dir = std::env::temp_dir().join("aelys_cli_link_no_import");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(&src_path, "println(1)\n").unwrap();
 
     let bytecode_path =
@@ -216,7 +216,7 @@ fn an_assembled_artifact_whose_module_resolves_nowhere_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("holder.aelys"), "pub fn v() -> int { return 1 }\n").unwrap();
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(&src_path, "use holder\nprintln(holder::v())\n").unwrap();
 
     let bytecode_path =
@@ -224,7 +224,7 @@ fn an_assembled_artifact_whose_module_resolves_nowhere_is_refused() {
             .unwrap();
 
     let asm_path = dir.join("main.aasm");
-    let disassembled = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let disassembled = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("asm")
         .arg(&bytecode_path)
         .output()
@@ -238,7 +238,7 @@ fn an_assembled_artifact_whose_module_resolves_nowhere_is_refused() {
     let moved = elsewhere.join("main.aasm");
     std::fs::rename(&asm_path, &moved).unwrap();
 
-    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("compile")
         .arg(&moved)
         .output()
@@ -267,7 +267,7 @@ fn public_generic_module_functions_survive_bytecode_compilation() {
             name,
             &[
                 ("m.aelys", "pub fn id<T>(x: T) -> T { x }\n"),
-                ("main.aelys", &main),
+                ("main.elyra", &main),
             ],
             "5",
         );

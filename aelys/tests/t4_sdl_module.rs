@@ -126,7 +126,7 @@ fn the_gradient_example_presents_frames_headless() {
     if !require_sdl() {
         return;
     }
-    let example = std::fs::read_to_string(repo_root().join("examples/sdl/gradient.aelys")).unwrap();
+    let example = std::fs::read_to_string(repo_root().join("examples/sdl/gradient.elyra")).unwrap();
     let (_dir, script) = prepare("gradient.aelys", &example);
     let stdout = run_headless("the_gradient_example_presents_frames_headless", &script);
 

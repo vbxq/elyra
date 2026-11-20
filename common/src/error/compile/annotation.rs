@@ -46,7 +46,7 @@ impl CompileErrorKind {
             Self::QuestionMarkOutsideResult => "no result type to propagate",
             Self::QuestionMarkTypeMismatch { .. } => "error types cannot be converted",
             Self::UnresolvedSumType { .. } => "type information is missing",
-            Self::UntypedSumValue { .. } => "native value has no Aelys signature",
+            Self::UntypedSumValue { .. } => "native value has no Elyra signature",
             Self::InvalidSumMethod { .. } => "method does not belong to this sum",
             Self::DynamicSumMethod { .. } => "dynamic type has no sum semantics",
             Self::TypeInferenceError(_) => "type inference failed",

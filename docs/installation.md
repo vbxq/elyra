@@ -19,7 +19,7 @@ cd aelys_lang
 cargo build --release
 ```
 
-The first build also compiles Cranelift, the JIT backend, so it takes a while. The binary lands in `target/release/aelys-cli`.
+The first build also compiles Cranelift, the JIT backend, so it takes a while. The binary lands in `target/release/elyra`.
 
 Add it to your PATH for convenience:
 
@@ -28,24 +28,24 @@ Add it to your PATH for convenience:
 export PATH="$PATH:/path/to/aelys_lang/target/release"
 
 # Or create a symlink
-sudo ln -s /path/to/aelys_lang/target/release/aelys-cli /usr/local/bin/aelys
+sudo ln -s /path/to/aelys_lang/target/release/elyra /usr/local/bin/elyra
 ```
 
-For Windows, you can add it manually to your PATH via System Properties, or copy the aelys-cli.exe file to your directory of choice.
+For Windows, you can add it manually to your PATH via System Properties, or copy the elyra.exe file to your directory of choice.
 
 ## Verifying Installation
 
 ```bash
-aelys-cli version
-# Aelys v0.22.0
+elyra version
+# Elyra v0.22.0
 ```
 
 Run the hello world example:
 
 ```bash
-aelys-cli examples/hello.aelys
+elyra examples/hello.elyra
 # Hello, World!
-# Welcome to Aelys v0.22.0!
+# Welcome to Elyra v0.22.0!
 # Platform: linux (x86_64)
 ```
 
@@ -54,13 +54,13 @@ aelys-cli examples/hello.aelys
 ### Basic Usage
 
 ```bash
-aelys-cli <file.aelys>              # run a source file
-aelys-cli run <file.aelys>          # same thing, explicit
-aelys-cli run <file.avbc>           # run compiled bytecode
-aelys-cli compile <file.aelys>      # compile to bytecode
-aelys-cli asm <file.aelys>          # show disassembly
-aelys-cli repl                      # interactive mode
-aelys-cli version                   # show version
+elyra <file.elyra>              # run a source file
+elyra run <file.elyra>          # same thing, explicit
+elyra run <file.avbc>           # run compiled bytecode
+elyra compile <file.elyra>      # compile to bytecode
+elyra asm <file.elyra>          # show disassembly
+elyra repl                      # interactive mode
+elyra version                   # show version
 ```
 
 ### Flags
@@ -88,7 +88,7 @@ In practice, optimization levels don't make a huge difference for most code righ
 You can tune VM behavior with `-ae.<option>=<value>`:
 
 ```bash
-aelys-cli -ae.max-heap=128M program.aelys
+elyra -ae.max-heap=128M program.elyra
 ```
 
 | Option | Description |
@@ -127,30 +127,30 @@ See Compiler Warnings in the [language specification](language-spec.md#compiler-
 
 ```bash
 # Run with arguments passed to the program
-aelys-cli program.aelys arg1 arg2
+elyra program.elyra arg1 arg2
 
 # Compile and save bytecode
-aelys-cli compile main.aelys -o main.avbc
+elyra compile main.elyra -o main.avbc
 
 # Run compiled bytecode
-aelys-cli run main.avbc
+elyra run main.avbc
 
 # View disassembly for debugging
-aelys-cli asm main.aelys --stdout
+elyra asm main.elyra --stdout
 
 # REPL with increased heap
-aelys-cli repl -ae.max-heap=1G
+elyra repl -ae.max-heap=1G
 ```
 
 ## File Types
 
 | Extension | Description |
 |-----------|-------------|
-| `.aelys` | Source code |
+| `.elyra` | Source code |
 | `.avbc` | Compiled bytecode |
 | `.aasm` | Assembly (human-readable bytecode) |
 
-Bytecode files are portable across machines with the same Aelys version. They skip parsing and compilation.
+Bytecode files are portable across machines with the same Elyra version. They skip parsing and compilation.
 
 A `.avbc` records the `use` lines its entry file declared, so running it imports the same modules the
 source did, under the same names, whether or not the program qualifies them. The modules themselves are
@@ -162,16 +162,16 @@ Here's a sample project layout to explain module organization:
 
 ```
 my_project/
-  main.aelys           # entry point
-  config.aelys         # configuration module
+  main.elyra           # entry point
+  config.elyra         # configuration module
   lib/
-    utils.aelys        # utility module
-    http.aelys         # http helpers
+    utils.elyra        # utility module
+    http.elyra         # http helpers
   tests/
-    test_utils.aelys   # tests
+    test_utils.elyra   # tests
 ```
 
-Modules are imported relative to the file that imports them. From `main.aelys`:
+Modules are imported relative to the file that imports them. From `main.elyra`:
 
 <!-- doctest: ignore (needs the project files shown above) -->
 ```rust
@@ -210,7 +210,7 @@ An `int` operation left the 64-bit range (-9223372036854775808 to 92233720368547
 
 ### "invalid bytecode"
 
-The bytecode file is corrupted or was compiled with a different Aelys version, try recompiling from source.
+The bytecode file is corrupted or was compiled with a different Elyra version, try recompiling from source.
 
 ### The REPL is behaving weirdly
 
@@ -234,10 +234,10 @@ cargo test
 
 ## Documentation examples
 
-The Aelys code blocks of `README.md` and `docs/*.md` are run by a test:
+The Elyra code blocks of `README.md` and `docs/*.md` are run by a test:
 
 ```bash
-python3 tools/doctest.py --aelys target/release/aelys-cli
+python3 tools/doctest.py --elyra target/release/elyra
 ```
 
 `cargo test -p aelys-cli --test doc_examples_tests` runs the same check against the freshly built binary. Every ```` ```rust ```` block must compile and run successfully, and a line comment `// prints: TEXT` declares an expected line of output, checked in order. A block that is not meant to run says so in its fence:
@@ -249,4 +249,4 @@ python3 tools/doctest.py --aelys target/release/aelys-cli
 | ```` ```rust,compile_fail ```` | must be rejected by the compiler; `rust,compile_fail,E0323` also requires that code |
 | ```` ```rust,should_panic ```` | must compile and then stop with a runtime error |
 
-The same flags can be written in an HTML comment on the line before the fence, with a reason: `<!-- doctest: ignore (needs a WAD file) -->`. `<!-- doctest: file shapes.aelys -->` before a block saves it as that module for the later blocks of the same page instead of running it. `python3 tools/doctest.py --help` describes every option.
+The same flags can be written in an HTML comment on the line before the fence, with a reason: `<!-- doctest: ignore (needs a WAD file) -->`. `<!-- doctest: file shapes.elyra -->` before a block saves it as that module for the later blocks of the same page instead of running it. `python3 tools/doctest.py --help` describes every option.

@@ -10,10 +10,10 @@ fn showcase_dir(name: &str) -> PathBuf {
 }
 
 fn run_program(name: &str, input: Option<&Path>, flags: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_aelys-cli"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_elyra"));
     command
         .args(flags)
-        .arg(showcase_dir(name).join(format!("{name}.aelys")));
+        .arg(showcase_dir(name).join(format!("{name}.elyra")));
     if let Some(input) = input {
         command.arg(input);
     }
@@ -220,10 +220,10 @@ fn a_script_ending_in_a_unit_statement_prints_nothing_after_its_output() {
         ("value_tail", "let x = 3\nx + 1\n", "4\n"),
     ];
     for (name, source, expected) in cases {
-        let path = dir.join(format!("{name}.aelys"));
+        let path = dir.join(format!("{name}.elyra"));
         std::fs::write(&path, source).expect("write script");
         for flags in MODES {
-            let output = Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+            let output = Command::new(env!("CARGO_BIN_EXE_elyra"))
                 .args(*flags)
                 .arg(&path)
                 .output()

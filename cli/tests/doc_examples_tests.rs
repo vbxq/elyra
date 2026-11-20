@@ -15,7 +15,7 @@ fn every_documentation_example_runs_as_documented() {
     let output = Command::new("python3")
         .arg(root.join("tools/doctest.py"))
         .arg("--aelys")
-        .arg(env!("CARGO_BIN_EXE_aelys-cli"))
+        .arg(env!("CARGO_BIN_EXE_elyra"))
         .arg("--root")
         .arg(root)
         .arg("--work-dir")

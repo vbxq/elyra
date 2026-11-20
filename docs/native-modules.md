@@ -254,8 +254,8 @@ cargo build --release --manifest-path my-module/Cargo.toml
 cp my-module/target/release/libmy_module.so game/pixels.so
 ```
 
-`use pixels` in `game/main.aelys` finds `pixels.so` next to the script. A
-manifest `main.aelys.toml` (or a project `aelys.toml`) can pin it:
+`use pixels` in `game/main.elyra` finds `pixels.so` next to the script. A
+manifest `main.elyra.toml` (or a project `elyra.toml`) can pin it:
 
 ```toml
 [module.pixels]
@@ -292,7 +292,7 @@ library (`libSDL2.so`, `pkg-config sdl2`).
 ```sh
 cargo build --release --manifest-path modules/sdl/Cargo.toml
 cp modules/sdl/target/release/libaelys_sdl.so examples/sdl/sdl.so
-aelys run examples/sdl/gradient.aelys 120
+elyra run examples/sdl/gradient.elyra 120
 ```
 
 A Doom E1M1 engine written in Elyra and drawn through this module lives in the
@@ -318,7 +318,7 @@ Without network access, copy the workspace `Cargo.lock` to
 
 Run headless with `SDL_VIDEODRIVER=dummy`, or on a virtual X display
 (`Xvfb :99` and `DISPLAY=:99`). The test `aelys/tests/t4_sdl_module.rs` builds
-the module, runs `examples/sdl/gradient.aelys` with the dummy driver and
+the module, runs `examples/sdl/gradient.elyra` with the dummy driver and
 checks the pixels read back, then checks that frames of the wrong size are
 refused. It builds a copy of the module under the cargo target directory (with
 `--offline` and the workspace `Cargo.lock`), so it writes nothing into

@@ -771,7 +771,7 @@ fn run_example(name: &str, args: &[&str], env: &[(&str, &str)]) -> Outcome {
 
 #[test]
 fn the_sdl_window_example_presents_frames_without_a_wrapper_module() {
-    let outcome = run_example("sdl_window.aelys", &["3"], &[("SDL_VIDEODRIVER", "dummy")]);
+    let outcome = run_example("sdl_window.elyra", &["3"], &[("SDL_VIDEODRIVER", "dummy")]);
     if outcome.stderr.contains("cannot load C library 'SDL2'") {
         eprintln!("SKIPPED: libSDL2 is not installed");
         return;
@@ -787,7 +787,7 @@ fn the_gl_example_clears_through_mesa() {
         eprintln!("SKIPPED: set AELYS_FFI_DISPLAY to a (virtual) X display to run the GL example");
         return;
     };
-    let outcome = run_example("gl_clear.aelys", &["10"], &[("DISPLAY", &display)]);
+    let outcome = run_example("gl_clear.elyra", &["10"], &[("DISPLAY", &display)]);
     assert_eq!(outcome.code, Some(0), "stderr: {}", outcome.stderr);
     let lines = outcome.lines();
     assert!(lines[0].starts_with("renderer: "), "{lines:?}");

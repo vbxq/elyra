@@ -1,4 +1,4 @@
-// opens an SDL2 window through the C FFI, no wrapper module: aelys run sdl_window.aelys [frames] [hold_ms]
+// opens an SDL2 window through the C FFI, no wrapper module: aelys run sdl_window.elyra [frames] [hold_ms]
 use std::sys as sys
 
 extern "SDL2" {

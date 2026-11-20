@@ -1,4 +1,4 @@
-// .aelys.toml manifest parsing
+// source and project manifest parsing
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -84,9 +84,9 @@ impl Manifest {
         Ok(toml::from_str(&content)?)
     }
 
-    // looks for foo.aelys.toml or aelys.toml in same dir
+    // source manifest takes precedence over the project manifest
     pub fn for_source_file(source_path: &Path) -> Option<Self> {
-        // Try {filename}.aelys.toml
+        // Try {filename}.toml
         let mut manifest_path = source_path.to_path_buf();
         let filename = source_path.file_name()?.to_string_lossy();
         manifest_path.set_file_name(format!("{}.toml", filename));
@@ -97,13 +97,14 @@ impl Manifest {
             return Some(manifest);
         }
 
-        // Try aelys.toml in the same directory (project manifest)
         if let Some(parent) = source_path.parent() {
-            let project_manifest = parent.join("aelys.toml");
-            if project_manifest.exists()
-                && let Ok(manifest) = Self::from_file(&project_manifest)
-            {
-                return Some(manifest);
+            for name in ["elyra.toml", "aelys.toml"] {
+                let project_manifest = parent.join(name);
+                if project_manifest.exists()
+                    && let Ok(manifest) = Self::from_file(&project_manifest)
+                {
+                    return Some(manifest);
+                }
             }
         }
 

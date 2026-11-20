@@ -255,7 +255,7 @@ fn test_booleans() {
 #[test]
 fn test_null_literal_is_rejected() {
     let error = aelys::run("null", "<test>").expect_err("null is not surface syntax");
-    assert!(error.to_string().contains("null is not part of Aelys"));
+    assert!(error.to_string().contains("null is not part of Elyra"));
 }
 
 #[test]

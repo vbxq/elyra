@@ -75,7 +75,7 @@ impl ValidatedNativeModule {
         {
             return Err(invalid_module_reason(
                 &alias,
-                "module rejected the Aelys VM API",
+                "module rejected the Elyra VM API",
             ));
         }
 

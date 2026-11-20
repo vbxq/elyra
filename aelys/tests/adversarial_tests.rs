@@ -84,7 +84,7 @@ let x = null
     x + 5
 "#;
     let err = run_aelys_err(code);
-    assert!(err.contains("null is not part of Aelys"));
+    assert!(err.contains("null is not part of Elyra"));
 }
 
 #[test]
@@ -300,5 +300,5 @@ let f = null
 f()
 "#;
     let err = run_aelys_err(code);
-    assert!(err.contains("null is not part of Aelys"));
+    assert!(err.contains("null is not part of Elyra"));
 }

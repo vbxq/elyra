@@ -2,5 +2,5 @@ use std::sys
 use std::io
 
 io::println("Hello, World!")
-io::println("Welcome to Aelys v0.22.0!")
+io::println("Welcome to Elyra v0.22.0!")
 io::println("Platform: {sys::platform()} {sys::arch()}")

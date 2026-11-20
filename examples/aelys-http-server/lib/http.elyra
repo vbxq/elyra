@@ -101,7 +101,7 @@ pub fn send_response(client: int, status: int, content_type: string, body: strin
     response = response + "Content-Type: " + content_type + "\r\n"
     response = response + "Content-Length: " + body.len().to_string() + "\r\n"
     response = response + "Connection: close\r\n"
-    response = response + "Server: Aelys-HTTP/0.1.0\r\n"
+    response = response + "Server: Elyra-HTTP/0.1.0\r\n"
 
     response = response + "\r\n"
 
@@ -130,7 +130,7 @@ pub fn send_error(client: int, status: int, message: string) {
     html = html + "</head>\n<body>\n"
     html = html + "<h1>" + status.to_string() + " " + utils::status_text(status) + "</h1>\n"
     html = html + "<p>" + message + "</p>\n"
-    html = html + "<hr><small>Aelys HTTP Server</small>\n"
+    html = html + "<hr><small>Elyra HTTP Server</small>\n"
     html = html + "</body>\n</html>"
 
     send_html(client, status, html)

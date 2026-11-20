@@ -52,7 +52,7 @@ print(".")               // .
 println("")              // prints: Loading.
 ```
 
-When the reader of standard output has gone away (`aelys-cli run app.aelys | head -1`),
+When the reader of standard output has gone away (`elyra run app.elyra | head -1`),
 the next `print` or `println` ends the program with exit status 141, as SIGPIPE ends a
 shell tool, without an error message.
 
@@ -816,10 +816,10 @@ use std::sys
 | `gc_collect()` | Run a full collection now (minor, then a complete major); its pause grows with the heap |
 
 The program arguments are the command-line words after the script path:
-`aelys script.aelys a "b c"` gives `arg_count()` 2, `arg(0)` `Some("a")` and
+`elyra script.elyra a "b c"` gives `arg_count()` 2, `arg(0)` `Some("a")` and
 `arg(1)` `Some("b c")`. The script path itself is not an argument. The CLI reads its
 own flags (`-O<level>`, `-ae.<k>=<v>`, `-h`, the warning flags and the others listed by
-`aelys --help`) anywhere on the line, also after the script path, so those words never
+`elyra --help`) anywhere on the line, also after the script path, so those words never
 reach the program; any other word, `--` and words starting with `-` included, is passed
 through in order. A program run through the embedding API sees the arguments its host
 set, and none by default.

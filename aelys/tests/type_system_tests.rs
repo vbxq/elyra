@@ -1140,7 +1140,7 @@ identity::<dynamic>(value)
     let error = error.to_string();
     assert!(error.contains("error[E0347]"), "expected E0347: {error}");
     assert!(
-        error.contains("dynamic is not part of Aelys"),
+        error.contains("dynamic is not part of Elyra"),
         "expected the surface diagnostic: {error}"
     );
 }
@@ -1154,7 +1154,7 @@ fn explicit_dynamic_type_is_rejected_at_the_surface_boundary() {
     .expect_err("dynamic must not be a surface type")
     .to_string();
     assert!(
-        error.contains("dynamic is not part of Aelys"),
+        error.contains("dynamic is not part of Elyra"),
         "expected the named dynamic surface diagnostic: {error}"
     );
 }

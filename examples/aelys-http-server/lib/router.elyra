@@ -63,7 +63,7 @@ fn handle_status(client: int) -> int {
     json = json + "  \"uptime_seconds\": " + uptime.to_string() + ",\n"
     json = json + "  \"uptime_minutes\": " + uptime_minutes.to_string() + ",\n"
     json = json + "  \"total_requests\": " + total_requests.to_string() + ",\n"
-    json = json + "  \"server\": \"Aelys-HTTP/0.1.0\"\n"
+    json = json + "  \"server\": \"Elyra-HTTP/0.1.0\"\n"
     json = json + "}}"
 
     http::send_json(client, 200, json)
@@ -75,7 +75,7 @@ fn handle_time(client: int) -> int {
 
     let mut json = "{{\n"
     json = json + "  \"timestamp\": " + current_time.to_string() + ",\n"
-    json = json + "  \"server\": \"Aelys-HTTP/0.1.0\"\n"
+    json = json + "  \"server\": \"Elyra-HTTP/0.1.0\"\n"
     json = json + "}}"
 
     http::send_json(client, 200, json)
@@ -105,9 +105,9 @@ fn handle_echo(client: int, headers) -> int {
 
 fn handle_hello(client: int) -> int {
     let mut json = "{{\n"
-    json = json + "  \"message\": \"Hello from Aelys HTTP Server!\",\n"
+    json = json + "  \"message\": \"Hello from Elyra HTTP Server!\",\n"
     json = json + "  \"version\": \"0.1.0\",\n"
-    json = json + "  \"language\": \"Aelys\"\n"
+    json = json + "  \"language\": \"Elyra\"\n"
     json = json + "}}"
 
     http::send_json(client, 200, json)

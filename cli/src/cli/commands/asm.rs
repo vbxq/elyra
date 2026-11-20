@@ -56,11 +56,11 @@ fn asm_transform_with_options(
         .to_ascii_lowercase();
 
     match ext.as_str() {
-        "aelys" => disassemble_source(path, output, stdout, opt_level, config),
+        "elyra" | "aelys" => disassemble_source(path, output, stdout, opt_level, config),
         "avbc" => disassemble_avbc(path, output, stdout),
         "aasm" => Err("input is already assembly".to_string()),
         _ => Err(format!(
-            "unsupported input extension '{}', expected .aelys or .avbc",
+            "unsupported input extension '{}', expected .elyra or .avbc",
             ext
         )),
     }

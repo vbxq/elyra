@@ -2,7 +2,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn repl(flags: &[&str], input: &str) -> Vec<String> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("repl")
         .args(flags)
         .stdin(Stdio::piped())

@@ -35,7 +35,7 @@ fn cli_binary() -> PathBuf {
             if directory.ends_with("deps") {
                 directory.pop();
             }
-            let binary = directory.join(format!("aelys-cli{}", std::env::consts::EXE_SUFFIX));
+            let binary = directory.join(format!("elyra{}", std::env::consts::EXE_SUFFIX));
             assert!(binary.is_file(), "missing aelys-cli at {binary:?}");
             binary
         })

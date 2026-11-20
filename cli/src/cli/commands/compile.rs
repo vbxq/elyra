@@ -604,7 +604,7 @@ mod unloadable_gate_tests {
     }
 
     fn verdict(dir: &Path, bytes: &[u8], declared: &[RequiredImport]) -> Result<(), String> {
-        let entry = dir.join("main.aelys");
+        let entry = dir.join("main.elyra");
         let source = Source::new(entry.display().to_string(), "");
         reject_unloadable_bytecode(bytes, declared, &entry, source, &dir.join("main.avbc"))
     }

@@ -6,7 +6,7 @@ fn compile_writes_avbc() {
     let dir = std::env::temp_dir().join("aelys_cli_compile_test");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(&src_path, "let x = 1\n").unwrap();
 
     let output = compile_to_avbc(&src_path, OptimizationLevel::None).unwrap();
@@ -20,7 +20,7 @@ fn compile_errors_keep_the_named_diagnostic_code() {
     let dir = std::env::temp_dir().join("aelys_cli_compile_diagnostic_test");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(&src_path, "type(42)\n").unwrap();
 
     let error = compile_to_avbc(&src_path, OptimizationLevel::None)
@@ -40,7 +40,7 @@ fn compile_accepts_a_type_imported_from_another_module() {
         "pub struct Point {\n    pub x: int,\n    pub y: int,\n}\n\npub trait Norm {\n    fn norm(self) -> int\n}\n\nimpl Norm for Point {\n    fn norm(self) -> int { self.x * self.x + self.y * self.y }\n}\n",
     )
     .unwrap();
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(
         &src_path,
         "use geometry\nlet p = Point { x: 3, y: 4 }\np.norm()\n",

@@ -82,7 +82,7 @@ fn generate_directory_listing(path: string, public_dir: string) -> string {
     html = html + "<li><em>Directory listing not yet implemented</em></li>\n"
 
     html = html + "</ul>\n"
-    html = html + "<hr><small>Aelys HTTP Server</small>\n"
+    html = html + "<hr><small>Elyra HTTP Server</small>\n"
     html = html + "</body>\n</html>"
 
     return html

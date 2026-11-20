@@ -43,7 +43,7 @@ impl WarningKind {
             Self::InlineHasCaptures => {
                 Some("captured variables may behave differently when inlined")
             }
-            Self::InlineNativeFunction => Some("native functions have no Aelys body"),
+            Self::InlineNativeFunction => Some("native functions have no Elyra body"),
             Self::InlinePublicFunction => {
                 Some("callers from other modules will still use the non-inlined version")
             }

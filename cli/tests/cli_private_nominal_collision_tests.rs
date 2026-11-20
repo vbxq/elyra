@@ -13,8 +13,8 @@ fn source_and_artifact(name: &str, files: &[(&str, &str)]) -> (String, String) {
         std::fs::write(path, content).unwrap();
     }
 
-    let src_path = dir.join("main.aelys");
-    let from_source = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let src_path = dir.join("main.elyra");
+    let from_source = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&src_path)
         .output()
@@ -30,7 +30,7 @@ fn source_and_artifact(name: &str, files: &[(&str, &str)]) -> (String, String) {
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::None)
             .unwrap_or_else(|err| panic!("{name} did not compile: {err}"));
 
-    let from_artifact = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let from_artifact = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&bytecode_path)
         .output()
@@ -89,7 +89,7 @@ fn two_modules_hiding_one_struct_name_each_answer_their_own_method() {
         &[
             ("alpha.aelys", &private_struct_module("take_alpha", 5)),
             ("beta.aelys", &private_struct_module("take_beta", 7)),
-            ("main.aelys", SUM_MAIN),
+            ("main.elyra", SUM_MAIN),
         ],
         "12",
         "12 pins alpha to 5 and beta to 7; one shared method symbol gives 14 or 10",
@@ -103,7 +103,7 @@ fn two_modules_hiding_one_enum_name_each_answer_their_own_method() {
         &[
             ("alpha.aelys", &private_enum_module("take_alpha", 5)),
             ("beta.aelys", &private_enum_module("take_beta", 7)),
-            ("main.aelys", SUM_MAIN),
+            ("main.elyra", SUM_MAIN),
         ],
         "12",
         "12 pins alpha to 5 and beta to 7; one shared method symbol gives 14 or 10",
@@ -118,7 +118,7 @@ fn two_modules_hiding_one_trait_name_on_one_target_each_answer_their_own_method(
             ("core.aelys", "pub struct Cell { pub v: int }\n"),
             ("alpha.aelys", &private_trait_module("take_alpha", 5)),
             ("beta.aelys", &private_trait_module("take_beta", 7)),
-            ("main.aelys", SUM_MAIN),
+            ("main.elyra", SUM_MAIN),
         ],
         "12",
         "the two private traits share a bare name and a target, so one symbol carries both",
@@ -132,7 +132,7 @@ fn the_entry_file_s_own_hidden_struct_never_answers_for_its_dependency() {
         &[
             ("lib.aelys", &private_struct_module("take", 5)),
             (
-                "main.aelys",
+                "main.elyra",
                 "use lib\n\nstruct S { v: int }\n\nimpl S {\n    fn get(self) -> int {\n        return 100\n    }\n}\n\nfn probe() -> int {\n    let s = S { v: 0 }\n    return lib::take() + s.get()\n}\nprintln(probe())\n",
             ),
         ],
@@ -153,7 +153,7 @@ fn a_third_module_never_moves_the_two_that_share_a_hidden_name() {
                 "struct R { v: int }\n\nimpl R {\n    fn get(self) -> int {\n        return 11\n    }\n}\n\npub fn take_gamma() -> int {\n    let r = R { v: 0 }\n    return r.get()\n}\n",
             ),
             (
-                "main.aelys",
+                "main.elyra",
                 "use alpha\nuse beta\nuse gamma\nfn probe() -> int {\n    return alpha::take_alpha() + beta::take_beta() + gamma::take_gamma()\n}\nprintln(probe())\n",
             ),
         ],
@@ -176,7 +176,7 @@ fn one_imported_impl_reaching_two_importers_stays_one_symbol() {
                 "use alpha::{Point, Norm}\npub fn beta_norm(v: int) -> int {\n    let p = Point { x: v }\n    return p.norm()\n}\n",
             ),
             (
-                "main.aelys",
+                "main.elyra",
                 "use alpha::{Point, Norm}\nuse beta::{beta_norm}\nfn probe() -> int {\n    let p = Point { x: 2 }\n    return p.norm() * 100 + beta_norm(1)\n}\nprintln(probe())\n",
             ),
         ],
@@ -199,7 +199,7 @@ fn two_modules_hiding_one_global_name_each_read_their_own() {
                 "let shared = 200\npub struct B1 { pub v: int }\npub trait TB {\n    fn tb(self) -> int\n}\nimpl TB for B1 {\n    fn tb(self) -> int {\n        return self.v + shared\n    }\n}\n",
             ),
             (
-                "main.aelys",
+                "main.elyra",
                 "use alpha::{A1, TA}\nuse beta::{B1, TB}\nfn probe() -> int {\n    let a = A1 { v: 0 }\n    let b = B1 { v: 0 }\n    return a.ta() * 1000 + b.tb()\n}\nprintln(probe())\n",
             ),
         ],
@@ -221,7 +221,7 @@ fn two_modules_hiding_one_function_name_each_call_their_own() {
                 "beta.aelys",
                 "fn helper() -> int {\n    return 7\n}\n\npub fn take_beta() -> int {\n    return helper()\n}\n",
             ),
-            ("main.aelys", SUM_MAIN),
+            ("main.elyra", SUM_MAIN),
         ],
         "12",
         "the private function already scopes per module and must stay that way",

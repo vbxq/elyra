@@ -8,7 +8,7 @@ fn compile_error(case: &str, files: &[(&str, &str)], main: &str) -> String {
     for (name, body) in files {
         std::fs::write(dir.join(name), body).unwrap();
     }
-    let src_path = dir.join("main.aelys");
+    let src_path = dir.join("main.elyra");
     std::fs::write(&src_path, main).unwrap();
     compile_to_avbc(&src_path, OptimizationLevel::None)
         .expect_err("an ambiguous bare name must not compile")

@@ -1,6 +1,6 @@
 # Language Specification
 
-This is the complete reference for Aelys syntax and semantics. If you're new to the language, start with [Getting Started](getting-started.md) instead.
+This is the complete reference for Elyra syntax and semantics. If you're new to the language, start with [Getting Started](getting-started.md) instead.
 
 ## Lexical Structure
 
@@ -173,7 +173,7 @@ true
 false
 ```
 
-There is no null value in the Aelys surface language. Use `Option<T>` for absence
+There is no null value in the Elyra surface language. Use `Option<T>` for absence
 and `Result<T, E>` for recoverable failure. The old `null` spelling is rejected
 with a diagnostic that names these replacements.
 
@@ -416,7 +416,7 @@ The compiler knows `x` is `int` (from the literal) and `y` is `int` (from the `+
 
 Inference supplies types for ordinary expressions. `dynamic` is not part of the
 surface language and there is no place where you may write it. Every `dynamic`
-annotation is rejected with E0347 `dynamic is not part of Aelys; use a concrete
+annotation is rejected with E0347 `dynamic is not part of Elyra; use a concrete
 type or an explicit enum`, whether it appears on a variable, a parameter, or a
 return type. Model a value whose shape varies with an enum whose variants name
 the cases you accept.
@@ -1409,36 +1409,36 @@ Native modules (shared libraries written against the aelys-native ABI, such as t
 
 ### Custom Modules
 
-Any `.aelys` file is a module. If you have:
+Any `.elyra` file is a module. If you have:
 
 ```
 project/
-  main.aelys
-  utils.aelys
+  main.elyra
+  utils.elyra
   lib/
-    helper.aelys
+    helper.elyra
 ```
 
-From `main.aelys`:
+From `main.elyra`:
 <!-- doctest: ignore (needs the project files shown above) -->
 ```rust
-use utils              // imports utils.aelys
-use lib::helper        // imports lib/helper.aelys
+use utils              // imports utils.elyra
+use lib::helper        // imports lib/helper.elyra
 ```
 
 Top-level definitions in a file become the module's exports. A `pub const`
 is exported with its value, so an importer can use it as a repeat count or an
 array length (`[0; cfg::W]`); see [Constants](#constants).
 
-A dotted path is resolved from the file that writes the `use` line: `use lib::util` in `game/mobj.aelys` looks for `game/lib/util.aelys` (then
-`game/lib/util/mod.aelys` and the native forms) first, and only then for
-`lib/util.aelys` under the project root, the directory of the entry file. The
+A dotted path is resolved from the file that writes the `use` line: `use lib::util` in `game/mobj.elyra` looks for `game/lib/util.elyra` (then
+`game/lib/util/mod.elyra` and the native forms) first, and only then for
+`lib/util.elyra` under the project root, the directory of the entry file. The
 first file found is the module. Resolution depends only on the importing file and
 the path, never on the order of `use` lines nor on what another file imported
 first.
 
 A module is its file. One file reached by two spellings, `use game::lib::util`
-from the entry file and `use lib::util` from `game/mobj.aelys`, is one module:
+from the entry file and `use lib::util` from `game/mobj.elyra`, is one module:
 its top-level code runs once and its variables exist once. Two different files
 that the same dotted path names from two different importers are two modules.
 
@@ -1513,9 +1513,9 @@ A method is reachable wherever its type is, so `pub` written on an item of an
 `pub` also applies to a `struct`, an `enum`, and a `trait`, and a public one can
 be used from another module. A type is imported by name with the selective form
 of `use`, not reached through a module path: `module::Name` does not name a
-type. Given `shapes.aelys`:
+type. Given `shapes.elyra`:
 
-<!-- doctest: file shapes.aelys -->
+<!-- doctest: file shapes.elyra -->
 ```rust
 pub enum Kind { Round, Sharp }
 
@@ -1610,7 +1610,7 @@ A public nominal type may cross a module boundary, including when some of its
 fields are private. A private nominal type in a public signature is still rejected
 at the point of declaration with E0407:
 
-<!-- doctest: file shapes.aelys -->
+<!-- doctest: file shapes.elyra -->
 ```rust
 pub struct Point { pub x: int, y: int }
 
@@ -1717,7 +1717,7 @@ Some functions simply can't be inlined:
 |------|-----|
 | Recursive function | Inlining would expand forever |
 | Mutual recursion | Cycle like A → B → A detected |
-| Native function | No Aelys body to substitute |
+| Native function | No Elyra body to substitute |
 
 ```rust
 // ✗ Won't work
@@ -3467,19 +3467,19 @@ Control warnings from the command line:
 
 ```bash
 # enable all warnings
-aelys compile main.aelys -Wall
+elyra compile main.elyra -Wall
 
 # treat warnings as errors
-aelys compile main.aelys -Werror
+elyra compile main.elyra -Werror
 
 # enable a specific category
-aelys compile main.aelys -Winline
+elyra compile main.elyra -Winline
 
 # disable a category
-aelys compile main.aelys -Wno-inline
+elyra compile main.elyra -Wno-inline
 
 # combine: all warnings, but not unused, treat as errors
-aelys compile main.aelys -Wall -Wno-unused -Werror
+elyra compile main.elyra -Wall -Wno-unused -Werror
 ```
 
 The `-Werror` flag is useful in CI to catch issues early
@@ -3797,7 +3797,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0103 | ExpectedIdentifier | an identifier was required |
 | E0104 | InvalidAssignmentTarget | the left side of `=` is not a place |
 | E0105 | RecursionDepthExceeded | the parser exceeded its nesting limit of 256 levels: each parenthesis, call, prefix operator, assignment, block and pattern level counts one, and so does the expression that holds them, so a `let` initializer accepts 255 nested parentheses, a call argument 254, and 254 nested `if` blocks |
-| E0106 | NullIsNotInSurface | `null` is not part of Aelys |
+| E0106 | NullIsNotInSurface | `null` is not part of Elyra |
 | E0107 | ExpectedPattern | a pattern was required |
 | E0108 | InvalidPattern | a pattern the grammar does not allow |
 | E0109 | UnknownVariant | no such variant on that type |
@@ -3880,7 +3880,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0344 | RecursiveMonomorphization | instantiation recurses without decreasing |
 | E0345 | MonomorphizationLimit | the instantiation limit is exceeded |
 | E0346 | EnumLayoutTooLarge | an enum payload exceeds the layout limit |
-| E0347 | DynamicIsNotInSurface | `dynamic` is not part of Aelys |
+| E0347 | DynamicIsNotInSurface | `dynamic` is not part of Elyra |
 | E0348 | UntypedNativeValue | a native value arrives without a type |
 | E0349 | UnmaterializedAppliedType | an applied type never became concrete |
 | E0351 | UnboundTypeParamMethod | a method call on an unbounded type parameter |
@@ -3911,7 +3911,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0376 | GlobalWithoutSignature | a global with no usable signature |
 | E0377 | UndeterminedType | a type that never became determinate |
 | E0378 | TypeNotImported | a public type of an imported module the selective `use` did not name |
-| E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Aelys operation |
+| E0379 | UntypedNativeBoundary | an untyped native value crosses into a typed Elyra operation |
 | E0380 | TypeNestingTooDeep | a type annotation nested past the descriptor depth limit |
 | E0395 | NonConstantInitializer | a `const` initializer that is not a compile-time constant, or whose evaluation divides by zero or overflows |
 | E0396 | DuplicateConstant | a `const` declared twice in the same scope |
@@ -3956,7 +3956,7 @@ enums name the same condition at two stages of the pipeline and share its code.
 | E0429 | UnevaluatedAssociatedConstBinding | an associated-constant binding has a side the compiler cannot evaluate |
 | E0430 | UnconstrainedImplTypeParam | an impl declares a type parameter its target type never mentions |
 | E0434 | UnfoldableAssociatedConstType | an associated constant is declared, or an impl instantiates its declaration, with a type the compiler folds no constant of |
-| E0435 | EmittedBytecodeRejected | the bytecode about to be written is refused by the Aelys verifier or cannot be read back, so the run writes no artifact |
+| E0435 | EmittedBytecodeRejected | the bytecode about to be written is refused by the Elyra verifier or cannot be read back, so the run writes no artifact |
 | E0436 | BytecodeEncodingRefused | the program carries a name the bytecode format cannot encode, so the run writes no artifact |
 | E0437 | AmbiguousTraitInstantiation | one trait, implemented for the same type at several instantiations, supplies the method a call names |
 | E0438 | UnresolvedReceiverInstantiation | several impls of one trait that takes parameters, at one instantiation, each for its own instantiation of the receiver's nominal, supply the method, and the receiver is not yet a known instantiation |

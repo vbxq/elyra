@@ -36,7 +36,7 @@ fn asm_compile_and_run_agree_on_a_program_that_uses_a_builtin() {
     .expect("compile accepts the same program");
 
     for target in [&src_path, &bytecode_path] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
             .arg("run")
             .arg(target)
             .output()

@@ -26,7 +26,7 @@ pub fn run() -> i32 {
         return 0;
     }
     if matches!(parsed.command, args::Command::Version) {
-        eprintln!("Aelys v{}", env!("CARGO_PKG_VERSION"));
+        eprintln!("Elyra v{}", env!("CARGO_PKG_VERSION"));
         return 0;
     }
 

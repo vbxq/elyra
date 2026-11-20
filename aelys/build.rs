@@ -14,9 +14,9 @@ fn main() {
             format!("# aelys {}", version),
         ),
         (
-            "examples/hello.aelys",
-            r"Aelys v\d+\.\d+\.\d+-[a-z]",
-            format!("Aelys v{}", version),
+            "examples/hello.elyra",
+            r"Elyra v\d+\.\d+\.\d+-[a-z]",
+            format!("Elyra v{}", version),
         ),
     ];
 

@@ -2,7 +2,7 @@
 # checks the aelys code blocks of README.md and docs/*.md against an aelys binary
 
 USAGE = """\
-usage: python3 tools/doctest.py --aelys target/release/aelys-cli [--jobs N] [--filter TEXT] [-v]
+usage: python3 tools/doctest.py --elyra target/release/elyra [--jobs N] [--filter TEXT] [-v]
 
 Every fenced block whose info string starts with `rust` is checked. The info
 string takes comma-separated flags:
@@ -201,10 +201,10 @@ def check(block, aelys, work, timeout, idx):
             target = d / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
-        src = d / "main.aelys"
+        src = d / "main.elyra"
         src.write_text(prepare(block.source), encoding="utf-8")
         if "compile_fail" in block.flags:
-            code, out, err, to = run([aelys, "compile", "main.aelys", "-o", "main.avbc"], d, timeout)
+            code, out, err, to = run([aelys, "compile", "main.elyra", "-o", "main.avbc"], d, timeout)
             if to:
                 return False, "compiler timed out"
             if code == 0:
@@ -214,14 +214,14 @@ def check(block, aelys, work, timeout, idx):
                 return False, f"compile error lacks {', '.join(missing)}: {first_error(err)}"
             return True, "compile_fail"
         if "no_run" in block.flags or "should_panic" in block.flags:
-            code, out, err, to = run([aelys, "compile", "main.aelys", "-o", "main.avbc"], d, timeout)
+            code, out, err, to = run([aelys, "compile", "main.elyra", "-o", "main.avbc"], d, timeout)
             if to:
                 return False, "compiler timed out"
             if code != 0:
                 return False, f"compile error: {first_error(err)}"
             if "no_run" in block.flags:
                 return True, "compiled"
-        code, out, err, to = run([aelys, "run", "main.aelys"], d, timeout)
+        code, out, err, to = run([aelys, "run", "main.elyra"], d, timeout)
         if to:
             return False, f"timed out after {timeout}s"
         if "should_panic" in block.flags:
@@ -249,11 +249,11 @@ def check(block, aelys, work, timeout, idx):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="check the Aelys code blocks of the documentation",
+        description="check the Elyra code blocks of the documentation",
         epilog=USAGE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--aelys", required=True, help="path to the aelys cli binary")
+    ap.add_argument("--elyra", "--aelys", dest="elyra", required=True, help="path to the elyra binary")
     ap.add_argument("--root", default=None, help="repository root (default: parent of tools/)")
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--timeout", type=float, default=60.0, help="seconds per block")
@@ -263,7 +263,7 @@ def main():
     args = ap.parse_args()
 
     root = Path(args.root) if args.root else Path(__file__).resolve().parent.parent
-    aelys = str(Path(args.aelys).resolve())
+    aelys = str(Path(args.elyra).resolve())
     if not os.access(aelys, os.X_OK):
         print(f"doctest: {aelys} is not an executable", file=sys.stderr)
         return 2

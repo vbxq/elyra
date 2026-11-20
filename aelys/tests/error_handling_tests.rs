@@ -23,7 +23,7 @@ fn assert_dynamic_surface_error(message: &str) {
         "expected E0347: {message}"
     );
     assert!(
-        message.contains("dynamic is not part of Aelys"),
+        message.contains("dynamic is not part of Elyra"),
         "expected the dynamic surface diagnostic: {message}"
     );
 }
@@ -228,7 +228,7 @@ fn question_mark_conversion_has_a_named_diagnostic() {
 #[test]
 fn null_is_rejected_with_an_option_or_result_fix() {
     let message = compile_message("null");
-    assert!(message.contains("null is not part of Aelys"), "{message}");
+    assert!(message.contains("null is not part of Elyra"), "{message}");
     assert!(
         message.contains("Option") || message.contains("Result"),
         "{message}"
@@ -238,19 +238,19 @@ fn null_is_rejected_with_an_option_or_result_fix() {
 #[test]
 fn null_type_annotation_is_rejected_with_the_same_diagnostic() {
     let message = compile_message("let value: null = 0\nvalue");
-    assert!(message.contains("null is not part of Aelys"), "{message}");
+    assert!(message.contains("null is not part of Elyra"), "{message}");
 }
 
 #[test]
 fn null_pattern_is_rejected_with_the_same_diagnostic() {
     let message = compile_message("match Some(1) { null => 1, _ => 0 }");
-    assert!(message.contains("null is not part of Aelys"), "{message}");
+    assert!(message.contains("null is not part of Elyra"), "{message}");
 }
 
 #[test]
 fn null_introspection_is_not_a_surface_api() {
     let message = compile_message("convert::is_null(1)");
-    assert!(message.contains("null is not part of Aelys"), "{message}");
+    assert!(message.contains("null is not part of Elyra"), "{message}");
 }
 
 #[test]
@@ -359,7 +359,7 @@ fn untyped_native_cannot_drive_iteration() {
 fn explicit_dynamic_is_rejected_at_the_native_boundary() {
     let message = compile_untyped_native_annotation("let value: dynamic = custom::read()\n0");
     assert!(
-        message.contains("dynamic is not part of Aelys"),
+        message.contains("dynamic is not part of Elyra"),
         "{message}"
     );
 }

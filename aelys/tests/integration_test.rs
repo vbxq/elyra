@@ -426,7 +426,7 @@ fn test_boolean_literals() {
 #[test]
 fn test_null_literal() {
     let error = run_err("null;");
-    assert!(error.contains("null is not part of Aelys"));
+    assert!(error.contains("null is not part of Elyra"));
 }
 
 #[test]

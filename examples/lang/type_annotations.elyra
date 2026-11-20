@@ -5,7 +5,7 @@ use std::time
 // Variables with type annotations
 let x: int = 42
 let pi: float = 3.14159
-let name: string = "Aelys"
+let name: string = "Elyra"
 let flag: bool = true
 
 io::print("Variables with Types ===")

@@ -33,13 +33,13 @@ fn run_repl_core<R: BufRead, W: Write>(
     let mut session = ReplSession::new();
 
     if interactive {
-        writeln!(output, "Aelys REPL (type 'exit' to quit)").map_err(|err| err.to_string())?;
+        writeln!(output, "Elyra REPL (type 'exit' to quit)").map_err(|err| err.to_string())?;
     }
 
     let mut line = String::new();
     loop {
         if interactive {
-            write!(output, "aelys> ").map_err(|err| err.to_string())?;
+            write!(output, "elyra> ").map_err(|err| err.to_string())?;
             output.flush().map_err(|err| err.to_string())?;
         }
 
@@ -70,4 +70,24 @@ fn run_repl_core<R: BufRead, W: Write>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn interactive_banner_and_prompt_use_elyra() {
+        let mut output = Vec::new();
+        super::run_repl_core(
+            "exit\n".as_bytes(),
+            &mut output,
+            aelys_opt::OptimizationLevel::None,
+            Vec::new(),
+            true,
+        )
+        .unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.starts_with("Elyra REPL"));
+        assert!(text.contains("elyra> "));
+        assert!(!text.contains("Aelys"));
+    }
 }

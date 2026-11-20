@@ -64,7 +64,7 @@ fn compile_and_run_capturing_stdout(name: &str, source: &str) -> (String, String
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::Standard)
             .unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&bytecode_path)
         .output()
@@ -208,7 +208,7 @@ fn a_module_named_like_the_mangling_prefix_still_loads_from_bytecode() {
         aelys_cli::cli::commands::compile::compile_to_avbc(&src_path, OptimizationLevel::Standard)
             .unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aelys-cli"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_elyra"))
         .arg("run")
         .arg(&bytecode_path)
         .output()

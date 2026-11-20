@@ -826,7 +826,7 @@ impl TypeError {
             ),
             TypeErrorKind::NullIsNotInSurface => write!(
                 f,
-                "null is not part of Aelys; use Option for absence or Result for failure"
+                "null is not part of Elyra; use Option for absence or Result for failure"
             ),
             TypeErrorKind::RemovedConvertModule { name } => write!(
                 f,
@@ -836,16 +836,16 @@ impl TypeError {
             ),
             TypeErrorKind::DynamicIsNotInSurface => write!(
                 f,
-                "dynamic is not part of Aelys; use a concrete type or an explicit enum"
+                "dynamic is not part of Elyra; use a concrete type or an explicit enum"
             ),
             TypeErrorKind::UntypedNativeValue { name } => write!(
                 f,
-                "native value '{}' has no Aelys type; declare its signature before using it",
+                "native value '{}' has no Elyra type; declare its signature before using it",
                 name
             ),
             TypeErrorKind::UntypedNativeBoundary { name } => write!(
                 f,
-                "native value '{}' crosses the typed Aelys boundary without a signature; declare its ABI signature before using it",
+                "native value '{}' crosses the typed Elyra boundary without a signature; declare its ABI signature before using it",
                 name
             ),
             TypeErrorKind::UnmaterializedAppliedType { name } => write!(
@@ -1899,7 +1899,7 @@ impl TypeError {
                 f,
                 "'{name}' is not public in module '{module}'; it is registered here only for a \
                  body this file inlines\n   \
-                 = help: declare it 'pub' in {module}.aelys, or declare a type of this file's own"
+                 = help: declare it 'pub' in {module}.elyra, or declare a type of this file's own"
             ),
         }
     }

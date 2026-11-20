@@ -47,18 +47,18 @@ jobs:
 
       - name: Rename binary (unix)
         if: runner.os != 'Windows'
-        run: cp target/${{ matrix.target }}/release/aelys-cli aelys-${{ matrix.target }}
+        run: cp target/${{ matrix.target }}/release/elyra elyra-${{ matrix.target }}
 
       - name: Rename binary (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Copy-Item "target/${{ matrix.target }}/release/aelys-cli.exe" "aelys-${{ matrix.target }}.exe"
+        run: Copy-Item "target/${{ matrix.target }}/release/elyra.exe" "elyra-${{ matrix.target }}.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aelys-${{ matrix.target }}
-          path: aelys-${{ matrix.target }}*
+          name: elyra-${{ matrix.target }}
+          path: elyra-${{ matrix.target }}*
 
   release:
     name: Publish Release

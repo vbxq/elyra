@@ -22,3 +22,7 @@ semver = "1.0"
 
 [lib]
 doctest = false
+
+[[bin]]
+name = "elyra"
+path = "src/main.rs"

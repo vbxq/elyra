@@ -114,7 +114,7 @@ def judge(expected, results):
 
 
 def write_program(dirpath, family, index, source, expected):
-    path = dirpath / f"{family}_{index:04d}.aelys"
+    path = dirpath / f"{family}_{index:04d}.elyra"
     path.write_text(source)
     if expected == TRAP:
         path.with_suffix(".trap").write_text("trap\n")
@@ -147,7 +147,7 @@ def keep_failure(keep, aelys, path, expected, results, problems):
 
 def main():
     ap = argparse.ArgumentParser(description="differential tests: generated programs run under every mode and a python oracle")
-    ap.add_argument("--aelys", help="aelys binary to test")
+    ap.add_argument("--elyra", "--aelys", dest="elyra", help="elyra binary to test")
     ap.add_argument("--programs", type=int, default=20, help="programs generated per family")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--families", default=",".join(FAMILIES))
@@ -163,8 +163,8 @@ def main():
         for f in FAMILIES:
             print(f"{f:15} {importlib.import_module(f).DESCRIPTION}")
         return 0
-    if not args.aelys:
-        ap.error("--aelys is required")
+    if not args.elyra:
+        ap.error("--elyra is required")
 
     families = [f for f in args.families.split(",") if f]
     modes = [m for m in args.modes.split(",") if m]
@@ -174,7 +174,7 @@ def main():
     for m in modes:
         if m not in MODES:
             ap.error(f"unknown mode {m}; known: {', '.join(MODES)}")
-    aelys = str(Path(args.aelys).resolve())
+    aelys = str(Path(args.elyra).resolve())
     keep = Path(args.keep).resolve() if args.keep else HERE.parent.parent / "target" / "difftest-failures"
     if args.work:
         Path(args.work).mkdir(parents=True, exist_ok=True)

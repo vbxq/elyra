@@ -358,5 +358,5 @@ fn test_to_string_bool() {
 #[test]
 fn test_to_string_null_syntax_is_rejected() {
     let error = run_aelys_err("let x = null; x.to_string()");
-    assert!(error.contains("null is not part of Aelys"));
+    assert!(error.contains("null is not part of Elyra"));
 }

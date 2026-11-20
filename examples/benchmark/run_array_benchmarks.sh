@@ -12,20 +12,20 @@ run_benchmark() {
 
     echo "--- $name ---"
     echo "Aelys:"
-    ./target/release/aelys-cli "$aelys_file" 2>&1 | grep -E "(time|Time)"
+    ./target/release/elyra "$aelys_file" 2>&1 | grep -E "(time|Time)"
     echo "Python:"
     python3 "$py_file" 2>&1 | grep -E "(time|Time)"
     echo ""
 }
 
 run_benchmark "Array Sum (1M elements)" \
-    "examples/benchmark/array_sum.aelys" \
+    "examples/benchmark/array_sum.elyra" \
     "examples/benchmark/array_sum.py"
 
 run_benchmark "Vec Push/Pop (1M ops)" \
-    "examples/benchmark/vec_pushpop.aelys" \
+    "examples/benchmark/vec_pushpop.elyra" \
     "examples/benchmark/vec_pushpop.py"
 
 run_benchmark "Bubble Sort (5K elements)" \
-    "examples/benchmark/array_sort.aelys" \
+    "examples/benchmark/array_sort.elyra" \
     "examples/benchmark/array_sort.py"

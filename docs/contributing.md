@@ -11,7 +11,7 @@ stdout, or an expected integer trap) that every mode must match. It needs only P
 
 ```sh
 cargo build --release
-python3 tools/difftest/run.py --aelys target/release/aelys-cli --programs 50
+python3 tools/difftest/run.py --elyra target/release/elyra --programs 50
 ```
 
 `--programs N` is the number of programs per family. `--seed`, `--families a,b`,
@@ -23,6 +23,6 @@ compile (a generator bug).
 Each failing program is copied to `target/difftest-failures/` (or `--keep DIR`) with its
 `.expected` or `.trap` file and a `.report.txt` holding every mode's command line, exit code,
 stdout and stderr. To reproduce one, run the command from the report, for example
-`target/release/aelys-cli run -ae.jit-sync=on checked_ints_0012.aelys`. Programs are named
+`target/release/elyra run -ae.jit-sync=on checked_ints_0012.elyra`. Programs are named
 `<family>_<index>` and are deterministic: the same `--seed` and `--first <index>
 --programs 1 --families <family>` regenerate exactly that program.

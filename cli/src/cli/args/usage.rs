@@ -1,11 +1,11 @@
 pub fn usage() -> &'static str {
     "Usage:
-  aelys [flags] <file> [args...]
-  aelys run [flags] <file> [args...]
-  aelys compile <file>
-  aelys asm <file>
-  aelys repl [flags]
-  aelys version
+  elyra [flags] <file> [args...]
+  elyra run [flags] <file> [args...]
+  elyra compile <file>
+  elyra asm <file>
+  elyra repl [flags]
+  elyra version
 
 Flags (any position):
   -h, --help                 Show help
@@ -25,10 +25,10 @@ Warning flags:
   -Wno-<category>            Disable specific category
 
 Examples:
-  aelys main.aelys -O2 '-ae.max-heap=256M'  (quote in PowerShell)
-  aelys run -O3 main.aelys arg1 arg2
-  aelys repl -ae.max-heap=1G
-  aelys asm main.aelys --stdout
-  aelys compile main.aelys -o main.avbc -Wall -Werror
-  aelys run program.avbc"
+  elyra main.elyra -O2 '-ae.max-heap=256M'  (quote in PowerShell)
+  elyra run -O3 main.elyra arg1 arg2
+  elyra repl -ae.max-heap=1G
+  elyra asm main.elyra --stdout
+  elyra compile main.elyra -o main.avbc -Wall -Werror
+  elyra run program.avbc"
 }

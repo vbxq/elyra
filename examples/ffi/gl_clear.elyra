@@ -1,4 +1,4 @@
-// clears an SDL2 OpenGL window through the C FFI: aelys run gl_clear.aelys [frames] [hold_ms]
+// clears an SDL2 OpenGL window through the C FFI: aelys run gl_clear.elyra [frames] [hold_ms]
 use std::sys as sys
 
 extern "SDL2" {

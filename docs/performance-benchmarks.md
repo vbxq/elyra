@@ -31,10 +31,10 @@ With `-ae.jit=on`, functions the JIT refuses and loops it no longer enters stay 
 
 ## Startup
 
-Running a file parses, type-checks and compiles it before the first instruction runs; `aelys compile` stores the result as `.avbc` bytecode so a later run skips that work. Measure a startup with:
+Running a file parses, type-checks and compiles it before the first instruction runs; `elyra compile` stores the result as `.avbc` bytecode so a later run skips that work. Measure a startup with:
 
 ```bash
-time aelys-cli examples/hello.aelys
+time elyra examples/hello.elyra
 ```
 
 ## Tiering and remaining fallbacks
@@ -99,17 +99,17 @@ for i in 0..1000 {
 `examples/benchmark` holds small array, Vec, sort and matrix programs, most with a Python twin, to compare on your machine:
 
 ```bash
-aelys-cli examples/benchmark/array_sum.aelys
+elyra examples/benchmark/array_sum.elyra
 python3 examples/benchmark/array_sum.py
 ```
 
 ## Improving Performance
 
-If your Aelys code is too slow:
+If your Elyra code is too slow:
 
 1. **Profile first** - make sure you're optimizing the right thing
 2. **Turn the JIT on** - `-ae.jit=on` on Linux x86_64 for long-running numeric loops
 3. **Pre-allocate arrays/vecs** - avoid reallocation overhead
 4. **Precompile to bytecode** - skip parse/compile on each run
 
-For truly performance-critical code, consider writing a native module in Rust and calling it from Aelys; see [Native modules](native-modules.md). Keep the loop itself in Aelys and hand the native a whole buffer: a native call costs far more than an interpreted instruction.
+For truly performance-critical code, consider writing a native module in Rust and calling it from Elyra; see [Native modules](native-modules.md). Keep the loop itself in Elyra and hand the native a whole buffer: a native call costs far more than an interpreted instruction.

@@ -239,7 +239,7 @@ or a file name or path. A name that contains a `/` or `\`, or ends in `.so`,
 next to the script first, then handed to the system loader as written. A bare
 name is looked up in this order:
 
-1. the path a manifest gives it, `main.aelys.toml` or `aelys.toml` next to the
+1. the path a manifest gives it, `main.elyra.toml` or `elyra.toml` next to the
    script:
 
    ```toml
@@ -308,13 +308,13 @@ per-sample loops in Elyra and cross into C once per frame or per batch.
 
 ## Example: an SDL2 window
 
-`examples/ffi/sdl_window.aelys` opens a window, fills a `Vec<u8>` with a
+`examples/ffi/sdl_window.elyra` opens a window, fills a `Vec<u8>` with a
 gradient each frame and shows it through an SDL streaming texture, with no
-wrapper module, only the system libSDL2. `examples/ffi/gl_clear.aelys`
+wrapper module, only the system libSDL2. `examples/ffi/gl_clear.elyra`
 creates an OpenGL context with SDL and clears it with `glClearColor` and
 `glClear`; under a virtual X display it runs on Mesa's llvmpipe.
 
 ```sh
-aelys run examples/ffi/sdl_window.aelys 120      # frames to show
-aelys run examples/ffi/gl_clear.aelys 60
+elyra run examples/ffi/sdl_window.elyra 120      # frames to show
+elyra run examples/ffi/gl_clear.elyra 60
 ```

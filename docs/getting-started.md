@@ -1,10 +1,10 @@
 # Getting Started
 
-This guide walks you through writing your first Aelys programs. I'll assume you've already [installed](installation.md) the compiler.
+This guide walks you through writing your first Elyra programs. I'll assume you've already [installed](installation.md) the compiler.
 
 ## Hello World
 
-Create a file called `hello.aelys`:
+Create a file called `hello.elyra`:
 
 ```rust
 println("Hello, World!")
@@ -13,7 +13,7 @@ println("Hello, World!")
 Run it:
 
 ```bash
-aelys hello.aelys
+elyra hello.elyra
 ```
 
 That's your first program ! The safe standard modules (`std::io`, `std::math`, `std::string`, `std::time`) are auto-registered at startup, so you don't need to import them. The other modules (`std::fs`, `std::net`, `std::sys`) need a `use` line, such as `use std::fs`.
@@ -350,12 +350,12 @@ for i in 1..=10 {
 
 ## Editor Support
 
-Writing Aelys code is way more pleasant with syntax highlighting.  
+Writing Elyra code is way more pleasant with syntax highlighting.
 Many other editor coming, don't worry !
 
 ### VSCode Extension
 
-Someone made a VSCode Extension for Aelys, see [Acknowledgements](../ACKNOWLEDGEMENTS.md)  
+Someone made a VSCode Extension for Elyra, see [Acknowledgements](../ACKNOWLEDGEMENTS.md)
 Download [Aelys Language Support](https://marketplace.visualstudio.com/items?itemName=SpaceGame.aelys-lang) from the VSCode marketplace, or directly to the [repository link](https://github.com/SpaceGame-wq/aelys-vscode)
 
 ## What's Next
