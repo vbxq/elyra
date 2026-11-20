@@ -253,3 +253,23 @@ fn an_assembled_artifact_whose_module_resolves_nowhere_is_refused() {
         "the refusal left an artefact behind"
     );
 }
+
+#[test]
+fn public_generic_module_functions_survive_bytecode_compilation() {
+    for (name, import, call) in [
+        ("generic_qualified", "use m", "m::id(5)"),
+        ("generic_aliased", "use m as alias", "alias::id(5)"),
+        ("generic_selective", "use m::{id}", "id(5)"),
+        ("generic_wildcard", "use m::*", "id(5)"),
+    ] {
+        let main = format!("{import}\nprintln({call})\n");
+        assert_agrees(
+            name,
+            &[
+                ("m.aelys", "pub fn id<T>(x: T) -> T { x }\n"),
+                ("main.aelys", &main),
+            ],
+            "5",
+        );
+    }
+}

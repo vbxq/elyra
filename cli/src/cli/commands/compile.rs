@@ -96,16 +96,7 @@ fn compile_to_avbc_gated(
     let (imports, loader) = load_modules_with_loader(&stmts, path, src.clone(), &mut vm)
         .map_err(|err| module_load_error(err, &output_path))?;
 
-    let main_stmts: Vec<_> = imports
-        .imported_impl_stmts
-        .iter()
-        .cloned()
-        .chain(
-            stmts
-                .into_iter()
-                .filter(|stmt| !matches!(stmt.kind, StmtKind::Needs(_))),
-        )
-        .collect();
+    let main_stmts = imports.program_stmts(stmts);
 
     let resolved = resolve_globals(Some(&imports), &vm);
     let all_known_globals = resolved.known_globals;
